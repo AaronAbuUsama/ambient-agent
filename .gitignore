@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+.eve/
+.output/
+.vercel/
+.workflow-data/
+
+# env
+.env
+.env.*
+!.env.example
+
+# whatsapp auth store
+.wa-auth*/
+
+# logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+
+# editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# coverage
+coverage/

@@ -1,0 +1,53 @@
+{
+  "name": "whatsappd-github-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A WhatsApp group-chat GitHub concierge: an Eve agent, bridged over whatsappd, that triages issues, reviews PRs, and summarizes code from a WhatsApp group.",
+  "keywords": [
+    "ai-agents",
+    "eve",
+    "github",
+    "whatsapp",
+    "whatsappd",
+    "chatbot",
+    "octokit",
+    "typescript"
+  ],
+  "homepage": "https://github.com/AaronAbuUsama/whatsappd-github-agent#readme",
+  "bugs": {
+    "url": "https://github.com/AaronAbuUsama/whatsappd-github-agent/issues"
+  },
+  "license": "MIT",
+  "author": "Aaron AbuUsama",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AaronAbuUsama/whatsappd-github-agent.git"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "eve dev",
+    "build": "eve build",
+    "start": "eve start",
+    "whatsapp": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.0",
+    "@octokit/rest": "^22.0.0",
+    "ai": "^7.0.0",
+    "eve": "^0.22.4",
+    "whatsappd": "^0.2.0",
+    "zod": "^4.1.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  }
+}

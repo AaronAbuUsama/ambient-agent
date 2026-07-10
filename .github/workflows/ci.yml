@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      # The `eve` CLI hard-requires Node >=24 at runtime (it exits with a
+      # version-check error below that, independent of what `engines` in
+      # package.json or npm itself enforce). `eve build` compiles agent/
+      # into .eve/ + .output/ with no network or model credential needed,
+      # so it's a real build check — just one only `eve` can run on Node
+      # 24. See docs/TUTORIAL.md and STATUS.md for how this was verified.
+      - name: Build (eve build)
+        if: matrix.node-version == 24
+        run: npm run build
