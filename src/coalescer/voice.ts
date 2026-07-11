@@ -57,13 +57,18 @@ export const aiVoice: Layer.Layer<Conversationalist, never, Outbound | Worker> =
   Effect.gen(function* () {
     const outbound = yield* Outbound;
     const worker = yield* Worker;
+    // Build the model once — it's pure allocation (credentials are read lazily, per
+    // request), so there's nothing per-turn to gain by rebuilding it. This is also the
+    // natural place to branch on env for a deployed model (experimental_chatgpt is
+    // local-dev only; see the header note).
+    const model = experimental_chatgpt();
     return {
       turn: (window) =>
         Effect.tryPromise({
           try: async (signal) => {
             let streamError: unknown;
             const result = streamText({
-              model: experimental_chatgpt(),
+              model,
               system: PERSONA,
               prompt: renderWindow(window),
               stopWhen: stepCountIs(6),

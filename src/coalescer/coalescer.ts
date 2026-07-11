@@ -17,7 +17,7 @@
  */
 import { Clock, Context, Duration, Effect, HashMap, Option, Queue, Ref, type Scope, Stream } from "effect";
 import { appendBounded, type BufferBounds } from "./buffer.ts";
-import { addressesBot, type ConversationWindow, type IncomingMessage, reasonOf } from "./events.ts";
+import { addressesBot, type ConversationWindow, type FireReason, type IncomingMessage, reasonOf } from "./events.ts";
 import { CoalescerConfig, type CoalescerConfigValues } from "./config.ts";
 import { Conversationalist, EventSource } from "./ports.ts";
 
@@ -56,6 +56,10 @@ const makeChatLoop = (config: CoalescerConfigValues, convo: ConversationalistSer
   const maxWaitMillis = Duration.toMillis(config.maxWait);
 
   return (chatId: string, queue: Queue.Dequeue<IncomingMessage>): Effect.Effect<never> => {
+    // Flush the buffered window to the voice, then go cold for the next burst.
+    const fireAndReset = (messages: readonly IncomingMessage[], reason: FireReason): Effect.Effect<never> =>
+      fire(convo, { chatId, messages, reason }).pipe(Effect.zipRight(cold));
+
     // A message landed: buffer it, and either flush now (bot addressed) or keep
     // waiting. `burstStart` is the clock time of the burst's first message — the
     // cap is measured from it and carried unchanged through the whole burst.
@@ -66,7 +70,7 @@ const makeChatLoop = (config: CoalescerConfigValues, convo: ConversationalistSer
     ): Effect.Effect<never> => {
       const next = appendBounded(buffer, msg, bounds);
       return addressesBot(msg, config.botId)
-        ? fire(convo, { chatId, messages: next, reason: reasonOf(msg, config.botId) }).pipe(Effect.zipRight(cold))
+        ? fireAndReset(next, reasonOf(msg, config.botId))
         : warm(next, burstStart);
     };
 
@@ -88,7 +92,7 @@ const makeChatLoop = (config: CoalescerConfigValues, convo: ConversationalistSer
             Effect.timeoutOption(wait),
             Effect.flatMap(
               Option.match({
-                onNone: () => fire(convo, { chatId, messages: buffer, reason: "debounce" }).pipe(Effect.zipRight(cold)),
+                onNone: () => fireAndReset(buffer, "debounce"),
                 onSome: (msg) => onMessage(buffer, burstStart, msg),
               }),
             ),

@@ -54,6 +54,9 @@ const parseLine = (line: string): { pushName: string; text: string } | undefined
   return { pushName: "you", text: trimmed };
 };
 
+// One-line command reference, shown in the banner and on `/help`.
+const USAGE = "<text> · /as <name> <text> · include @bot to address it · /help · Ctrl-D to quit";
+
 // Outbound → the console (what the bot would post to the group).
 const consoleOutbound = Layer.succeed(Outbound, {
   reply: (chatId, text) => Console.log(`\n\u{1F916} bot → ${chatId}: ${text}\n`),
@@ -62,7 +65,8 @@ const consoleOutbound = Layer.succeed(Outbound, {
 
 // Worker → a canned stand-in for the real GitHub agent, with a small delay so the
 // blocking delegate (D1a) — and any "typing" around it — is actually visible.
-const cannedWorker = Layer.succeed(Worker, {
+// (Named `consoleWorker` to avoid shadowing the `cannedWorker` factory exported by mocks.ts.)
+const consoleWorker = Layer.succeed(Worker, {
   delegate: (task) =>
     Console.log(`   \u{1F6E0}\u{FE0F}  worker handling: "${task.instruction}"`).pipe(
       Effect.zipRight(Effect.sleep(Duration.seconds(1))),
@@ -76,14 +80,14 @@ const program = Effect.gen(function* () {
       "voice REPL — real model, mocked WhatsApp + Worker.",
       `  bot=${BOT}  chat=${CHAT}`,
       "  type a message and watch the voice decide speak / delegate / stay silent.",
-      "  /as <name> <text> to speak as someone else · include @bot to address it · Ctrl-D to quit.",
+      `  ${USAGE}`,
       "",
     ].join("\n"),
   );
 
   const inbox = yield* Queue.unbounded<IncomingMessage>();
   const services = Layer.mergeAll(
-    aiVoice.pipe(Layer.provideMerge(Layer.merge(consoleOutbound, cannedWorker))),
+    aiVoice.pipe(Layer.provideMerge(Layer.merge(consoleOutbound, consoleWorker))),
     configLayer({ botId: BOT }),
     queueEventSource(inbox),
   );
@@ -97,7 +101,7 @@ const program = Effect.gen(function* () {
 
   rl.on("line", (line) => {
     if (line.trim() === "/help") {
-      console.log("  <text> | /as <name> <text> | @bot ... | Ctrl-D to quit");
+      console.log(`  ${USAGE}`);
       return;
     }
     const parsed = parseLine(line);
