@@ -7,6 +7,7 @@
  * (`maxBufferAgeMillis`); the count cap is applied last so the buffer is always
  * the most-recent N regardless of arrival gaps.
  */
+import { Array as Arr } from "effect";
 import type { IncomingMessage } from "./events.ts";
 
 export interface BufferBounds {
@@ -34,7 +35,6 @@ export const appendBounded = (
   const newest = withNew.reduce((max, m) => (m.timestamp > max ? m.timestamp : max), msg.timestamp);
   const cutoff = newest - bounds.maxBufferAgeMillis;
   const recentEnough = withNew.filter((m) => m.timestamp >= cutoff);
-  return recentEnough.length > bounds.maxBufferMessages
-    ? recentEnough.slice(recentEnough.length - bounds.maxBufferMessages)
-    : recentEnough;
+  // Keep only the most-recent N (returns everything when N ≥ length; [] when N is 0).
+  return Arr.takeRight(recentEnough, bounds.maxBufferMessages);
 };

@@ -67,6 +67,24 @@ const startRecording = (
     ),
   );
 
+/** Fork the real Coalescer over a test source + the self-gating voice (collecting outbound + canned worker). */
+const startSelfGating = (
+  source: Queue.Dequeue<IncomingMessage>,
+  outbound: Ref.Ref<readonly OutboundEvent[]>,
+  tasks?: Ref.Ref<readonly WorkerTask[]>,
+) =>
+  Effect.forkScoped(
+    Coalescer.run.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          queueEventSource(source),
+          selfGatingConversationalist.pipe(Layer.provide(Layer.merge(collectingOutbound(outbound), cannedWorker(undefined, tasks)))),
+          configLayer({ botId: BOT, debounceWindow: WINDOW }),
+        ),
+      ),
+    ),
+  );
+
 const texts = (w: ConversationWindow): readonly string[] => w.messages.map((m) => m.text);
 
 describe("Coalescer", () => {
@@ -238,19 +256,7 @@ describe("Coalescer", () => {
       const outbound = yield* Ref.make<readonly OutboundEvent[]>([]);
       const tasks = yield* Ref.make<readonly WorkerTask[]>([]);
 
-      yield* Effect.forkScoped(
-        Coalescer.run.pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              queueEventSource(source),
-              selfGatingConversationalist.pipe(
-                Layer.provide(Layer.merge(collectingOutbound(outbound), cannedWorker(undefined, tasks))),
-              ),
-              configLayer({ botId: BOT, debounceWindow: WINDOW }),
-            ),
-          ),
-        ),
-      );
+      yield* startSelfGating(source, outbound, tasks);
 
       yield* Queue.offer(source, mkMsg("@bot please review PR 42", { mentions: [BOT] }));
       yield* TestClock.adjust(Duration.zero);
@@ -314,19 +320,7 @@ describe("Coalescer", () => {
       const source = yield* Queue.unbounded<IncomingMessage>();
       const outbound = yield* Ref.make<readonly OutboundEvent[]>([]);
 
-      yield* Effect.forkScoped(
-        Coalescer.run.pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              queueEventSource(source),
-              selfGatingConversationalist.pipe(
-                Layer.provide(Layer.merge(collectingOutbound(outbound), cannedWorker())),
-              ),
-              configLayer({ botId: BOT, debounceWindow: WINDOW }),
-            ),
-          ),
-        ),
-      );
+      yield* startSelfGating(source, outbound);
 
       yield* Queue.offer(source, mkMsg("just chatting"));
       yield* TestClock.adjust(WINDOW);

@@ -12,7 +12,7 @@ import { Console, Duration, Effect, Layer, Queue } from "effect";
 import * as Coalescer from "./coalescer.ts";
 import { configLayer } from "./config.ts";
 import type { IncomingMessage } from "./events.ts";
-import { queueEventSource } from "./mocks.ts";
+import { delegateAndNarrate, queueEventSource } from "./mocks.ts";
 import { Conversationalist, Outbound, Worker } from "./ports.ts";
 
 const BOT = "bot@s.whatsapp.net";
@@ -89,12 +89,7 @@ const loggingVoice: Layer.Layer<Conversationalist, never, Outbound | Worker> = L
             return;
           }
           const last = window.messages[window.messages.length - 1]!;
-          yield* outbound.setTyping(window.chatId, true);
-          const result = yield* worker
-            .delegate({ chatId: window.chatId, instruction: last.text })
-            .pipe(Effect.catchAll((err) => Effect.succeed({ summary: `couldn't do that: ${String(err)}` })));
-          yield* outbound.reply(window.chatId, `on it — ${result.summary}`);
-          yield* outbound.setTyping(window.chatId, false);
+          yield* delegateAndNarrate(outbound, worker, window.chatId, last.text);
         }),
     };
   }),

@@ -5,7 +5,7 @@
  * these for its real implementation is a one-line Layer change at the wiring
  * site; nothing in the Coalescer moves.
  */
-import { Effect, Layer, Queue, Ref, Stream } from "effect";
+import { Context, Effect, Layer, Queue, Ref, Stream } from "effect";
 import type { ConversationWindow, IncomingMessage } from "./events.ts";
 import {
   Conversationalist,
@@ -64,6 +64,26 @@ export const recordingConversationalist = (
 
 const looksLikeTask = (text: string): boolean => /\b(pr|issue|review|check|deploy|bug|merge|close)\b/i.test(text);
 
+/**
+ * The blocking delegate→narrate move (decision D1a), in one place so the voice
+ * stub and the demo can't drift: show typing, hand the task to the Worker and
+ * wait for it, narrate the result, stop typing.
+ */
+export const delegateAndNarrate = (
+  outbound: Context.Tag.Service<typeof Outbound>,
+  worker: Context.Tag.Service<typeof Worker>,
+  chatId: string,
+  instruction: string,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    yield* outbound.setTyping(chatId, true);
+    const result = yield* worker
+      .delegate({ chatId, instruction })
+      .pipe(Effect.catchAll((err) => Effect.succeed({ summary: `couldn't do that: ${String(err)}` })));
+    yield* outbound.reply(chatId, `on it — ${result.summary}`);
+    yield* outbound.setTyping(chatId, false);
+  });
+
 export const selfGatingConversationalist: Layer.Layer<Conversationalist, never, Outbound | Worker> = Layer.effect(
   Conversationalist,
   Effect.gen(function* () {
@@ -76,13 +96,7 @@ export const selfGatingConversationalist: Layer.Layer<Conversationalist, never, 
           const last = window.messages[window.messages.length - 1];
           if (last === undefined) return;
           if (looksLikeTask(last.text)) {
-            yield* outbound.setTyping(window.chatId, true);
-            // D1a: block on the worker inside the turn, then narrate its result.
-            const result = yield* worker
-              .delegate({ chatId: window.chatId, instruction: last.text })
-              .pipe(Effect.catchAll((err) => Effect.succeed({ summary: `couldn't do that: ${String(err)}` })));
-            yield* outbound.reply(window.chatId, `on it — ${result.summary}`);
-            yield* outbound.setTyping(window.chatId, false);
+            yield* delegateAndNarrate(outbound, worker, window.chatId, last.text);
           } else {
             yield* outbound.reply(window.chatId, `👋 ${last.pushName ?? "hey"}`);
           }

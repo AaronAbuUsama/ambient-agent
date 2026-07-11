@@ -21,16 +21,17 @@ export interface CoalescerConfigValues {
 export class CoalescerConfig extends Context.Tag("CoalescerConfig")<CoalescerConfig, CoalescerConfigValues>() {}
 
 /** Sane defaults: debounce a few seconds, buffer ~10 msgs / ~5 min. */
-export const defaultConfig: CoalescerConfigValues = {
+const defaultConfig: CoalescerConfigValues = {
   debounceWindow: Duration.seconds(3),
   maxBufferMessages: 10,
   maxBufferAgeMillis: Duration.toMillis(Duration.minutes(5)),
   botId: "bot@s.whatsapp.net",
 };
 
-/** Default config Layer. Compose `CoalescerConfig.layer({ ... })` to override. */
-export const CoalescerConfigLive = Layer.succeed(CoalescerConfig, defaultConfig);
-
-/** Build a config Layer from a partial override on top of the defaults. */
-export const configLayer = (overrides: Partial<CoalescerConfigValues>): Layer.Layer<CoalescerConfig> =>
+/**
+ * Build a config Layer, overriding any defaults you name. `configLayer({})` is
+ * the plain defaults; `configLayer({ debounceWindow: Duration.seconds(5) })`
+ * tweaks one knob. This is the only config surface callers need.
+ */
+export const configLayer = (overrides: Partial<CoalescerConfigValues> = {}): Layer.Layer<CoalescerConfig> =>
   Layer.succeed(CoalescerConfig, { ...defaultConfig, ...overrides });
