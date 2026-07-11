@@ -153,7 +153,7 @@ A file under `agent/tools/` becomes a tool the model can call; the filename
 // agent/tools/github_create_issue.ts
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { getOctokit, resolveRepo } from "../lib/github.ts";
+import { getOctokit, resolveWritableRepo } from "../lib/github.ts";
 
 export default defineTool({
   description:
@@ -168,7 +168,7 @@ export default defineTool({
     assignees: z.array(z.string()).optional().describe("GitHub usernames to assign."),
   }),
   async execute(input) {
-    const { owner, repo } = resolveRepo(input);
+    const { owner, repo } = resolveWritableRepo(input);
     const octokit = getOctokit();
     const { data } = await octokit.rest.issues.create({
       owner,
@@ -191,7 +191,11 @@ in your normal Node runtime (full `process.env`, no sandbox), so it can be
 tested exactly like a regular async function — see [§6](#6-wiring-the-github-tools)
 and [`tests/tools/`](../tests/tools).
 
-There are ten of these — see the [tool table in the README](../README.md#what-it-does)
+Write tools (create/comment/close/review/label/assign) resolve through
+`resolveWritableRepo` rather than `resolveRepo` — same resolution, but it also
+enforces a **write allow-list**, so a repo named in a chat message can't be
+written to unless it's on `GITHUB_ALLOWED_REPOS` (see [§6](#6-wiring-the-github-tools)).
+There are thirteen tools in all — see the [tool table in the README](../README.md#what-it-does)
 for the full list.
 
 ### `agent/channels/whatsapp.ts` — the ingress
@@ -265,6 +269,19 @@ another project into this one, or vice versa — pair fresh for each bot
 instance. Two processes pointed at the same credentials will fight over the
 one linked-device slot and kick each other off.
 
+**Verify a pairing without sending anything.** Before wiring the bot into a
+group, confirm the credentials actually connect, using the bundled probe:
+
+```bash
+npx tsx scripts/whatsapp-dry-run.ts ./.wa-auth
+```
+
+It connects, prints the status phase it reaches, and disconnects — it never
+sends, reads, or marks a message. A completed pairing reaches `online`; an
+empty store stops at `pairing` (scan needed); a store whose device was removed
+reports `logged_out` with reason `logged_out_remote` (pair again). It's the
+fastest way to catch a dead `.wa-auth` before debugging the whole pipeline.
+
 ### Sessions and the Eve adapter
 
 whatsappd models one WhatsApp conversation (a DM or a group) as one ongoing
@@ -326,6 +343,15 @@ export function resolveRepo(input: { owner?: string; repo?: string }): RepoRef {
   const fallback = process.env.GITHUB_REPO; // "owner/repo"
   // ... falls back per-field, throws a clear error if nothing resolves
 }
+
+// Read tools use resolveRepo; write tools use this, which ALSO enforces the
+// allow-list so untrusted chat text can't redirect a write to any repo.
+export function resolveWritableRepo(input: RepoInput): RepoRef {
+  const ref = resolveRepo(input);
+  const allowed = allowedWriteRepos(); // GITHUB_ALLOWED_REPOS, defaults to [GITHUB_REPO]
+  if (!allowed.has(`${ref.owner}/${ref.repo}`.toLowerCase())) throw new Error("not in the write allow-list");
+  return ref;
+}
 ```
 
 `getOctokit` is lazy and memoized — importing the module (which `eve build`
@@ -335,6 +361,16 @@ optional: "list open issues" works against `GITHUB_REPO` with no repo named,
 while "list open issues in acme/other-repo" still works by naming one
 explicitly. `lib/` is Eve's designated spot for this kind of import-only
 shared code — files there are never discovered as tools themselves.
+
+**The write allow-list is the one security-critical helper here.** Tool inputs
+are model output derived from *untrusted* group-chat text, and the channel gate
+(below) authorizes by group membership — not by which repo a message names. So
+without a guard, "@github-bot open an issue in someone-else/their-repo" would
+let anyone in the group turn the bot's token into a write against any repo it
+can reach. Every mutating tool (`create`/`comment`/`close`/`review`/`add_labels`/`assign`)
+therefore resolves through `resolveWritableRepo`, which refuses any repo outside
+`GITHUB_ALLOWED_REPOS` (default: just `GITHUB_REPO`). Reads stay unrestricted —
+lower blast radius, and "review PR in acme/widgets" is a legitimate ask.
 
 Every tool in `agent/tools/github_*.ts` follows the same shape: resolve the
 repo, call one Octokit method, return a small, model-friendly summary (never
@@ -399,20 +435,36 @@ gates every inbound event before it can start a session:
 // agent/channels/whatsapp.ts (excerpt)
 export function isAddressed(event: Extract<SidecarEvent, { type: "message" }>): boolean {
   if (event.isGroup) {
-    if (TARGET_GROUP && event.chatId !== TARGET_GROUP) return false;
+    if (GROUP_ALLOWLIST.size > 0) {
+      if (!GROUP_ALLOWLIST.has(event.chatId.toLowerCase())) return false;
+    } else if (!ALLOW_ANY_GROUP) {
+      return false; // fail closed: no group configured → ignore every group
+    }
   } else if (!ALLOW_DM) {
     return false; // DMs ignored unless explicitly opted in — see WHATSAPP_ALLOW_DM
   }
+  // optional second gate: only allow-listed senders (digit-matched) may trigger
+  if (SENDER_ALLOWLIST.size > 0 && !senderAllowed(event.from)) return false;
   return textOf(event.message).toLowerCase().includes(TRIGGER);
 }
 ```
 
-Two rules: **only the configured group** (`WHATSAPP_GROUP_ID`, when set —
-leaving it unset is a "any group" convenience for local testing, called out
-loudly in `.env.example`), and **only messages that name the trigger word**
-(`WHATSAPP_BOT_TRIGGER`, default `@github-bot`). Direct messages are ignored
-by default; opt in with `WHATSAPP_ALLOW_DM=true` only for solo testing
-before you add the bot to a group.
+The rules, all **fail-closed** — a misconfiguration silences the bot rather
+than exposing it:
+
+- **Group allow-list.** Only groups named in `WHATSAPP_GROUP_ID` /
+  `WHATSAPP_GROUP_IDS`. Configure none and the bot ignores *every* group;
+  `WHATSAPP_ALLOW_ANY_GROUP=true` is an explicit escape hatch for local testing.
+- **Trigger word.** Only messages containing `WHATSAPP_BOT_TRIGGER` (default
+  `@github-bot`).
+- **Optional sender allow-list.** `WHATSAPP_ALLOWED_SENDERS` (phone numbers or
+  JIDs, digit-matched) restricts *who* may trigger writes, beyond mere group
+  membership. Unset = any member of an allowed group.
+- **DMs off by default.** Opt in with `WHATSAPP_ALLOW_DM=true` for solo testing.
+
+(The sidecar `POST /event` route is separately protected by a constant-time
+`WHATSAPP_SIDECAR_TOKEN` bearer check, and warns loudly at startup if it's
+unset.)
 
 **Why a plain-text trigger and not a real `@`-mention:** WhatsApp's actual
 mention metadata (`contextInfo.mentionedJid`, the list of JIDs someone

@@ -33,11 +33,14 @@ Mention the bot in a watched WhatsApp group and it can:
 | "close #42, not planned"               | `github_close_issue`            |
 | "list open PRs"                        | `github_list_pull_requests`     |
 | "summarize PR #12"                     | `github_get_pull_request`       |
+| "show me the diff for PR #12"          | `github_get_pull_request_diff`  |
 | "review PR #12"                        | `github_review_pull_request`    |
+| "label #42 as bug, p1"                 | `github_add_labels`             |
+| "assign #42 to octocat"                | `github_assign`                 |
 | "show me src/index.ts on main"         | `github_get_file_contents`      |
 | "search the codebase for useEffect"    | `github_search_code`            |
 
-All ten tools live under [`agent/tools/`](./agent/tools), each a `defineTool()`
+All thirteen tools live under [`agent/tools/`](./agent/tools), each a `defineTool()`
 with a Zod input schema, and each has a unit test under
 [`tests/tools/`](./tests/tools) against a mocked Octokit client.
 
@@ -84,7 +87,7 @@ agent/
 ├── instructions.md              # the GitHub-concierge persona
 ├── channels/whatsapp.ts         # gated WhatsApp ingress (whatsappd's Eve adapter + group gating)
 ├── lib/github.ts                # shared Octokit client + repo resolution
-└── tools/github_*.ts            # the 10 GitHub tools
+└── tools/github_*.ts            # the 13 GitHub tools
 src/index.ts                     # whatsappd sidecar launcher (separate process)
 tests/                           # vitest unit tests (mocked Octokit)
 docs/TUTORIAL.md                 # the full walkthrough
