@@ -2,18 +2,20 @@
  * The Coalescer — the timing layer with no model.
  *
  * One actor fiber per `chatId`, each draining its own `Queue<IncomingMessage>`.
- * The debounce is expressed as "take the next message, but give up after
- * `debounceWindow`" (`Queue.take` raced against a virtual sleep via
- * `timeoutOption`), which is exactly the flush rule: the timeout restarts every
- * iteration → "one debounce timer that resets on each new message", so light
- * traffic fires ~one window later and heavy traffic coalesces into one fire at
- * the end of the burst. An @-mention / quote-reply of the bot skips the wait and
- * flushes immediately. See `docs/COALESCER-DESIGN.md` §2.
+ * The flush rule is a throttle with a settle window: "take the next message, but
+ * give up after `min(debounceWindow, timeLeftUntilCap)`" (`Queue.take` raced
+ * against a virtual sleep via `timeoutOption`). The `debounceWindow` leg restarts
+ * every iteration — "one settle timer that resets on each new message" — so light
+ * traffic fires ~one window later and a burst coalesces into one fire at its end.
+ * The `maxWait` cap is measured from the burst's first message and does NOT reset,
+ * so a nonstop chat still fires roughly every `maxWait` instead of being starved
+ * forever by a perpetually-resetting timer. An @-mention / quote-reply of the bot
+ * skips the wait and flushes immediately. See `docs/COALESCER-DESIGN.md` §2.
  *
  * Everything time-based routes through the Effect `Clock`, so under `TestClock`
  * the whole thing runs in virtual time with zero real sleeps.
  */
-import { Context, Effect, HashMap, Option, Queue, Ref, type Scope, Stream } from "effect";
+import { Clock, Context, Duration, Effect, HashMap, Option, Queue, Ref, type Scope, Stream } from "effect";
 import { appendBounded, type BufferBounds } from "./buffer.ts";
 import { addressesBot, type ConversationWindow, type IncomingMessage, reasonOf } from "./events.ts";
 import { CoalescerConfig, type CoalescerConfigValues } from "./config.ts";
@@ -51,32 +53,50 @@ const makeChatLoop = (config: CoalescerConfigValues, convo: ConversationalistSer
     maxBufferMessages: config.maxBufferMessages,
     maxBufferAgeMillis: config.maxBufferAgeMillis,
   };
+  const maxWaitMillis = Duration.toMillis(config.maxWait);
 
   return (chatId: string, queue: Queue.Dequeue<IncomingMessage>): Effect.Effect<never> => {
-    // A message landed: buffer it, and either flush now (bot addressed) or keep waiting.
-    const onMessage = (buffer: readonly IncomingMessage[], msg: IncomingMessage): Effect.Effect<never> => {
+    // A message landed: buffer it, and either flush now (bot addressed) or keep
+    // waiting. `burstStart` is the clock time of the burst's first message — the
+    // cap is measured from it and carried unchanged through the whole burst.
+    const onMessage = (
+      buffer: readonly IncomingMessage[],
+      burstStart: number,
+      msg: IncomingMessage,
+    ): Effect.Effect<never> => {
       const next = appendBounded(buffer, msg, bounds);
       return addressesBot(msg, config.botId)
-        ? fire(convo, { chatId, messages: next, reason: reasonOf(msg, config.botId) }).pipe(Effect.zipRight(step([])))
-        : step(next);
+        ? fire(convo, { chatId, messages: next, reason: reasonOf(msg, config.botId) }).pipe(Effect.zipRight(cold))
+        : warm(next, burstStart);
     };
 
-    const step = (buffer: readonly IncomingMessage[]): Effect.Effect<never> =>
-      buffer.length === 0
-        ? // Cold: block indefinitely for the first message of a new burst.
-          Queue.take(queue).pipe(Effect.flatMap((msg) => onMessage([], msg)))
-        : // Warm: wait for the next message, but give up after the quiet window.
-          Queue.take(queue).pipe(
-            Effect.timeoutOption(config.debounceWindow),
+    // Cold: no buffered messages. Block indefinitely for the burst's first message,
+    // stamping `burstStart` from the clock the instant it arrives.
+    const cold: Effect.Effect<never> = Queue.take(queue).pipe(
+      Effect.flatMap((msg) => Clock.currentTimeMillis.pipe(Effect.flatMap((now) => onMessage([], now, msg)))),
+    );
+
+    // Warm: a burst is accumulating. Wait for the next message, but give up when the
+    // chat goes quiet (`debounceWindow`) OR the cap elapses (`maxWait` since
+    // `burstStart`), whichever comes first — then fire and start a fresh burst.
+    const warm = (buffer: readonly IncomingMessage[], burstStart: number): Effect.Effect<never> =>
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap((now) => {
+          const capLeft = Math.max(0, burstStart + maxWaitMillis - now);
+          const wait = Duration.min(config.debounceWindow, Duration.millis(capLeft));
+          return Queue.take(queue).pipe(
+            Effect.timeoutOption(wait),
             Effect.flatMap(
               Option.match({
-                onNone: () => fire(convo, { chatId, messages: buffer, reason: "debounce" }).pipe(Effect.zipRight(step([]))),
-                onSome: (msg) => onMessage(buffer, msg),
+                onNone: () => fire(convo, { chatId, messages: buffer, reason: "debounce" }).pipe(Effect.zipRight(cold)),
+                onSome: (msg) => onMessage(buffer, burstStart, msg),
               }),
             ),
           );
+        }),
+      );
 
-    return step([]);
+    return cold;
   };
 };
 

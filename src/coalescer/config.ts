@@ -10,6 +10,14 @@ import { Context, Duration, Layer } from "effect";
 export interface CoalescerConfigValues {
   /** Quiet window after which an ambient burst is considered settled. */
   readonly debounceWindow: Duration.Duration;
+  /**
+   * Hard cap on how long a burst may keep accumulating before it fires anyway.
+   * The quiet window (`debounceWindow`) resets on every message, so a nonstop
+   * chat would never settle; this cap makes the loop a throttle — fire when the
+   * chat goes quiet OR when `maxWait` has elapsed since the burst's first
+   * message, whichever comes first. Must be ≥ `debounceWindow` to have any effect.
+   */
+  readonly maxWait: Duration.Duration;
   /** Hard cap on the rolling buffer's message count. */
   readonly maxBufferMessages: number;
   /** Buffer age bound, in ms, measured against the newest buffered message. */
@@ -20,9 +28,10 @@ export interface CoalescerConfigValues {
 
 export class CoalescerConfig extends Context.Tag("CoalescerConfig")<CoalescerConfig, CoalescerConfigValues>() {}
 
-/** Sane defaults: debounce a few seconds, buffer ~10 msgs / ~5 min. */
+/** Sane defaults: debounce a few seconds, cap a burst at ~10s, buffer ~10 msgs / ~5 min. */
 const defaultConfig: CoalescerConfigValues = {
   debounceWindow: Duration.seconds(3),
+  maxWait: Duration.seconds(10),
   maxBufferMessages: 10,
   maxBufferAgeMillis: Duration.toMillis(Duration.minutes(5)),
   botId: "bot@s.whatsapp.net",

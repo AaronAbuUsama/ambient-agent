@@ -34,6 +34,7 @@
     "start": "eve start",
     "whatsapp": "tsx src/index.ts",
     "coalescer": "tsx src/coalescer/demo.ts",
+    "voice": "tsx src/coalescer/repl.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

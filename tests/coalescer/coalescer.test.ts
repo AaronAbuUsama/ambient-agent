@@ -133,6 +133,45 @@ describe("Coalescer", () => {
     }),
   );
 
+  it.scoped("cap: a nonstop chat still fires ~every maxWait instead of being starved forever", () =>
+    Effect.gen(function* () {
+      const source = yield* Queue.unbounded<IncomingMessage>();
+      const turns = yield* Ref.make<readonly ConversationWindow[]>([]);
+      // debounceWindow 3s, cap 8s: the quiet window never elapses under steady
+      // 1s-apart traffic, so only the cap can ever flush this chat.
+      yield* startRecording(source, turns, { maxWait: Duration.seconds(8) });
+
+      // Messages at t=0..3, one per second. A lone message would settle at t=3,
+      // but the steady traffic keeps resetting the quiet window — nothing fires.
+      for (let i = 0; i < 4; i++) {
+        yield* Queue.offer(source, mkMsg(`busy ${i}`));
+        yield* TestClock.adjust(Duration.seconds(1));
+      }
+      expect(yield* Ref.get(turns)).toHaveLength(0);
+
+      // Keep it busy through the cap (t=4..7). At t=8 = maxWait the cap forces a
+      // single fire carrying the whole pile — this is what pure debounce couldn't do.
+      for (let i = 4; i < 8; i++) {
+        yield* Queue.offer(source, mkMsg(`busy ${i}`));
+        yield* TestClock.adjust(Duration.seconds(1));
+      }
+      const t = yield* Ref.get(turns);
+      expect(t).toHaveLength(1);
+      expect(t[0]!.reason).toBe("debounce");
+      expect(t[0]!.messages).toHaveLength(8);
+
+      // Still nonstop (t=8..15): a SECOND cap cycle fires ~maxWait after its own
+      // first message — the chat gathers again and is not starved after one fire.
+      for (let i = 8; i < 16; i++) {
+        yield* Queue.offer(source, mkMsg(`busy ${i}`));
+        yield* TestClock.adjust(Duration.seconds(1));
+      }
+      const t2 = yield* Ref.get(turns);
+      expect(t2).toHaveLength(2);
+      expect(t2[1]!.reason).toBe("debounce");
+    }),
+  );
+
   it.scoped("mention: an @-mention of the bot fires immediately, skipping the debounce", () =>
     Effect.gen(function* () {
       const source = yield* Queue.unbounded<IncomingMessage>();

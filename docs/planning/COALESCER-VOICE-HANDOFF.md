@@ -62,8 +62,17 @@ GitHub is only the test capability; the **architecture is the deliverable**.
    provider authenticates with an API key against the real OpenAI API, and has
    **no AI-SDK bridge**. Our model `experimental_chatgpt()` speaks to the *Codex
    backend* with signed-JWT subscription auth (no key). Using `@effect/ai` would
-   mean rebuilding Eve's Codex transport — rejected. `ai@7`'s `generateText` runs
-   the tool loop for us; that's the seam.
+   mean rebuilding Eve's Codex transport — rejected. `ai@7`'s streaming loop runs
+   the tools for us; that's the seam.
+
+   **DISCOVERED building Rung 1 — the Codex backend is STREAMING-ONLY.**
+   `generateText` (non-streaming) is rejected outright: `400 {"detail":"Stream
+   must be set to true"}`. So the voice uses **`streamText` + `result.consumeStream()`**,
+   not `generateText`. `consumeStream()` swallows+logs stream errors by default, so
+   we capture the real cause via the `onError` callback and rethrow it after
+   draining — a failed turn becomes a `ConversationError`, never a silent no-op.
+   (This is the one substantive change from the verbatim §4 sketch, which used
+   `generateText`; `src/coalescer/voice.ts` is the real, working version.)
 
 6. **`experimental_chatgpt()` works standalone.** It returns a plain AI-SDK
    `LanguageModel` (`eve/dist/src/public/models/openai/index.d.ts`), reads the
@@ -92,9 +101,17 @@ GitHub is only the test capability; the **architecture is the deliverable**.
   never fire; `appendBounded` age-anchored on max timestamp for out-of-order msgs).
 - `80ed4c6` — refactor(coalescer): the Tier-1 simplification (dead config removed,
   `Array.takeRight`, shared `delegateAndNarrate`, `startSelfGating` test helper).
+- `1f2a921` — docs(handoff): this file.
+- **Rung 1 (see §4) — the `maxWait` throttle cap + the real voice + the interactive
+  terminal. `config.ts` gains `maxWait` (default 10s); `coalescer.ts` warm state
+  waits `min(debounceWindow, maxWait − elapsedSinceBurstStart)` off a per-burst
+  `burstStart`; new cap test. `src/coalescer/voice.ts` = the real model-backed voice
+  (`streamText`); `src/coalescer/repl.ts` (`pnpm run voice`) = the interactive
+  terminal. Verified live end-to-end: silent on chatter, chimes in on a relevant
+  un-@-mentioned message, delegates+narrates on an addressed task.**
 
-**State: 71 tests green, `pnpm typecheck` clean, `pnpm run coalescer` demo works.**
-Tip of `main` = `80ed4c6`. Working tree clean.
+**State: 72 tests green, `pnpm typecheck` clean, `pnpm run coalescer` demo + `pnpm run
+voice` REPL both work.** Working tree clean.
 
 Two adversarial reviews already run and folded in: a correctness review (→ the
 resilience hardening in `f886a13`) and a 4-angle simplify review (→ `80ed4c6`;
@@ -103,13 +120,16 @@ because idle-chat eviction is easier against our owned registry — see §5).
 
 ---
 
-## 4. Held / NEXT — Rung 1 (build in this order)
+## 4. Rung 1 — DONE ✅ (built; NEXT is Rung 2)
 
 The testing ladder: **Rung 0** = `pnpm run coalescer` (scripted real-time
-playground, exists). **Rung 1** = real voice + interactive terminal (NEXT).
-**Rung 2** = real WhatsApp (needs re-pair; later).
+playground, exists). **Rung 1** = real voice + interactive terminal — **BUILT &
+verified live** (`pnpm run voice`). **Rung 2** = real WhatsApp (needs re-pair;
+NEXT — see §7).
 
-Aaron said **"continue"** to building Rung 1. It is NOT yet started. Steps:
+Rung 1's three steps below are all done; the sketches are kept as the record of
+what was built (the voice sketch's `generateText` became `streamText` per §2.5).
+Steps as built:
 
 1. **Add the `maxWait` cap to the loop** (`src/coalescer/coalescer.ts`) + a new
    config knob `maxWait` (default ~10s) in `config.ts`. Warm state waits
@@ -213,8 +233,13 @@ quiet on chit-chat, chimes in on relevant/GitHub-ish messages *without* being
 - **`groupByKey` fan-out deferred on purpose** — the manual per-chat registry is
   kept because idle-chat eviction (a real future need) is easier against a
   registry we own than `groupByKey`'s opaque group lifecycle.
-- **maxWait not yet built** — the committed loop is still pure debounce (starves a
-  busy chat). Item 1 above fixes it.
+- **maxWait IS built now** — the loop is throttle-with-a-cap (fires on quiet OR
+  `maxWait` since the burst's first message). A cap-triggered fire still carries
+  `reason: "debounce"` (the voice branches on addressed-vs-not, not on which timer
+  tripped), so `FireReason` stayed unchanged.
+- **The Codex backend is streaming-only** — `generateText` 400s (`"Stream must be
+  set to true"`). The voice uses `streamText` + `consumeStream()`; don't switch it
+  back to `generateText`. See §2.5.
 
 ---
 
@@ -225,5 +250,30 @@ quiet on chit-chat, chimes in on relevant/GitHub-ish messages *without* being
   `events.ts`, `config.ts`, `ports.ts` (the 4 DI seams), `mocks.ts`, `demo.ts`.
 - Tests: `tests/coalescer/{coalescer,buffer}.test.ts` (TestClock, `@effect/vitest`
   `it.scoped`).
+- Voice + REPL: `src/coalescer/voice.ts` (real model-backed `Conversationalist`),
+  `src/coalescer/repl.ts` (`pnpm run voice` interactive terminal).
 - Model helper: `eve/models/openai` → `experimental_chatgpt(model?)`.
-- AI SDK: `ai@7` → `generateText`, `tool`, `stepCountIs`.
+- AI SDK: `ai@7` → `streamText`, `tool`, `stepCountIs` (voice uses `streamText`,
+  NOT `generateText` — Codex is streaming-only, §2.5).
+
+---
+
+## 7. NEXT — Rung 2 (real WhatsApp)
+
+Not started. Swap the three mocked seams for their real implementations at the
+wiring site; the Coalescer, voice, and ports do NOT change.
+
+1. **Re-pair WhatsApp** — creds are dead (`logged_out_remote`); needs a QR
+   re-pair before anything live runs.
+2. **Real `EventSource`** — `createChannelAdapter().subscribe()` bridged into a
+   `Stream` (e.g. `Stream.async`), emitting the full-fidelity `ChannelEvent`
+   (`events.ts` already mirrors it field-for-field, incl. `mentions`/`quoted`).
+3. **Real `Outbound`** — back `reply`/`setTyping` with `adapter.send` /
+   `adapter.setTyping`.
+4. **Real `Worker`** — delegate to the existing `agent/` GitHub agent (blocking,
+   D1a). This is the ONE Eve doorway; leave `agent/` otherwise untouched.
+5. **Prod guard** — `experimental_chatgpt()` is local-dev only; branch on
+   `NODE_ENV` for a deployed model (see §2.6).
+
+DoD: the bot participates in a real WhatsApp group — silent on chatter, chimes in
+when it can help, delegates real GitHub work and narrates the result.
