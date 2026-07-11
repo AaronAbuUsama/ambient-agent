@@ -70,7 +70,8 @@ This is **already designed**: it is the `agent-niceties` **SPEC** (tickets 00–
 
 ## 5. How-to / conventions / DoD
 
-- **Run:** `npm run dev` (Eve agent, port 2000, **Node ≥24**) + `npm run whatsapp` (sidecar, port 8788, Node ≥22 ok). Sidecar POSTs inbound to `WHATSAPP_FORWARD_URLS` = app root **+ `/event`** (NOT `/channels/...`).
+- **Run:** `pnpm run dev` (Eve agent, port 2000, **Node ≥24**) + `pnpm run whatsapp` (sidecar, port 8788, Node ≥22 ok). Sidecar POSTs inbound to `WHATSAPP_FORWARD_URLS` = app root **+ `/event`** (NOT `/channels/...`).
+- **Find the group JID:** `npx tsx scripts/find-group-jid.ts` (listener on :8790); point `WHATSAPP_FORWARD_URLS` at it, send a message in the target group, it prints `WHATSAPP_GROUP_ID=…@g.us`. Then revert the forward URL to the agent.
 - **Env:** see `.env.example`. Key knobs: `GITHUB_TOKEN`, `GITHUB_REPO`, `GITHUB_ALLOWED_REPOS` (writes), `WHATSAPP_GROUP_ID(S)`, `WHATSAPP_BOT_TRIGGER` (default `@github-bot`), `WHATSAPP_ALLOWED_SENDERS`, `WHATSAPP_SIDECAR_TOKEN`. (`ANTHROPIC_API_KEY` line gets replaced by the Codex auth mechanism.)
 - **Match conventions:** tools = one file per `agent/tools/github_*.ts`, `defineTool()` + Zod, WRITE tools resolve via `resolveWritableRepo`, READ via `resolveRepo`; every tool has a mocked-octokit unit test in `tests/tools/`.
 - **DoD Stage 1:** `npm run typecheck` + `npm test` green; `eve build` green in CI (Node 24); a real "@github-bot open an issue: …" in a group creates an issue in the sandbox repo; an unaddressed message is dropped (`{"ignored":true}`); all running on Codex/subscription with no API key present.
@@ -98,7 +99,8 @@ This is **already designed**: it is the `agent-niceties` **SPEC** (tickets 00–
   `eve build` step onto the Node-24 leg only.
 - ⚠️ **Do NOT build Stage 2 (two-tier) until Stage 1 (single-model E2E) works** — user's explicit order.
 - ⚠️ Never commit secrets: `.gitignore` covers `.env`, `.env.*`, `.wa-auth*/`. Secret-scan before any push.
-- The bot uses **npm** (not pnpm); the whatsappd library uses pnpm + has an `allowBuilds` CI gotcha —
-  don't conflate the two toolchains.
+- The bot now uses **pnpm** (`packageManager: pnpm@9.15.9`). `pnpm.onlyBuiltDependencies` allowlists
+  `esbuild`/`baileys`/`protobufjs` so pnpm-10+ CI doesn't hit `ERR_PNPM_IGNORED_BUILDS`. Local pnpm 9
+  runs those build scripts by default. Node ≥24 still required for the `eve` CLI.
 - whatsappd exposes a first-class Eve adapter at `whatsappd/adapters/eve`; the bot re-implements only
   the inbound route (to gate before starting a session), reusing the adapter's other building blocks.
