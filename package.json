@@ -24,6 +24,7 @@
     "url": "git+https://github.com/AaronAbuUsama/whatsappd-github-agent.git"
   },
   "type": "module",
+  "packageManager": "pnpm@9.15.9",
   "engines": {
     "node": ">=22"
   },
@@ -49,5 +50,12 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^3.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "baileys",
+      "protobufjs"
+    ]
   }
 }

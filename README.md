@@ -63,11 +63,11 @@ Full diagram and explanation in [the tutorial](./docs/TUTORIAL.md#1-what-this-is
 ```bash
 git clone https://github.com/AaronAbuUsama/whatsappd-github-agent.git
 cd whatsappd-github-agent
-npm install
+pnpm install
 cp .env.example .env   # fill in GITHUB_TOKEN, GITHUB_REPO, ...  (model = your `codex login`, no API key)
 
-npm run dev             # terminal 1: the Eve agent (needs Node >= 24)
-npm run whatsapp         # terminal 2: the WhatsApp sidecar — scan the QR it prints
+pnpm run dev             # terminal 1: the Eve agent (needs Node >= 24)
+pnpm run whatsapp         # terminal 2: the WhatsApp sidecar — scan the QR it prints
 ```
 
 Add the bot's number to a WhatsApp group, then send:
@@ -96,9 +96,9 @@ docs/TUTORIAL.md                 # the full walkthrough
 ## Development
 
 ```bash
-npm run typecheck   # tsc --noEmit
-npm test             # vitest, mocked GitHub API — no network or credentials needed
-npm run build        # eve build — compiles agent/ to .eve/ + .output/ (needs Node >= 24)
+pnpm run typecheck   # tsc --noEmit
+pnpm test             # vitest, mocked GitHub API — no network or credentials needed
+pnpm run build        # eve build — compiles agent/ to .eve/ + .output/ (needs Node >= 24)
 ```
 
 CI runs all three on Node 22 and 24 — see [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).

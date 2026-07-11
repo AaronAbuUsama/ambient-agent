@@ -21,19 +21,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Uses the pnpm version pinned by package.json's "packageManager" field.
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        run: npm run typecheck
+        run: pnpm run typecheck
 
       - name: Test
-        run: npm test
+        run: pnpm test
 
       # The `eve` CLI hard-requires Node >=24 at runtime (it exits with a
       # version-check error below that, independent of what `engines` in
@@ -43,4 +46,4 @@ jobs:
       # 24. See docs/TUTORIAL.md and STATUS.md for how this was verified.
       - name: Build (eve build)
         if: matrix.node-version == 24
-        run: npm run build
+        run: pnpm run build

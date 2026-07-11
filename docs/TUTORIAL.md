@@ -66,8 +66,8 @@ and running both.
 - **Node.js ≥ 22** to install and test this repo. **Node.js ≥ 24 specifically
   to run the Eve agent** (`eve dev` / `eve build` / `eve start`) — the `eve`
   CLI checks its own Node version at startup and refuses to run below 24,
-  independent of what any `package.json` `engines` field says. (`npm install`,
-  `npm run typecheck`, and `npm test` all work fine on Node 22 — only the
+  independent of what any `package.json` `engines` field says. (`pnpm install`,
+  `pnpm run typecheck`, and `pnpm test` all work fine on Node 22 — only the
   `eve` binary itself enforces 24. See [STATUS.md](../STATUS.md) for how this
   was verified.)
 - **A GitHub personal access token** with `repo` scope (issues, pull
@@ -86,7 +86,7 @@ and running both.
 ```bash
 git clone https://github.com/AaronAbuUsama/whatsappd-github-agent.git
 cd whatsappd-github-agent
-npm install
+pnpm install
 cp .env.example .env
 ```
 
@@ -212,10 +212,10 @@ adapter — full explanation in [§6](#6-wiring-the-github-tools).
 ### Building and running
 
 ```bash
-npm run typecheck   # tsc --noEmit — works on Node >= 22
-npm test             # vitest — works on Node >= 22, no network needed
-npm run build         # eve build → .eve/ + .output/ — needs Node >= 24
-npm run dev            # eve dev — the interactive dev server + TUI, needs Node >= 24
+pnpm run typecheck   # tsc --noEmit — works on Node >= 22
+pnpm test             # vitest — works on Node >= 22, no network needed
+pnpm run build         # eve build → .eve/ + .output/ — needs Node >= 24
+pnpm run dev            # eve dev — the interactive dev server + TUI, needs Node >= 24
 ```
 
 `eve build` is a genuine, offline compile step: it discovers every file
@@ -239,7 +239,7 @@ The sidecar is a single command, configured entirely by environment
 variables (see `.env.example`):
 
 ```bash
-npm run whatsapp
+pnpm run whatsapp
 ```
 
 Under the hood this runs [`src/index.ts`](../src/index.ts), a thin wrapper
@@ -420,7 +420,7 @@ it("creates an issue against the resolved repo and returns a summary", async () 
 `resolveRepo` is kept real (via `importOriginal`) in these tests, so
 default-repo behavior is exercised too, not just mocked away. All 41 tests
 across `tests/lib/`, `tests/tools/`, and `tests/channels/` run with
-`npm test` — no network access, no real `GITHUB_TOKEN`, in about a second.
+`pnpm test` — no network access, no real `GITHUB_TOKEN`, in about a second.
 
 ### Group gating
 
@@ -507,14 +507,14 @@ Two terminals, from the repo root, both loading the same `.env`:
 
 ```bash
 # terminal 1 — the Eve agent (needs Node >= 24)
-npm run dev
+pnpm run dev
 
 # terminal 2 — the whatsappd sidecar (works on Node >= 22 too)
-npm run whatsapp
+pnpm run whatsapp
 ```
 
-`npm run dev` opens Eve's interactive terminal UI, useful for testing the
-agent directly with text input before wiring WhatsApp at all. `npm run whatsapp`
+`pnpm run dev` opens Eve's interactive terminal UI, useful for testing the
+agent directly with text input before wiring WhatsApp at all. `pnpm run whatsapp`
 prints a QR the first time (§5) — pair it, then send a message in the paired
 number's chats.
 
@@ -572,7 +572,7 @@ different hosts as long as they can reach each other over HTTP:
   start`, needs Node ≥ 24 on the host). Set `GITHUB_TOKEN`, `GITHUB_REPO`,
   `ANTHROPIC_API_KEY`, and the `WHATSAPP_*` variables in the deployment
   environment — never in source.
-- The **sidecar** (`npm run whatsapp`, or `npx whatsappd` directly with the
+- The **sidecar** (`pnpm run whatsapp`, or `npx whatsappd` directly with the
   same env vars) needs a long-running process — it holds the WhatsApp
   WebSocket open — and persistent storage for `WHATSAPP_STORE_DIR` so a
   restart reconnects instead of re-pairing. A small always-on VM or
