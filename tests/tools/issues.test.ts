@@ -24,6 +24,7 @@ describe("github_create_issue", () => {
   beforeEach(() => {
     mockIssues.create.mockReset();
     process.env.GITHUB_REPO = "acme/widgets";
+    delete process.env.GITHUB_ALLOWED_REPOS;
   });
 
   it("creates an issue against the resolved repo and returns a summary", async () => {
@@ -53,7 +54,18 @@ describe("github_create_issue", () => {
     });
   });
 
-  it("honors an explicit owner/repo over GITHUB_REPO", async () => {
+  it("refuses an explicit owner/repo that is not on the write allow-list", async () => {
+    // GITHUB_REPO=acme/widgets is the only writable repo. A prompt-injected
+    // "open an issue in other/repo" must be rejected before any API call.
+    const { default: tool } = await import("../../agent/tools/github_create_issue.ts");
+    await expect(tool.execute({ owner: "other", repo: "repo", title: "x" }, dummyCtx)).rejects.toThrow(
+      /not in the write allow-list/,
+    );
+    expect(mockIssues.create).not.toHaveBeenCalled();
+  });
+
+  it("honors an explicit owner/repo when it is on the allow-list", async () => {
+    process.env.GITHUB_ALLOWED_REPOS = "acme/widgets,other/repo";
     mockIssues.create.mockResolvedValue({
       data: { number: 1, html_url: "https://github.com/other/repo/issues/1", title: "x", state: "open" },
     });

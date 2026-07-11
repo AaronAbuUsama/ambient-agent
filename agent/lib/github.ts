@@ -61,3 +61,48 @@ export function resolveRepo(input: RepoInput): RepoRef {
   }
   return { owner: input.owner ?? fallbackOwner, repo: input.repo ?? fallbackRepo };
 }
+
+/**
+ * The repos this agent is permitted to WRITE to. Defaults to `GITHUB_REPO`;
+ * override with `GITHUB_ALLOWED_REPOS` (comma-separated "owner/repo"). Keys are
+ * lower-cased for case-insensitive matching (GitHub owners/repos are).
+ *
+ * Why this exists: the WhatsApp gate authorizes by *group membership*, and tool
+ * inputs come from model output derived from untrusted chat text. Without an
+ * allow-list, a prompt-injected "open an issue in someone-else/their-repo" would
+ * turn the bot's `GITHUB_TOKEN` into a write primitive against any repository
+ * the token can reach. Reads stay unrestricted (lower blast radius, and
+ * "review PR in acme/widgets" is a legitimate ask); mutations do not.
+ */
+export function allowedWriteRepos(): ReadonlySet<string> {
+  const raw = process.env.GITHUB_ALLOWED_REPOS?.trim() || process.env.GITHUB_REPO?.trim() || "";
+  const set = new Set<string>();
+  for (const entry of raw.split(",")) {
+    const key = entry.trim().toLowerCase();
+    if (key) set.add(key);
+  }
+  return set;
+}
+
+/**
+ * Resolve owner/repo like {@link resolveRepo}, then enforce the write
+ * allow-list. Every tool that MUTATES GitHub state must resolve through this,
+ * never through {@link resolveRepo} directly.
+ */
+export function resolveWritableRepo(input: RepoInput): RepoRef {
+  const ref = resolveRepo(input);
+  const allowed = allowedWriteRepos();
+  if (allowed.size === 0) {
+    throw new Error(
+      "No writable repos configured. Set GITHUB_REPO (or GITHUB_ALLOWED_REPOS=owner/repo,owner/repo) " +
+        "to authorize which repositories this bot may modify.",
+    );
+  }
+  if (!allowed.has(`${ref.owner}/${ref.repo}`.toLowerCase())) {
+    throw new Error(
+      `Refusing to write to ${ref.owner}/${ref.repo}: not in the write allow-list (${[...allowed].join(", ")}). ` +
+        "Add it to GITHUB_ALLOWED_REPOS to permit writes.",
+    );
+  }
+  return ref;
+}

@@ -26,6 +26,7 @@
  * docs/TUTORIAL.md for the tradeoff and how to swap in real mention
  * detection if you fork this.
  */
+import { timingSafeEqual } from "node:crypto";
 import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import {
   createEventHandlers,
@@ -37,8 +38,31 @@ import {
 } from "whatsappd/adapters/eve";
 import type { SidecarEvent, WireMessage } from "whatsappd/sidecar";
 
-/** The WhatsApp group JID this bot watches (e.g. "1203...@g.us"). */
-const TARGET_GROUP = process.env.WHATSAPP_GROUP_ID?.trim() || undefined;
+/** Comma-separated env value → a Set of trimmed, lower-cased entries. */
+function envSet(raw: string | undefined): ReadonlySet<string> {
+  const set = new Set<string>();
+  for (const part of (raw ?? "").split(",")) {
+    const v = part.trim().toLowerCase();
+    if (v) set.add(v);
+  }
+  return set;
+}
+
+/**
+ * Group JIDs this bot watches. Accepts `WHATSAPP_GROUP_IDS` (comma list) or the
+ * singular `WHATSAPP_GROUP_ID`. When EMPTY the bot ignores every group (fail
+ * closed) unless `WHATSAPP_ALLOW_ANY_GROUP=true` is set explicitly — a misconfig
+ * should silence the bot, never open it to every group the number is in.
+ */
+const GROUP_ALLOWLIST = envSet(process.env.WHATSAPP_GROUP_IDS ?? process.env.WHATSAPP_GROUP_ID);
+const ALLOW_ANY_GROUP = process.env.WHATSAPP_ALLOW_ANY_GROUP === "true";
+
+/**
+ * Optional per-sender allow-list (phone numbers or JIDs, comma-separated). When
+ * set, only these senders can trigger the bot — a second gate beyond group
+ * membership, because any member's message can drive GitHub *writes*.
+ */
+const SENDER_ALLOWLIST = envSet(process.env.WHATSAPP_ALLOWED_SENDERS);
 
 /** Plain-text trigger that marks a message as addressed to the bot. */
 const TRIGGER = (process.env.WHATSAPP_BOT_TRIGGER?.trim() || "@github-bot").toLowerCase();
@@ -48,6 +72,31 @@ const ALLOW_DM = process.env.WHATSAPP_ALLOW_DM === "true";
 
 const SIDECAR_URL = process.env.WHATSAPP_SIDECAR_URL ?? "http://localhost:8788";
 const SIDECAR_TOKEN = process.env.WHATSAPP_SIDECAR_TOKEN;
+
+if (!SIDECAR_TOKEN) {
+  console.warn(
+    "[whatsapp] WHATSAPP_SIDECAR_TOKEN is not set — the /event webhook is UNAUTHENTICATED. " +
+      "Set it (and point the sidecar at it) before exposing this beyond localhost.",
+  );
+}
+if (GROUP_ALLOWLIST.size === 0 && !ALLOW_ANY_GROUP) {
+  console.warn(
+    "[whatsapp] No WHATSAPP_GROUP_ID(S) configured — all group messages are ignored. " +
+      "Set the target group JID, or WHATSAPP_ALLOW_ANY_GROUP=true to accept any group (not recommended).",
+  );
+}
+
+/** Digits-only identity of a JID/number, for order-insensitive sender matching. */
+function senderDigits(jid: string | undefined): string {
+  return (jid ?? "").split("@")[0]!.replace(/\D/g, "");
+}
+
+/** Constant-time string equality, to keep the sidecar-token check off the timing side-channel. */
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
+}
 
 /** The plain-text body of a wire message, when it has one. */
 function textOf(message: WireMessage): string {
@@ -77,9 +126,17 @@ function textOf(message: WireMessage): string {
  */
 export function isAddressed(event: Extract<SidecarEvent, { type: "message" }>): boolean {
   if (event.isGroup) {
-    if (TARGET_GROUP && event.chatId !== TARGET_GROUP) return false;
+    if (GROUP_ALLOWLIST.size > 0) {
+      if (!GROUP_ALLOWLIST.has(event.chatId.toLowerCase())) return false;
+    } else if (!ALLOW_ANY_GROUP) {
+      return false; // fail closed: no group configured
+    }
   } else if (!ALLOW_DM) {
     return false;
+  }
+  if (SENDER_ALLOWLIST.size > 0) {
+    const digits = senderDigits(event.from);
+    if (digits === "" || ![...SENDER_ALLOWLIST].some((e) => senderDigits(e) === digits)) return false;
   }
   return textOf(event.message).toLowerCase().includes(TRIGGER);
 }
@@ -93,7 +150,7 @@ export function isAddressed(event: Extract<SidecarEvent, { type: "message" }>): 
  */
 export function createGatedEventRoute() {
   return async (req: Request, args: RouteHandlerArgs<WhatsAppEveState>): Promise<Response> => {
-    if (SIDECAR_TOKEN && req.headers.get("authorization") !== `Bearer ${SIDECAR_TOKEN}`) {
+    if (SIDECAR_TOKEN && !safeEqual(req.headers.get("authorization") ?? "", `Bearer ${SIDECAR_TOKEN}`)) {
       return Response.json({ error: "unauthorized" }, { status: 401 });
     }
 

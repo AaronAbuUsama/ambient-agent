@@ -1,6 +1,6 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { getOctokit, resolveRepo } from "../lib/github.ts";
+import { getOctokit, resolveWritableRepo } from "../lib/github.ts";
 
 export default defineTool({
   description:
@@ -30,7 +30,7 @@ export default defineTool({
     if (input.event === "REQUEST_CHANGES" && !input.body) {
       throw new Error("`body` is required when event is REQUEST_CHANGES.");
     }
-    const { owner, repo } = resolveRepo(input);
+    const { owner, repo } = resolveWritableRepo(input);
     const octokit = getOctokit();
     const { data } = await octokit.rest.pulls.createReview({
       owner,

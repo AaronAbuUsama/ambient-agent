@@ -4,6 +4,9 @@ import type { SidecarEvent, WireMessage } from "whatsappd/sidecar";
 
 const ENV_KEYS = [
   "WHATSAPP_GROUP_ID",
+  "WHATSAPP_GROUP_IDS",
+  "WHATSAPP_ALLOW_ANY_GROUP",
+  "WHATSAPP_ALLOWED_SENDERS",
   "WHATSAPP_BOT_TRIGGER",
   "WHATSAPP_ALLOW_DM",
   "WHATSAPP_SIDECAR_URL",
@@ -85,11 +88,38 @@ describe("isAddressed", () => {
     expect(isAddressed(messageEvent(otherGroup))).toBe(false);
   });
 
-  it("allows any group when WHATSAPP_GROUP_ID is unset, still gated by the trigger", async () => {
+  it("fails closed: ignores every group when no group is configured", async () => {
     delete process.env.WHATSAPP_GROUP_ID;
+    delete process.env.WHATSAPP_GROUP_IDS;
     const { isAddressed } = await import("../../agent/channels/whatsapp.ts");
-    expect(isAddressed(messageEvent(wireText("@github-bot hi")))).toBe(true);
-    expect(isAddressed(messageEvent(wireText("hi")))).toBe(false);
+    // Even with the trigger, an unconfigured bot must not act in any group.
+    expect(isAddressed(messageEvent(wireText("@github-bot hi")))).toBe(false);
+  });
+
+  it("accepts any group only when WHATSAPP_ALLOW_ANY_GROUP=true (explicit opt-in)", async () => {
+    delete process.env.WHATSAPP_GROUP_ID;
+    process.env.WHATSAPP_ALLOW_ANY_GROUP = "true";
+    const { isAddressed } = await import("../../agent/channels/whatsapp.ts");
+    expect(isAddressed(messageEvent(wireText("@github-bot hi", { chatId: "ANY@g.us" })))).toBe(true);
+    expect(isAddressed(messageEvent(wireText("hi", { chatId: "ANY@g.us" })))).toBe(false);
+  });
+
+  it("supports a multi-group allow-list via WHATSAPP_GROUP_IDS", async () => {
+    delete process.env.WHATSAPP_GROUP_ID;
+    process.env.WHATSAPP_GROUP_IDS = "GROUP1@g.us, GROUP2@g.us";
+    const { isAddressed } = await import("../../agent/channels/whatsapp.ts");
+    expect(isAddressed(messageEvent(wireText("@github-bot hi", { chatId: "GROUP2@g.us" })))).toBe(true);
+    expect(isAddressed(messageEvent(wireText("@github-bot hi", { chatId: "GROUP3@g.us" })))).toBe(false);
+  });
+
+  it("enforces a per-sender allow-list, matching on digits regardless of formatting", async () => {
+    process.env.WHATSAPP_GROUP_ID = "GROUP1@g.us";
+    process.env.WHATSAPP_ALLOWED_SENDERS = "+44 7836 603208, 15550001111";
+    const { isAddressed } = await import("../../agent/channels/whatsapp.ts");
+    const allowed = wireText("@github-bot hi", { from: "447836603208@s.whatsapp.net" });
+    expect(isAddressed(messageEvent(allowed))).toBe(true);
+    const outsider = wireText("@github-bot hi", { from: "999@s.whatsapp.net" });
+    expect(isAddressed(messageEvent(outsider))).toBe(false);
   });
 
   it("ignores direct messages by default, even with the trigger", async () => {

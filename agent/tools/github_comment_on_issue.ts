@@ -1,6 +1,6 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { getOctokit, resolveRepo } from "../lib/github.ts";
+import { getOctokit, resolveWritableRepo } from "../lib/github.ts";
 
 export default defineTool({
   description:
@@ -13,7 +13,7 @@ export default defineTool({
     body: z.string().min(1).describe("Comment body in GitHub-flavored markdown."),
   }),
   async execute(input) {
-    const { owner, repo } = resolveRepo(input);
+    const { owner, repo } = resolveWritableRepo(input);
     const octokit = getOctokit();
     const { data } = await octokit.rest.issues.createComment({
       owner,
