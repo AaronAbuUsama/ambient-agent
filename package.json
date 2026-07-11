@@ -41,7 +41,7 @@
     "@octokit/rest": "^22.0.0",
     "ai": "^7.0.0",
     "eve": "^0.22.4",
-    "whatsappd": "^0.2.0",
+    "whatsappd": "^0.2.1",
     "zod": "^4.1.8"
   },
   "devDependencies": {
@@ -55,9 +55,6 @@
       "esbuild",
       "baileys",
       "protobufjs"
-    ],
-    "patchedDependencies": {
-      "whatsappd@0.2.0": "patches/whatsappd@0.2.0.patch"
-    }
+    ]
   }
 }
