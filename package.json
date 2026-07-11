@@ -40,7 +40,6 @@
   "dependencies": {
     "@octokit/rest": "^22.0.0",
     "ai": "^7.0.0",
-    "ai-sdk-provider-codex-cli": "^2.1.1",
     "eve": "^0.22.4",
     "whatsappd": "^0.2.0",
     "zod": "^4.1.8"

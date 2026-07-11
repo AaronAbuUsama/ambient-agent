@@ -45,15 +45,16 @@ This is **already designed**: it is the `agent-niceties` **SPEC** (tickets 00–
 ## 4. What's held / next (in order — user's chosen sequencing)
 
 **STAGE 1 — prove the single-model bot end-to-end on Codex.**
-1. **TASK #1 — Codex provider: ✅ DONE & PROVEN LIVE (2026-07-11).** Wired
-   `ai-sdk-provider-codex-cli@2.1.1` (AI-SDK v7 line, matches our `ai@7.0.22` / `@ai-sdk/provider@2.0.3`).
-   `agent/agent.ts` now uses `codexExec("gpt-5.5", { skipGitRepoCheck: true })`; `@ai-sdk/anthropic`
-   removed. Auth = the user's `~/.codex/auth.json` (from `codex login`, Codex CLI 0.144.1) — **no API key**.
-   Smoke-tested: with `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` both unset, a `generateText` returned "hello".
-   Mode = `codexExec` (process-per-call, floor); `createCodexAppServer()` is the Stage-2 upgrade for
-   token streaming / tool-call deltas.
-   ⚠️ **Residual risk to prove in E2E:** confirm our `github_*` tools round-trip as AI-SDK tool calls
-   (model requests → Eve executes via octokit → result back), not executed inside Codex's own sandbox.
+1. **TASK #1 — Codex/subscription model: ✅ SOLVED NATIVELY & PROVEN E2E (2026-07-11).**
+   `agent/agent.ts` uses **eve's native `experimental_chatgpt()`** (`eve/models/openai`) +
+   `modelContextWindowTokens: 200_000`. It reads the local `codex login` (`~/.codex/auth.json`) and
+   bills the ChatGPT subscription — **no ANTHROPIC_API_KEY / OPENAI_API_KEY**. The third-party
+   `ai-sdk-provider-codex-cli` was removed (native path is cleaner and — being in eve's model catalog —
+   carries the context-window metadata eve needs for compaction; a custom AI-SDK provider does not,
+   which crashed `eve dev` with "does not have known AI Gateway context window metadata").
+   **Residual tool-round-trip risk is RESOLVED:** a synthetic addressed event → the model called
+   `github_create_issue` → issue #1 created in `wa-bot-sandbox` with the exact requested title/body.
+   Eve-native tool loop routes our tools correctly.
 2. **User does the auth/setup** (they will do this live): pair a **fresh** WhatsApp number
    (`npm run whatsapp` → scan QR), set `GITHUB_TOKEN` + `GITHUB_REPO=<sandbox>` + subscription auth.
 3. Verify pairing: `npx tsx scripts/whatsapp-dry-run.ts ./.wa-auth` → expect `status: online`.
@@ -91,8 +92,17 @@ This is **already designed**: it is the `agent-niceties` **SPEC** (tickets 00–
 
 ## 7. Gotchas & risks (will bite if forgotten)
 
-- ✅ **Codex provider VERIFIED & PROVEN LIVE** (was the biggest risk). `ai-sdk-provider-codex-cli` rides
-  `~/.codex/auth.json` — no API key. See §4 Task #1. Keep both `*_API_KEY` env vars UNSET on purpose.
+- ✅ **Model SOLVED** (was the biggest risk): eve-native `experimental_chatgpt()` rides `~/.codex/auth.json`
+  — no API key. See §4 Task #1. Keep both `*_API_KEY` env vars UNSET on purpose.
+- ⚠️ **Do NOT set `PORT` in `.env`.** Both the sidecar and `eve dev` read `PORT`; setting it makes eve
+  bind the sidecar's port (8788) instead of its default 2000, breaking the forward URL. Unset → sidecar
+  8788, eve 2000. (Fixed in `.env.example`.)
+- ℹ️ **E2E harness (no phone needed):** `POST http://localhost:2000/event` with a synthetic `SidecarEvent`
+  (Bearer = `WHATSAPP_SIDECAR_TOKEN`, `chatId` = the group JID, text containing `@github-bot …`) drives the
+  gate → session → model → tools. Reply delivery is the only leg that needs a live sidecar on 8788.
+- ℹ️ **Testing token:** the user's fine-grained PAT wasn't scoped to `wa-bot-sandbox`; E2E used the `gh`
+  CLI token via a gitignored `.env.local` (`GITHUB_TOKEN=<gh auth token>`, overrides `.env`). Write
+  allow-list still confines writes to the sandbox. For real use, scope the PAT and delete `.env.local`.
 - ⚠️ **Stored WhatsApp creds are DEAD** (`open-harness/whatsapp/.wa-auth-*` both returned
   `logged_out_remote`). A fresh pairing is mandatory before any live run.
 - ⚠️ **Node ≥24 for `eve` CLI** (dev/build/start); the sidecar is fine on Node 22. CI splits the

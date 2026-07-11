@@ -83,7 +83,7 @@ WhatsApp number, and everything else in depth.
 
 ```
 agent/
-├── agent.ts                    # model config (Codex/ChatGPT subscription, via ai-sdk-provider-codex-cli)
+├── agent.ts                    # model config (Codex/ChatGPT subscription, via eve's experimental_chatgpt)
 ├── instructions.md              # the GitHub-concierge persona
 ├── channels/whatsapp.ts         # gated WhatsApp ingress (whatsappd's Eve adapter + group gating)
 ├── lib/github.ts                # shared Octokit client + repo resolution

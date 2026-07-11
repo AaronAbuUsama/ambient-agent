@@ -1,32 +1,28 @@
 /**
  * Eve runtime config — model selection for the GitHub concierge agent.
  *
- * Runs on your ChatGPT / Codex **subscription**, not API credits. The
- * `ai-sdk-provider-codex-cli` provider spawns the local Codex CLI and rides the
- * OAuth token from `codex login` (stored at `~/.codex/auth.json`) — so this
- * agent needs **no ANTHROPIC_API_KEY and no OPENAI_API_KEY**. Requires the
- * Codex CLI (`>=0.144.x`) installed and logged in. See
- * https://github.com/ben-vargas/ai-sdk-provider-codex-cli.
+ * Runs on your ChatGPT / Codex **subscription**, not API credits, via eve's
+ * native `experimental_chatgpt()` helper — it reads the local `codex login`
+ * (OAuth token in `~/.codex/auth.json`) and bills the ChatGPT subscription, so
+ * this agent needs **no ANTHROPIC_API_KEY and no OPENAI_API_KEY**. Requires the
+ * Codex CLI installed and logged in. See eve's `reference/typescript-api`
+ * ("ChatGPT subscription models") and `agent-config` docs.
  *
- * Mode: `codexExec` (process-per-call) — the simplest, stateless fit for Eve's
- * per-session request model. Tool calls (our github_* tools) round-trip as
- * AI-SDK tool calls; outputs arrive in the final event. If we later want token
- * streaming / tool-call deltas ("one voice" polish), swap to
- * `createCodexAppServer()` (persistent process + provider.close()).
+ * Being an eve-native model, it carries the context-window / catalog metadata
+ * eve needs for compaction — a third-party AI-SDK provider does not, which is
+ * why `modelContextWindowTokens` is still set explicitly below.
  */
 import { defineAgent } from "eve";
-import { codexExec } from "ai-sdk-provider-codex-cli";
+import { experimental_chatgpt } from "eve/models/openai";
 
-// Model slugs are whatever your installed Codex CLI exposes (discover with the
-// provider's listModels()). "gpt-5.5" is the current default; override with
-// EVE_MODEL_ID without editing code.
-const modelId = process.env.EVE_MODEL_ID ?? "gpt-5.5";
+// Optional model-slug override (defaults to eve's current ChatGPT-subscription
+// model). Set EVE_MODEL_ID to pin a different OpenAI slug without editing code.
+const slug = process.env.EVE_MODEL_ID;
 
 export default defineAgent({
-  model: codexExec(modelId, {
-    // We use Codex purely as a chat/tool brain; don't make it demand a git repo.
-    skipGitRepoCheck: true,
-  }),
+  model: slug ? experimental_chatgpt(slug) : experimental_chatgpt(),
+  // Non-gateway model → declare the window so compaction has a threshold.
+  modelContextWindowTokens: 200_000,
   // Keep the loop tight for a chat surface: a runaway tool-call chain in a
   // group chat is much more visible (and annoying) than in a web UI.
   limits: {
