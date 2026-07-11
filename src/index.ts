@@ -22,6 +22,16 @@
  */
 import { runSidecar } from "whatsappd/sidecar";
 
+// Load .env into process.env (native, Node >=20.12 — no dotenv dependency), so
+// `pnpm run whatsapp` picks up the file the tutorial tells you to create.
+// Falls back to the real environment when there's no .env (e.g. production,
+// where the vars are injected directly).
+try {
+  process.loadEnvFile();
+} catch {
+  // No .env file present — use process.env as-is.
+}
+
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.trim().length === 0) {
