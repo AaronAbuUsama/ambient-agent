@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  whatsappd@0.2.0:
+    hash: rcb3thxk22lzcvdg5woxve5hdq
+    path: patches/whatsappd@0.2.0.patch
+
 importers:
 
   .:
@@ -19,7 +24,7 @@ importers:
         version: 0.22.5(ai@7.0.22(zod@4.4.3))(lru-cache@11.5.2)(rollup@4.62.2)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.0))
       whatsappd:
         specifier: ^0.2.0
-        version: 0.2.0(eve@0.22.5(ai@7.0.22(zod@4.4.3))(lru-cache@11.5.2)(rollup@4.62.2)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.0)))(sharp@0.35.3(@types/node@22.20.1))
+        version: 0.2.0(patch_hash=rcb3thxk22lzcvdg5woxve5hdq)(eve@0.22.5(ai@7.0.22(zod@4.4.3))(lru-cache@11.5.2)(rollup@4.62.2)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.0)))(sharp@0.35.3(@types/node@22.20.1))
       zod:
         specifier: ^4.1.8
         version: 4.4.3
@@ -2755,7 +2760,7 @@ snapshots:
 
   whatsapp-rust-bridge@0.5.4: {}
 
-  whatsappd@0.2.0(eve@0.22.5(ai@7.0.22(zod@4.4.3))(lru-cache@11.5.2)(rollup@4.62.2)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.0)))(sharp@0.35.3(@types/node@22.20.1)):
+  whatsappd@0.2.0(patch_hash=rcb3thxk22lzcvdg5woxve5hdq)(eve@0.22.5(ai@7.0.22(zod@4.4.3))(lru-cache@11.5.2)(rollup@4.62.2)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.0)))(sharp@0.35.3(@types/node@22.20.1)):
     dependencies:
       baileys: 7.0.0-rc13(sharp@0.35.3(@types/node@22.20.1))
       pino: 10.3.1

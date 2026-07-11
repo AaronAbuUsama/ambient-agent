@@ -55,6 +55,9 @@
       "esbuild",
       "baileys",
       "protobufjs"
-    ]
+    ],
+    "patchedDependencies": {
+      "whatsappd@0.2.0": "patches/whatsappd@0.2.0.patch"
+    }
   }
 }
