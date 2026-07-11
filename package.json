@@ -35,6 +35,7 @@
     "whatsapp": "tsx src/index.ts",
     "coalescer": "tsx src/coalescer/demo.ts",
     "voice": "tsx src/coalescer/repl.ts",
+    "live": "tsx src/coalescer/live.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

@@ -228,8 +228,9 @@ quiet on chit-chat, chimes in on relevant/GitHub-ish messages *without* being
   `/Users/abuusama/projects/hack-space/effect` (sibling dir). Useful:
   `packages/ai` (= `@effect/ai`, rejected but for reference), `packages/platform`
   (`HttpClient`, if we ever need the Eve-client loopback for delegation).
-- **WhatsApp creds are dead** (`logged_out_remote` per prior stage) — Rung 2
-  needs a QR re-pair. Not needed for Rung 1.
+- **WhatsApp creds actually connect** — the earlier "dead / `logged_out_remote`"
+  note was stale; `pnpm run live` reaches `online` on the existing `./.wa-auth`
+  (QR re-pair path exists in `whatsapp.ts` if it ever does log out).
 - **`groupByKey` fan-out deferred on purpose** — the manual per-chat registry is
   kept because idle-chat eviction (a real future need) is easier against a
   registry we own than `groupByKey`'s opaque group lifecycle.
@@ -258,22 +259,39 @@ quiet on chit-chat, chimes in on relevant/GitHub-ish messages *without* being
 
 ---
 
-## 7. NEXT — Rung 2 (real WhatsApp)
+## 7. Rung 2 — plumbing built (2a ✅), Worker doorway is NEXT (2b)
 
-Not started. Swap the three mocked seams for their real implementations at the
-wiring site; the Coalescer, voice, and ports do NOT change.
+The seams swap in behind the same ports; the Coalescer, voice, and ports did NOT
+change. Built in `src/coalescer/whatsapp.ts` + `src/coalescer/live.ts`
+(`pnpm run live`):
 
-1. **Re-pair WhatsApp** — creds are dead (`logged_out_remote`); needs a QR
-   re-pair before anything live runs.
-2. **Real `EventSource`** — `createChannelAdapter().subscribe()` bridged into a
-   `Stream` (e.g. `Stream.async`), emitting the full-fidelity `ChannelEvent`
-   (`events.ts` already mirrors it field-for-field, incl. `mentions`/`quoted`).
-3. **Real `Outbound`** — back `reply`/`setTyping` with `adapter.send` /
-   `adapter.setTyping`.
-4. **Real `Worker`** — delegate to the existing `agent/` GitHub agent (blocking,
-   D1a). This is the ONE Eve doorway; leave `agent/` otherwise untouched.
-5. **Prod guard** — `experimental_chatgpt()` is local-dev only; branch on
-   `NODE_ENV` for a deployed model (see §2.6).
+- **Real `EventSource` + `Outbound` — DONE.** `whatsapp.ts` uses the in-process
+  `createSession(...).onMessage / .send / .setTyping` (NOT the lossy HTTP sidecar,
+  so `context.mentions`/`quoted` survive). `session.onMessage` → whatsappd
+  `IncomingMessage` maps straight onto our `events.ts` shape; `timestamp` is
+  already ms (`toMillis` in whatsappd). `botId` comes from `session.identity().jid`.
+- **Session bootstrap — DONE.** `openSession` is a scoped resource (stops on scope
+  close), waits for `isOnline`, prints a QR (`qrcode-terminal`) on first-run pair.
+- **Chat gate — DONE.** `live.ts` fails closed: set `WHATSAPP_GROUP_ID`/`_IDS`
+  (or `WHATSAPP_ALLOW_DM=true`) or the bot stays silent. The voice replies for real
+  and engages on relevance, so this gate is mandatory — use a private test group.
+- **Creds actually WORK** — the "dead / `logged_out_remote`" note was stale.
+  `pnpm run live` connected (`connecting → authenticated → online`) on the existing
+  `./.wa-auth`. **No re-pair needed** (QR path is there if it ever logs out).
+
+**To go live (user):** `WHATSAPP_GROUP_ID=<jid@g.us> pnpm run live` (needs the local
+Codex login for the voice). Then message that group and watch the voice
+participate. Full inbound→reply flow is NOT yet exercised end-to-end (needs a live
+message), but boot + connect + online are verified.
+
+**NEXT — Rung 2b (the one real fork):**
+1. **Real `Worker`** — replace the honest stub in `live.ts` (`(worker not wired
+   yet — would handle: …)`) with real delegation to `agent/` (blocking, D1a). This
+   is the ONE Eve doorway; `agent/` stays untouched. Open question to settle:
+   mechanism — `eve/client` session loopback (needs the Eve app running) vs. an
+   in-process agent-turn API. Present options in code before choosing.
+2. **Prod guard** — `experimental_chatgpt()` is local-dev only; branch on
+   `NODE_ENV` at the model-hoist in `voice.ts` for a deployed model (see §2.6).
 
 DoD: the bot participates in a real WhatsApp group — silent on chatter, chimes in
 when it can help, delegates real GitHub work and narrates the result.

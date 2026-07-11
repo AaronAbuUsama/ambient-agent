@@ -1,0 +1,145 @@
+/**
+ * The real WhatsApp seams (Rung 2) — `EventSource` + `Outbound` over an
+ * in-process whatsappd session, plus the session bootstrap.
+ *
+ * Why in-process (not the HTTP sidecar in src/index.ts): the sidecar's wire
+ * format drops `contextInfo.mentionedJid` / quoted, but `addressesBot` needs
+ * them. whatsappd's `session.onMessage` keeps the full `context`, which
+ * `events.ts` mirrors field-for-field — so this mapper is a straight copy.
+ *
+ * These Layers just swap in behind the same `EventSource`/`Outbound` ports the
+ * mocks satisfy; the Coalescer and voice don't change. The session is created
+ * as a scoped resource: it's stopped and unsubscribed when the scope closes.
+ */
+import { createRequire } from "node:module";
+import { Data, Deferred, Effect, Layer, Queue, Runtime, type Scope, Stream } from "effect";
+import {
+  createSession,
+  fileStore,
+  type IncomingMessage as WaMessage,
+  isOnline,
+  isTerminal,
+  qrAuth,
+  type WhatsAppSession,
+} from "whatsappd";
+import type { IncomingMessage } from "./events.ts";
+import { EventSource, Outbound } from "./ports.ts";
+
+// qrcode-terminal ships no types and is a transitive dep of whatsappd; require it
+// so a first-run pairing prints a scannable QR without adding a typed import.
+const qr = createRequire(import.meta.url)("qrcode-terminal") as {
+  generate(text: string, opts?: { small?: boolean }): void;
+};
+
+export class WhatsAppError extends Data.TaggedError("WhatsAppError")<{ readonly cause: unknown }> {}
+
+/** Plain-text body of an inbound message (media captions included; non-text → ""). */
+const textOf = (msg: WaMessage): string => {
+  switch (msg.kind) {
+    case "text":
+      return msg.text;
+    case "image":
+    case "video":
+    case "audio":
+    case "document":
+    case "sticker":
+      return msg.text ?? "";
+    default:
+      return "";
+  }
+};
+
+/** whatsappd's inbound shape → the Coalescer's IncomingMessage (timestamp is already ms). */
+const toIncoming = (msg: WaMessage): IncomingMessage => ({
+  id: msg.id,
+  chatId: msg.chatId,
+  from: msg.from,
+  pushName: msg.pushName,
+  text: textOf(msg),
+  timestamp: msg.timestamp,
+  isGroup: msg.isGroup,
+  fromMe: msg.fromMe,
+  live: msg.live,
+  mentions: msg.context?.mentions ?? [],
+  quotedFrom: msg.context?.quoted?.from,
+});
+
+/**
+ * Create the session, connect, and resolve once it's genuinely online (so
+ * `identity()` is readable). Prints a QR on first-run pairing; fails if the
+ * connection reaches a terminal state (e.g. logged out) without coming online.
+ * Scoped: the session is stopped and its listener removed on scope close.
+ */
+export const openSession = (storeDir: string): Effect.Effect<WhatsAppSession, WhatsAppError, Scope.Scope> =>
+  Effect.gen(function* () {
+    const session = createSession({ store: fileStore(storeDir), auth: qrAuth() });
+    yield* Effect.addFinalizer(() => Effect.promise(() => session.stop()).pipe(Effect.ignore));
+
+    const online = yield* Deferred.make<void, WhatsAppError>();
+    const runtime = yield* Effect.runtime<never>();
+    const unsub = session.onStatus((status) => {
+      if (
+        status.phase === "pairing" &&
+        status.pairing.step === "challenge_live" &&
+        status.pairing.method === "qr" &&
+        status.pairing.qr
+      ) {
+        console.log("\n📱 Link a device: WhatsApp → Settings → Linked devices → Link a device, then scan:\n");
+        qr.generate(status.pairing.qr, { small: true });
+      } else {
+        console.log(`[wa] ${status.phase}`);
+      }
+      if (isOnline(status)) {
+        Runtime.runFork(runtime)(Deferred.succeed(online, undefined));
+      } else if (isTerminal(status)) {
+        Runtime.runFork(runtime)(Deferred.fail(online, new WhatsAppError({ cause: `connection ${status.phase}` })));
+      }
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => unsub()));
+
+    yield* Effect.tryPromise({ try: () => session.start(), catch: (cause) => new WhatsAppError({ cause }) });
+    yield* Deferred.await(online);
+    return session;
+  });
+
+/** The connected account's own JID — the botId `addressesBot` matches against. */
+export const botIdOf = (session: WhatsAppSession): string => session.identity()?.jid ?? "unknown@s.whatsapp.net";
+
+/**
+ * EventSource over `session.onMessage`. Messages are pushed onto an unbounded
+ * queue (WhatsApp's inbound rate is low) and surfaced as a Stream; `allow` gates
+ * which chats reach the loop, since the voice replies for real. The listener is
+ * removed on scope close.
+ */
+export const whatsappEventSource = (
+  session: WhatsAppSession,
+  allow: (chatId: string, isGroup: boolean) => boolean,
+): Layer.Layer<EventSource> =>
+  Layer.scoped(
+    EventSource,
+    Effect.gen(function* () {
+      const queue = yield* Queue.unbounded<IncomingMessage>();
+      const runtime = yield* Effect.runtime<never>();
+      const unsub = session.onMessage((msg) => {
+        if (!allow(msg.chatId, msg.isGroup)) return;
+        // Unbounded offer never suspends, so runSync keeps arrival order.
+        Runtime.runSync(runtime)(Queue.offer(queue, toIncoming(msg)));
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(() => unsub()));
+      return { events: Stream.fromQueue(queue) };
+    }),
+  );
+
+/** Outbound over `session.send` / `session.setTyping`. Send/typing failures are
+ * logged, not raised — a dropped reply must not wedge the chat's loop. */
+export const whatsappOutbound = (session: WhatsAppSession): Layer.Layer<Outbound> =>
+  Layer.succeed(Outbound, {
+    reply: (chatId, text) =>
+      Effect.tryPromise(() => session.send(chatId, { text })).pipe(
+        Effect.asVoid,
+        Effect.catchAll((cause) =>
+          Effect.logError("whatsapp send failed").pipe(Effect.annotateLogs({ chatId, cause: String(cause) })),
+        ),
+      ),
+    setTyping: (chatId, on) => Effect.tryPromise(() => session.setTyping(chatId, on)).pipe(Effect.ignore),
+  });
