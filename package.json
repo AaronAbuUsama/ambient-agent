@@ -33,6 +33,7 @@
     "build": "eve build",
     "start": "eve start",
     "whatsapp": "tsx src/index.ts",
+    "coalescer": "tsx src/coalescer/demo.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -40,11 +41,13 @@
   "dependencies": {
     "@octokit/rest": "^22.0.0",
     "ai": "^7.0.0",
+    "effect": "^3.21.4",
     "eve": "^0.22.4",
     "whatsappd": "^0.2.1",
     "zod": "^4.1.8"
   },
   "devDependencies": {
+    "@effect/vitest": "^0.29.0",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
