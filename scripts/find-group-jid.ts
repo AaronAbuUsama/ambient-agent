@@ -34,9 +34,11 @@ const server = createServer((req, res) => {
   req.on("end", () => {
     try {
       const event = JSON.parse(raw) as SidecarEvent;
-      if (event.type === "message" && !event.message.fromMe) {
+      // Print ANY message (including your own — fromMe) so the JID shows up no
+      // matter who sends it in the group.
+      if (event.type === "message") {
         const where = event.isGroup ? "GROUP" : "dm";
-        const who = event.pushName ?? event.from ?? "?";
+        const who = event.message.fromMe ? "you (this number)" : (event.pushName ?? event.from ?? "?");
         console.log(`\n[${where}] ${who}: ${JSON.stringify(bodyText(event.message))}`);
         console.log(`  chatId = ${event.chatId}`);
         if (event.isGroup) {
