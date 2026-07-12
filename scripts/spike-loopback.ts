@@ -10,18 +10,20 @@
  *       .session(chatId)            // continuationToken = chatId  (D4)
  *       .send({ message })          // open-or-resume this chat's durable session
  *
- * Run it once to prove a background caller gets a non-empty reply. Run it twice
- * with the SAME token to prove the per-chat session resumes (history carries).
+ * Run it to prove a background caller gets a non-empty reply. NOTE: this alone
+ * does NOT prove per-chat resume — a fixed continuationToken across cold client
+ * calls starts a fresh session each time (see the spike finding). Durable resume
+ * is characterized by `scripts/spike-resume.ts`; look there, not here.
  *
  * Usage:
  *   tsx scripts/spike-loopback.ts "<message>"
  * Env:
- *   EVE_URL     (default http://127.0.0.1:4319)
+ *   EVE_URL     full server URL; else built from PORT (eve's default is 3000)
  *   SPIKE_TOKEN continuationToken / chatId (default "spike-chat-001")
  */
 import { Client } from "eve/client";
 
-const host = process.env.EVE_URL ?? "http://127.0.0.1:4319";
+const host = process.env.EVE_URL ?? `http://127.0.0.1:${process.env.PORT ?? "3000"}`;
 const token = process.env.SPIKE_TOKEN ?? "spike-chat-001";
 const message = process.argv[2] ?? "Hello! Reply with one short sentence.";
 

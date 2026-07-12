@@ -26,13 +26,24 @@ async function runR2BackgroundCaller(agentName: string): Promise<void> {
 
   // Wait for our own HTTP server to accept connections (setup runs before the
   // listener is necessarily ready). This is a background loop, not a handler.
-  for (let attempt = 0; attempt < 40; attempt++) {
+  const MAX_HEALTH_ATTEMPTS = 40;
+  const HEALTH_RETRY_MS = 250;
+  let healthy = false;
+  for (let attempt = 0; attempt < MAX_HEALTH_ATTEMPTS; attempt++) {
     try {
       await client.health();
+      healthy = true;
       break;
     } catch {
-      await new Promise((r) => setTimeout(r, 250));
+      await new Promise((r) => setTimeout(r, HEALTH_RETRY_MS));
     }
+  }
+  if (!healthy) {
+    console.error(
+      `[R2-BOOT] FAILED: server did not become healthy at ${host} after ` +
+        `${MAX_HEALTH_ATTEMPTS} attempts (${(MAX_HEALTH_ATTEMPTS * HEALTH_RETRY_MS) / 1000}s)`,
+    );
+    return;
   }
 
   try {
