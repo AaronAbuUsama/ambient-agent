@@ -57,11 +57,21 @@ describe("github subagent — outputSchema shape", () => {
   });
 });
 
-describe("github subagent — reuses the root prompt unchanged", () => {
-  it("instructions.md is byte-identical to the root agent's prompt", () => {
-    const root = readFileSync(repoPath("agent/instructions.md"), "utf8");
-    const sub = readFileSync(repoPath("agent/subagents/github/instructions.md"), "utf8");
-    expect(sub).toBe(root);
+describe("github subagent — carries its own GitHub-triage prompt", () => {
+  const sub = readFileSync(repoPath("agent/subagents/github/instructions.md"), "utf8");
+
+  it("is the GitHub Concierge triage prompt", () => {
+    expect(sub).toMatch(/GitHub Concierge/);
+    expect(sub).toMatch(/triage/i);
+  });
+
+  // The root/voice prompt owns the `say` tool + ambient-chatter judgment (#6).
+  // The worker has no `say` tool and returns structured output, so its prompt
+  // must NOT carry the voice-only instructions — this guards against anyone
+  // re-syncing the worker to the (now different) root prompt.
+  it("does not carry the voice-only `say` / ambient instructions", () => {
+    expect(sub).not.toMatch(/`say`/);
+    expect(sub).not.toMatch(/ambient/i);
   });
 });
 
