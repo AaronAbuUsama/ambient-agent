@@ -15,11 +15,10 @@
  * First run prints a QR to link the device; creds persist under WHATSAPP_STORE_DIR
  * (default ./.wa-auth), shared with the `pnpm whatsapp` sidecar.
  */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { Console, Effect, Layer } from "effect";
 import * as Coalescer from "./coalescer.ts";
 import { configLayer } from "./config.ts";
+import { describeModel } from "./model.ts";
 import { aiVoice } from "./voice.ts";
 import { botIdOf, openSession, whatsappEventSource, whatsappOutbound } from "./whatsapp.ts";
 import { githubWorker } from "./worker.ts";
@@ -51,22 +50,6 @@ const ALLOW_DM = process.env.WHATSAPP_ALLOW_DM === "true";
 const chatAllowed = (chatId: string, isGroup: boolean): boolean =>
   isGroup ? (GROUPS.size > 0 ? GROUPS.has(chatId.toLowerCase()) : ALLOW_ANY_GROUP) : ALLOW_DM;
 
-// Which ChatGPT/Codex account the voice + worker will bill. experimental_chatgpt reads
-// `${CODEX_HOME}/auth.json` (default ~/.codex). We point CODEX_HOME at a project-local
-// folder (see .env + `pnpm run login`) so the bot uses a SEPARATE account from your
-// personal `codex` login. This surfaces which account is active — and warns loudly if
-// its creds are missing — instead of silently falling back to your main account.
-const codexCredsHint = (): string => {
-  const home = process.env.CODEX_HOME?.trim() || join(process.env.HOME ?? "~", ".codex");
-  const authPath = join(home, "auth.json");
-  try {
-    const auth = JSON.parse(readFileSync(authPath, "utf8")) as { tokens?: { account_id?: string } };
-    return `🔑 codex account ${auth.tokens?.account_id ?? "unknown"} — creds ${authPath}`;
-  } catch {
-    return `🔑 ⚠️  no codex creds at ${authPath} — run \`pnpm run login\` (needs the bot's ChatGPT account)`;
-  }
-};
-
 // The voice's persona for this chat: a bug-intake assistant for non-technical QA
 // testers of an iOS app. It gathers the details a good bug report needs, then
 // delegates to the GitHub worker to file the issue and reports the link back.
@@ -83,7 +66,7 @@ const program = Effect.gen(function* () {
         "(or WHATSAPP_ALLOW_DM=true) and re-run.",
     );
   }
-  yield* Console.log(codexCredsHint());
+  yield* Console.log(describeModel());
   yield* Console.log(`connecting to WhatsApp (store: ${STORE_DIR})…`);
 
   const session = yield* openSession(STORE_DIR);

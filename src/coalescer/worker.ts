@@ -9,13 +9,14 @@
  * the stub with zero change to the voice or Coalescer, and a future `eve/client`
  * version (for Eve durability) swaps in exactly the same way.
  *
- * Local-dev only, like the voice: `experimental_chatgpt()` bills the local Codex
- * login. Needs `GITHUB_TOKEN` + `GITHUB_REPO` (writes gated to `GITHUB_ALLOWED_REPOS`).
+ * Model via `makeModel()` (model.ts): an OpenAI API key if `OPENAI_API_KEY` is set
+ * (works anywhere), else the local ChatGPT/Codex subscription (local-dev only). Needs
+ * `GITHUB_TOKEN` + `GITHUB_REPO` (writes gated to `GITHUB_ALLOWED_REPOS`).
  */
 import { readFileSync } from "node:fs";
 import { Effect, Layer } from "effect";
 import { stepCountIs, streamText, tool } from "ai";
-import { experimental_chatgpt } from "eve/models/openai";
+import { makeModel } from "./model.ts";
 import { Worker, WorkerError } from "./ports.ts";
 // agent/ GitHub tools — reused unchanged (imported, never modified).
 import addLabels from "../../agent/tools/github_add_labels.ts";
@@ -79,7 +80,7 @@ explicitly names a different one; otherwise leave it unspecified.`;
 export const githubWorker: Layer.Layer<Worker> = Layer.effect(
   Worker,
   Effect.gen(function* () {
-    const model = experimental_chatgpt();
+    const model = makeModel();
     return {
       delegate: (task) =>
         Effect.tryPromise({
