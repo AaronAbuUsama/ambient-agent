@@ -110,6 +110,23 @@ describe("resolveWritableRepo (write allow-list)", () => {
     delete process.env.GITHUB_ALLOWED_REPOS;
     expect(() => resolveWritableRepo({ owner: "a", repo: "b" })).toThrow(/No writable repos configured/);
   });
+
+  // F4 residual, made explicit and intentional: a COMPLETE foreign pair is a
+  // legitimate cross-repo *read* override (instructions.md: "reads work on any
+  // repo the token can see") — reads across repos are a real feature, so we do
+  // not distrust an explicit pair here. The same pair is refused on any *write*
+  // by the allow-list, so a hallucinated `ios-design-system/ios-design-system`
+  // can at worst cause a read 404, never a write to the wrong repo. The proper
+  // cure for the *guessing* is seeding the accessible-repo list into the agent's
+  // context so it picks from real repos instead of inventing them (follow-up
+  // issue), not second-guessing explicit input in resolveRepo.
+  it("honors a complete foreign pair on reads but refuses it on writes", () => {
+    process.env.GITHUB_REPO = "acme/widgets";
+    delete process.env.GITHUB_ALLOWED_REPOS;
+    const foreign = { owner: "ios-design-system", repo: "ios-design-system" };
+    expect(resolveRepo(foreign)).toEqual(foreign);
+    expect(() => resolveWritableRepo(foreign)).toThrow(/not in the write allow-list/);
+  });
 });
 
 describe("getOctokit", () => {

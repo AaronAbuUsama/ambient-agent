@@ -4,8 +4,9 @@
  * The voice orchestrator delegates a single GitHub task here and gets back a
  * typed result (see `outputSchema`), never the worker's tool-call chatter. This
  * child reuses the root agent's 13 `github_*` tools (thin re-export shims under
- * `tools/`) and the root `instructions.md` prompt (via `instructions.ts`) —
- * both unchanged — but runs as its own agent with its own structured contract.
+ * `tools/`) and the root prompt (a verbatim copy at `instructions.md`, kept
+ * byte-identical by a test) — both unchanged — but runs as its own agent with
+ * its own structured contract.
  *
  * Model wiring mirrors the root: eve's `experimental_chatgpt()` bills the local
  * `codex login` (ChatGPT subscription), so no ANTHROPIC/OPENAI key is needed.

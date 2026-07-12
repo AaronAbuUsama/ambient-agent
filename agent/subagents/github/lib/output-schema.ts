@@ -9,7 +9,11 @@
  */
 import { z } from "zod";
 
-/** High-level action the worker performed, derived from the 13 GitHub tools. */
+/**
+ * High-level action the worker performed — a coarse result vocabulary over the
+ * 13 `github_*` tools (PR-diff reads fold into `get_pr`/`review_pr`), plus
+ * `none`/`error` so the child always has a valid slot.
+ */
 export const githubAction = z.enum([
   "create_issue",
   "get_issue",
