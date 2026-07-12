@@ -23,8 +23,8 @@ import { Console, Deferred, Duration, Effect, Layer, Queue, Runtime } from "effe
 import * as Coalescer from "./coalescer.ts";
 import { configLayer } from "./config.ts";
 import type { IncomingMessage } from "./events.ts";
-import { queueEventSource } from "./mocks.ts";
-import { Outbound, Worker } from "./ports.ts";
+import { consoleWorker, queueEventSource } from "./mocks.ts";
+import { Outbound } from "./ports.ts";
 import { aiVoice } from "./voice.ts";
 
 const BOT = "bot@s.whatsapp.net";
@@ -63,15 +63,12 @@ const consoleOutbound = Layer.succeed(Outbound, {
   setTyping: (_chatId, on) => Console.log(`   \u{2328}\u{FE0F}  (bot ${on ? "started" : "stopped"} typing)`),
 });
 
-// Worker → a canned stand-in for the real GitHub agent, with a small delay so the
+// Worker → a canned stand-in for the real GitHub agent, with a small delay (1s) so the
 // blocking delegate (D1a) — and any "typing" around it — is actually visible.
-// (Named `consoleWorker` to avoid shadowing the `cannedWorker` factory exported by mocks.ts.)
-const consoleWorker = Layer.succeed(Worker, {
-  delegate: (task) =>
-    Console.log(`   \u{1F6E0}\u{FE0F}  worker handling: "${task.instruction}"`).pipe(
-      Effect.zipRight(Effect.sleep(Duration.seconds(1))),
-      Effect.as({ summary: `done: ${task.instruction}` }),
-    ),
+const replWorker = consoleWorker({
+  log: (task) => `   \u{1F6E0}\u{FE0F}  worker handling: "${task.instruction}"`,
+  delay: Duration.seconds(1),
+  summary: (task) => `done: ${task.instruction}`,
 });
 
 const program = Effect.gen(function* () {
@@ -87,7 +84,7 @@ const program = Effect.gen(function* () {
 
   const inbox = yield* Queue.unbounded<IncomingMessage>();
   const services = Layer.mergeAll(
-    aiVoice().pipe(Layer.provideMerge(Layer.merge(consoleOutbound, consoleWorker))),
+    aiVoice().pipe(Layer.provideMerge(Layer.merge(consoleOutbound, replWorker))),
     configLayer({ botIds: [BOT] }),
     queueEventSource(inbox),
   );

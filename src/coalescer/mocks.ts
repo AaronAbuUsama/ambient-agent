@@ -5,7 +5,7 @@
  * these for its real implementation is a one-line Layer change at the wiring
  * site; nothing in the Coalescer moves.
  */
-import { Context, Effect, Layer, Queue, Ref, Stream } from "effect";
+import { Console, Context, Duration, Effect, Layer, Queue, Ref, Stream } from "effect";
 import type { ConversationWindow, IncomingMessage } from "./events.ts";
 import {
   Conversationalist,
@@ -42,6 +42,20 @@ export const cannedWorker = (
   Layer.succeed(Worker, {
     delegate: (task) =>
       (tasks ? Ref.update(tasks, (t) => [...t, task]) : Effect.void).pipe(Effect.as(reply(task))),
+  });
+
+// A console-logging Worker stand-in for the runnable harnesses (demo, repl): log the
+// task, pause `delay` (so the blocking delegate is actually *felt* against the debounce),
+// then return a canned summary. Parameterized so each harness keeps its own log line,
+// delay, and summary — the shared shape lives here, the flavour stays at the call site.
+export const consoleWorker = (opts: {
+  readonly log: (task: WorkerTask) => string;
+  readonly delay: Duration.DurationInput;
+  readonly summary: (task: WorkerTask) => string;
+}): Layer.Layer<Worker> =>
+  Layer.succeed(Worker, {
+    delegate: (task) =>
+      Console.log(opts.log(task)).pipe(Effect.zipRight(Effect.sleep(opts.delay)), Effect.as({ summary: opts.summary(task) })),
   });
 
 // ── Conversationalist stub #1: record every fire (for timing tests) ──────────

@@ -124,6 +124,10 @@ export const aiVoice = (persona: string = DEFAULT_PERSONA): Layer.Layer<Conversa
             const runTurn = Effect.tryPromise({
               try: async (signal) => {
                 const run = <A>(eff: Effect.Effect<A>): Promise<A> => Runtime.runPromise(runtime)(eff, { signal });
+                // "The voice is acting" — light the typing latch (a no-op once lit), then run the
+                // outbound Effect. Both tools go through here, so typing switches on for any action.
+                const act = <A>(eff: Effect.Effect<A>): Promise<A> =>
+                  run(Deferred.succeed(acting, undefined).pipe(Effect.zipRight(eff)));
                 const replies: string[] = [];
                 let delegated = false;
                 let streamError: unknown;
@@ -146,7 +150,7 @@ export const aiVoice = (persona: string = DEFAULT_PERSONA): Layer.Layer<Conversa
                       inputSchema: z.object({ text: z.string() }),
                       execute: ({ text }) => {
                         replies.push(text);
-                        return run(Deferred.succeed(acting, undefined).pipe(Effect.zipRight(outbound.reply(chatId, text))));
+                        return act(outbound.reply(chatId, text));
                       },
                     }),
                     delegate: tool({
@@ -156,13 +160,9 @@ export const aiVoice = (persona: string = DEFAULT_PERSONA): Layer.Layer<Conversa
                       // result the model can narrate, exactly as the stub's delegateAndNarrate does.
                       execute: ({ instruction }) => {
                         delegated = true;
-                        return run(
-                          Deferred.succeed(acting, undefined).pipe(
-                            Effect.zipRight(
-                              worker.delegate({ chatId, instruction }).pipe(
-                                Effect.catchAll((err) => Effect.succeed({ summary: `couldn't do that: ${String(err)}` })),
-                              ),
-                            ),
+                        return act(
+                          worker.delegate({ chatId, instruction }).pipe(
+                            Effect.catchAll((err) => Effect.succeed({ summary: `couldn't do that: ${String(err)}` })),
                           ),
                         );
                       },
@@ -173,13 +173,15 @@ export const aiVoice = (persona: string = DEFAULT_PERSONA): Layer.Layer<Conversa
                 if (streamError !== undefined) throw streamError;
                 // Silence is a DECISION — log it as loudly as a reply, so the terminal always
                 // shows what the voice CHOSE, never just an absence you have to interpret.
-                const decision = replies.length
-                  ? delegated
+                const spoke = replies.length > 0;
+                const decision =
+                  delegated && spoke
                     ? "🛠️  delegated + replied"
-                    : "💬 replied"
-                  : delegated
-                    ? "🛠️  delegated, no reply"
-                    : "🤫 chose to stay silent";
+                    : delegated
+                      ? "🛠️  delegated, no reply"
+                      : spoke
+                        ? "💬 replied"
+                        : "🤫 chose to stay silent";
                 console.log(`[${stamp()}] ${decision} — ${chatId}`);
                 return replies;
               },

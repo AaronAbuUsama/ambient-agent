@@ -12,7 +12,7 @@ import { Console, Duration, Effect, Layer, Queue } from "effect";
 import * as Coalescer from "./coalescer.ts";
 import { configLayer } from "./config.ts";
 import type { IncomingMessage } from "./events.ts";
-import { delegateAndNarrate, queueEventSource } from "./mocks.ts";
+import { consoleWorker, delegateAndNarrate, queueEventSource } from "./mocks.ts";
 import { Conversationalist, Outbound, Worker } from "./ports.ts";
 
 const BOT = "bot@s.whatsapp.net";
@@ -60,13 +60,11 @@ const consoleOutbound = Layer.succeed(Outbound, {
   setTyping: (chatId, on) => Console.log(`   ⌨️  typing ${on ? "on" : "off"}`),
 });
 
-// A deliberately slow Worker — this is what the blocking delegate (D1a) waits on.
-const slowWorker = Layer.succeed(Worker, {
-  delegate: (task) =>
-    Console.log(`   \u{1F6E0}️  worker: "${task.instruction}" (working…)`).pipe(
-      Effect.zipRight(Effect.sleep(Duration.seconds(2))),
-      Effect.as({ summary: `reviewed ${task.instruction.match(/pr \d+/i)?.[0] ?? "it"} — LGTM` }),
-    ),
+// A deliberately slow Worker (2s) — this is what the blocking delegate (D1a) waits on.
+const slowWorker = consoleWorker({
+  log: (task) => `   \u{1F6E0}️  worker: "${task.instruction}" (working…)`,
+  delay: Duration.seconds(2),
+  summary: (task) => `reviewed ${task.instruction.match(/pr \d+/i)?.[0] ?? "it"} — LGTM`,
 });
 
 // The voice: logs each fire (so you can see *when* the Coalescer wakes it), then

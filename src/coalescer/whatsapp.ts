@@ -142,6 +142,19 @@ export const botIdOf = (session: WhatsAppSession): string =>
   (session.identity()?.jid ?? "unknown@s.whatsapp.net").replace(/:\d+(?=@)/, "");
 
 /**
+ * Every JID an @-mention of the bot can carry. In a LID-addressed group the mention
+ * uses the bot's `@lid` identity, which `identity()` does NOT expose — so it must be
+ * supplied out-of-band (env for now; auto-detection later). `rawLid` accepts a bare
+ * number (we append `@lid`) or a full `NNN@lid` JID. This keeps all bot-JID shaping —
+ * PN device-strip AND LID normalization — in one place, next to `botIdOf`.
+ */
+export const botIdsOf = (session: WhatsAppSession, rawLid?: string): readonly string[] => {
+  const trimmed = rawLid?.trim();
+  const lid = trimmed ? (trimmed.includes("@") ? trimmed : `${trimmed}@lid`) : undefined;
+  return lid ? [botIdOf(session), lid] : [botIdOf(session)];
+};
+
+/**
  * EventSource over `session.onMessage`. Messages are pushed onto an unbounded
  * queue (WhatsApp's inbound rate is low) and surfaced as a Stream; `allow` gates
  * which chats reach the loop, since the voice replies for real. The listener is

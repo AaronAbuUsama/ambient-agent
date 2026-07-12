@@ -20,7 +20,7 @@ import * as Coalescer from "./coalescer.ts";
 import { configLayer } from "./config.ts";
 import { describeModel } from "./model.ts";
 import { aiVoice } from "./voice.ts";
-import { botIdOf, openSession, whatsappEventSource, whatsappOutbound } from "./whatsapp.ts";
+import { botIdsOf, openSession, whatsappEventSource, whatsappOutbound } from "./whatsapp.ts";
 import { githubWorker } from "./worker.ts";
 
 try {
@@ -30,14 +30,6 @@ try {
 }
 
 const STORE_DIR = process.env.WHATSAPP_STORE_DIR ?? "./.wa-auth";
-
-// The bot's `@lid` identity. In a LID-addressed chat, an @-mention of the bot
-// carries its `@lid` JID — which `session.identity()` does NOT expose (it only
-// gives the phone-number JID), so mentions there never match without this. Set it
-// via env for now (auto-detection later); accepts a bare number (we append `@lid`)
-// or a full `NNN@lid` JID.
-const rawLid = process.env.WHATSAPP_BOT_LID?.trim();
-const BOT_LID = rawLid ? (rawLid.includes("@") ? rawLid : `${rawLid}@lid`) : undefined;
 
 // Chat gate — mirrors agent/channels/whatsapp.ts. Fail closed: an unset target
 // silences the bot rather than turning it loose on every chat the number is in.
@@ -70,10 +62,11 @@ const program = Effect.gen(function* () {
   yield* Console.log(`connecting to WhatsApp (store: ${STORE_DIR})…`);
 
   const session = yield* openSession(STORE_DIR);
-  const botPn = botIdOf(session);
-  const botIds = BOT_LID ? [botPn, BOT_LID] : [botPn];
+  // The bot's identities to match @-mentions against: its phone-number JID plus,
+  // in a LID-addressed group, its `@lid` JID (from WHATSAPP_BOT_LID — see botIdsOf).
+  const botIds = botIdsOf(session, process.env.WHATSAPP_BOT_LID);
   yield* Console.log(
-    `online as ${botPn}${BOT_LID ? ` (lid ${BOT_LID})` : ""} — watching ${
+    `online as ${botIds.join(" / ")} — watching ${
       GROUPS.size > 0 ? [...GROUPS].join(", ") : ALLOW_ANY_GROUP ? "any group" : ALLOW_DM ? "DMs" : "nothing"
     }\n`,
   );
