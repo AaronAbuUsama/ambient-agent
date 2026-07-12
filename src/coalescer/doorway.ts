@@ -41,6 +41,13 @@ import { Conversationalist, ConversationError, Outbound } from "./ports.ts";
  * The in-memory implementation below is enough for one always-on process; #9
  * replaces it with a SQLite-backed store so sessions survive a restart, without
  * the doorway voice changing.
+ *
+ * Deliberately a plain injected interface, NOT a Coalescer `Context.Tag` port
+ * (contrast `ports.ts`): `SessionStore` and `VoiceModel` are internal to how the
+ * voice is *constructed*, not seams the Coalescer itself depends on — the Coalescer
+ * still sees only the `Conversationalist`/`Outbound` tags. Constructor injection is
+ * already the swap seam (#9 passes a durable impl; the harness passes a scripted
+ * `VoiceModel`), so a tag/Layer would add wiring without buying more.
  */
 export interface SessionStore {
   /** The resume cursor for a chat, or `undefined` for a chat we've never woken. */
