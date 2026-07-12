@@ -259,7 +259,7 @@ quiet on chit-chat, chimes in on relevant/GitHub-ish messages *without* being
 
 ---
 
-## 7. Rung 2 — plumbing built (2a ✅), Worker doorway is NEXT (2b)
+## 7. Rung 2 — 2a ✅ + 2b ✅ DONE; blocked only on a GitHub token (see BLOCKER below)
 
 The seams swap in behind the same ports; the Coalescer, voice, and ports did NOT
 change. Built in `src/coalescer/whatsapp.ts` + `src/coalescer/live.ts`
@@ -279,19 +279,63 @@ change. Built in `src/coalescer/whatsapp.ts` + `src/coalescer/live.ts`
   `pnpm run live` connected (`connecting → authenticated → online`) on the existing
   `./.wa-auth`. **No re-pair needed** (QR path is there if it ever logs out).
 
-**To go live (user):** `WHATSAPP_GROUP_ID=<jid@g.us> pnpm run live` (needs the local
-Codex login for the voice). Then message that group and watch the voice
-participate. Full inbound→reply flow is NOT yet exercised end-to-end (needs a live
-message), but boot + connect + online are verified.
+**Live is PROVEN.** `pnpm run live` connected and the two-tier behavior ran in the
+"Tst" group for real: silent on "Yo", chimed in unprompted on "What's happening with
+GitHub" — no @-mention needed. Every WhatsApp in/out is logged (📥/📤/⌨️, with raw
+mention JIDs; `whatsapp.ts`). All traffic bills the local Codex sub (no API key set).
 
-**NEXT — Rung 2b (the one real fork):**
-1. **Real `Worker`** — replace the honest stub in `live.ts` (`(worker not wired
-   yet — would handle: …)`) with real delegation to `agent/` (blocking, D1a). This
-   is the ONE Eve doorway; `agent/` stays untouched. Open question to settle:
-   mechanism — `eve/client` session loopback (needs the Eve app running) vs. an
-   in-process agent-turn API. Present options in code before choosing.
-2. **Prod guard** — `experimental_chatgpt()` is local-dev only; branch on
-   `NODE_ENV` at the model-hoist in `voice.ts` for a deployed model (see §2.6).
+### Rung 2b — real Worker — DONE ✅ (chose Option B: in-process reuse)
+`src/coalescer/worker.ts` runs `agent/`'s GitHub agent **in-process**: imports its 13
+tools + `instructions.md` UNCHANGED, drives them with `ai@7` `streamText` (same seam
+as the voice), no Eve runtime. Decisions/mechanics:
+- Eve `defineTool` → AI-SDK `tool` via a tiny `adapt()`; tools ignore Eve's
+  `ToolContext` (0/13 use it), so a `{}` stand-in works.
+- `adapt()` STRIPS empty-string args — the model fills optional `owner`/`repo` with
+  `""`, and `agent/`'s `resolveRepo` does `input.owner ?? fallback` (keeps `""`); the
+  strip lets the configured default repo win. (Do NOT "fix" this in `agent/`.)
+- `voice.ts`: persona is now a param — `aiVoice(persona?)` (default unchanged; REPL
+  uses `aiVoice()`). `live.ts` passes a **QA bug-intake persona**.
+- Verified end-to-end: the worker drove the REAL GitHub API (model → adapted tool →
+  octokit). Committed `9dc87a6`. 72 tests green, typecheck clean, `agent/` untouched.
 
-DoD: the bot participates in a real WhatsApp group — silent on chatter, chimes in
-when it can help, delegates real GitHub work and narrates the result.
+### Near-term GOAL (the actual use case)
+A WhatsApp group of **non-technical QA testers** for an **iOS app**. They describe
+bugs casually; the voice (QA persona in `live.ts`) asks short clarifying questions
+(repro / expected vs actual / device+iOS / frequency), then `delegate`s a structured
+bug report; the worker files a GitHub **issue** and the voice replies with the link.
+
+### BLOCKER (hand back to user) — GitHub token can't see the target repo
+`.env` `GITHUB_REPO` is now **`TheCallApp/ios-design-system`** (changed from the
+non-existent `AaronAbuUsama/wa-bot-sandbox`). But the current **fine-grained** token
+is scoped to `AaronAbuUsama` + a few orgs — NOT `TheCallApp` → every call **404s**.
+User must create a new token that can reach `TheCallApp/ios-design-system`:
+- Fast (classic, pre-fillable): `https://github.com/settings/tokens/new?scopes=repo&description=whatsappd-qa-bot`
+  → generate → if org uses SAML, "Configure SSO → Authorize" for TheCallApp →
+  `sed -i '' 's|^GITHUB_TOKEN=.*|GITHUB_TOKEN=<paste>|' .env`.
+- Tidy (fine-grained): `https://github.com/settings/personal-access-tokens/new`,
+  Resource owner = **TheCallApp**, repo = ios-design-system, perms Issues R/W +
+  PRs R/W + Contents R + Metadata R.
+On resume: re-run the token access check (the `node -e fetch /repos/TheCallApp/…`
+probe) before testing live. `.env` is gitignored — token never enters git.
+
+### Also open / next
+- **Prod guard** — `experimental_chatgpt()` is local-dev only; branch on `NODE_ENV`
+  at the model-hoist in `voice.ts` + `worker.ts` for a deployed model (see §2.6).
+- **/simplify pass** — deferred until after 2b (now done). Known target: `demo.ts` /
+  `repl.ts` / `live.ts` triplicate a console `Outbound` + worker stub; consolidate
+  into `mocks.ts`. Also re-check `voice.ts` indentation around the `aiVoice(persona)`
+  wrapper.
+- **Eve direction (decided):** we are ~90% off Eve — the voice + worker are plain
+  Effect + AI SDK; the Eve *runtime* is never run. KEEP the one import
+  `experimental_chatgpt` (Eve's CUSTOM transport to the Codex subscription backend via
+  the local `codex login` — there is NO free ecosystem/Effect drop-in; standard
+  AI-SDK/@effect/ai providers need paid API keys). Fully scrapping Eve = reimplement
+  that Codex transport OR pay for keys — a later call, not now. `agent/` the Eve app is
+  now vestigial (we reuse its tools, never run it).
+- **Multi-agent vision:** the `Worker` port already makes each agent a swappable
+  layer; a future code-runner/sandbox agent is another worker + another `delegate_*`
+  tool (or a router). Not built; nothing blocks it.
+
+DoD (near-term): a QA tester messages "Tst" (or the real QA group) → voice gathers
+details → worker files an issue in `TheCallApp/ios-design-system` → voice replies with
+the link. Blocked only on the token above.
