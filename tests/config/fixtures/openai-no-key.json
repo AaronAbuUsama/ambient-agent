@@ -1,0 +1,10 @@
+{
+  "whatsapp": { "chats": [], "allowDm": false },
+  "github": {
+    "token": "ghp_x",
+    "repo": "acme/widgets"
+  },
+  "model": {
+    "source": "openai"
+  }
+}
