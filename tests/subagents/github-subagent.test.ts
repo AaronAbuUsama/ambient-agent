@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { githubResultSchema } from "../../agent/subagents/github/lib/output-schema.ts";
@@ -72,6 +72,21 @@ describe("github subagent — carries its own GitHub-triage prompt", () => {
   it("does not carry the voice-only `say` / ambient instructions", () => {
     expect(sub).not.toMatch(/`say`/);
     expect(sub).not.toMatch(/ambient/i);
+  });
+});
+
+describe("root voice — non-blocking delegation contract", () => {
+  const delegation = readFileSync(repoPath("agent/instructions/10-delegation.md"), "utf8");
+
+  it("routes GitHub operations through delegate and ends with an on-it say", () => {
+    expect(delegation).toMatch(/every GitHub write or potentially long GitHub read\/review, call `delegate`/);
+    expect(delegation).toMatch(/Never call a\s+`github_\*` tool directly/);
+    expect(delegation).toMatch(/call `say` with a short “on it” message\s+and end the turn/);
+  });
+
+  it("does not alter the github subagent's 13-tool surface", () => {
+    const subagentTools = readdirSync(repoPath("agent/subagents/github/tools")).filter((name) => name.endsWith(".ts"));
+    expect(subagentTools).toHaveLength(13);
   });
 });
 
