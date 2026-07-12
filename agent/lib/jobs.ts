@@ -16,6 +16,7 @@ export interface DelegationJob {
   readonly task: string;
   readonly status: JobStatus;
   readonly attempts: number;
+  readonly workerState?: SessionState;
   readonly result?: GithubResult;
   readonly error?: string;
 }
@@ -28,6 +29,7 @@ interface JobRow {
   task: string;
   status: JobStatus;
   attempts: number;
+  worker_state_json: string | null;
   result_json: string | null;
   error: string | null;
 }
@@ -40,6 +42,7 @@ const decodeJob = (row: JobRow): DelegationJob => ({
   task: row.task,
   status: row.status,
   attempts: row.attempts,
+  ...(row.worker_state_json === null ? {} : { workerState: JSON.parse(row.worker_state_json) as SessionState }),
   ...(row.result_json === null ? {} : { result: JSON.parse(row.result_json) as GithubResult }),
   ...(row.error === null ? {} : { error: row.error }),
 });
@@ -72,6 +75,7 @@ export class GatewayStore implements SessionStore {
         task TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'report_pending', 'reporting', 'done', 'failed')),
         attempts INTEGER NOT NULL DEFAULT 0,
+        worker_state_json TEXT,
         result_json TEXT,
         error TEXT,
         created_at TEXT NOT NULL,
@@ -79,6 +83,10 @@ export class GatewayStore implements SessionStore {
       );
       CREATE INDEX IF NOT EXISTS jobs_status_idx ON jobs(status, created_at);
     `);
+    const columns = this.#db.prepare("PRAGMA table_info(jobs)").all() as unknown as Array<{ name: string }>;
+    if (!columns.some(({ name }) => name === "worker_state_json")) {
+      this.#db.exec("ALTER TABLE jobs ADD COLUMN worker_state_json TEXT");
+    }
   }
 
   close(): void {
@@ -181,6 +189,16 @@ export class GatewayStore implements SessionStore {
           WHERE id = ? AND status = 'running'`,
       )
       .run(JSON.stringify(result), id);
+  }
+
+  checkpointWorker(id: string, state: SessionState): void {
+    if (state.sessionId === undefined) throw new Error(`Cannot checkpoint worker ${id} without sessionId`);
+    this.#db
+      .prepare(
+        `UPDATE jobs SET worker_state_json = ?, updated_at = datetime('now')
+          WHERE id = ? AND status = 'running'`,
+      )
+      .run(JSON.stringify(state), id);
   }
 
   queueFailure(id: string, error: string): void {

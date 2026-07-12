@@ -90,10 +90,10 @@ export async function startGateway(agentName: string): Promise<void> {
     const botIds = botIdsOf(session, process.env.WHATSAPP_BOT_LID);
     yield* Effect.logInfo(`online as ${botIds.join(" / ")} — watching ${gate.describe()}`);
 
-    const jobs = eveJobLoopback(client, async (chatId, text) => {
+    const jobLoopback = eveJobLoopback(client, async (chatId, text) => {
       await session.send(chatId, { text });
     });
-    yield* Effect.forkScoped(jobRunner(store, jobs));
+    yield* Effect.forkScoped(jobRunner(store, jobLoopback));
     yield* Effect.logInfo("non-blocking delegation runner started");
 
     const services = Layer.mergeAll(

@@ -69,6 +69,7 @@ describe("non-blocking delegate", () => {
     const id = first.enqueue({ voiceSessionId: "voice-session-3", kind: "github", task: "Survive restart." });
     first.set("team@g.us", { sessionId: "voice-session-3", streamIndex: 2 });
     expect(first.claimPending(1)[0]).toMatchObject({ id, status: "running", attempts: 1 });
+    first.checkpointWorker(id, { sessionId: "worker-session-3", continuationToken: "worker-token", streamIndex: 0 });
 
     // A delegate tool opens a short-lived connection while the gateway is live;
     // merely opening it must not misclassify active work as crash leftovers.
@@ -79,13 +80,73 @@ describe("non-blocking delegate", () => {
 
     const restarted = new GatewayStore(path);
     expect(restarted.reclaimRunning()).toBe(1);
-    expect(restarted.listJobs()[0]).toMatchObject({ id, status: "pending", attempts: 1 });
-    expect(restarted.claimPending(1)[0]).toMatchObject({ id, status: "running", attempts: 2 });
+    expect(restarted.listJobs()[0]).toMatchObject({
+      id,
+      status: "pending",
+      attempts: 1,
+      workerState: { sessionId: "worker-session-3", continuationToken: "worker-token", streamIndex: 0 },
+    });
+    expect(restarted.claimPending(1)[0]).toMatchObject({
+      id,
+      status: "running",
+      attempts: 2,
+      workerState: { sessionId: "worker-session-3" },
+    });
     restarted.close();
   });
 });
 
 describe("gateway job runner", () => {
+  it("resumes an interrupted worker stream from persisted SessionState without sending the mutation again", async () => {
+    const workerState = { sessionId: "worker-in-flight", continuationToken: "worker-token", streamIndex: 6 };
+    const selectors: Array<SessionState | string | undefined> = [];
+    let sends = 0;
+    const client = {
+      session(selector?: SessionState | string) {
+        selectors.push(selector);
+        return {
+          state: workerState,
+          async send() {
+            sends += 1;
+            throw new Error("must not send a second worker turn");
+          },
+          async *stream() {
+            yield { type: "subagent.called", data: { name: "github" } };
+            yield {
+              type: "result.completed",
+              data: {
+                result: {
+                  action: "create_issue",
+                  number: 77,
+                  url: "https://github.com/acme/repo/issues/77",
+                  summary: "Filed #77 before the restart.",
+                },
+              },
+            };
+            yield { type: "session.completed" };
+          },
+        };
+      },
+    } as unknown as Client;
+    const loopback = eveJobLoopback(client, async () => {});
+    const job = {
+      id: "job-resume",
+      voiceSessionId: "voice-resume",
+      chatId: "group@g.us",
+      kind: "github" as const,
+      task: "File only once.",
+      status: "running" as const,
+      attempts: 2,
+      workerState,
+    };
+
+    expect(await loopback.runGithub(job, () => { throw new Error("must not checkpoint again"); })).toMatchObject({
+      number: 77,
+    });
+    expect(selectors).toEqual([workerState]);
+    expect(sends).toBe(0);
+  });
+
   it("uses task-mode outputSchema for the worker and full SessionState for report-back", async () => {
     const selectors: Array<SessionState | string | undefined> = [];
     const sends: unknown[] = [];
@@ -101,6 +162,8 @@ describe("gateway job runner", () => {
           async send(input: unknown) {
             sends.push(input);
             return {
+              sessionId: call === 1 ? "worker-session" : "voice-real",
+              continuationToken: call === 1 ? "worker-token" : "not-a-chat-id",
               async result() {
                 return call === 1
                   ? {
@@ -111,7 +174,20 @@ describe("gateway job runner", () => {
                         summary: "Filed #88.",
                       },
                       status: "completed",
-                      events: [{ type: "subagent.called", data: { name: "github" } }],
+                      events: [
+                        { type: "subagent.called", data: { name: "github" } },
+                        {
+                          type: "result.completed",
+                          data: {
+                            result: {
+                              action: "create_issue",
+                              number: 88,
+                              url: "https://github.com/acme/repo/issues/88",
+                              summary: "Filed #88.",
+                            },
+                          },
+                        },
+                      ],
                     }
                   : {
                       data: undefined,
@@ -147,7 +223,7 @@ describe("gateway job runner", () => {
       attempts: 1,
     };
 
-    expect(await loopback.runGithub(job)).toMatchObject({ number: 88 });
+    expect(await loopback.runGithub(job, () => {})).toMatchObject({ number: 88 });
     expect(await loopback.deliverVoice(job, persisted, "worker result")).toEqual(advanced);
 
     expect(selectors).toEqual([undefined, persisted]);

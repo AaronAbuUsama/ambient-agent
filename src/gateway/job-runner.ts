@@ -1,20 +1,36 @@
 import { Duration, Effect, type Scope } from "effect";
-import { Client, type SessionState } from "eve/client";
+import { Client, type HandleMessageStreamEvent, type SessionState } from "eve/client";
 import { githubResultSchema, type GithubResult } from "../../agent/subagents/github/lib/output-schema.ts";
 import type { DelegationJob, GatewayStore } from "../../agent/lib/jobs.ts";
 import { harvestSays } from "../coalescer/doorway.ts";
 
 export interface JobLoopback {
-  readonly runGithub: (job: DelegationJob) => Promise<GithubResult>;
+  readonly runGithub: (job: DelegationJob, checkpoint: (state: SessionState) => void) => Promise<GithubResult>;
   readonly deliverVoice: (job: DelegationJob, state: SessionState, message: string) => Promise<SessionState>;
 }
+
+const githubResultFromEvents = (job: DelegationJob, events: readonly HandleMessageStreamEvent[]): GithubResult => {
+  const delegated = events.some((event) => event.type === "subagent.called" && event.data.name === "github");
+  if (!delegated) throw new Error(`Detached worker did not call the github subagent for job ${job.id}`);
+  const failure = events.find((event) => event.type === "session.failed");
+  if (failure?.type === "session.failed") throw new Error(failure.data.message);
+  const completed = events.filter((event) => event.type === "result.completed").at(-1);
+  if (completed?.type !== "result.completed") throw new Error(`GitHub worker produced no result for job ${job.id}`);
+  return githubResultSchema.parse(completed.data.result);
+};
 
 /** Production adapter: every direction uses the same eve/client loopback doorway. */
 export const eveJobLoopback = (
   client: Client,
   reply: (chatId: string, text: string) => Promise<void>,
 ): JobLoopback => ({
-  runGithub: async (job) => {
+  runGithub: async (job, checkpoint) => {
+    if (job.workerState !== undefined) {
+      const session = client.session(job.workerState);
+      const events: HandleMessageStreamEvent[] = [];
+      for await (const event of session.stream()) events.push(event);
+      return githubResultFromEvents(job, events);
+    }
     const session = client.session();
     const response = await session.send<GithubResult>({
       message:
@@ -23,13 +39,14 @@ export const eveJobLoopback = (
         `typed worker result as your own final result. Do not call say.\n\nTask:\n${job.task}`,
       outputSchema: githubResultSchema,
     });
+    checkpoint({
+      ...(response.continuationToken === undefined ? {} : { continuationToken: response.continuationToken }),
+      sessionId: response.sessionId,
+      streamIndex: 0,
+    });
     const result = await response.result();
     if (result.status === "failed") throw new Error(`GitHub worker session failed for job ${job.id}`);
-    const delegated = result.events.some(
-      (event) => event.type === "subagent.called" && event.data.name === "github",
-    );
-    if (!delegated) throw new Error(`Detached worker did not call the github subagent for job ${job.id}`);
-    return githubResultSchema.parse(result.data);
+    return githubResultFromEvents(job, result.events);
   },
   deliverVoice: async (job, state, message) => {
     if (job.chatId === undefined) throw new Error(`Claimed job ${job.id} has no chatId`);
@@ -96,7 +113,7 @@ const report = (store: GatewayStore, loopback: JobLoopback, job: DelegationJob):
 };
 
 const runWorker = (store: GatewayStore, loopback: JobLoopback, job: DelegationJob): Effect.Effect<void> =>
-  Effect.tryPromise(() => loopback.runGithub(job)).pipe(
+  Effect.tryPromise(() => loopback.runGithub(job, (state) => store.checkpointWorker(job.id, state))).pipe(
     Effect.matchEffect({
       onSuccess: (result) => {
         store.queueResult(job.id, result);
