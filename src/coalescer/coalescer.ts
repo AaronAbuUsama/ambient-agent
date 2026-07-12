@@ -69,8 +69,8 @@ const makeChatLoop = (config: CoalescerConfigValues, convo: ConversationalistSer
       msg: IncomingMessage,
     ): Effect.Effect<never> => {
       const next = appendBounded(buffer, msg, bounds);
-      return addressesBot(msg, config.botId)
-        ? fireAndReset(next, reasonOf(msg, config.botId))
+      return addressesBot(msg, config.botIds)
+        ? fireAndReset(next, reasonOf(msg, config.botIds))
         : warm(next, burstStart);
     };
 

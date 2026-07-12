@@ -101,7 +101,7 @@ const main = Effect.gen(function* () {
 
   const services = Layer.mergeAll(
     loggingVoice.pipe(Layer.provideMerge(Layer.merge(consoleOutbound, slowWorker))),
-    configLayer({ botId: BOT, debounceWindow: Duration.seconds(3) }),
+    configLayer({ botIds: [BOT], debounceWindow: Duration.seconds(3) }),
     queueEventSource(inbox),
   );
 

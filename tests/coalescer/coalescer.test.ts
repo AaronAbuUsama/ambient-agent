@@ -61,7 +61,7 @@ const startRecording = (
         Layer.mergeAll(
           queueEventSource(source),
           recordingConversationalist(turns),
-          configLayer({ botId: BOT, debounceWindow: WINDOW, ...cfg }),
+          configLayer({ botIds: [BOT], debounceWindow: WINDOW, ...cfg }),
         ),
       ),
     ),
@@ -79,7 +79,7 @@ const startSelfGating = (
         Layer.mergeAll(
           queueEventSource(source),
           selfGatingConversationalist.pipe(Layer.provide(Layer.merge(collectingOutbound(outbound), cannedWorker(undefined, tasks)))),
-          configLayer({ botId: BOT, debounceWindow: WINDOW }),
+          configLayer({ botIds: [BOT], debounceWindow: WINDOW }),
         ),
       ),
     ),
@@ -334,7 +334,7 @@ describe("Coalescer", () => {
       yield* Effect.forkScoped(
         Coalescer.run.pipe(
           Effect.provide(
-            Layer.mergeAll(queueEventSource(source), flakyVoice, configLayer({ botId: BOT, debounceWindow: WINDOW })),
+            Layer.mergeAll(queueEventSource(source), flakyVoice, configLayer({ botIds: [BOT], debounceWindow: WINDOW })),
           ),
         ),
       );

@@ -30,6 +30,14 @@ try {
 
 const STORE_DIR = process.env.WHATSAPP_STORE_DIR ?? "./.wa-auth";
 
+// The bot's `@lid` identity. In a LID-addressed chat, an @-mention of the bot
+// carries its `@lid` JID — which `session.identity()` does NOT expose (it only
+// gives the phone-number JID), so mentions there never match without this. Set it
+// via env for now (auto-detection later); accepts a bare number (we append `@lid`)
+// or a full `NNN@lid` JID.
+const rawLid = process.env.WHATSAPP_BOT_LID?.trim();
+const BOT_LID = rawLid ? (rawLid.includes("@") ? rawLid : `${rawLid}@lid`) : undefined;
+
 // Chat gate — mirrors agent/channels/whatsapp.ts. Fail closed: an unset target
 // silences the bot rather than turning it loose on every chat the number is in.
 const parseSet = (raw: string | undefined): ReadonlySet<string> =>
@@ -60,16 +68,17 @@ const program = Effect.gen(function* () {
   yield* Console.log(`connecting to WhatsApp (store: ${STORE_DIR})…`);
 
   const session = yield* openSession(STORE_DIR);
-  const botId = botIdOf(session);
+  const botPn = botIdOf(session);
+  const botIds = BOT_LID ? [botPn, BOT_LID] : [botPn];
   yield* Console.log(
-    `online as ${botId} — watching ${
+    `online as ${botPn}${BOT_LID ? ` (lid ${BOT_LID})` : ""} — watching ${
       GROUPS.size > 0 ? [...GROUPS].join(", ") : ALLOW_ANY_GROUP ? "any group" : ALLOW_DM ? "DMs" : "nothing"
     }\n`,
   );
 
   const services = Layer.mergeAll(
     aiVoice(QA_PERSONA).pipe(Layer.provideMerge(Layer.merge(whatsappOutbound(session), githubWorker))),
-    configLayer({ botId }),
+    configLayer({ botIds }),
     whatsappEventSource(session, chatAllowed),
   );
 

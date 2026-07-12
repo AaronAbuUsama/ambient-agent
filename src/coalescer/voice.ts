@@ -23,7 +23,7 @@
  * LOCAL-DEV ONLY — it fails in deployment (no Codex creds there). Branch on env
  * before shipping.
  */
-import { Effect, Layer, Runtime } from "effect";
+import { Duration, Effect, Layer, Runtime } from "effect";
 import { stepCountIs, streamText, tool } from "ai";
 import { experimental_chatgpt } from "eve/models/openai";
 import { z } from "zod";
@@ -35,6 +35,21 @@ const DEFAULT_PERSONA = `You're a regular member of this WhatsApp group.
 - Do NOT wait to be @-mentioned. Being addressed just means "definitely answer now."
 - Stay quiet during pure social chatter — silence is normal. To stay silent, just don't call reply.
 - For real GitHub work, call delegate() then reply() to narrate what came back.`;
+
+/**
+ * Appended to every persona. The group is tool-driven: the ONLY channel to the
+ * humans is the `reply` tool — assistant prose is drained and discarded, never
+ * delivered. Without this, the model answers a clear question in plain text,
+ * calls no tool, and the group hears nothing (verified against the Codex
+ * backend). Spelling out the contract makes it call `reply`, while still
+ * choosing silence (no tool call) on off-topic chatter.
+ */
+const SPEECH_CONTRACT = `
+
+How the group hears you: they ONLY see messages you send by calling the reply tool. Any text you write outside a tool call is discarded — nobody sees it. So whenever you want to say ANYTHING, you must call reply with that text. If you have nothing to add, call no tools at all — that is how you stay silent.`;
+
+/** `HH:MM:SS`, matching the whatsapp.ts traffic logs so turns interleave readably. */
+const stamp = (): string => new Date().toTimeString().slice(0, 8);
 
 /**
  * Render the buffered window as a plain transcript plus a one-line note on how
@@ -68,22 +83,34 @@ export const aiVoice = (persona: string = DEFAULT_PERSONA): Layer.Layer<Conversa
     // local-dev only; see the header note).
     const model = experimental_chatgpt();
     return {
-      turn: (window) =>
+      turn: (window) => {
+        const chatId = window.chatId;
+
+        // Auto-typing: keep WhatsApp's "typing…" lit for the whole turn as a mechanical
+        // side-effect of *working* — NOT a tool the model has to remember to call. The
+        // indicator auto-expires after ~25s, so refresh it on a timer; it's raced against
+        // the turn below (so it's interrupted the instant the turn ends) and `ensuring`
+        // clears it whatever the outcome — reply, silence, error, or scope shutdown.
+        const keepTyping = outbound
+          .setTyping(chatId, true)
+          .pipe(Effect.zipRight(Effect.sleep(Duration.seconds(8))), Effect.forever);
+
         // Run each tool's Effect on the turn fiber's OWN runtime (not a bare, detached
         // `Effect.runPromise`) so log context and — the load-bearing part — interruption
         // propagate into an in-flight tool, e.g. a long blocking `worker.delegate` that
         // must be torn down when the loop's scope closes. Same runtime-capture seam
         // repl.ts uses to bridge stdin into the running program.
-        Effect.runtime<never>().pipe(
+        const runTurn = Effect.runtime<never>().pipe(
           Effect.flatMap((runtime) =>
             Effect.tryPromise({
               try: async (signal) => {
                 const run = <A>(eff: Effect.Effect<A>): Promise<A> => Runtime.runPromise(runtime)(eff, { signal });
-                const chatId = window.chatId;
+                let replied = false;
+                let delegated = false;
                 let streamError: unknown;
                 const result = streamText({
                   model,
-                  system: persona,
+                  system: persona + SPEECH_CONTRACT,
                   prompt: renderWindow(window),
                   stopWhen: stepCountIs(6),
                   abortSignal: signal,
@@ -94,36 +121,60 @@ export const aiVoice = (persona: string = DEFAULT_PERSONA): Layer.Layer<Conversa
                   },
                   tools: {
                     reply: tool({
-                      description: "Say something in the group.",
+                      description: "Say something in the group. This is the ONLY way the group hears you.",
                       inputSchema: z.object({ text: z.string() }),
-                      execute: ({ text }) => run(outbound.reply(chatId, text)),
-                    }),
-                    set_typing: tool({
-                      description: "Show typing while you work.",
-                      inputSchema: z.object({ on: z.boolean() }),
-                      execute: ({ on }) => run(outbound.setTyping(chatId, on)),
+                      execute: ({ text }) => {
+                        replied = true;
+                        return run(outbound.reply(chatId, text));
+                      },
                     }),
                     delegate: tool({
                       description: "Hand real GitHub work to the Worker; returns its result to narrate.",
                       inputSchema: z.object({ instruction: z.string() }),
                       // Never let a Worker failure reject the tool mid-turn: fold it into a
                       // result the model can narrate, exactly as the stub's delegateAndNarrate does.
-                      execute: ({ instruction }) =>
-                        run(
+                      execute: ({ instruction }) => {
+                        delegated = true;
+                        return run(
                           worker.delegate({ chatId, instruction }).pipe(
                             Effect.catchAll((err) => Effect.succeed({ summary: `couldn't do that: ${String(err)}` })),
                           ),
-                        ),
+                        );
+                      },
                     }),
                   },
                 });
                 await result.consumeStream({ onError: () => {} });
                 if (streamError !== undefined) throw streamError;
+                // Silence is a DECISION — log it as loudly as a reply, so the terminal always
+                // shows what the voice CHOSE, never just an absence you have to interpret.
+                const decision = replied
+                  ? delegated
+                    ? "🛠️  delegated + replied"
+                    : "💬 replied"
+                  : delegated
+                    ? "🛠️  delegated, no reply"
+                    : "🤫 chose to stay silent";
+                console.log(`[${stamp()}] ${decision} — ${chatId}`);
               },
               catch: (cause) => new ConversationError({ cause }),
             }),
           ),
-        ),
+        );
+
+        // Announce the wake-up (eligible + why: addressed vs ambient), keep typing lit for
+        // the turn's duration, then always clear it. The turn's error still propagates so
+        // the Coalescer's fire() logs a failed turn.
+        const addressed = window.reason !== "debounce";
+        return Effect.sync(() =>
+          console.log(
+            `[${stamp()}] 🗣️  voice turn — ${addressed ? `addressed (${window.reason})` : "ambient"}, ${window.messages.length} msg → ${chatId}`,
+          ),
+        ).pipe(
+          Effect.zipRight(Effect.race(runTurn, keepTyping)),
+          Effect.ensuring(outbound.setTyping(chatId, false)),
+        );
+      },
     };
   }),
 );

@@ -22,8 +22,13 @@ export interface CoalescerConfigValues {
   readonly maxBufferMessages: number;
   /** Buffer age bound, in ms, measured against the newest buffered message. */
   readonly maxBufferAgeMillis: number;
-  /** The bot's own JID — used to detect @-mentions and quote-replies of the bot. */
-  readonly botId: string;
+  /**
+   * Every JID that means "the bot" — used to detect @-mentions and quote-replies of
+   * it. WhatsApp addresses an account by two schemes (phone-number `@s.whatsapp.net`
+   * AND a per-chat `@lid`), and a mention can arrive under EITHER, so this is a set,
+   * not one string. A message addresses the bot if it mentions/quotes any of these.
+   */
+  readonly botIds: readonly string[];
 }
 
 export class CoalescerConfig extends Context.Tag("CoalescerConfig")<CoalescerConfig, CoalescerConfigValues>() {}
@@ -34,7 +39,7 @@ const defaultConfig: CoalescerConfigValues = {
   maxWait: Duration.seconds(10),
   maxBufferMessages: 10,
   maxBufferAgeMillis: Duration.toMillis(Duration.minutes(5)),
-  botId: "bot@s.whatsapp.net",
+  botIds: ["bot@s.whatsapp.net"],
 };
 
 /**

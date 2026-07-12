@@ -57,11 +57,13 @@ export interface ConversationWindow {
  * Does this message directly address the bot — an @-mention or a quote-reply of
  * one of the bot's messages? This is the *only* condition that skips the
  * debounce and fires immediately. It needs the high-fidelity `mentions` /
- * `quotedFrom` fields the sidecar throws away.
+ * `quotedFrom` fields the sidecar throws away. `botIds` is the set of JIDs that
+ * mean "the bot" (phone-number and/or `@lid` form) — a match on any one counts.
  */
-export const addressesBot = (msg: IncomingMessage, botId: string): boolean =>
-  msg.mentions.includes(botId) || msg.quotedFrom === botId;
+export const addressesBot = (msg: IncomingMessage, botIds: readonly string[]): boolean =>
+  msg.mentions.some((jid) => botIds.includes(jid)) ||
+  (msg.quotedFrom !== undefined && botIds.includes(msg.quotedFrom));
 
 /** The fire reason for an addressing message (mention takes precedence over quote). */
-export const reasonOf = (msg: IncomingMessage, botId: string): FireReason =>
-  msg.mentions.includes(botId) ? "mention" : "quote-reply";
+export const reasonOf = (msg: IncomingMessage, botIds: readonly string[]): FireReason =>
+  msg.mentions.some((jid) => botIds.includes(jid)) ? "mention" : "quote-reply";

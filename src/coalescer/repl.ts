@@ -88,7 +88,7 @@ const program = Effect.gen(function* () {
   const inbox = yield* Queue.unbounded<IncomingMessage>();
   const services = Layer.mergeAll(
     aiVoice().pipe(Layer.provideMerge(Layer.merge(consoleOutbound, consoleWorker))),
-    configLayer({ botId: BOT }),
+    configLayer({ botIds: [BOT] }),
     queueEventSource(inbox),
   );
   yield* Effect.forkScoped(Coalescer.run.pipe(Effect.provide(services)));
