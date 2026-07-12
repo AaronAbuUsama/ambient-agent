@@ -16,6 +16,9 @@ dist/
 # whatsapp auth store
 .wa-auth*/
 
+# codex/chatgpt creds for the bot's SEPARATE account (never commit tokens)
+.codex-bot/
+
 # logs
 *.log
 npm-debug.log*
