@@ -71,12 +71,11 @@ function formatIssues(error: z.ZodError): string {
 let cached: AppConfig | undefined;
 
 /**
- * The cached app config. Loads from the default path on first call and memoizes
- * it. Pass an explicit `filePath` to bypass the cache (used in tests); that
- * neither reads nor writes the cache, so it can't leak between tests.
+ * The cached app config: loads from the default path on first access and
+ * memoizes it, so repeated `CONFIG.*` reads don't re-hit the disk. Tests (or
+ * any caller needing a specific file) call `loadConfig(path)` directly instead.
  */
-export function getConfig(filePath?: string): AppConfig {
-  if (filePath !== undefined) return loadConfig(filePath);
+export function getConfig(): AppConfig {
   return (cached ??= loadConfig());
 }
 
