@@ -1,0 +1,10 @@
+{
+  "whatsapp": {},
+  "github": {
+    "token": "ghp_min",
+    "repo": "acme/widgets"
+  },
+  "model": {
+    "source": "codex"
+  }
+}

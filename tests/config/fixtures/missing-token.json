@@ -1,0 +1,10 @@
+{
+  "whatsapp": { "chats": [], "allowDm": false },
+  "github": {
+    "token": "",
+    "repo": "acme/widgets"
+  },
+  "model": {
+    "source": "codex"
+  }
+}
