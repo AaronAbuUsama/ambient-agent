@@ -30,7 +30,7 @@ import { z } from "zod";
 import type { ConversationWindow } from "./events.ts";
 import { Conversationalist, ConversationError, Outbound, Worker } from "./ports.ts";
 
-const PERSONA = `You're a regular member of this WhatsApp group.
+const DEFAULT_PERSONA = `You're a regular member of this WhatsApp group.
 - Chime in WHENEVER you can genuinely help — someone's stuck, a bug/PR/issue comes up, a question you can answer.
 - Do NOT wait to be @-mentioned. Being addressed just means "definitely answer now."
 - Stay quiet during pure social chatter — silence is normal. To stay silent, just don't call reply.
@@ -52,7 +52,12 @@ const renderWindow = (window: ConversationWindow): string => {
   return `Recent messages in the group:\n${transcript}\n\n(${note})`;
 };
 
-export const aiVoice: Layer.Layer<Conversationalist, never, Outbound | Worker> = Layer.effect(
+/**
+ * The voice as a `Conversationalist` Layer. `persona` is the system prompt — pass
+ * a chat-specific one (e.g. a bug-intake persona for a QA group); it defaults to a
+ * general helpful-group-member persona.
+ */
+export const aiVoice = (persona: string = DEFAULT_PERSONA): Layer.Layer<Conversationalist, never, Outbound | Worker> => Layer.effect(
   Conversationalist,
   Effect.gen(function* () {
     const outbound = yield* Outbound;
@@ -78,7 +83,7 @@ export const aiVoice: Layer.Layer<Conversationalist, never, Outbound | Worker> =
                 let streamError: unknown;
                 const result = streamText({
                   model,
-                  system: PERSONA,
+                  system: persona,
                   prompt: renderWindow(window),
                   stopWhen: stepCountIs(6),
                   abortSignal: signal,
