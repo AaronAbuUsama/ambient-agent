@@ -28,14 +28,44 @@ describe("resolveRepo", () => {
     expect(resolveRepo({})).toEqual({ owner: "acme", repo: "widgets" });
   });
 
-  it("mixes explicit fields with the fallback per-field", () => {
+  it("honors a complete explicit pair as a cross-repo override", () => {
     process.env.GITHUB_REPO = "acme/widgets";
-    expect(resolveRepo({ owner: "other" })).toEqual({ owner: "other", repo: "widgets" });
+    expect(resolveRepo({ owner: "other", repo: "thing" })).toEqual({ owner: "other", repo: "thing" });
+  });
+
+  // F4/F5: default HARD to the configured repo. A *partial* input must never
+  // bleed a model-supplied field into the default — a lone `owner` used to
+  // produce `ios-design-system/<configured-repo>` and 404. It now defaults hard.
+  it("defaults hard to GITHUB_REPO when only one field is given (no per-field mixing)", () => {
+    process.env.GITHUB_REPO = "acme/widgets";
+    expect(resolveRepo({ owner: "ios-design-system" })).toEqual({ owner: "acme", repo: "widgets" });
+    expect(resolveRepo({ repo: "ios-design-system" })).toEqual({ owner: "acme", repo: "widgets" });
+  });
+
+  // F4: the model filled the fields with the env-var *name* → `GITHUB_REPO/GITHUB_REPO`.
+  it("treats env-var-name echoes as absent and defaults to the configured repo", () => {
+    process.env.GITHUB_REPO = "acme/widgets";
+    expect(resolveRepo({ owner: "GITHUB_REPO", repo: "GITHUB_REPO" })).toEqual({ owner: "acme", repo: "widgets" });
+    expect(resolveRepo({ owner: "github_repo", repo: "github_owner" })).toEqual({ owner: "acme", repo: "widgets" });
+  });
+
+  // The old `"" ?? default` leaked the empty string through as the owner/repo.
+  it("treats empty / whitespace strings as absent and defaults to the configured repo", () => {
+    process.env.GITHUB_REPO = "acme/widgets";
+    expect(resolveRepo({ owner: "", repo: "" })).toEqual({ owner: "acme", repo: "widgets" });
+    expect(resolveRepo({ owner: "   ", repo: "widgets" })).toEqual({ owner: "acme", repo: "widgets" });
+  });
+
+  it("trims a valid explicit pair", () => {
+    delete process.env.GITHUB_REPO;
+    expect(resolveRepo({ owner: "  acme ", repo: " widgets  " })).toEqual({ owner: "acme", repo: "widgets" });
   });
 
   it("throws when neither explicit input nor GITHUB_REPO is set", () => {
     delete process.env.GITHUB_REPO;
     expect(() => resolveRepo({})).toThrow(/GITHUB_REPO is not set/);
+    // A partial input with no configured default is not a usable override.
+    expect(() => resolveRepo({ owner: "ios-design-system" })).toThrow(/GITHUB_REPO is not set/);
   });
 
   it("throws when GITHUB_REPO is malformed", () => {
