@@ -1,4 +1,9 @@
 import type { ConversationWindow } from "../coalescer/events.ts";
+import {
+  gitHubProofCompletedSchema,
+  gitHubProofUncertainSchema,
+  repositoryRefSchema,
+} from "../github/proof-contract.ts";
 import * as v from "valibot";
 
 const nonEmptyString = v.pipe(v.string(), v.minLength(1));
@@ -32,7 +37,16 @@ export const workflowCompletedInputSchema = v.object({
   workflow: nonEmptyString,
   runId: nonEmptyString,
   operationId: nonEmptyString,
-  output: v.object({ value: nonEmptyString }),
+  output: gitHubProofCompletedSchema,
+});
+
+export const workflowUncertainInputSchema = v.object({
+  type: v.literal("workflow.uncertain"),
+  chatId: nonEmptyString,
+  workflow: nonEmptyString,
+  runId: nonEmptyString,
+  operationId: nonEmptyString,
+  output: gitHubProofUncertainSchema,
 });
 
 export const workflowFailedInputSchema = v.object({
@@ -41,12 +55,18 @@ export const workflowFailedInputSchema = v.object({
   workflow: nonEmptyString,
   runId: nonEmptyString,
   operationId: nonEmptyString,
+  repository: repositoryRefSchema,
   error: v.object({ message: nonEmptyString }),
 });
 
 export type WorkflowCompletedInput = v.InferOutput<typeof workflowCompletedInputSchema>;
+export type WorkflowUncertainInput = v.InferOutput<typeof workflowUncertainInputSchema>;
 export type WorkflowFailedInput = v.InferOutput<typeof workflowFailedInputSchema>;
-export type AmbienceInput = WhatsAppWindowInput | WorkflowCompletedInput | WorkflowFailedInput;
+export type AmbienceInput =
+  | WhatsAppWindowInput
+  | WorkflowCompletedInput
+  | WorkflowUncertainInput
+  | WorkflowFailedInput;
 
 export const whatsappWindowInput = (window: ConversationWindow): WhatsAppWindowInput =>
   v.parse(whatsappWindowInputSchema, {

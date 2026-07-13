@@ -34,7 +34,7 @@
     "start": "eve start",
     "ambience:dev": "flue dev --target node",
     "ambience:build": "flue build --target node",
-    "ambience:start": "node dist/server.mjs",
+    "ambience:start": "node --env-file-if-exists=.env dist/server.mjs",
     "whatsapp": "tsx src/index.ts",
     "coalescer": "tsx src/coalescer/demo.ts",
     "voice": "tsx src/coalescer/repl.ts",
