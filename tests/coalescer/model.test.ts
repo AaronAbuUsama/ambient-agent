@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   describeSubscriptionModel,
+  prepareLunaResponsesLiteRequest,
   subscriptionModelSettings,
 } from "../../src/model/subscription.ts";
 
@@ -35,7 +36,7 @@ describe("subscription-only model selection", () => {
     const settings = subscriptionModelSettings();
 
     expect((settings.model as { provider?: string }).provider).toBe("codex.responses");
-    expect((settings.model as { modelId?: string }).modelId).toBe("gpt-5.6-sol");
+    expect((settings.model as { modelId?: string }).modelId).toBe("gpt-5.6-luna");
     expect(settings.reasoning).toBe("low");
     expect(describeSubscriptionModel()).toContain("ChatGPT subscription");
     expect(describeSubscriptionModel()).not.toContain("OpenAI API key");
@@ -50,7 +51,7 @@ describe("subscription-only model selection", () => {
 
     for (const agent of [rootAgent, githubAgent]) {
       expect((agent.model as { provider?: string }).provider).toBe("codex.responses");
-      expect((agent.model as { modelId?: string }).modelId).toBe("gpt-5.6-sol");
+      expect((agent.model as { modelId?: string }).modelId).toBe("gpt-5.6-luna");
       expect(agent.reasoning).toBe("low");
     }
   });
@@ -62,5 +63,49 @@ describe("subscription-only model selection", () => {
     );
 
     expect(() => subscriptionModelSettings()).toThrow(/ChatGPT subscription login/);
+  });
+
+  it("adapts Luna calls to Codex Responses Lite without changing the OAuth boundary", () => {
+    const prepared = prepareLunaResponsesLiteRequest(
+      new Headers({ authorization: "Bearer subscription-token", originator: "eve" }),
+      {
+        model: "gpt-5.6-luna",
+        instructions: "Use the say tool.",
+        input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
+        tools: [{ type: "function", name: "say" }],
+        reasoning: { effort: "low" },
+        stream: true,
+      },
+    );
+
+    expect(prepared.headers.get("authorization")).toBe("Bearer subscription-token");
+    expect(prepared.headers.get("originator")).toBe("codex_exec");
+    expect(prepared.headers.get("version")).toBe("0.144.1");
+    expect(prepared.headers.get("x-openai-internal-codex-responses-lite")).toBe("true");
+    expect(prepared.body).toMatchObject({
+      model: "gpt-5.6-luna",
+      input: [
+        {
+          type: "additional_tools",
+          role: "developer",
+          tools: [{ type: "function", name: "say" }],
+        },
+        {
+          type: "message",
+          role: "developer",
+          content: [{ type: "input_text", text: "Use the say tool." }],
+        },
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "hello" }],
+        },
+      ],
+      parallel_tool_calls: false,
+      reasoning: { effort: "low", context: "all_turns" },
+      stream: true,
+    });
+    expect(prepared.body).not.toHaveProperty("instructions");
+    expect(prepared.body).not.toHaveProperty("tools");
   });
 });
