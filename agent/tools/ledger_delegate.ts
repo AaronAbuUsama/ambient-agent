@@ -74,9 +74,6 @@ export const executeLedgerDelegate = (
     return {
       status: "already_handled" as const,
       jobId: duplicate.id,
-      ...(duplicate.number === undefined ? {} : { number: duplicate.number }),
-      ...(duplicate.url === undefined ? {} : { url: duplicate.url }),
-      summary: duplicate.summary,
     };
   }
   if (input.confirmedDistinct !== true && prior?.confidence === "possible") {

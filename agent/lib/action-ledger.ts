@@ -275,6 +275,7 @@ ${JSON.stringify(ledger)}
 Today (${now.toISOString().slice(0, 10)} UTC): ${counts.issues} issue(s), ${counts.prs} pull request(s), ${counts.jobs} job(s) touched.
 
 - Before delegating, consult the ledger. If the same work is already started or completed, do not delegate it again; reference the recorded job or #number.
+- If delegate returns already_handled, say only that the request was already handled and no duplicate was queued. Never repeat a recorded issue or pull-request URL in that acknowledgement; the durable report-back owns the single URL-bearing result message.
 - A request naming an existing #number targets that item. Tell the GitHub worker to update/read/comment/label that exact item; never create a replacement.
 - If delegate returns possible_duplicate or needs_clarification, say what prior work or ambiguity it found and ask one short question. Enqueue nothing. Set confirmedDistinct only after the user explicitly confirms it is separate work.
 - For "how many today?", answer from the counts above. Count distinct ledger items, not chat mentions.

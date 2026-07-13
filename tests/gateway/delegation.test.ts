@@ -130,14 +130,16 @@ describe("gateway job runner", () => {
           async *stream() {
             yield { type: "subagent.called", data: { name: "github" } };
             yield {
-              type: "result.completed",
+              type: "subagent.completed",
               data: {
-                result: {
+                callId: "github-resume",
+                subagentName: "github",
+                output: JSON.stringify({
                   action: "create_issue",
                   number: 77,
                   url: "https://github.com/acme/repo/issues/77",
                   summary: "Filed #77 before the restart.",
-                },
+                }),
               },
             };
             yield { type: "session.completed" };
@@ -164,6 +166,71 @@ describe("gateway job runner", () => {
     expect(sends).toBe(0);
   });
 
+  it("persists the completed GitHub child result when the detached launcher later fails its own output schema", async () => {
+    const store = new GatewayStore(temporaryDatabase());
+    store.set("child-result@g.us", { sessionId: "voice-child-result", streamIndex: 1 });
+    store.enqueue({ voiceSessionId: "voice-child-result", kind: "github", task: "File the captured result once." });
+    let launcherTurns = 0;
+    const client = {
+      session() {
+        launcherTurns += 1;
+        return {
+          state: { sessionId: "launcher-child-result", streamIndex: 0 },
+          async send() {
+            return {
+              sessionId: "launcher-child-result",
+              async result() {
+                return {
+                  status: "failed",
+                  events: [
+                    { type: "subagent.called", data: { name: "github" } },
+                    {
+                      type: "subagent.completed",
+                      data: {
+                        callId: "github-call-1",
+                        subagentName: "github",
+                        output: JSON.stringify({
+                          action: "create_issue",
+                          number: 404,
+                          url: "https://github.com/acme/repo/issues/404",
+                          summary: "Filed #404 from the child result.",
+                        }),
+                      },
+                    },
+                    { type: "session.failed", data: { message: "OUTPUT_SCHEMA_NOT_FULFILLED" } },
+                  ],
+                };
+              },
+            };
+          },
+        };
+      },
+    } as unknown as Client;
+    const eve = eveJobLoopback(client, async () => {});
+    const loopback: JobLoopback = {
+      runGithub: eve.runGithub,
+      deliverVoice: async (_job, state) => ({ ...state, streamIndex: state.streamIndex + 1 }),
+    };
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          expect(yield* forkPendingJobs(store, loopback, 10)).toBe(1);
+          yield* Effect.promise(() => expect.poll(() => store.listJobs()[0]?.status).toBe("report_pending"));
+          expect(store.listJobs()[0]).toMatchObject({
+            status: "report_pending",
+            result: { number: 404, url: "https://github.com/acme/repo/issues/404" },
+          });
+          expect(yield* forkPendingJobs(store, loopback, 10)).toBe(1);
+          yield* Effect.promise(() => expect.poll(() => store.listJobs()[0]?.status).toBe("done"));
+        }),
+      ),
+    );
+
+    expect(launcherTurns).toBe(1);
+    store.close();
+  });
+
   it.each([
     ["create_issue", 77, "attempted to create a replacement"],
     ["label", 78, "returned #78; expected #77"],
@@ -182,9 +249,11 @@ describe("gateway job runner", () => {
                   events: [
                     { type: "subagent.called", data: { name: "github" } },
                     {
-                      type: "result.completed",
+                      type: "subagent.completed",
                       data: {
-                        result: {
+                        callId: "github-constrained",
+                        subagentName: "github",
+                        output: JSON.stringify({
                           action,
                           number,
                           url:
@@ -192,7 +261,7 @@ describe("gateway job runner", () => {
                               ? `https://github.com/acme/repo/pull/${number}`
                               : `https://github.com/acme/repo/issues/${number}`,
                           summary: "Worker result",
-                        },
+                        }),
                       },
                     },
                   ],
@@ -220,7 +289,7 @@ describe("gateway job runner", () => {
     ).rejects.toThrow(message);
   });
 
-  it("uses task-mode outputSchema for the worker and full SessionState for report-back", async () => {
+  it("uses an unconstrained detached launcher and full SessionState for report-back", async () => {
     const selectors: Array<SessionState | string | undefined> = [];
     const sends: unknown[] = [];
     const persisted = { sessionId: "voice-real", continuationToken: "not-a-chat-id", streamIndex: 12 };
@@ -250,14 +319,16 @@ describe("gateway job runner", () => {
                       events: [
                         { type: "subagent.called", data: { name: "github" } },
                         {
-                          type: "result.completed",
+                          type: "subagent.completed",
                           data: {
-                            result: {
+                            callId: "github-real",
+                            subagentName: "github",
+                            output: JSON.stringify({
                               action: "create_issue",
                               number: 88,
                               url: "https://github.com/acme/repo/issues/88",
                               summary: "Filed #88.",
-                            },
+                            }),
                           },
                         },
                       ],
@@ -314,8 +385,8 @@ describe("gateway job runner", () => {
     expect(selectors).toEqual([undefined, persisted]);
     expect(sends[0]).toMatchObject({
       message: expect.stringMatching(/declared `github` subagent.*File the bug\./s),
-      outputSchema: expect.any(Object),
     });
+    expect(sends[0]).not.toHaveProperty("outputSchema");
     expect(replies).toEqual([{ chatId: "group@g.us", text: "Done — #88" }]);
   });
 
@@ -408,6 +479,10 @@ describe("gateway job runner", () => {
           yield* Effect.promise(() => expect.poll(() => started.length).toBe(2));
           expect(store.listJobs().map((job) => job.status)).toEqual(["running", "running"]);
           for (const release of releases) release();
+          yield* Effect.promise(() =>
+            expect.poll(() => store.listJobs().every((job) => job.status === "report_pending")).toBe(true),
+          );
+          expect(yield* forkPendingJobs(store, loopback, 10)).toBe(2);
           yield* Effect.promise(() => expect.poll(() => store.listJobs().every((job) => job.status === "done")).toBe(true));
         }),
       ),
@@ -440,6 +515,8 @@ describe("gateway job runner", () => {
       Effect.scoped(
         Effect.gen(function* () {
           expect(yield* forkPendingJobs(store, loopback, 10)).toBe(1);
+          yield* Effect.promise(() => expect.poll(() => store.listJobs()[0]?.status).toBe("report_pending"));
+          expect(yield* forkPendingJobs(store, loopback, 10)).toBe(1);
           yield* Effect.promise(() => expect.poll(() => store.listJobs()[0]?.status).toBe("failed"));
         }),
       ),
@@ -448,6 +525,109 @@ describe("gateway job runner", () => {
     expect(delivered).toEqual([expect.stringMatching(/^\[worker FAILED job .+\] GitHub unavailable/)]);
     expect(store.listJobs()[0]).toMatchObject({ status: "failed", error: "GitHub unavailable" });
     store.close();
+  });
+
+  it("gives slow report-back one atomic poller owner", async () => {
+    const store = new GatewayStore(temporaryDatabase());
+    store.set("slow-report@g.us", { sessionId: "voice-slow-report", streamIndex: 1 });
+    store.enqueue({ voiceSessionId: "voice-slow-report", kind: "github", task: "Create one slow report." });
+    let workerRuns = 0;
+    let deliveries = 0;
+    let releaseDelivery!: () => void;
+    let reportStarted!: () => void;
+    const deliveryReleased = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    const reportHasStarted = new Promise<void>((resolve) => {
+      reportStarted = resolve;
+    });
+    const loopback: JobLoopback = {
+      runGithub: async () => {
+        workerRuns += 1;
+        return {
+          action: "create_issue",
+          number: 505,
+          url: "https://github.com/acme/repo/issues/505",
+          summary: "Filed #505.",
+        };
+      },
+      deliverVoice: async (_job, state) => {
+        deliveries += 1;
+        reportStarted();
+        await deliveryReleased;
+        return { ...state, streamIndex: state.streamIndex + 1 };
+      },
+    };
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          expect(yield* forkPendingJobs(store, loopback, 10)).toBe(1);
+          yield* Effect.promise(() => expect.poll(() => store.listJobs()[0]?.status).toBe("report_pending"));
+          yield* Effect.sleep("30 millis");
+          expect(deliveries).toBe(0);
+
+          expect(yield* forkPendingJobs(store, loopback, 10)).toBe(1);
+          yield* Effect.promise(() => reportHasStarted);
+          expect(store.listJobs()[0]?.status).toBe("reporting");
+          expect(yield* forkPendingJobs(store, loopback, 10)).toBe(0);
+
+          releaseDelivery();
+          yield* Effect.promise(() => expect.poll(() => store.listJobs()[0]?.status).toBe("done"));
+        }),
+      ),
+    );
+
+    expect(workerRuns).toBe(1);
+    expect(deliveries).toBe(1);
+    store.close();
+  });
+
+  it("reports a persisted result once after restart without rerunning GitHub", async () => {
+    const path = temporaryDatabase();
+    const beforeRestart = new GatewayStore(path);
+    beforeRestart.set("restart-report@g.us", { sessionId: "voice-restart-report", streamIndex: 9 });
+    const id = beforeRestart.enqueue({
+      voiceSessionId: "voice-restart-report",
+      kind: "github",
+      task: "Report the already-filed issue.",
+    });
+    expect(beforeRestart.claimPending(1)[0]).toMatchObject({ id, status: "running" });
+    beforeRestart.queueResult(id, {
+      action: "create_issue",
+      number: 606,
+      url: "https://github.com/acme/repo/issues/606",
+      summary: "Filed #606 before the restart.",
+    });
+    beforeRestart.close();
+
+    const restarted = new GatewayStore(path);
+    expect(restarted.reclaimRunning()).toBe(0);
+    let workerRuns = 0;
+    let deliveries = 0;
+    const loopback: JobLoopback = {
+      runGithub: async () => {
+        workerRuns += 1;
+        throw new Error("the persisted result must prevent another GitHub mutation");
+      },
+      deliverVoice: async (_job, state) => {
+        deliveries += 1;
+        return { ...state, streamIndex: state.streamIndex + 1 };
+      },
+    };
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          expect(yield* forkPendingJobs(restarted, loopback, 10)).toBe(1);
+          yield* Effect.promise(() => expect.poll(() => restarted.listJobs()[0]?.status).toBe("done"));
+        }),
+      ),
+    );
+
+    expect(workerRuns).toBe(0);
+    expect(deliveries).toBe(1);
+    restarted.close();
   });
 
   it("retries only report-back after delivery fails, never the completed GitHub mutation", async () => {
@@ -479,6 +659,8 @@ describe("gateway job runner", () => {
           yield* forkPendingJobs(store, loopback, 10);
           yield* Effect.promise(() => expect.poll(() => store.listJobs()[0]?.status).toBe("report_pending"));
           expect(workerRuns).toBe(1);
+          yield* forkPendingJobs(store, loopback, 10);
+          yield* Effect.promise(() => expect.poll(() => store.listJobs()[0]?.status).toBe("report_pending"));
           yield* forkPendingJobs(store, loopback, 10);
           yield* Effect.promise(() => expect.poll(() => store.listJobs()[0]?.status).toBe("done"));
         }),

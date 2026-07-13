@@ -26,7 +26,7 @@
   "type": "module",
   "packageManager": "pnpm@9.15.9",
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "scripts": {
     "dev": "eve dev",

@@ -88,7 +88,12 @@ describe("F1/F7 durable voice-ledger replay", () => {
         Effect.scoped(
           Effect.gen(function* () {
             const doneBefore = store.listJobs().filter((job) => job.status === "done").length;
+            const reportPendingBefore = store.listJobs().filter((job) => job.status === "report_pending").length;
             const claimed = yield* forkPendingJobs(store, loopback, 10);
+            yield* Effect.promise(() =>
+              expect.poll(() => store.listJobs().filter((job) => job.status === "report_pending").length).toBe(reportPendingBefore + claimed),
+            );
+            expect(yield* forkPendingJobs(store, loopback, 10)).toBe(claimed);
             yield* Effect.promise(() =>
               expect.poll(() => store.listJobs().filter((job) => job.status === "done").length).toBe(doneBefore + claimed),
             );
@@ -112,6 +117,21 @@ describe("F1/F7 durable voice-ledger replay", () => {
     expect(delegated).toBe(1);
     expect(creates).toBe(1);
     expect(ledger.value.items).toEqual([expect.objectContaining({ kind: "issue", number: 77, status: "open" })]);
+
+    // An exact replay is acknowledged without handing the voice model a second
+    // report URL to echo into the chat.
+    const exactReplay = executeLedgerDelegate(
+      {
+        kind: "github",
+        task: "The Profile page crashes to a blank white screen on an iPhone 5s after tapping Settings.",
+      },
+      ctx,
+      delegateDeps,
+    );
+    expect(exactReplay).toMatchObject({ status: "already_handled", jobId: "job-1" });
+    expect(exactReplay).not.toHaveProperty("summary");
+    expect(exactReplay).not.toHaveProperty("number");
+    expect(exactReplay).not.toHaveProperty("url");
 
     // F1 replay: a real paraphrase is a possible duplicate, never a certainty.
     // The tool returns the prior evidence and queues nothing while the voice clarifies.

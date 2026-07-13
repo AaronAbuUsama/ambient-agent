@@ -38,14 +38,19 @@ export const assertLedgerRecordedBeforeSay = (jobId: string, events: readonly Ha
   if (recordedAt > saidAt) throw new Error(`Voice narrated job ${jobId} before recording it in the action ledger`);
 };
 
+const isGithubChildCompletion = (
+  event: HandleMessageStreamEvent,
+): event is Extract<HandleMessageStreamEvent, { type: "subagent.completed" }> =>
+  event.type === "subagent.completed" && event.data.subagentName === "github";
+
 const githubResultFromEvents = (job: DelegationJob, events: readonly HandleMessageStreamEvent[]): GithubResult => {
   const delegated = events.some((event) => event.type === "subagent.called" && event.data.name === "github");
   if (!delegated) throw new Error(`Detached worker did not call the github subagent for job ${job.id}`);
-  const failure = events.find((event) => event.type === "session.failed");
-  if (failure?.type === "session.failed") throw new Error(failure.data.message);
-  const completed = events.filter((event) => event.type === "result.completed").at(-1);
-  if (completed?.type !== "result.completed") throw new Error(`GitHub worker produced no result for job ${job.id}`);
-  const result = githubResultSchema.parse(completed.data.result);
+  const completed = events.filter(isGithubChildCompletion);
+  if (completed.length !== 1) {
+    throw new Error(`Detached worker produced ${completed.length} GitHub child results for job ${job.id}; expected exactly one`);
+  }
+  const result = githubResultSchema.parse(JSON.parse(completed[0]!.data.output));
   const constrained = /Ledger-constrained (issue|pull_request) #(\d+)\./u.exec(job.task);
   if (constrained !== null) {
     const expectedKind = constrained[1] as "issue" | "pull_request";
@@ -77,12 +82,10 @@ export const eveJobLoopback = (
       return githubResultFromEvents(job, events);
     }
     const session = client.session();
-    const response = await session.send<GithubResult>({
+    const response = await session.send({
       message:
         "This is a detached gateway job, not a WhatsApp voice turn. Call the declared `github` " +
-        "subagent exactly once with the task below and its structured output schema. Return that " +
-        `typed worker result as your own final result. Do not call say.\n\nTask:\n${job.task}`,
-      outputSchema: githubResultSchema,
+        `subagent exactly once with the task below. Do not call say.\n\nTask:\n${job.task}`,
     });
     checkpoint({
       ...(response.continuationToken === undefined ? {} : { continuationToken: response.continuationToken }),
@@ -90,7 +93,6 @@ export const eveJobLoopback = (
       streamIndex: 0,
     });
     const result = await response.result();
-    if (result.status === "failed") throw new Error(`GitHub worker session failed for job ${job.id}`);
     return githubResultFromEvents(job, result.events);
   },
   deliverVoice: async (job, state, message) => {
@@ -163,15 +165,15 @@ const report = (store: GatewayStore, loopback: JobLoopback, job: DelegationJob):
 const runWorker = (store: GatewayStore, loopback: JobLoopback, job: DelegationJob): Effect.Effect<void> =>
   Effect.tryPromise(() => loopback.runGithub(job, (state) => store.checkpointWorker(job.id, state))).pipe(
     Effect.matchEffect({
-      onSuccess: (result) => {
-        store.queueResult(job.id, result);
-        return report(store, loopback, { ...job, status: "report_pending", result, error: undefined });
-      },
-      onFailure: (cause) => {
-        const error = errorText(cause);
-        store.queueFailure(job.id, error);
-        return report(store, loopback, { ...job, status: "report_pending", result: undefined, error });
-      },
+      onSuccess: (result) =>
+        Effect.sync(() => {
+          store.queueResult(job.id, result);
+        }),
+      onFailure: (cause) =>
+        Effect.sync(() => {
+          const error = errorText(cause);
+          store.queueFailure(job.id, error);
+        }),
     }),
   );
 
