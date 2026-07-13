@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { IncomingMessage } from "../../src/coalescer/events.ts";
+import type { FakeGitHubProofEvent } from "../../src/host/fake-github-proof-host.ts";
 import type { FakeWhatsAppEvent } from "../../src/host/fake-whatsapp-host.ts";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -116,6 +117,24 @@ async function whatsappEvents(): Promise<readonly FakeWhatsAppEvent[]> {
 
 async function resetWhatsApp(): Promise<void> {
   const response = await fetch(`${origin}/test/whatsapp/events`, { method: "DELETE" });
+  expect(response.status).toBe(204);
+}
+
+async function githubEvents(): Promise<readonly FakeGitHubProofEvent[]> {
+  const response = await fetch(`${origin}/test/github/events`);
+  expect(response.status).toBe(200);
+  return (await response.json()) as FakeGitHubProofEvent[];
+}
+
+async function resetGitHub(): Promise<void> {
+  const response = await fetch(`${origin}/test/github/events`, { method: "DELETE" });
+  expect(response.status).toBe(204);
+}
+
+async function setNextGitHubCreate(mode: "failure" | "timeout"): Promise<void> {
+  const response = await fetch(`${origin}/test/github/${mode === "failure" ? "fail" : "timeout"}-next-create`, {
+    method: "POST",
+  });
   expect(response.status).toBe(204);
 }
 
@@ -298,10 +317,11 @@ describe("persisted Ambience doorway", () => {
     expect(b).not.toContain("A_SECOND");
   });
 
-  it("admits a finite workflow non-blockingly, stays responsive, then processes one validated completion", async () => {
-    const chatId = "workflow-success-28@g.us";
+  it("admits the bounded GitHub workflow, stays responsive, then processes observed completion", async () => {
+    const chatId = "github-success-30@g.us";
+    await resetGitHub();
 
-    await coalescerMessage(chatId, "START_WORKFLOW_SUCCESS", { mentions: ["bot@s.whatsapp.net"] });
+    await coalescerMessage(chatId, "START_GITHUB_PROOF", { mentions: ["bot@s.whatsapp.net"] });
     await waitFor(
       async () =>
         (await pendingWorkflowOperations()).length === 1 &&
@@ -316,9 +336,9 @@ describe("persisted Ambience doorway", () => {
     expect(operationId).toBeDefined();
     await expect(getRun(runId!)).resolves.toMatchObject({
       runId,
-      workflowName: "test-task",
+      workflowName: "github-proof",
       status: "active",
-      input: { chatId, operationId, value: "validated-success", shouldFail: false },
+      input: { chatId, operationId, repository: { owner: "acme", repo: "widgets" } },
     });
 
     await coalescerMessage(chatId, "WHILE_WORKFLOW_HELD");
@@ -331,7 +351,7 @@ describe("persisted Ambience doorway", () => {
     await releaseWorkflow(operationId!);
     await waitFor(
       async () =>
-        (await historyText(chatId)).includes("Private workflow completion input processed by the same Ambience instance.") &&
+        (await historyText(chatId)).includes("Private GitHub workflow completion input processed by the same Ambience instance.") &&
         (await getRun(runId!)).status === "completed",
       "validated workflow completion input and terminal run record",
     );
@@ -340,14 +360,30 @@ describe("persisted Ambience doorway", () => {
     expect(finalHistory.match(/workflow\.completed/g)).toHaveLength(1);
     await expect(getRun(runId!)).resolves.toMatchObject({
       status: "completed",
-      result: { operationId, value: "validated-success" },
+      result: {
+        status: "completed",
+        chatId,
+        operationId,
+        repository: { owner: "acme", repo: "widgets" },
+        creation: "confirmed",
+        closure: "confirmed",
+        issue: { number: 1, state: "closed", url: "https://github.com/acme/widgets/issues/1" },
+      },
     });
+    expect(await githubEvents()).toEqual([
+      { kind: "create", repository: "acme/widgets", operationId, outcome: "created", number: 1 },
+      { kind: "get", repository: "acme/widgets", number: 1, state: "open" },
+      { kind: "close", repository: "acme/widgets", number: 1, outcome: "closed" },
+      { kind: "get", repository: "acme/widgets", number: 1, state: "closed" },
+    ]);
   });
 
-  it("turns deterministic workflow failure into one normalized failure input", async () => {
-    const chatId = "workflow-failure-28@g.us";
+  it("turns deterministic GitHub failure into one normalized same-chat failure input", async () => {
+    const chatId = "github-failure-30@g.us";
+    await resetGitHub();
+    await setNextGitHubCreate("failure");
 
-    await coalescerMessage(chatId, "START_WORKFLOW_FAILURE", { mentions: ["bot@s.whatsapp.net"] });
+    await coalescerMessage(chatId, "START_GITHUB_PROOF", { mentions: ["bot@s.whatsapp.net"] });
     await waitFor(
       async () =>
         (await pendingWorkflowOperations()).length === 1 &&
@@ -364,7 +400,7 @@ describe("persisted Ambience doorway", () => {
     await releaseWorkflow(operationId!);
     await waitFor(
       async () =>
-        (await historyText(chatId)).includes("Private workflow failure input processed by the same Ambience instance.") &&
+        (await historyText(chatId)).includes("Private GitHub workflow failure input processed by the same Ambience instance.") &&
         (await getRun(runId!)).status === "errored",
       "normalized workflow failure input and terminal run record",
     );
@@ -374,7 +410,50 @@ describe("persisted Ambience doorway", () => {
     expect(finalHistory).not.toContain("secret stack");
     await expect(getRun(runId!)).resolves.toMatchObject({
       status: "errored",
-      error: expect.objectContaining({ message: "Deterministic test workflow failure" }),
+      error: expect.objectContaining({ message: "GitHub rejected the mutation" }),
     });
+    expect((await githubEvents()).filter((event) => event.kind === "create")).toHaveLength(1);
+  });
+
+  it("returns one uncertain input when a timed-out create cannot be observed and never retries", async () => {
+    const chatId = "github-uncertain-30@g.us";
+    await resetGitHub();
+    await setNextGitHubCreate("timeout");
+
+    await coalescerMessage(chatId, "START_GITHUB_PROOF", { mentions: ["bot@s.whatsapp.net"] });
+    await waitFor(
+      async () =>
+        (await pendingWorkflowOperations()).length === 1 &&
+        (await historyText(chatId)).includes("Private workflow admission settled with runId"),
+      "uncertain GitHub workflow admission",
+    );
+    const admittedHistory = await historyText(chatId);
+    const runId = admittedHistory.match(/Private workflow admission settled with runId ([^\s.]+)\./)?.[1];
+    expect(runId).toBeDefined();
+    const [operationId] = await pendingWorkflowOperations();
+    expect(operationId).toBeDefined();
+
+    await releaseWorkflow(operationId!);
+    await waitFor(
+      async () =>
+        (await historyText(chatId)).includes("Private GitHub workflow uncertainty input processed by the same Ambience instance.") &&
+        (await getRun(runId!)).status === "completed",
+      "uncertain GitHub workflow result",
+    );
+
+    const finalHistory = await historyText(chatId);
+    expect(finalHistory.match(/workflow\.uncertain/g)).toHaveLength(1);
+    await expect(getRun(runId!)).resolves.toMatchObject({
+      status: "completed",
+      result: {
+        status: "uncertain",
+        operationId,
+        phase: "create",
+      },
+    });
+    const events = await githubEvents();
+    expect(events.filter((event) => event.kind === "create")).toHaveLength(1);
+    expect(events.filter((event) => event.kind === "find")).toHaveLength(1);
+    expect(events.filter((event) => event.kind === "close")).toHaveLength(0);
   });
 });

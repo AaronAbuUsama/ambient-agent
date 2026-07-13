@@ -10,14 +10,17 @@ import { configLayer } from "../../../../src/coalescer/config.js";
 import type { IncomingMessage } from "../../../../src/coalescer/events.js";
 import { queueEventSource } from "../../../../src/coalescer/mocks.js";
 import { ambienceDoorway, dispatchAmbience } from "../../../../src/ambience/doorway.js";
+import { configureGitHubProofRuntime, createGitHubProofPolicy } from "../../../../src/github/proof-runtime.js";
+import {
+  createControllableGitHubProofGate,
+  createFakeGitHubProofHost,
+} from "../../../../src/host/fake-github-proof-host.js";
 import { createFakeWhatsAppHost } from "../../../../src/host/fake-whatsapp-host.js";
 import { configureWhatsAppHost } from "../../../../src/host/whatsapp-host.js";
 import {
-  configureTestTaskGate,
-  configureTestTaskResultSink,
-  createControllableTestTaskGate,
-  installTestTaskResultDelivery,
-} from "../../../../src/workflows/test-task.js";
+  configureGitHubProofResultSink,
+  installGitHubProofResultDelivery,
+} from "../../../../src/workflows/github-proof.js";
 
 const provider = registerFauxProvider({ provider: "ambience-fixture" });
 const respond = (context: Context) => {
@@ -25,21 +28,24 @@ const respond = (context: Context) => {
   const serialized = JSON.stringify(last);
   const transcript = JSON.stringify(context.messages);
   if (last?.role === "toolResult") {
-    if (serialized.includes("start_test_workflow")) {
+    if (serialized.includes("start_github_proof")) {
       const runId = serialized.match(/\"runId\"\s*:\s*\"([^\"]+)\"/)?.[1] ?? "missing-run-id";
       return fauxAssistantMessage(`Private workflow admission settled with runId ${runId}.`);
     }
+    if (serialized.includes("run_disposable_github_issue_proof")) {
+      return fauxAssistantMessage("Private GitHub specialist retained the observed proof receipt.");
+    }
     return fauxAssistantMessage("Private speech outcome retained for the next Ambience turn.");
   }
-  if (serialized.includes("START_WORKFLOW_SUCCESS")) {
+  if (serialized.includes("START_GITHUB_PROOF")) {
     return fauxAssistantMessage(
-      fauxToolCall("start_test_workflow", { value: "validated-success", shouldFail: false }),
+      fauxToolCall("start_github_proof", { repository: "acme/widgets" }),
       { stopReason: "toolUse" },
     );
   }
-  if (serialized.includes("START_WORKFLOW_FAILURE")) {
+  if (serialized.includes("Run the bounded disposable GitHub issue proof")) {
     return fauxAssistantMessage(
-      fauxToolCall("start_test_workflow", { value: "validated-failure", shouldFail: true }),
+      fauxToolCall("run_disposable_github_issue_proof", {}),
       { stopReason: "toolUse" },
     );
   }
@@ -47,10 +53,13 @@ const respond = (context: Context) => {
     return fauxAssistantMessage("Private Ambience turn settled while the workflow remained active.");
   }
   if (serialized.includes("workflow.completed")) {
-    return fauxAssistantMessage("Private workflow completion input processed by the same Ambience instance.");
+    return fauxAssistantMessage("Private GitHub workflow completion input processed by the same Ambience instance.");
+  }
+  if (serialized.includes("workflow.uncertain")) {
+    return fauxAssistantMessage("Private GitHub workflow uncertainty input processed by the same Ambience instance.");
   }
   if (serialized.includes("workflow.failed")) {
-    return fauxAssistantMessage("Private workflow failure input processed by the same Ambience instance.");
+    return fauxAssistantMessage("Private GitHub workflow failure input processed by the same Ambience instance.");
   }
   if (serialized.includes("SPEAK_ONCE")) {
     return fauxAssistantMessage(fauxToolCall("say", { text: "one explicit outbound" }), { stopReason: "toolUse" });
@@ -82,17 +91,21 @@ registerProvider("openai-codex", {
 
 const fakeWhatsApp = createFakeWhatsAppHost();
 configureWhatsAppHost(fakeWhatsApp);
-const workflowGate = createControllableTestTaskGate();
-configureTestTaskGate(workflowGate);
-configureTestTaskResultSink(async (chatId, input) => {
+const workflowGate = createControllableGitHubProofGate();
+const fakeGitHub = createFakeGitHubProofHost({ gate: workflowGate });
+configureGitHubProofRuntime({
+  host: fakeGitHub,
+  policy: createGitHubProofPolicy("acme/widgets", ["acme/widgets"]),
+});
+configureGitHubProofResultSink(async (chatId, input) => {
   const run = await getRun(input.runId);
-  const expectedStatus = input.type === "workflow.completed" ? "completed" : "errored";
+  const expectedStatus = input.type === "workflow.failed" ? "errored" : "completed";
   if (run?.status !== expectedStatus) {
-    throw new Error(`Test workflow ${input.runId} is not durably ${expectedStatus}`);
+    throw new Error(`GitHub proof workflow ${input.runId} is not durably ${expectedStatus}`);
   }
   await dispatchAmbience({ id: chatId, input });
 });
-installTestTaskResultDelivery();
+installGitHubProofResultDelivery();
 
 const source = await Effect.runPromise(Queue.unbounded<IncomingMessage>());
 Effect.runFork(
@@ -123,6 +136,19 @@ app.delete("/test/whatsapp/events", (context) => {
 });
 app.post("/test/whatsapp/fail-next-send", (context) => {
   fakeWhatsApp.failNextSend(new Error("provider outcome unknown"));
+  return context.body(null, 204);
+});
+app.get("/test/github/events", (context) => context.json(fakeGitHub.events()));
+app.delete("/test/github/events", (context) => {
+  fakeGitHub.reset();
+  return context.body(null, 204);
+});
+app.post("/test/github/fail-next-create", (context) => {
+  fakeGitHub.failNextCreate(new Error("GitHub rejected the mutation"));
+  return context.body(null, 204);
+});
+app.post("/test/github/timeout-next-create", (context) => {
+  fakeGitHub.timeoutNextCreate({ afterMutation: false });
   return context.body(null, 204);
 });
 app.get("/test/workflows/pending", async (context) => context.json({ operationIds: await workflowGate.pending() }));
