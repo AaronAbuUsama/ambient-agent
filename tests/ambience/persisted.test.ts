@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -67,8 +67,8 @@ beforeAll(async () => {
   build.stdout.on("data", (chunk) => buildOutput.push(chunk));
   build.stderr.on("data", (chunk) => buildOutput.push(chunk));
   const buildExit = await new Promise<number | null>((resolve) => build.once("close", resolve));
-  expect(Buffer.concat(buildOutput).toString(), "fixture build output").toContain("done ready");
-  expect(buildExit).toBe(0);
+  expect(buildExit, Buffer.concat(buildOutput).toString()).toBe(0);
+  expect(existsSync(join(outputRoot, "server.mjs"))).toBe(true);
 
   const port = await unusedPort();
   origin = `http://127.0.0.1:${port}`;
