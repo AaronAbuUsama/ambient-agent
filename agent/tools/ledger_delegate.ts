@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   actionLedger,
-  findDuplicateJob,
+  findPriorJobMatch,
   findLedgerItem,
   recordStartedJob,
   referencedNumber,
@@ -30,24 +30,47 @@ const dependencies = (): DelegateDependencies => ({
   now: () => new Date(),
 });
 
-const constrainExistingTarget = (task: string, ledger: LedgerAccess): string => {
+type TargetResolution =
+  | { readonly type: "none" }
+  | { readonly type: "target"; readonly kind: "issue" | "pull_request"; readonly number: number }
+  | { readonly type: "needs_clarification"; readonly number: number; readonly candidates: readonly string[] };
+
+const resolveTarget = (task: string, ledger: LedgerAccess): TargetResolution => {
   const number = referencedNumber(task);
-  if (number === undefined) return task;
-  const item = findLedgerItem(ledger.get(), number, referencedKind(task));
-  if (item === undefined) return task;
+  if (number === undefined) return { type: "none" };
+  const statedKind = referencedKind(task);
+  if (statedKind !== undefined) return { type: "target", kind: statedKind, number };
+  const item = findLedgerItem(ledger.get(), number);
+  if (item !== undefined) return { type: "target", kind: item.kind, number };
+  const candidates = ledger.get().items.filter((candidate) => candidate.number === number).map((candidate) => candidate.kind);
+  return { type: "needs_clarification", number, candidates };
+};
+
+const constrainTarget = (task: string, target: Extract<TargetResolution, { type: "target" }>): string => {
   return (
-    `Ledger-verified existing ${item.kind} #${number}. Act on that exact item; do not create a replacement. ` +
+    `Ledger-constrained ${target.kind} #${target.number}. Act on that exact item; do not create a replacement. ` +
     `Prefer the smallest available update operation (get/comment/label/close as requested).\n\n${task}`
   );
 };
 
 export const executeLedgerDelegate = (
-  input: { readonly kind: "github"; readonly task: string },
+  input: { readonly kind: "github"; readonly task: string; readonly confirmedDistinct?: boolean },
   ctx: ToolContext,
   deps: DelegateDependencies = dependencies(),
 ) => {
-  const duplicate = findDuplicateJob(deps.ledger.get(), input.task);
-  if (duplicate !== undefined) {
+  const target = resolveTarget(input.task, deps.ledger);
+  if (target.type === "needs_clarification") {
+    return {
+      status: "needs_clarification" as const,
+      number: target.number,
+      candidates: target.candidates,
+      summary: `Clarify whether #${target.number} is an issue or pull request before delegating.`,
+    };
+  }
+
+  const prior = findPriorJobMatch(deps.ledger.get(), input.task);
+  if (prior?.confidence === "exact") {
+    const duplicate = prior.job;
     return {
       status: "already_handled" as const,
       jobId: duplicate.id,
@@ -56,11 +79,21 @@ export const executeLedgerDelegate = (
       summary: duplicate.summary,
     };
   }
+  if (input.confirmedDistinct !== true && prior?.confidence === "possible") {
+    return {
+      status: "possible_duplicate" as const,
+      requiresConfirmation: true as const,
+      jobId: prior.job.id,
+      ...(prior.job.number === undefined ? {} : { number: prior.job.number }),
+      ...(prior.job.url === undefined ? {} : { url: prior.job.url }),
+      summary: prior.job.summary,
+    };
+  }
 
   const store = deps.openStore();
   const jobId = deps.newJobId(ctx);
   try {
-    const task = constrainExistingTarget(input.task, deps.ledger);
+    const task = target.type === "target" ? constrainTarget(input.task, target) : input.task;
     // Queue first. If the process dies immediately afterward, durable tool
     // replay uses the same call-derived id, enqueue is an idempotent no-op, and
     // the missing defineState entry is filled below. The reverse ordering can
@@ -90,14 +123,21 @@ export default defineDynamic({
     "turn.started": () => ({
       delegate: defineTool({
         description:
-          "Start a non-blocking GitHub task unless this voice session's durable ledger shows matching work already started or completed. " +
-          "A known #number is constrained to that exact item. After started, say 'on it'; after already_handled, reference the recorded result.",
+          "Start a non-blocking GitHub task unless this voice session's durable ledger shows exact or possibly matching work. " +
+          "Possible duplicates and ambiguous #numbers enqueue nothing and require clarification. A resolved #number is constrained exactly.",
         inputSchema: z.object({
           kind: z.literal("github"),
           task: z.string().min(1).describe("Everything the GitHub worker needs; it cannot see this chat."),
+          confirmedDistinct: z
+            .boolean()
+            .optional()
+            .describe("Set true only after the user explicitly confirms a possible duplicate is genuinely separate work."),
         }),
-        execute({ kind, task }, ctx) {
-          return executeLedgerDelegate({ kind, task }, ctx);
+        execute({ kind, task, confirmedDistinct }, ctx) {
+          return executeLedgerDelegate(
+            { kind, task, ...(confirmedDistinct === undefined ? {} : { confirmedDistinct }) },
+            ctx,
+          );
         },
       }),
     }),

@@ -46,7 +46,7 @@ const githubResultFromEvents = (job: DelegationJob, events: readonly HandleMessa
   const completed = events.filter((event) => event.type === "result.completed").at(-1);
   if (completed?.type !== "result.completed") throw new Error(`GitHub worker produced no result for job ${job.id}`);
   const result = githubResultSchema.parse(completed.data.result);
-  const constrained = /Ledger-verified existing (issue|pull_request) #(\d+)\./u.exec(job.task);
+  const constrained = /Ledger-constrained (issue|pull_request) #(\d+)\./u.exec(job.task);
   if (constrained !== null) {
     const expectedKind = constrained[1] as "issue" | "pull_request";
     const target = Number(constrained[2]);

@@ -211,7 +211,7 @@ describe("gateway job runner", () => {
           voiceSessionId: "voice",
           chatId: "group@g.us",
           kind: "github",
-          task: "Ledger-verified existing issue #77. Act on that exact item; do not create a replacement.\n\nUpdate #77.",
+          task: "Ledger-constrained issue #77. Act on that exact item; do not create a replacement.\n\nUpdate #77.",
           status: "running",
           attempts: 1,
         },

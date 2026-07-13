@@ -107,16 +107,14 @@ const taskTokens = (task: string): readonly string[] =>
 
 export const taskFingerprint = (task: string): string => taskTokens(task).join(" ");
 
-const similarity = (left: string, right: string): { readonly shared: number; readonly containment: number } => {
+const sharedTokens = (left: string, right: string): number => {
   const a = new Set(taskTokens(left));
   const b = new Set(taskTokens(right));
-  if (a.size === 0 || b.size === 0) return { shared: 0, containment: 0 };
-  const intersection = [...a].filter((token) => b.has(token)).length;
-  return { shared: intersection, containment: intersection / Math.min(a.size, b.size) };
+  return [...a].filter((token) => b.has(token)).length;
 };
 
 export const referencedNumber = (task: string): number | undefined => {
-  const match = /(?:^|\s)#(\d+)\b/u.exec(task);
+  const match = /(?:^|[^a-z0-9_])#(\d+)\b/iu.exec(task);
   return match === null ? undefined : Number(match[1]);
 };
 
@@ -132,26 +130,27 @@ export const findLedgerItem = (ledger: ActionLedger, number: number, kind?: Ledg
   return matches.length === 1 ? matches[0] : undefined;
 };
 
-/**
- * The hard F1 guard. The prompt should avoid redundant delegation, but if the
- * model asks anyway this check prevents a second job from being queued.
- */
-export const findDuplicateJob = (ledger: ActionLedger, task: string): LedgerJob | undefined => {
+export interface PriorJobMatch {
+  readonly confidence: "exact" | "possible";
+  readonly job: LedgerJob;
+}
+
+/** Lexical overlap identifies candidates; only an exact fingerprint is certainty. */
+export const findPriorJobMatch = (ledger: ActionLedger, task: string): PriorJobMatch | undefined => {
   // An explicit #N is an update/read request for that existing item, not a
   // duplicate mention of the original report.
   if (referencedNumber(task) !== undefined) return undefined;
   const fingerprint = taskFingerprint(task);
-  return [...ledger.jobs]
-    .reverse()
-    .find(
-      (job) =>
-        job.status !== "failed" &&
-        (job.fingerprint === fingerprint ||
-          (() => {
-            const score = similarity(job.task, task);
-            return score.shared >= 3 && score.containment >= 0.75;
-          })()),
-    );
+  for (const job of [...ledger.jobs].reverse()) {
+    if (job.status === "failed") continue;
+    if (job.fingerprint === fingerprint) return { confidence: "exact", job };
+    const shared = sharedTokens(job.task, task);
+    // Overlap is only a candidate signal, never permission to suppress work.
+    // Keep this deliberately broad; the caller must clarify or receive an
+    // explicit confirmedDistinct escape before any new job is queued.
+    if (shared >= 3) return { confidence: "possible", job };
+  }
+  return undefined;
 };
 
 export const recordStartedJob = (
@@ -277,6 +276,7 @@ Today (${now.toISOString().slice(0, 10)} UTC): ${counts.issues} issue(s), ${coun
 
 - Before delegating, consult the ledger. If the same work is already started or completed, do not delegate it again; reference the recorded job or #number.
 - A request naming an existing #number targets that item. Tell the GitHub worker to update/read/comment/label that exact item; never create a replacement.
+- If delegate returns possible_duplicate or needs_clarification, say what prior work or ambiguity it found and ask one short question. Enqueue nothing. Set confirmedDistinct only after the user explicitly confirms it is separate work.
 - For "how many today?", answer from the counts above. Count distinct ledger items, not chat mentions.
 - On a [worker result] or [worker FAILED] turn, call record_job_result with its jobId before calling say.
   `.trim();

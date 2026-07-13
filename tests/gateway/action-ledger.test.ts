@@ -69,7 +69,7 @@ describe("F1/F7 durable voice-ledger replay", () => {
     const loopback: JobLoopback = {
       async runGithub(job) {
         delegated += 1;
-        const update = job.task.includes("Ledger-verified existing issue #77");
+        const update = job.task.includes("Ledger-constrained issue #77");
         const result: GithubResult = update
           ? { action: "label", number: 77, url: "https://github.com/acme/repo/issues/77", summary: "Marked #77 as a feature." }
           : { action: "create_issue", number: 77, url: "https://github.com/acme/repo/issues/77", summary: "Filed #77." };
@@ -100,7 +100,10 @@ describe("F1/F7 durable voice-ledger replay", () => {
     // F1: first report delegates and creates one real issue.
     expect(
       executeLedgerDelegate(
-        { kind: "github", task: "File the Profile blank screen crash on iPhone 5s after tapping Settings." },
+        {
+          kind: "github",
+          task: "The Profile page crashes to a blank white screen on an iPhone 5s after tapping Settings.",
+        },
         ctx,
         delegateDeps,
       ),
@@ -110,15 +113,23 @@ describe("F1/F7 durable voice-ledger replay", () => {
     expect(creates).toBe(1);
     expect(ledger.value.items).toEqual([expect.objectContaining({ kind: "issue", number: 77, status: "open" })]);
 
-    // F1 replay: same failure with slightly different prose reaches the ACTUAL
-    // delegate guard, which returns the prior result and queues nothing.
+    // F1 replay: a real paraphrase is a possible duplicate, never a certainty.
+    // The tool returns the prior evidence and queues nothing while the voice clarifies.
     expect(
       executeLedgerDelegate(
-        { kind: "github", task: "Opening Settings makes the Profile disappear on my old Apple phone." },
+        {
+          kind: "github",
+          task: "The Profile screen is white when I open preferences on my old Apple phone.",
+        },
         ctx,
         delegateDeps,
       ),
-    ).toMatchObject({ status: "already_handled", number: 77, url: "https://github.com/acme/repo/issues/77" });
+    ).toMatchObject({
+      status: "possible_duplicate",
+      requiresConfirmation: true,
+      number: 77,
+      url: "https://github.com/acme/repo/issues/77",
+    });
     expect(store.listJobs()).toHaveLength(1);
     expect(delegated).toBe(1);
     expect(creates).toBe(1);
@@ -129,7 +140,7 @@ describe("F1/F7 durable voice-ledger replay", () => {
       executeLedgerDelegate({ kind: "github", task: "Make #77 a feature request instead of a bug." }, ctx, delegateDeps),
     ).toMatchObject({ status: "started" });
     const correction = store.listJobs().find((job) => job.task.includes("Make #77"));
-    expect(correction?.task).toMatch(/Ledger-verified existing issue #77.*do not create a replacement/s);
+    expect(correction?.task).toMatch(/Ledger-constrained issue #77.*do not create a replacement/s);
     expect(await runPending()).toBe(1);
     expect(delegated).toBe(2);
     expect(creates).toBe(1);
@@ -139,6 +150,133 @@ describe("F1/F7 durable voice-ledger replay", () => {
     expect(renderLedgerInstructions(ledger.value, now)).toContain(
       "Today (2026-07-13 UTC): 1 issue(s), 0 pull request(s), 2 job(s) touched.",
     );
+  });
+
+  it("does not silently discard a distinct report that resembles prior work", () => {
+    const path = temporaryDatabase();
+    const ledger = memoryLedger();
+    const ctx = { session: { id: "voice-distinct" } } as ToolContext;
+    const deps: DelegateDependencies = {
+      ledger,
+      openStore: () => new GatewayStore(path),
+      newJobId: () => `job-${ledger.value.jobs.length + 1}`,
+      now: () => new Date("2026-07-13T12:00:00Z"),
+    };
+    const prior = "The Profile page crashes to a blank white screen on an iPhone 5s after tapping Settings.";
+    const distinct = "The Settings button in Profile is blank on iPhone 5s, but the page itself still works.";
+
+    expect(executeLedgerDelegate({ kind: "github", task: prior }, ctx, deps)).toMatchObject({ status: "started" });
+    expect(executeLedgerDelegate({ kind: "github", task: prior, confirmedDistinct: true }, ctx, deps)).toMatchObject({
+      status: "already_handled",
+      jobId: "job-1",
+    });
+    expect(executeLedgerDelegate({ kind: "github", task: distinct }, ctx, deps)).toMatchObject({
+      status: "possible_duplicate",
+      requiresConfirmation: true,
+      jobId: "job-1",
+    });
+    let store = new GatewayStore(path);
+    expect(store.listJobs()).toHaveLength(1);
+    store.close();
+
+    // Explicit user confirmation is the safe escape: now the distinct work is queued.
+    expect(executeLedgerDelegate({ kind: "github", task: distinct, confirmedDistinct: true }, ctx, deps)).toMatchObject({
+      status: "started",
+      jobId: "job-2",
+    });
+    store = new GatewayStore(path);
+    expect(store.listJobs()).toHaveLength(2);
+    expect(store.getJob("job-2")?.task).toBe(distinct);
+    store.close();
+  });
+
+  it("constrains a typed unknown #N and blocks an untyped unknown #N", () => {
+    const path = temporaryDatabase();
+    const ledger = memoryLedger();
+    const ctx = { session: { id: "voice-target" } } as ToolContext;
+    const deps: DelegateDependencies = {
+      ledger,
+      openStore: () => new GatewayStore(path),
+      newJobId: () => "typed-target",
+      now: () => new Date("2026-07-13T12:00:00Z"),
+    };
+
+    expect(executeLedgerDelegate({ kind: "github", task: "Comment on issue #404 with the workaround." }, ctx, deps)).toMatchObject({
+      status: "started",
+    });
+    let store = new GatewayStore(path);
+    expect(store.getJob("typed-target")?.task).toMatch(/Ledger-constrained issue #404/);
+    store.close();
+
+    const empty = memoryLedger();
+    expect(
+      executeLedgerDelegate(
+        { kind: "github", task: "Update #405 with the workaround." },
+        ctx,
+        {
+          ledger: empty,
+          openStore: () => {
+            throw new Error("ambiguous target must not open the queue");
+          },
+          newJobId: () => "must-not-exist",
+          now: () => new Date("2026-07-13T12:00:00Z"),
+        },
+      ),
+    ).toMatchObject({ status: "needs_clarification", number: 405, candidates: [] });
+    store = new GatewayStore(path);
+    expect(store.listJobs()).toHaveLength(1);
+    store.close();
+  });
+
+  it("blocks a bare #N when issue and PR identities are ambiguous", () => {
+    const ledger = memoryLedger();
+    ledger.update(() => ({
+      version: 1,
+      jobs: [],
+      items: [
+        { kind: "issue", number: 77, status: "open", summary: "Issue", at: "2026-07-13", evidence: [] },
+        { kind: "pull_request", number: 77, status: "open", summary: "PR", at: "2026-07-13", evidence: [] },
+      ],
+    }));
+    expect(
+      executeLedgerDelegate(
+        { kind: "github", task: "Update #77." },
+        { session: { id: "voice-ambiguous" } } as ToolContext,
+        {
+          ledger,
+          openStore: () => {
+            throw new Error("ambiguous target must not open the queue");
+          },
+          newJobId: () => "must-not-exist",
+          now: () => new Date("2026-07-13T12:00:00Z"),
+        },
+      ),
+    ).toMatchObject({ status: "needs_clarification", number: 77, candidates: ["issue", "pull_request"] });
+  });
+
+  it("constrains a bare #N from a unique ledger identity", () => {
+    const path = temporaryDatabase();
+    const ledger = memoryLedger();
+    ledger.update(() => ({
+      version: 1,
+      jobs: [],
+      items: [{ kind: "pull_request", number: 21, status: "open", summary: "PR", at: "2026-07-13", evidence: [] }],
+    }));
+    expect(
+      executeLedgerDelegate(
+        { kind: "github", task: "Update #21 with the review note." },
+        { session: { id: "voice-unique" } } as ToolContext,
+        {
+          ledger,
+          openStore: () => new GatewayStore(path),
+          newJobId: () => "unique-target",
+          now: () => new Date("2026-07-13T12:00:00Z"),
+        },
+      ),
+    ).toMatchObject({ status: "started" });
+    const store = new GatewayStore(path);
+    expect(store.getJob("unique-target")?.task).toMatch(/Ledger-constrained pull_request #21/);
+    store.close();
   });
 
   it("removes the pending queue row when the defineState write fails synchronously", () => {
