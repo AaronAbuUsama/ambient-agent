@@ -239,8 +239,8 @@ export class GatewayStore implements SessionStore {
     return rows.map(decodeMessage);
   }
 
-  enqueue(input: { voiceSessionId: string; kind: "github"; task: string }): string {
-    const id = randomUUID();
+  enqueue(input: { voiceSessionId: string; kind: "github"; task: string; id?: string }): string {
+    const id = input.id ?? randomUUID();
     this.#db
       .prepare(
         `INSERT INTO jobs
@@ -350,6 +350,11 @@ export class GatewayStore implements SessionStore {
           WHERE id = ? AND status IN ('report_pending', 'reporting')`,
       )
       .run(error, id);
+  }
+
+  getJob(id: string): DelegationJob | undefined {
+    const row = this.#db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as unknown as JobRow | undefined;
+    return row === undefined ? undefined : decodeJob(row);
   }
 
   listJobs(): readonly DelegationJob[] {
