@@ -6,9 +6,10 @@ import type { Client, SessionState } from "eve/client";
 import type { ToolContext } from "eve/tools";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GithubResult } from "../../agent/subagents/github/lib/output-schema.ts";
-import delegate from "../../agent/tools/delegate.ts";
 import { GatewayStore } from "../../agent/lib/jobs.ts";
+import { emptyActionLedger, type ActionLedger, type LedgerAccess } from "../../agent/lib/action-ledger.ts";
 import { eveJobLoopback, forkPendingJobs, type JobLoopback } from "../../src/gateway/job-runner.ts";
+import { executeLedgerDelegate } from "../../agent/tools/ledger_delegate.ts";
 
 const dirs: string[] = [];
 
@@ -29,7 +30,23 @@ describe("non-blocking delegate", () => {
     process.env.WA_GATEWAY_DB = path;
     const ctx = { session: { id: "voice-session-1" } } as ToolContext;
 
-    const result = await delegate.execute({ kind: "github", task: "File the login crash." }, ctx);
+    let state: ActionLedger = emptyActionLedger();
+    const ledger: LedgerAccess = {
+      get: () => state,
+      update(fn) {
+        state = fn(state);
+      },
+    };
+    const result = executeLedgerDelegate(
+      { kind: "github", task: "File the login crash." },
+      ctx,
+      {
+        ledger,
+        openStore: () => new GatewayStore(path),
+        newJobId: () => "job-ledger-test",
+        now: () => new Date("2026-07-13T00:00:00Z"),
+      },
+    );
 
     expect(result).toMatchObject({ status: "started" });
     const store = new GatewayStore(path);
@@ -147,6 +164,62 @@ describe("gateway job runner", () => {
     expect(sends).toBe(0);
   });
 
+  it.each([
+    ["create_issue", 77, "attempted to create a replacement"],
+    ["label", 78, "returned #78; expected #77"],
+    ["get_pr", 77, "returned pull_request #77; expected issue"],
+  ] as const)("rejects constrained update result action=%s number=%s", async (action, number, message) => {
+    const client = {
+      session() {
+        return {
+          state: { sessionId: "worker", streamIndex: 1 },
+          async send() {
+            return {
+              sessionId: "worker",
+              async result() {
+                return {
+                  status: "completed",
+                  events: [
+                    { type: "subagent.called", data: { name: "github" } },
+                    {
+                      type: "result.completed",
+                      data: {
+                        result: {
+                          action,
+                          number,
+                          url:
+                            action === "get_pr"
+                              ? `https://github.com/acme/repo/pull/${number}`
+                              : `https://github.com/acme/repo/issues/${number}`,
+                          summary: "Worker result",
+                        },
+                      },
+                    },
+                  ],
+                };
+              },
+            };
+          },
+        };
+      },
+    } as unknown as Client;
+    const loopback = eveJobLoopback(client, async () => {});
+    await expect(
+      loopback.runGithub(
+        {
+          id: "job-constrained",
+          voiceSessionId: "voice",
+          chatId: "group@g.us",
+          kind: "github",
+          task: "Ledger-constrained issue #77. Act on that exact item; do not create a replacement.\n\nUpdate #77.",
+          status: "running",
+          attempts: 1,
+        },
+        () => {},
+      ),
+    ).rejects.toThrow(message);
+  });
+
   it("uses task-mode outputSchema for the worker and full SessionState for report-back", async () => {
     const selectors: Array<SessionState | string | undefined> = [];
     const sends: unknown[] = [];
@@ -194,6 +267,18 @@ describe("gateway job runner", () => {
                       status: "waiting",
                       events: [
                         {
+                          type: "action.result",
+                          data: {
+                            status: "completed",
+                            result: {
+                              kind: "tool-result",
+                              toolName: "record_job_result",
+                              callId: "record-1",
+                              output: { recorded: true, jobId: "job-real", status: "completed" },
+                            },
+                          },
+                        },
+                        {
                           type: "actions.requested",
                           data: {
                             actions: [
@@ -232,6 +317,60 @@ describe("gateway job runner", () => {
       outputSchema: expect.any(Object),
     });
     expect(replies).toEqual([{ chatId: "group@g.us", text: "Done — #88" }]);
+  });
+
+  it("refuses report-back when say happens before the ledger record", async () => {
+    const persisted = { sessionId: "voice-real", streamIndex: 12 };
+    const client = {
+      session() {
+        return {
+          state: persisted,
+          async send() {
+            return {
+              async result() {
+                return {
+                  status: "waiting",
+                  events: [
+                    {
+                      type: "actions.requested",
+                      data: { actions: [{ kind: "tool-call", toolName: "say", callId: "say", input: { text: "Done" } }] },
+                    },
+                    {
+                      type: "action.result",
+                      data: {
+                        status: "completed",
+                        result: {
+                          kind: "tool-result",
+                          toolName: "record_job_result",
+                          callId: "record",
+                          output: { recorded: true, jobId: "job-order", status: "completed" },
+                        },
+                      },
+                    },
+                  ],
+                };
+              },
+            };
+          },
+        };
+      },
+    } as unknown as Client;
+    const loopback = eveJobLoopback(client, async () => {});
+    await expect(
+      loopback.deliverVoice(
+        {
+          id: "job-order",
+          voiceSessionId: "voice-real",
+          chatId: "group@g.us",
+          kind: "github",
+          task: "File it",
+          status: "reporting",
+          attempts: 1,
+        },
+        persisted,
+        "result",
+      ),
+    ).rejects.toThrow("before recording");
   });
 
   it("forks workers concurrently but serializes same-chat report-back SessionState", async () => {

@@ -239,16 +239,34 @@ export class GatewayStore implements SessionStore {
     return rows.map(decodeMessage);
   }
 
-  enqueue(input: { voiceSessionId: string; kind: "github"; task: string }): string {
-    const id = randomUUID();
-    this.#db
+  enqueue(input: { voiceSessionId: string; kind: "github"; task: string; id?: string }): string {
+    const id = input.id ?? randomUUID();
+    const inserted = this.#db
       .prepare(
-        `INSERT INTO jobs
+        `INSERT OR IGNORE INTO jobs
           (id, voice_session_id, kind, task, status, created_at, updated_at)
          VALUES (?, ?, ?, ?, 'pending', datetime('now'), datetime('now'))`,
       )
       .run(id, input.voiceSessionId, input.kind, input.task);
+    if (inserted.changes === 0) {
+      const existing = this.#db.prepare("SELECT voice_session_id, kind, task FROM jobs WHERE id = ?").get(id) as
+        | { voice_session_id: string; kind: "github"; task: string }
+        | undefined;
+      if (
+        existing === undefined ||
+        existing.voice_session_id !== input.voiceSessionId ||
+        existing.kind !== input.kind ||
+        existing.task !== input.task
+      ) {
+        throw new Error(`Delegated job id collision for ${id}`);
+      }
+    }
     return id;
+  }
+
+  /** Compensate a synchronous tool failure only while the runner cannot have claimed the job. */
+  cancelPending(id: string): boolean {
+    return this.#db.prepare("DELETE FROM jobs WHERE id = ? AND status = 'pending'").run(id).changes === 1;
   }
 
   claimPending(limit: number): readonly DelegationJob[] {
@@ -350,6 +368,11 @@ export class GatewayStore implements SessionStore {
           WHERE id = ? AND status IN ('report_pending', 'reporting')`,
       )
       .run(error, id);
+  }
+
+  getJob(id: string): DelegationJob | undefined {
+    const row = this.#db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as unknown as JobRow | undefined;
+    return row === undefined ? undefined : decodeJob(row);
   }
 
   listJobs(): readonly DelegationJob[] {

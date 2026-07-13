@@ -2,12 +2,41 @@ import { Duration, Effect, type Scope } from "effect";
 import { Client, type HandleMessageStreamEvent, type SessionState } from "eve/client";
 import { githubResultSchema, type GithubResult } from "../../agent/subagents/github/lib/output-schema.ts";
 import type { DelegationJob, GatewayStore } from "../../agent/lib/jobs.ts";
+import { githubResultKind } from "../../agent/lib/action-ledger.ts";
 import { harvestSays } from "../coalescer/doorway.ts";
 
 export interface JobLoopback {
   readonly runGithub: (job: DelegationJob, checkpoint: (state: SessionState) => void) => Promise<GithubResult>;
   readonly deliverVoice: (job: DelegationJob, state: SessionState, message: string) => Promise<SessionState>;
 }
+
+const isRecordedJobResult = (event: HandleMessageStreamEvent, jobId: string): boolean => {
+  if (event.type !== "action.result" || event.data.status !== "completed") return false;
+  const result = event.data.result;
+  if (result.kind !== "tool-result" || result.toolName !== "record_job_result" || result.isError === true) return false;
+  const output = result.output;
+  return (
+    typeof output === "object" &&
+    output !== null &&
+    "recorded" in output &&
+    "jobId" in output &&
+    output.recorded === true &&
+    output.jobId === jobId
+  );
+};
+
+const isSayRequest = (event: HandleMessageStreamEvent): boolean =>
+  event.type === "actions.requested" &&
+  event.data.actions.some((action) => action.kind === "tool-call" && action.toolName === "say");
+
+/** A report is delivered only after the trusted result has reached defineState. */
+export const assertLedgerRecordedBeforeSay = (jobId: string, events: readonly HandleMessageStreamEvent[]): void => {
+  const recordedAt = events.findIndex((event) => isRecordedJobResult(event, jobId));
+  const saidAt = events.findIndex(isSayRequest);
+  if (recordedAt < 0) throw new Error(`Voice did not record job ${jobId} in the action ledger`);
+  if (saidAt < 0) throw new Error(`Voice did not narrate report-back for job ${jobId}`);
+  if (recordedAt > saidAt) throw new Error(`Voice narrated job ${jobId} before recording it in the action ledger`);
+};
 
 const githubResultFromEvents = (job: DelegationJob, events: readonly HandleMessageStreamEvent[]): GithubResult => {
   const delegated = events.some((event) => event.type === "subagent.called" && event.data.name === "github");
@@ -16,7 +45,23 @@ const githubResultFromEvents = (job: DelegationJob, events: readonly HandleMessa
   if (failure?.type === "session.failed") throw new Error(failure.data.message);
   const completed = events.filter((event) => event.type === "result.completed").at(-1);
   if (completed?.type !== "result.completed") throw new Error(`GitHub worker produced no result for job ${job.id}`);
-  return githubResultSchema.parse(completed.data.result);
+  const result = githubResultSchema.parse(completed.data.result);
+  const constrained = /Ledger-constrained (issue|pull_request) #(\d+)\./u.exec(job.task);
+  if (constrained !== null) {
+    const expectedKind = constrained[1] as "issue" | "pull_request";
+    const target = Number(constrained[2]);
+    if (result.action === "create_issue") {
+      throw new Error(`Update-constrained job ${job.id} attempted to create a replacement for #${target}`);
+    }
+    if (result.number !== target) {
+      throw new Error(`Update-constrained job ${job.id} returned #${result.number ?? "none"}; expected #${target}`);
+    }
+    const actualKind = githubResultKind(result);
+    if (actualKind !== expectedKind) {
+      throw new Error(`Update-constrained job ${job.id} returned ${actualKind ?? "unknown kind"} #${target}; expected ${expectedKind}`);
+    }
+  }
+  return result;
 };
 
 /** Production adapter: every direction uses the same eve/client loopback doorway. */
@@ -55,8 +100,8 @@ export const eveJobLoopback = (
     const response = await session.send({ message });
     const result = await response.result();
     if (result.status === "failed") throw new Error(`Voice report-back failed for job ${job.id}`);
+    assertLedgerRecordedBeforeSay(job.id, result.events);
     const says = harvestSays(result.events);
-    if (says.length === 0) throw new Error(`Voice did not narrate report-back for job ${job.id}`);
     for (const text of says) await reply(job.chatId, text);
     return session.state;
   },
@@ -76,12 +121,15 @@ const successTurn = (job: DelegationJob, result: GithubResult): string => {
   return (
     `[worker result for job ${job.id}] ${reference}\n` +
     `${JSON.stringify(result)}\n` +
-    "This is the completed delegated result. Narrate it to the group now with say; include the real number and URL when present."
+    `First call record_job_result with {\"jobId\":${JSON.stringify(job.id)}}. Only after it succeeds, narrate this ` +
+    "completed delegated result to the group with say; include the real number and URL when present."
   );
 };
 
 const failureTurn = (job: DelegationJob, error: string): string =>
-  `[worker FAILED job ${job.id}] ${error}\nNarrate this failure to the group now with say; do not silently drop it.`;
+  `[worker FAILED job ${job.id}] ${error}\n` +
+  `First call record_job_result with {\"jobId\":${JSON.stringify(job.id)}}. Only after it succeeds, narrate this ` +
+  "failure to the group with say; do not silently drop it.";
 
 const deliver = (
   store: GatewayStore,
