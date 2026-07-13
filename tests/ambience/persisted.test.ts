@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHmac } from "node:crypto";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -17,6 +18,8 @@ const tempRoot = mkdtempSync(join(tmpdir(), "ambience-flue-"));
 const buildRoot = mkdtempSync(join(fixtureRoot, ".test-build-"));
 const outputRoot = join(buildRoot, "dist");
 const databasePath = join(tempRoot, "flue.db");
+const githubIngressDatabasePath = join(tempRoot, "github-ingress.db");
+const githubWebhookSecret = "fixture-github-webhook-secret";
 
 let server: ChildProcessWithoutNullStreams | undefined;
 let origin: string;
@@ -38,6 +41,9 @@ async function startServer(extraEnv: NodeJS.ProcessEnv = {}): Promise<void> {
     env: {
       ...process.env,
       FLUE_DB_PATH: databasePath,
+      GITHUB_WEBHOOK_SECRET: githubWebhookSecret,
+      GITHUB_CHAT_ROUTES: "acme/widgets=github-ingress-29@g.us",
+      GITHUB_INGRESS_DB_PATH: githubIngressDatabasePath,
       OPENAI_API_KEY: "",
       PORT: String(port),
       ...extraEnv,
@@ -130,6 +136,51 @@ async function historyText(chatId: string): Promise<string> {
   return history.messages
     .flatMap((message) => message.parts.filter((part) => part.type === "text").map((part) => part.text ?? ""))
     .join("\n");
+}
+
+function githubIssueOpenedPayload(repository = "widgets"): string {
+  return JSON.stringify({
+    action: "opened",
+    installation: { id: 77 },
+    repository: {
+      id: repository === "widgets" ? 101 : 202,
+      name: repository,
+      html_url: `https://github.com/acme/${repository}`,
+      owner: { login: "acme" },
+    },
+    issue: {
+      number: 29,
+      html_url: `https://github.com/acme/${repository}/issues/29`,
+      title: "Signed delivery proof",
+      state: "open",
+    },
+    sender: { login: "octocat", id: 1, type: "User" },
+  });
+}
+
+async function githubDelivery(options: {
+  readonly deliveryId: string;
+  readonly body: string;
+  readonly signature?: string;
+  readonly event?: string;
+}): Promise<Response> {
+  const signature = options.signature ?? createHmac("sha256", githubWebhookSecret).update(options.body).digest("hex");
+  return await fetch(`${origin}/channels/github/webhook`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-github-event": options.event ?? "issues",
+      "x-github-delivery": options.deliveryId,
+      "x-hub-signature-256": `sha256=${signature}`,
+    },
+    body: options.body,
+  });
+}
+
+async function githubIngressRecords(): Promise<readonly Record<string, unknown>[]> {
+  const response = await fetch(`${origin}/test/github/ingress`);
+  expect(response.status).toBe(200);
+  return (await response.json()) as readonly Record<string, unknown>[];
 }
 
 async function waitFor(predicate: () => Promise<boolean>, label: string): Promise<void> {
@@ -237,7 +288,11 @@ beforeAll(async () => {
   const build = spawn(
     "pnpm",
     ["exec", "flue", "build", "--target", "node", "--root", fixtureRoot, "--output", outputRoot],
-    { cwd: repoRoot, env: process.env, stdio: "pipe" },
+    {
+      cwd: repoRoot,
+      env: { ...process.env, GITHUB_WEBHOOK_SECRET: githubWebhookSecret },
+      stdio: "pipe",
+    },
   );
   const buildOutput: Buffer[] = [];
   build.stdout.on("data", (chunk) => buildOutput.push(chunk));
@@ -256,6 +311,113 @@ afterAll(async () => {
 });
 
 describe("persisted Ambience doorway", () => {
+  it("verifies, normalizes, deduplicates, and routes GitHub ingress without implying speech", async () => {
+    const chatId = "github-ingress-29@g.us";
+    const deliveryId = "29-valid-signed-delivery";
+    const body = githubIssueOpenedPayload();
+    await resetWhatsApp();
+
+    const first = await githubDelivery({ deliveryId, body });
+    const firstBody = await first.text();
+    expect(first.status, firstBody).toBe(200);
+    const firstReceipt = JSON.parse(firstBody) as { status: string; dispatchId: string };
+    expect(firstReceipt.status).toBe("dispatched");
+    expect(firstReceipt.dispatchId).toBeTruthy();
+    await waitFor(
+      async () => (await historyText(chatId)).includes("Private verified GitHub delivery processed without speaking."),
+      "verified GitHub delivery settlement",
+    );
+
+    const duplicate = await githubDelivery({ deliveryId, body });
+    const duplicateBody = await duplicate.text();
+    expect(duplicate.status, duplicateBody).toBe(200);
+    expect(JSON.parse(duplicateBody) as { status: string }).toMatchObject({ status: "duplicate" });
+
+    const history = await historyText(chatId);
+    expect(history.match(/github\.issue\.opened/g)).toHaveLength(1);
+    expect(history).toContain(deliveryId);
+    expect(history).toContain("acme");
+    expect(history).toContain("widgets");
+    expect(await whatsappEvents()).toEqual([]);
+    expect(await githubIngressRecords()).toContainEqual(
+      expect.objectContaining({
+        deliveryId,
+        repository: "acme/widgets",
+        chatId,
+        ambience: "ambience",
+        dispatchId: firstReceipt.dispatchId,
+        status: "dispatched",
+      }),
+    );
+    expect(serverOutput).toContain(`"deliveryId":"${deliveryId}"`);
+    expect(serverOutput).toContain(`"repository":"acme/widgets"`);
+    expect(serverOutput).toContain(`"chatId":"${chatId}"`);
+    expect(serverOutput).toContain(`"ambience":"ambience"`);
+    expect(serverOutput).toContain(`"dispatchId":"${firstReceipt.dispatchId}"`);
+    expect(serverOutput).toContain(`"runId":null`);
+  });
+
+  it("rejects an invalid GitHub signature before application processing", async () => {
+    const deliveryId = "29-invalid-signature";
+    const response = await githubDelivery({
+      deliveryId,
+      body: githubIssueOpenedPayload(),
+      signature: "0".repeat(64),
+    });
+
+    expect(response.status).toBe(401);
+    expect(await githubIngressRecords()).not.toContainEqual(expect.objectContaining({ deliveryId }));
+  });
+
+  it("rejects semantically identical JSON when the signed bytes differ", async () => {
+    const deliveryId = "29-byte-altered-signature";
+    const signedBody = githubIssueOpenedPayload();
+    const signature = createHmac("sha256", githubWebhookSecret).update(signedBody).digest("hex");
+    const response = await githubDelivery({
+      deliveryId,
+      body: `${signedBody}\n`,
+      signature,
+    });
+
+    expect(response.status).toBe(401);
+    expect(await githubIngressRecords()).not.toContainEqual(expect.objectContaining({ deliveryId }));
+  });
+
+  it("observes an unconfigured repository without guessing an Ambience destination", async () => {
+    const deliveryId = "29-uncorrelated-repository";
+    const response = await githubDelivery({ deliveryId, body: githubIssueOpenedPayload("unconfigured") });
+
+    const responseBody = await response.text();
+    expect(response.status, responseBody).toBe(200);
+    expect(JSON.parse(responseBody)).toMatchObject({
+      status: "uncorrelated",
+      deliveryId,
+      repository: "acme/unconfigured",
+    });
+    expect(await historyText("github-ingress-29@g.us")).not.toContain(deliveryId);
+    expect(await githubIngressRecords()).toContainEqual(
+      expect.objectContaining({
+        deliveryId,
+        repository: "acme/unconfigured",
+        status: "uncorrelated",
+      }),
+    );
+  });
+
+  it("records a verified unsupported GitHub event without dispatching it", async () => {
+    const deliveryId = "29-unsupported-event";
+    const body = JSON.stringify({ ref: "refs/heads/main", repository: { full_name: "acme/widgets" } });
+    const response = await githubDelivery({ deliveryId, body, event: "push" });
+
+    const responseBody = await response.text();
+    expect(response.status, responseBody).toBe(200);
+    expect(JSON.parse(responseBody)).toMatchObject({ status: "unsupported", deliveryId });
+    expect(await historyText("github-ingress-29@g.us")).not.toContain(deliveryId);
+    expect(await githubIngressRecords()).toContainEqual(
+      expect.objectContaining({ deliveryId, eventName: "push", status: "unsupported" }),
+    );
+  });
+
   it("keeps ordinary final prose private in one canonical chat history", async () => {
     const chatId = "120363000000000000@g.us";
 

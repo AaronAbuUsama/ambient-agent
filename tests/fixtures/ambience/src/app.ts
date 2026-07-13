@@ -10,6 +10,9 @@ import { configLayer } from "../../../../src/coalescer/config.js";
 import type { IncomingMessage } from "../../../../src/coalescer/events.js";
 import { queueEventSource } from "../../../../src/coalescer/mocks.js";
 import { ambienceDoorway, dispatchAmbience } from "../../../../src/ambience/doorway.js";
+import { createGitHubIngress, loadGitHubIngressSettings } from "../../../../src/github/ingress.js";
+import { configureGitHubIngressRuntime } from "../../../../src/github/ingress-runtime.js";
+import { createGitHubIngressStore } from "../../../../src/github/ingress-store.js";
 import { configureGitHubProofRuntime, createGitHubProofPolicy } from "../../../../src/github/proof-runtime.js";
 import {
   createControllableGitHubProofGate,
@@ -75,6 +78,9 @@ const respond = async (context: Context) => {
   if (serialized.includes("workflow.failed")) {
     return fauxAssistantMessage("Private GitHub workflow failure input processed by the same Ambience instance.");
   }
+  if (serialized.includes("github.issue.opened")) {
+    return fauxAssistantMessage("Private verified GitHub delivery processed without speaking.");
+  }
   if (serialized.includes("SPEAK_ONCE")) {
     return fauxAssistantMessage(fauxToolCall("say", { text: "one explicit outbound" }), { stopReason: "toolUse" });
   }
@@ -105,6 +111,15 @@ registerProvider("openai-codex", {
 
 const fakeWhatsApp = createFakeWhatsAppHost();
 configureWhatsAppHost(fakeWhatsApp);
+const githubIngress = loadGitHubIngressSettings();
+const githubIngressStore = createGitHubIngressStore(githubIngress.databasePath);
+configureGitHubIngressRuntime(
+  createGitHubIngress({
+    store: githubIngressStore,
+    routes: githubIngress.routes,
+    admit: async (chatId, input) => await dispatchAmbience({ id: chatId, input }),
+  }),
+);
 const workflowGate = createControllableGitHubProofGate();
 const fakeGitHub = createFakeGitHubProofHost({ gate: workflowGate });
 configureGitHubProofRuntime({
@@ -153,6 +168,7 @@ app.post("/test/whatsapp/fail-next-send", (context) => {
   return context.body(null, 204);
 });
 app.get("/test/github/events", (context) => context.json(fakeGitHub.events()));
+app.get("/test/github/ingress", (context) => context.json(githubIngressStore.list()));
 app.delete("/test/github/events", (context) => {
   fakeGitHub.reset();
   return context.body(null, 204);
