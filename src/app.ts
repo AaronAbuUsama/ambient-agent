@@ -8,6 +8,9 @@ import {
   configureGitHubProofRuntime,
   loadGitHubProofSettings,
 } from "./github/proof-runtime.js";
+import { createGitHubIngress, loadGitHubIngressSettings } from "./github/ingress.js";
+import { configureGitHubIngressRuntime } from "./github/ingress-runtime.js";
+import { createGitHubIngressStore } from "./github/ingress-store.js";
 import { createOctokitGitHubProofHost } from "./host/github-proof-host.js";
 import { connectPiChatGptSubscription } from "./model/pi-subscription.js";
 import {
@@ -16,6 +19,15 @@ import {
 } from "./workflows/github-proof.js";
 
 const subscription = await connectPiChatGptSubscription();
+const githubIngress = loadGitHubIngressSettings();
+const githubIngressStore = createGitHubIngressStore(githubIngress.databasePath);
+configureGitHubIngressRuntime(
+  createGitHubIngress({
+    store: githubIngressStore,
+    routes: githubIngress.routes,
+    admit: async (chatId, input) => await dispatchAmbience({ id: chatId, input }),
+  }),
+);
 const github = loadGitHubProofSettings();
 configureGitHubProofRuntime({
   host: createOctokitGitHubProofHost(github.token),

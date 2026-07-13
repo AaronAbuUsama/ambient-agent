@@ -59,14 +59,40 @@ export const workflowFailedInputSchema = v.object({
   error: v.object({ message: nonEmptyString }),
 });
 
+export const githubIssueOpenedInputSchema = v.object({
+  type: v.literal("github.issue.opened"),
+  chatId: nonEmptyString,
+  deliveryId: nonEmptyString,
+  installationId: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
+  repository: v.object({
+    owner: nonEmptyString,
+    repo: nonEmptyString,
+    id: v.pipe(v.number(), v.integer(), v.minValue(1)),
+    url: nonEmptyString,
+  }),
+  issue: v.object({
+    number: v.pipe(v.number(), v.integer(), v.minValue(1)),
+    url: nonEmptyString,
+    title: nonEmptyString,
+    state: v.literal("open"),
+  }),
+  sender: v.object({
+    login: nonEmptyString,
+    id: v.pipe(v.number(), v.integer(), v.minValue(1)),
+    type: nonEmptyString,
+  }),
+});
+
 export type WorkflowCompletedInput = v.InferOutput<typeof workflowCompletedInputSchema>;
 export type WorkflowUncertainInput = v.InferOutput<typeof workflowUncertainInputSchema>;
 export type WorkflowFailedInput = v.InferOutput<typeof workflowFailedInputSchema>;
+export type GitHubIssueOpenedInput = v.InferOutput<typeof githubIssueOpenedInputSchema>;
 export type AmbienceInput =
   | WhatsAppWindowInput
   | WorkflowCompletedInput
   | WorkflowUncertainInput
-  | WorkflowFailedInput;
+  | WorkflowFailedInput
+  | GitHubIssueOpenedInput;
 
 export const whatsappWindowInput = (window: ConversationWindow): WhatsAppWindowInput =>
   v.parse(whatsappWindowInputSchema, {
