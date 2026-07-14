@@ -1,6 +1,6 @@
 /**
  * Coalescer tuning — feel-critical constants that will be tuned live, so they
- * are a DI service (a `Context.Tag`), never literals. Override the Layer per
+ * are a DI service (a `Context.Service`), never literals. Override the Layer per
  * deployment or per test; the defaults below are sane starting points.
  *
  * Decision D2 in `docs/COALESCER-DESIGN.md`.
@@ -31,7 +31,7 @@ export interface CoalescerConfigValues {
   readonly botIds: readonly string[];
 }
 
-export class CoalescerConfig extends Context.Tag("CoalescerConfig")<CoalescerConfig, CoalescerConfigValues>() {}
+export class CoalescerConfig extends Context.Service<CoalescerConfig, CoalescerConfigValues>()("CoalescerConfig") {}
 
 /** Sane defaults: debounce a few seconds, cap a burst at ~10s, buffer ~10 msgs / ~5 min. */
 const defaultConfig: CoalescerConfigValues = {
@@ -47,5 +47,5 @@ const defaultConfig: CoalescerConfigValues = {
  * the plain defaults; `configLayer({ debounceWindow: Duration.seconds(5) })`
  * tweaks one knob. This is the only config surface callers need.
  */
-export const configLayer = (overrides: Partial<CoalescerConfigValues> = {}): Layer.Layer<CoalescerConfig> =>
+export const configLayer = (overrides: Partial<CoalescerConfigValues> = {}): Layer.Layer<CoalescerConfig, never> =>
   Layer.succeed(CoalescerConfig, { ...defaultConfig, ...overrides });

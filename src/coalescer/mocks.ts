@@ -8,7 +8,7 @@ import { AmbienceAdmission, EventSource } from "./ports.ts";
 
 // ── EventSource: a Stream fed from a Queue the test controls ─────────────────
 
-export const queueEventSource = (queue: Queue.Dequeue<IncomingMessage>): Layer.Layer<EventSource> =>
+export const queueEventSource = (queue: Queue.Dequeue<IncomingMessage>): Layer.Layer<EventSource, never> =>
   Layer.succeed(EventSource, { events: Stream.fromQueue(queue) });
 
 // ── Ambience admission: record every admission (for timing tests) ─────────────
@@ -17,7 +17,7 @@ export const queueEventSource = (queue: Queue.Dequeue<IncomingMessage>): Layer.L
 
 export const recordingAmbienceAdmission = (
   turns: Ref.Ref<readonly ConversationWindow[]>,
-): Layer.Layer<AmbienceAdmission> =>
+): Layer.Layer<AmbienceAdmission, never> =>
   Layer.succeed(AmbienceAdmission, {
     admit: (window) => Ref.update(turns, (t) => [...t, window]),
   });

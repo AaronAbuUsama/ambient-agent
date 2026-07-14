@@ -12,7 +12,8 @@
  * `Scope` for the coalescer's `forkScoped` actors.
  */
 import { describe, expect, it } from "@effect/vitest";
-import { Duration, Effect, Layer, Queue, Ref, TestClock } from "effect";
+import { Duration, Effect, Layer, Queue, Ref } from "effect";
+import { TestClock } from "effect/testing";
 import * as Coalescer from "../../src/coalescer/coalescer.ts";
 import { type CoalescerConfigValues, configLayer } from "../../src/coalescer/config.ts";
 import type { ConversationWindow, IncomingMessage } from "../../src/coalescer/events.ts";
@@ -63,7 +64,7 @@ const startRecording = (
 const texts = (w: ConversationWindow): readonly string[] => w.messages.map((m) => m.text);
 
 describe("Coalescer", () => {
-  it.scoped("light traffic: a lone message fires once, after the quiet window settles", () =>
+  it.effect("light traffic: a lone message fires once, after the quiet window settles", () =>
     Effect.gen(function* () {
       const source = yield* Queue.unbounded<IncomingMessage>();
       const turns = yield* Ref.make<readonly ConversationWindow[]>([]);
@@ -84,7 +85,7 @@ describe("Coalescer", () => {
     }),
   );
 
-  it.scoped("heavy traffic: a burst < window apart coalesces into ONE fire with the whole burst", () =>
+  it.effect("heavy traffic: a burst < window apart coalesces into ONE fire with the whole burst", () =>
     Effect.gen(function* () {
       const source = yield* Queue.unbounded<IncomingMessage>();
       const turns = yield* Ref.make<readonly ConversationWindow[]>([]);
@@ -108,7 +109,7 @@ describe("Coalescer", () => {
     }),
   );
 
-  it.scoped("cap: a nonstop chat still fires ~every maxWait instead of being starved forever", () =>
+  it.effect("cap: a nonstop chat still fires ~every maxWait instead of being starved forever", () =>
     Effect.gen(function* () {
       const source = yield* Queue.unbounded<IncomingMessage>();
       const turns = yield* Ref.make<readonly ConversationWindow[]>([]);
@@ -147,7 +148,7 @@ describe("Coalescer", () => {
     }),
   );
 
-  it.scoped("mention: an @-mention of the bot fires immediately, skipping the debounce", () =>
+  it.effect("mention: an @-mention of the bot fires immediately, skipping the debounce", () =>
     Effect.gen(function* () {
       const source = yield* Queue.unbounded<IncomingMessage>();
       const turns = yield* Ref.make<readonly ConversationWindow[]>([]);
@@ -164,7 +165,7 @@ describe("Coalescer", () => {
     }),
   );
 
-  it.scoped("quote-reply: a reply to the bot also fires immediately", () =>
+  it.effect("quote-reply: a reply to the bot also fires immediately", () =>
     Effect.gen(function* () {
       const source = yield* Queue.unbounded<IncomingMessage>();
       const turns = yield* Ref.make<readonly ConversationWindow[]>([]);
@@ -179,7 +180,7 @@ describe("Coalescer", () => {
     }),
   );
 
-  it.scoped("mention mid-burst flushes the accumulated window immediately (not just the mention)", () =>
+  it.effect("mention mid-burst flushes the accumulated window immediately (not just the mention)", () =>
     Effect.gen(function* () {
       const source = yield* Queue.unbounded<IncomingMessage>();
       const turns = yield* Ref.make<readonly ConversationWindow[]>([]);
@@ -202,7 +203,7 @@ describe("Coalescer", () => {
     }),
   );
 
-  it.scoped("per-chat isolation: two chats debounce independently", () =>
+  it.effect("per-chat isolation: two chats debounce independently", () =>
     Effect.gen(function* () {
       const source = yield* Queue.unbounded<IncomingMessage>();
       const turns = yield* Ref.make<readonly ConversationWindow[]>([]);
@@ -232,7 +233,7 @@ describe("Coalescer", () => {
     }),
   );
 
-  it.scoped("buffer bound: the fired window is capped to the most-recent N messages", () =>
+  it.effect("buffer bound: the fired window is capped to the most-recent N messages", () =>
     Effect.gen(function* () {
       const source = yield* Queue.unbounded<IncomingMessage>();
       const turns = yield* Ref.make<readonly ConversationWindow[]>([]);
@@ -250,7 +251,7 @@ describe("Coalescer", () => {
     }),
   );
 
-  it.scoped("history + own messages are filtered before the loop (never fire)", () =>
+  it.effect("history + own messages are filtered before the loop (never fire)", () =>
     Effect.gen(function* () {
       const source = yield* Queue.unbounded<IncomingMessage>();
       const turns = yield* Ref.make<readonly ConversationWindow[]>([]);
@@ -264,7 +265,7 @@ describe("Coalescer", () => {
     }),
   );
 
-  it.scoped("resilience: a turn that dies (defect) does not wedge the chat — the next burst still fires", () =>
+  it.effect("resilience: a turn that dies (defect) does not wedge the chat — the next burst still fires", () =>
     Effect.gen(function* () {
       const source = yield* Queue.unbounded<IncomingMessage>();
       const turns = yield* Ref.make<readonly ConversationWindow[]>([]);
@@ -283,7 +284,11 @@ describe("Coalescer", () => {
       yield* Effect.forkScoped(
         Coalescer.run.pipe(
           Effect.provide(
-            Layer.mergeAll(queueEventSource(source), flakyAdmission, configLayer({ botIds: [BOT], debounceWindow: WINDOW })),
+            Layer.mergeAll(
+              queueEventSource(source),
+              flakyAdmission,
+              configLayer({ botIds: [BOT], debounceWindow: WINDOW }),
+            ),
           ),
         ),
       );
@@ -302,5 +307,4 @@ describe("Coalescer", () => {
       expect(texts(t[0]!)).toEqual(["second"]);
     }),
   );
-
 });

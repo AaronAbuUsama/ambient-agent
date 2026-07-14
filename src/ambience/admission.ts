@@ -16,9 +16,7 @@ export type AdmitAmbience = (admission: AmbienceAdmissionRequest) => Promise<Dis
 export const dispatchAmbience = ({ id, input }: AmbienceAdmissionRequest): Promise<DispatchReceipt> =>
   dispatch(ambience, { id, input });
 
-export const makeAmbienceAdmission = (
-  admit: AdmitAmbience = dispatchAmbience,
-): Layer.Layer<AmbienceAdmission> =>
+export const makeAmbienceAdmission = (admit: AdmitAmbience = dispatchAmbience): Layer.Layer<AmbienceAdmission, never> =>
   Layer.succeed(AmbienceAdmission, {
     admit: (window: ConversationWindow) =>
       Effect.tryPromise({

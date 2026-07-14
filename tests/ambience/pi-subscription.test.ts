@@ -1,6 +1,6 @@
 import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import type { ProviderStreams } from "@earendil-works/pi-ai";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   AMBIENCE_MODEL_ID,
@@ -25,8 +25,8 @@ describe("connectPiChatGptSubscription", () => {
     process.env.OPENAI_API_KEY = "must-not-be-used";
     const registerProvider = vi.fn();
     const codexApi: ProviderStreams = {
-      stream: vi.fn(() => ({} as ReturnType<ProviderStreams["stream"]>)),
-      streamSimple: vi.fn(() => ({} as ReturnType<ProviderStreams["streamSimple"]>)),
+      stream: vi.fn(() => ({}) as ReturnType<ProviderStreams["stream"]>),
+      streamSimple: vi.fn(() => ({}) as ReturnType<ProviderStreams["streamSimple"]>),
     };
 
     try {
@@ -56,12 +56,12 @@ describe("connectPiChatGptSubscription", () => {
       "openai-codex": { type: "api_key", key: "must-not-be-used" },
     });
 
-    await expect(
-      connectPiChatGptSubscription({ authStorage: apiKeyStorage }),
-    ).rejects.toThrow(/Pi OAuth credential.*openai-codex/i);
-    await expect(
-      connectPiChatGptSubscription({ authStorage: AuthStorage.inMemory() }),
-    ).rejects.toThrow(/Pi OAuth credential.*openai-codex/i);
+    await expect(connectPiChatGptSubscription({ authStorage: apiKeyStorage })).rejects.toThrow(
+      /Pi OAuth credential.*openai-codex/i,
+    );
+    await expect(connectPiChatGptSubscription({ authStorage: AuthStorage.inMemory() })).rejects.toThrow(
+      /Pi OAuth credential.*openai-codex/i,
+    );
   });
 
   it("registers Luna through Pi with reasoning enabled and a safe receipt", async () => {

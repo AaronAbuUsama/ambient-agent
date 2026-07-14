@@ -3,7 +3,7 @@
  * integration tests exercise the count cap; age eviction is pure and easiest to
  * pin down here directly.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { appendBounded, type BufferBounds } from "../../src/coalescer/buffer.ts";
 import type { IncomingMessage } from "../../src/coalescer/events.ts";
 
@@ -32,7 +32,10 @@ describe("appendBounded", () => {
 
   it("caps to the most-recent N by count", () => {
     const bounds: BufferBounds = { maxBufferMessages: 3, maxBufferAgeMillis: 5 * 60_000 };
-    const out = build([1, 2, 3, 4, 5].map((n) => msg(`m${n}`, n * 1_000)), bounds);
+    const out = build(
+      [1, 2, 3, 4, 5].map((n) => msg(`m${n}`, n * 1_000)),
+      bounds,
+    );
     expect(out.map((m) => m.text)).toEqual(["m3", "m4", "m5"]);
   });
 
@@ -47,10 +50,7 @@ describe("appendBounded", () => {
   it("applies age eviction before the count cap (never returns a stale message)", () => {
     const bounds: BufferBounds = { maxBufferMessages: 5, maxBufferAgeMillis: 10_000 };
     // A long-idle first message, then a fresh burst well after the age window.
-    const out = build(
-      [msg("stale", 0), msg("x", 100_000), msg("y", 101_000), msg("z", 102_000)],
-      bounds,
-    );
+    const out = build([msg("stale", 0), msg("x", 100_000), msg("y", 101_000), msg("z", 102_000)], bounds);
     expect(out.map((m) => m.text)).toEqual(["x", "y", "z"]);
   });
 });

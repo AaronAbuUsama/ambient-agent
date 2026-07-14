@@ -9,7 +9,7 @@
  * session is a scoped resource: it is stopped and unsubscribed on scope close.
  */
 import { createRequire } from "node:module";
-import { Data, Effect, Layer, Queue, Runtime, type Scope, Stream } from "effect";
+import { Data, Effect, Layer, Queue, type Scope, Stream } from "effect";
 import {
   createSession,
   fileStore,
@@ -122,7 +122,7 @@ export const openSession = (
     // Connect and settle once genuinely online (so identity() is readable), or fail
     // on a terminal status. start() is fired here, NOT awaited separately — it doesn't
     // resolve until well after online, so we settle on the status callback instead.
-    yield* Effect.async<void, WhatsAppError>((resume) => {
+    yield* Effect.callback<void, WhatsAppError>((resume) => {
       const unsub = session.onStatus((status) => {
         if (isOnline(status)) {
           unsub();
@@ -172,18 +172,17 @@ export const botIdsOf = (session: WhatsAppSession, rawLid?: string): readonly st
 export const whatsappEventSource = (
   session: WhatsAppSession,
   allow: (chatId: string, isGroup: boolean) => boolean,
-): Layer.Layer<EventSource> =>
-  Layer.scoped(
+): Layer.Layer<EventSource, never> =>
+  Layer.effect(
     EventSource,
     Effect.gen(function* () {
       const queue = yield* Queue.unbounded<IncomingMessage>();
-      const runtime = yield* Effect.runtime<never>();
       const unsub = session.onMessage((msg) => {
         const allowed = allow(msg.chatId, msg.isGroup);
         logInbound(msg, allowed);
         if (!allowed) return;
-        // Unbounded offer never suspends, so runSync keeps arrival order.
-        Runtime.runSync(runtime)(Queue.offer(queue, toIncoming(msg)));
+        // Unbounded offer never suspends; the unsafe API preserves callback arrival order.
+        Queue.offerUnsafe(queue, toIncoming(msg));
       });
       yield* Effect.addFinalizer(() => Effect.sync(() => unsub()));
       return { events: Stream.fromQueue(queue) };

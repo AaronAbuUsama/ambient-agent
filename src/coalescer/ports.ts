@@ -1,5 +1,5 @@
 /**
- * The Coalescer's ports — every boundary to the outside world is a `Context.Tag`
+ * The Coalescer's ports — every boundary to the outside world is a `Context.Service`
  * service, so each is a swappable Layer. This is the Effect-to-Flue admission
  * seam and the test seams, in one place.
  *
@@ -16,21 +16,21 @@ export class AmbienceAdmissionError extends Data.TaggedError("AmbienceAdmissionE
   readonly cause: unknown;
 }> {}
 
-export class AmbienceAdmission extends Context.Tag("AmbienceAdmission")<
+export class AmbienceAdmission extends Context.Service<
   AmbienceAdmission,
   {
     /** Admit one accepted buffered window to the continuing Ambience instance. */
     readonly admit: (window: ConversationWindow) => Effect.Effect<void, AmbienceAdmissionError>;
   }
->() {}
+>()("AmbienceAdmission") {}
 
 // ── EventSource (inbound stream) ────────────────────────────────────────────
 // The raw per-chat event firehose. Mock: a `Stream` fed from a test `Queue`,
 // driven under `TestClock`. Real: the in-process whatsappd subscription.
 
-export class EventSource extends Context.Tag("EventSource")<
+export class EventSource extends Context.Service<
   EventSource,
   {
     readonly events: Stream.Stream<IncomingMessage>;
   }
->() {}
+>()("EventSource") {}

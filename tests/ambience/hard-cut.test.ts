@@ -1,6 +1,6 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 const root = process.cwd();
 
@@ -27,19 +27,17 @@ async function sourceFiles(relativeDirectory: string): Promise<string[]> {
 }
 
 describe("the post-Eve production cut", () => {
-  it("has one Flue production command surface and no Eve runtime dependencies", async () => {
-    const packageJson = JSON.parse(
-      await readFile(path.join(root, "package.json"), "utf8"),
-    ) as {
+  it("keeps Flue as the server build while packaging the CLI separately", async () => {
+    const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")) as {
       dependencies: Record<string, string>;
       scripts: Record<string, string>;
     };
 
     expect(packageJson.scripts.dev).toBe("flue dev --target node");
-    expect(packageJson.scripts.build).toBe("flue build --target node");
-    expect(packageJson.scripts.start).toBe(
-      "node --env-file-if-exists=.env dist/server.mjs",
-    );
+    expect(packageJson.scripts["build:server"]).toBe("flue build --target node");
+    expect(packageJson.scripts["build:cli"]).toBe("vp pack");
+    expect(packageJson.scripts.build).toBe("pnpm run build:server && pnpm run build:cli");
+    expect(packageJson.scripts.start).toBe("node --env-file-if-exists=.env dist/server.mjs");
     expect(Object.keys(packageJson.scripts)).not.toContain("ambience:build");
     expect(Object.values(packageJson.scripts).join("\n")).not.toMatch(
       /(?:eve|src\/index\.ts|coalescer\/(?:doorway|live|repl|voice|worker)|spike-(?:loopback|resume))/,
@@ -71,16 +69,13 @@ describe("the post-Eve production cut", () => {
       "scripts/find-group-jid.ts",
     ];
 
-    await expect(
-      Promise.all(deletedPaths.map((relativePath) => exists(relativePath))),
-    ).resolves.toEqual(deletedPaths.map(() => false));
+    await expect(Promise.all(deletedPaths.map((relativePath) => exists(relativePath)))).resolves.toEqual(
+      deletedPaths.map(() => false),
+    );
   });
 
   it("keeps the canonical Coalescer-to-Ambience admission free of API-key fallback", async () => {
-    const runtime = await readFile(
-      path.join(root, "src/host/whatsapp-runtime.ts"),
-      "utf8",
-    );
+    const runtime = await readFile(path.join(root, "src/host/whatsapp-runtime.ts"), "utf8");
     expect(runtime).toContain("makeAmbienceAdmission");
 
     const files = await sourceFiles("src");

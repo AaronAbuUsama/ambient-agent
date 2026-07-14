@@ -15,13 +15,15 @@
  * Everything time-based routes through the Effect `Clock`, so under `TestClock`
  * the whole thing runs in virtual time with zero real sleeps.
  */
-import { Clock, Context, Duration, Effect, HashMap, Option, Queue, Ref, type Scope, Stream } from "effect";
+import { Clock, Duration, Effect, HashMap, Option, Queue, Ref, type Scope, Stream } from "effect";
 import { appendBounded, type BufferBounds } from "./buffer.ts";
 import { addressesBot, type ConversationWindow, type FireReason, type IncomingMessage, reasonOf } from "./events.ts";
 import { CoalescerConfig, type CoalescerConfigValues } from "./config.ts";
 import { AmbienceAdmission, EventSource } from "./ports.ts";
 
-type AmbienceAdmissionService = Context.Tag.Service<typeof AmbienceAdmission>;
+type AmbienceAdmissionService = {
+  readonly admit: (window: ConversationWindow) => Effect.Effect<void, unknown>;
+};
 
 /**
  * Admit the buffered window to Ambience. A failed admission must not kill the
@@ -32,20 +34,14 @@ type AmbienceAdmissionService = Context.Tag.Service<typeof AmbienceAdmission>;
  * never fire (a config edge, e.g. `maxBufferMessages: 0`) — there is nothing to say.
  */
 const logAdmissionError = (window: ConversationWindow) => (cause: unknown) =>
-  Effect.logError(`Ambience admission failed for ${window.chatId}`).pipe(
-    Effect.annotateLogs({ cause: String(cause) }),
-  );
+  Effect.logError(`Ambience admission failed for ${window.chatId}`).pipe(Effect.annotateLogs({ cause: String(cause) }));
 
-const fire = (
-  admission: AmbienceAdmissionService,
-  window: ConversationWindow,
-): Effect.Effect<void> =>
+const fire = (admission: AmbienceAdmissionService, window: ConversationWindow): Effect.Effect<void> =>
   window.messages.length === 0
     ? Effect.void
-    : admission.admit(window).pipe(
-        Effect.catchAll(logAdmissionError(window)),
-        Effect.catchAllDefect(logAdmissionError(window)),
-      );
+    : admission
+        .admit(window)
+        .pipe(Effect.catch(logAdmissionError(window)), Effect.catchDefect(logAdmissionError(window)));
 
 /**
  * Build the per-chat actor loop for a given config + Ambience admission. Returns a function
@@ -61,7 +57,7 @@ const makeChatLoop = (config: CoalescerConfigValues, admission: AmbienceAdmissio
   return (chatId: string, queue: Queue.Dequeue<IncomingMessage>): Effect.Effect<never> => {
     // Admit the buffered window to Ambience, then go cold for the next burst.
     const fireAndReset = (messages: readonly IncomingMessage[], reason: FireReason): Effect.Effect<never> =>
-      fire(admission, { chatId, messages, reason }).pipe(Effect.zipRight(cold));
+      fire(admission, { chatId, messages, reason }).pipe(Effect.andThen(cold));
 
     // A message landed: buffer it, and either flush now (bot addressed) or keep
     // waiting. `burstStart` is the clock time of the burst's first message — the
@@ -116,33 +112,30 @@ const makeChatLoop = (config: CoalescerConfigValues, admission: AmbienceAdmissio
  * `forkScoped` — they live until the enclosing `Scope` closes, giving clean
  * shutdown. The router drains sequentially, so lazy queue creation never races.
  */
-export const run: Effect.Effect<
-  void,
-  never,
-  EventSource | AmbienceAdmission | CoalescerConfig | Scope.Scope
-> = Effect.gen(function* () {
-  const { events } = yield* EventSource;
-  const config = yield* CoalescerConfig;
-  const admission = yield* AmbienceAdmission;
-  const chatLoop = makeChatLoop(config, admission);
-  const registry = yield* Ref.make(HashMap.empty<string, Queue.Queue<IncomingMessage>>());
+export const run: Effect.Effect<void, never, EventSource | AmbienceAdmission | CoalescerConfig | Scope.Scope> =
+  Effect.gen(function* () {
+    const { events } = yield* EventSource;
+    const config = yield* CoalescerConfig;
+    const admission = yield* AmbienceAdmission;
+    const chatLoop = makeChatLoop(config, admission);
+    const registry = yield* Ref.make(HashMap.empty<string, Queue.Queue<IncomingMessage>>());
 
-  const routeTo = (msg: IncomingMessage): Effect.Effect<void, never, Scope.Scope> =>
-    Effect.gen(function* () {
-      const existing = HashMap.get(yield* Ref.get(registry), msg.chatId);
-      if (Option.isSome(existing)) {
-        yield* Queue.offer(existing.value, msg);
-        return;
-      }
-      const queue = yield* Queue.unbounded<IncomingMessage>();
-      yield* Ref.update(registry, HashMap.set(msg.chatId, queue));
-      yield* Effect.forkScoped(chatLoop(msg.chatId, queue));
-      yield* Queue.offer(queue, msg);
-    });
+    const routeTo = (msg: IncomingMessage): Effect.Effect<void, never, Scope.Scope> =>
+      Effect.gen(function* () {
+        const existing = HashMap.get(yield* Ref.get(registry), msg.chatId);
+        if (Option.isSome(existing)) {
+          yield* Queue.offer(existing.value, msg);
+          return;
+        }
+        const queue = yield* Queue.unbounded<IncomingMessage>();
+        yield* Ref.update(registry, HashMap.set(msg.chatId, queue));
+        yield* Effect.forkScoped(chatLoop(msg.chatId, queue));
+        yield* Queue.offer(queue, msg);
+      });
 
-  yield* events.pipe(
-    // fromMe = the bot's own messages; live=false = history backfill. Neither drives the loop.
-    Stream.filter((m) => m.live && !m.fromMe),
-    Stream.runForEach(routeTo),
-  );
-});
+    yield* events.pipe(
+      // fromMe = the bot's own messages; live=false = history backfill. Neither drives the loop.
+      Stream.filter((m) => m.live && !m.fromMe),
+      Stream.runForEach(routeTo),
+    );
+  });

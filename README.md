@@ -1,6 +1,9 @@
-# whatsappd-github-agent
+# Ambient Agent
 
-> This README describes the currently shipped hard-cut baseline. The ratified next production architecture renames the product and package to **Ambient Agent** and is specified in [docs/architecture/ambient-agent.md](./docs/architecture/ambient-agent.md). Until that rollout lands, do not treat the target CLI, durable intake, or production Issue Management module as shipped behavior.
+> The secure `ambient-agent` installer, managed filesystem, `status`, and
+> `doctor` commands are shipped. The foreground managed runtime and production
+> Issue Management rollout are still tracked by the remaining stable-base work
+> in [the architecture plan](./docs/architecture/ambient-agent.md).
 
 A continuing ambient agent for managed WhatsApp chats. Each accepted coalesced
 window is admitted to one canonical instance of Ambience — this application's
@@ -35,8 +38,29 @@ state by operation identity and never blindly retries an uncertain write.
 
 ## Run it
 
-Requirements: Node 22 or 24, pnpm 9, a paired WhatsApp account, a scoped GitHub
+Requirements: Node 22.19 or newer, pnpm 9, a paired WhatsApp account, a scoped GitHub
 token, and a Pi ChatGPT OAuth login.
+
+Install or run the package and create its managed data skeleton:
+
+```bash
+npx ambient-agent init \
+  --chat 120363000000000000@g.us \
+  --repository owner/repository \
+  --github-token-file /secure/path/github-token.txt \
+  --pi-auth-file ~/.pi/agent/auth.json
+
+npx ambient-agent status
+npx ambient-agent doctor
+```
+
+With no arguments, the executable enters guided setup on a first run and
+reports status thereafter. It stores non-secret configuration and credential
+references in the OS data directory while keeping credentials in private
+`0600` files beneath a `0700` root. Running setup again verifies the existing
+installation and does not replace credentials.
+
+For current source development of the runtime baseline:
 
 ```bash
 pnpm install --frozen-lockfile

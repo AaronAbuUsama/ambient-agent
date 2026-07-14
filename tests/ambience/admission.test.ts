@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { Duration, Effect, Layer, Queue, Ref, Schedule } from "effect";
 import * as v from "valibot";
 
@@ -33,7 +33,10 @@ const awaitRef = <A>(ref: Ref.Ref<A>, predicate: (value: A) => boolean) =>
   Ref.get(ref).pipe(
     Effect.flatMap((value) => (predicate(value) ? Effect.succeed(value) : Effect.fail(new Error("retry")))),
     Effect.retry(Schedule.spaced(Duration.millis(10))),
-    Effect.timeoutFail({ duration: Duration.seconds(5), onTimeout: () => new Error("condition never held") }),
+    Effect.timeoutOrElse({
+      duration: Duration.seconds(5),
+      orElse: () => Effect.fail(new Error("condition never held")),
+    }),
   );
 
 describe("production Coalescer-to-Ambience admission", () => {
@@ -96,7 +99,13 @@ describe("say", () => {
     });
     expect(host.events()).toEqual([
       { kind: "typing", chatId: CHAT, on: true },
-      { kind: "send", chatId: CHAT, text: "hello group", outcome: "sent", messageId: "fake-message-1" },
+      {
+        kind: "send",
+        chatId: CHAT,
+        text: "hello group",
+        outcome: "sent",
+        messageId: "fake-message-1",
+      },
       { kind: "typing", chatId: CHAT, on: false },
     ]);
   });
@@ -113,7 +122,13 @@ describe("say", () => {
     });
     expect(host.events()).toEqual([
       { kind: "typing", chatId: CHAT, on: true },
-      { kind: "send", chatId: CHAT, text: "send once", outcome: "unknown", error: "provider outcome unknown" },
+      {
+        kind: "send",
+        chatId: CHAT,
+        text: "send once",
+        outcome: "unknown",
+        error: "provider outcome unknown",
+      },
       { kind: "typing", chatId: CHAT, on: false },
     ]);
   });
@@ -131,8 +146,20 @@ describe("say", () => {
     });
     expect(host.events()).toEqual([
       { kind: "typing", chatId: CHAT, on: true },
-      { kind: "send", chatId: CHAT, text: "delivered once", outcome: "sent", messageId: "fake-message-1" },
-      { kind: "typing", chatId: CHAT, on: false, outcome: "unknown", error: "typing cleanup outcome unknown" },
+      {
+        kind: "send",
+        chatId: CHAT,
+        text: "delivered once",
+        outcome: "sent",
+        messageId: "fake-message-1",
+      },
+      {
+        kind: "typing",
+        chatId: CHAT,
+        on: false,
+        outcome: "unknown",
+        error: "typing cleanup outcome unknown",
+      },
     ]);
   });
 

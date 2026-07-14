@@ -9,7 +9,7 @@ import type {
   Outbound,
   WhatsAppSession,
 } from "whatsappd";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import type { AmbienceAdmissionRequest } from "../../src/ambience/admission.ts";
 import { makeChatGate } from "../../src/coalescer/chat-gate.ts";
@@ -62,27 +62,30 @@ const fakeSession = (options: { readonly sendError?: Error; readonly typingOffEr
   return { session, messageListeners, syncListeners, sent, typing };
 };
 
-const inbound = (overrides: {
-  readonly id?: string;
-  readonly chatId?: string;
-  readonly live?: boolean;
-  readonly fromMe?: boolean;
-  readonly text?: string;
-  readonly timestamp?: number;
-} = {}): WhatsAppMessage => ({
-  id: "inbound-31",
-  chatId: CHAT,
-  from: "15551112222@s.whatsapp.net",
-  pushName: "Alice",
-  fromMe: false,
-  timestamp: 1_000,
-  live: true,
-  isGroup: true,
-  kind: "text",
-  text: "quiet production-path input",
-  reply: async () => ({ id: "unused", chatId: CHAT, fromMe: true }),
-  ...overrides,
-} as WhatsAppMessage);
+const inbound = (
+  overrides: {
+    readonly id?: string;
+    readonly chatId?: string;
+    readonly live?: boolean;
+    readonly fromMe?: boolean;
+    readonly text?: string;
+    readonly timestamp?: number;
+  } = {},
+): WhatsAppMessage =>
+  ({
+    id: "inbound-31",
+    chatId: CHAT,
+    from: "15551112222@s.whatsapp.net",
+    pushName: "Alice",
+    fromMe: false,
+    timestamp: 1_000,
+    live: true,
+    isGroup: true,
+    kind: "text",
+    text: "quiet production-path input",
+    reply: async () => ({ id: "unused", chatId: CHAT, fromMe: true }),
+    ...overrides,
+  }) as WhatsAppMessage;
 
 describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
   it("uses one managed session for gated ingress, history, Ambience admission, and explicit say", async () => {
@@ -101,11 +104,14 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
               coalescer: { debounceWindow: Duration.millis(10), maxWait: Duration.millis(20) },
               admit: async (admission) => {
                 admissions.push(admission);
-                return { dispatchId: "dispatch-whatsapp-31", acceptedAt: "2026-07-13T00:00:00.000Z" };
+                return {
+                  dispatchId: "dispatch-whatsapp-31",
+                  acceptedAt: "2026-07-13T00:00:00.000Z",
+                };
               },
             }),
           );
-          yield* Effect.yieldNow();
+          yield* Effect.yieldNow;
 
           yield* Effect.promise(async () => {
             const synced = inbound({
@@ -134,14 +140,21 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
                 type: "whatsapp.window",
                 chatId: CHAT,
                 reason: "debounce",
-                messages: [expect.objectContaining({ id: "inbound-31", text: "quiet production-path input" })],
+                messages: [
+                  expect.objectContaining({
+                    id: "inbound-31",
+                    text: "quiet production-path input",
+                  }),
+                ],
               }),
             },
           ]);
           expect(fake.sent).toEqual([]);
 
           const say = createSayTool(CHAT);
-          expect(yield* Effect.promise(() => Promise.resolve(say.run({ input: { text: "one controlled reply" } })))).toEqual({
+          expect(
+            yield* Effect.promise(() => Promise.resolve(say.run({ input: { text: "one controlled reply" } }))),
+          ).toEqual({
             delivery: "sent",
             messageId: "real-host-message-1",
             typing: "cleared",
