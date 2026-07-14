@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import * as ambienceModule from "../../src/agents/ambience.js";
 
@@ -10,12 +10,10 @@ describe("Ambience admission boundary", () => {
   });
 
   it("loads the repository environment for the packaged Ambience server", () => {
-    const packageJson = JSON.parse(
-      readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
-    ) as { scripts?: Record<string, string> };
+    const packageJson = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
+      scripts?: Record<string, string>;
+    };
 
-    expect(packageJson.scripts?.["start"]).toBe(
-      "node --env-file-if-exists=.env dist/server.mjs",
-    );
+    expect(packageJson.scripts?.["start"]).toBe("node --env-file-if-exists=.env dist/server.mjs");
   });
 });

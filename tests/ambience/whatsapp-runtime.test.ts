@@ -9,9 +9,9 @@ import type {
   Outbound,
   WhatsAppSession,
 } from "whatsappd";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import type { AmbienceAdmission } from "../../src/ambience/doorway.ts";
+import type { AmbienceDispatchRequest } from "../../src/ambience/dispatch.ts";
 import { makeChatGate } from "../../src/coalescer/chat-gate.ts";
 import { createWhatsAppHistory, persistWhatsAppMessages } from "../../src/host/whatsapp-history.ts";
 import { createWhatsAppHost, runWhatsAppSession } from "../../src/host/whatsapp-runtime.ts";
@@ -62,34 +62,37 @@ const fakeSession = (options: { readonly sendError?: Error; readonly typingOffEr
   return { session, messageListeners, syncListeners, sent, typing };
 };
 
-const inbound = (overrides: {
-  readonly id?: string;
-  readonly chatId?: string;
-  readonly live?: boolean;
-  readonly fromMe?: boolean;
-  readonly text?: string;
-  readonly timestamp?: number;
-} = {}): WhatsAppMessage => ({
-  id: "inbound-31",
-  chatId: CHAT,
-  from: "15551112222@s.whatsapp.net",
-  pushName: "Alice",
-  fromMe: false,
-  timestamp: 1_000,
-  live: true,
-  isGroup: true,
-  kind: "text",
-  text: "quiet production-path input",
-  reply: async () => ({ id: "unused", chatId: CHAT, fromMe: true }),
-  ...overrides,
-} as WhatsAppMessage);
+const inbound = (
+  overrides: {
+    readonly id?: string;
+    readonly chatId?: string;
+    readonly live?: boolean;
+    readonly fromMe?: boolean;
+    readonly text?: string;
+    readonly timestamp?: number;
+  } = {},
+): WhatsAppMessage =>
+  ({
+    id: "inbound-31",
+    chatId: CHAT,
+    from: "15551112222@s.whatsapp.net",
+    pushName: "Alice",
+    fromMe: false,
+    timestamp: 1_000,
+    live: true,
+    isGroup: true,
+    kind: "text",
+    text: "quiet production-path input",
+    reply: async () => ({ id: "unused", chatId: CHAT, fromMe: true }),
+    ...overrides,
+  }) as WhatsAppMessage;
 
 describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
-  it("uses one managed session for gated ingress, history, Ambience admission, and explicit say", async () => {
+  it("uses one managed session for gated ingress, history, Ambience dispatch, and explicit say", async () => {
     const history = temporaryHistory();
     const fake = fakeSession();
     const persisted = persistWhatsAppMessages(fake.session, history);
-    const admissions: AmbienceAdmission[] = [];
+    const dispatches: AmbienceDispatchRequest[] = [];
 
     await Effect.runPromise(
       Effect.scoped(
@@ -99,13 +102,16 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
               gate: makeChatGate({ groupIds: CHAT }),
               history,
               coalescer: { debounceWindow: Duration.millis(10), maxWait: Duration.millis(20) },
-              admit: async (admission) => {
-                admissions.push(admission);
-                return { dispatchId: "dispatch-whatsapp-31", acceptedAt: "2026-07-13T00:00:00.000Z" };
+              dispatch: async (request) => {
+                dispatches.push(request);
+                return {
+                  dispatchId: "dispatch-whatsapp-31",
+                  acceptedAt: "2026-07-13T00:00:00.000Z",
+                };
               },
             }),
           );
-          yield* Effect.yieldNow();
+          yield* Effect.yieldNow;
 
           yield* Effect.promise(async () => {
             const synced = inbound({
@@ -127,21 +133,28 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
           });
           yield* Effect.sleep(Duration.millis(50));
 
-          expect(admissions).toEqual([
+          expect(dispatches).toEqual([
             {
               id: CHAT,
               input: expect.objectContaining({
                 type: "whatsapp.window",
                 chatId: CHAT,
                 reason: "debounce",
-                messages: [expect.objectContaining({ id: "inbound-31", text: "quiet production-path input" })],
+                messages: [
+                  expect.objectContaining({
+                    id: "inbound-31",
+                    text: "quiet production-path input",
+                  }),
+                ],
               }),
             },
           ]);
           expect(fake.sent).toEqual([]);
 
           const say = createSayTool(CHAT);
-          expect(yield* Effect.promise(() => Promise.resolve(say.run({ input: { text: "one controlled reply" } })))).toEqual({
+          expect(
+            yield* Effect.promise(() => Promise.resolve(say.run({ input: { text: "one controlled reply" } }))),
+          ).toEqual({
             delivery: "sent",
             messageId: "real-host-message-1",
             typing: "cleared",

@@ -9,10 +9,9 @@ import * as Coalescer from "../../../../src/coalescer/coalescer.js";
 import { configLayer } from "../../../../src/coalescer/config.js";
 import type { IncomingMessage } from "../../../../src/coalescer/events.js";
 import { queueEventSource } from "../../../../src/coalescer/mocks.js";
-import { ambienceDoorway, dispatchAmbience } from "../../../../src/ambience/doorway.js";
-import { createGitHubIngress, loadGitHubIngressSettings } from "../../../../src/github/ingress.js";
-import { configureGitHubIngressRuntime } from "../../../../src/github/ingress-runtime.js";
-import { createGitHubIngressStore } from "../../../../src/github/ingress-store.js";
+import { ambienceWindowDispatcher, dispatchAmbience } from "../../../../src/ambience/dispatch.js";
+import { loadGitHubIngressSettings } from "../../../../src/github/ingress.js";
+import { installGitHubIngressRuntime } from "../../../../src/github/ingress-runtime.js";
 import { configureGitHubProofRuntime, createGitHubProofPolicy } from "../../../../src/github/proof-runtime.js";
 import {
   createControllableGitHubProofGate,
@@ -20,10 +19,7 @@ import {
 } from "../../../../src/host/fake-github-proof-host.js";
 import { createFakeWhatsAppHost } from "../../../../src/host/fake-whatsapp-host.js";
 import { configureWhatsAppHost } from "../../../../src/host/whatsapp-host.js";
-import {
-  configureGitHubProofResultSink,
-  installGitHubProofResultDelivery,
-} from "../../../../src/workflows/github-proof.js";
+import { installGitHubProofResultDispatch } from "../../../../src/workflows/github-proof.js";
 
 const provider = registerFauxProvider({ provider: "ambience-fixture" });
 const heldRecoveryMarkers = new Set<string>();
@@ -55,16 +51,12 @@ const respond = async (context: Context) => {
     return fauxAssistantMessage("Private speech outcome retained for the next Ambience turn.");
   }
   if (serialized.includes("START_GITHUB_PROOF")) {
-    return fauxAssistantMessage(
-      fauxToolCall("start_github_proof", { repository: "acme/widgets" }),
-      { stopReason: "toolUse" },
-    );
+    return fauxAssistantMessage(fauxToolCall("start_github_proof", { repository: "acme/widgets" }), {
+      stopReason: "toolUse",
+    });
   }
   if (serialized.includes("Run the bounded disposable GitHub issue proof")) {
-    return fauxAssistantMessage(
-      fauxToolCall("run_disposable_github_issue_proof", {}),
-      { stopReason: "toolUse" },
-    );
+    return fauxAssistantMessage(fauxToolCall("run_disposable_github_issue_proof", {}), { stopReason: "toolUse" });
   }
   if (serialized.includes("WHILE_WORKFLOW_HELD")) {
     return fauxAssistantMessage("Private Ambience turn settled while the workflow remained active.");
@@ -112,13 +104,9 @@ registerProvider("openai-codex", {
 const fakeWhatsApp = createFakeWhatsAppHost();
 configureWhatsAppHost(fakeWhatsApp);
 const githubIngress = loadGitHubIngressSettings();
-const githubIngressStore = createGitHubIngressStore(githubIngress.databasePath);
-configureGitHubIngressRuntime(
-  createGitHubIngress({
-    store: githubIngressStore,
-    routes: githubIngress.routes,
-    admit: async (chatId, input) => await dispatchAmbience({ id: chatId, input }),
-  }),
+const githubIngressStore = installGitHubIngressRuntime(
+  githubIngress,
+  async (chatId, input) => await dispatchAmbience({ id: chatId, input }),
 );
 const workflowGate = createControllableGitHubProofGate();
 const fakeGitHub = createFakeGitHubProofHost({ gate: workflowGate });
@@ -126,15 +114,9 @@ configureGitHubProofRuntime({
   host: fakeGitHub,
   policy: createGitHubProofPolicy("acme/widgets", ["acme/widgets"]),
 });
-configureGitHubProofResultSink(async (chatId, input) => {
-  const run = await getRun(input.runId);
-  const expectedStatus = input.type === "workflow.failed" ? "errored" : "completed";
-  if (run?.status !== expectedStatus) {
-    throw new Error(`GitHub proof workflow ${input.runId} is not durably ${expectedStatus}`);
-  }
+installGitHubProofResultDispatch(async (chatId, input) => {
   await dispatchAmbience({ id: chatId, input });
 });
-installGitHubProofResultDelivery();
 
 const source = await Effect.runPromise(Queue.unbounded<IncomingMessage>());
 Effect.runFork(
@@ -143,7 +125,7 @@ Effect.runFork(
       Effect.provide(
         Layer.mergeAll(
           queueEventSource(source),
-          ambienceDoorway,
+          ambienceWindowDispatcher,
           configLayer({ botIds: ["bot@s.whatsapp.net"], debounceWindow: Duration.millis(25) }),
         ),
       ),

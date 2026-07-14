@@ -40,8 +40,8 @@ export interface IncomingMessage {
 export type FireReason = "debounce" | "mention" | "quote-reply";
 
 /**
- * The window admitted to Ambience on each flush: messages buffered since the
- * last admission, plus why it fired. This is the Coalescer's entire output.
+ * The window dispatched to Ambience on each flush: messages buffered since the
+ * last dispatch, plus why it fired. This is the Coalescer's entire output.
  */
 export interface ConversationWindow {
   readonly chatId: string;
@@ -57,8 +57,7 @@ export interface ConversationWindow {
  * mean "the bot" (phone-number and/or `@lid` form) — a match on any one counts.
  */
 export const addressesBot = (msg: IncomingMessage, botIds: readonly string[]): boolean =>
-  msg.mentions.some((jid) => botIds.includes(jid)) ||
-  (msg.quotedFrom !== undefined && botIds.includes(msg.quotedFrom));
+  msg.mentions.some((jid) => botIds.includes(jid)) || (msg.quotedFrom !== undefined && botIds.includes(msg.quotedFrom));
 
 /** The fire reason for an addressing message (mention takes precedence over quote). */
 export const reasonOf = (msg: IncomingMessage, botIds: readonly string[]): FireReason =>

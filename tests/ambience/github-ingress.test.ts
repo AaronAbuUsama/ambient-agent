@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import type { GitHubWebhookDelivery } from "@flue/github";
 
@@ -72,7 +72,7 @@ describe("GitHub ingress delivery ledger", () => {
       const ingress = createGitHubIngress({
         store,
         routes: new Map([["acme/widgets", "chat-29@g.us"]]),
-        admit: async () => {
+        dispatch: async () => {
           admissions += 1;
           return { dispatchId: "must-not-dispatch", acceptedAt: "2026-07-13T00:00:00.000Z" };
         },
@@ -92,11 +92,15 @@ describe("GitHub ingress delivery ledger", () => {
         status: "uncertain",
         error: "Earlier processing was interrupted with Ambience admission outcome unknown",
       });
-      expect((await ingress({
-        name: "issues",
-        deliveryId: "interrupted-29",
-        payload: { action: "opened" },
-      } as GitHubWebhookDelivery)).status).toBe("uncertain");
+      expect(
+        (
+          await ingress({
+            name: "issues",
+            deliveryId: "interrupted-29",
+            payload: { action: "opened" },
+          } as GitHubWebhookDelivery)
+        ).status,
+      ).toBe("uncertain");
       expect(admissions).toBe(0);
     } finally {
       store.close();

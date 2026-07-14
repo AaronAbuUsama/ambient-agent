@@ -8,7 +8,7 @@ import * as v from "valibot";
 
 const nonEmptyString = v.pipe(v.string(), v.minLength(1));
 
-export const whatsappWindowInputSchema = v.object({
+const whatsappWindowInputSchema = v.object({
   type: v.literal("whatsapp.window"),
   chatId: nonEmptyString,
   reason: v.union([v.literal("debounce"), v.literal("mention"), v.literal("quote-reply")]),

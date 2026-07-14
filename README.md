@@ -1,9 +1,14 @@
-# whatsappd-github-agent
+# Ambient Agent
+
+> The secure `ambient-agent` installer, managed filesystem, `status`, and
+> `doctor` commands are shipped. The foreground managed runtime and production
+> Issue Management rollout are still tracked by the remaining stable-base work
+> in [the architecture plan](./docs/architecture/ambient-agent.md).
 
 A continuing ambient agent for managed WhatsApp chats. Each accepted coalesced
-window is admitted to one canonical Flue Ambience instance keyed by WhatsApp
-`chatId`. Ambience uses Luna 5.6 at low reasoning through Pi's ChatGPT
-subscription OAuth adapter.
+window is admitted to one canonical instance of Ambience — this application's
+Flue agent — keyed by WhatsApp `chatId`. Ambience uses Luna 5.6 at low
+reasoning through Pi's ChatGPT subscription OAuth adapter.
 
 ## Production architecture
 
@@ -33,8 +38,43 @@ state by operation identity and never blindly retries an uncertain write.
 
 ## Run it
 
-Requirements: Node 22 or 24, pnpm 9, a paired WhatsApp account, a scoped GitHub
-token, and a Pi ChatGPT OAuth login.
+The installed CLI requires macOS or Linux and Node 22.19 or newer. Building this
+repository from source additionally requires a Vite+-supported Node release:
+`^22.19.0` or `>=24.11.0`. Development uses pnpm 9. Runtime setup also needs a
+paired WhatsApp account, a scoped GitHub token, and a Pi ChatGPT OAuth login.
+Windows setup currently fails closed until equivalent private ACL enforcement
+is implemented.
+
+Until the package is published, build a local tarball, install that tarball, and
+create its managed data skeleton:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm pack --pack-destination ./artifacts
+npm install --global ./artifacts/ambient-agent-0.1.0.tgz
+
+ambient-agent init \
+  --chat 120363000000000000@g.us \
+  --repository owner/repository \
+  --github-token-file /secure/path/github-token.txt \
+  --pi-auth-file ~/.pi/agent/auth.json
+
+ambient-agent status
+ambient-agent doctor
+```
+
+After the package is published, `npx ambient-agent` will be the equivalent
+one-command entry point.
+
+With no arguments, the executable enters guided setup on a first run and
+reports status thereafter. It stores non-secret configuration and credential
+references in the OS data directory while keeping credentials in private
+`0600` files beneath a `0700` root. Running setup again verifies the existing
+installation and does not replace credentials.
+Managed JSON diagnostics read at most 1 MiB per file and fail closed if a file
+exceeds that limit or changes during inspection.
+
+For current source development of the runtime baseline:
 
 ```bash
 pnpm install --frozen-lockfile

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { Duration, Effect, Layer, Queue, Ref, Schedule } from "effect";
 import * as v from "valibot";
 
@@ -6,7 +6,7 @@ import * as Coalescer from "../../src/coalescer/coalescer.ts";
 import { configLayer } from "../../src/coalescer/config.ts";
 import type { IncomingMessage } from "../../src/coalescer/events.ts";
 import { queueEventSource } from "../../src/coalescer/mocks.ts";
-import { makeAmbienceDoorway, type AmbienceAdmission } from "../../src/ambience/doorway.ts";
+import { makeAmbienceWindowDispatcher, type AmbienceDispatchRequest } from "../../src/ambience/dispatch.ts";
 import { createFakeWhatsAppHost } from "../../src/host/fake-whatsapp-host.ts";
 import type { WhatsAppHost } from "../../src/host/whatsapp-host.ts";
 import { createSayTool } from "../../src/tools/whatsapp/say.ts";
@@ -33,18 +33,21 @@ const awaitRef = <A>(ref: Ref.Ref<A>, predicate: (value: A) => boolean) =>
   Ref.get(ref).pipe(
     Effect.flatMap((value) => (predicate(value) ? Effect.succeed(value) : Effect.fail(new Error("retry")))),
     Effect.retry(Schedule.spaced(Duration.millis(10))),
-    Effect.timeoutFail({ duration: Duration.seconds(5), onTimeout: () => new Error("condition never held") }),
+    Effect.timeoutOrElse({
+      duration: Duration.seconds(5),
+      orElse: () => Effect.fail(new Error("condition never held")),
+    }),
   );
 
-describe("production Coalescer-to-Ambience doorway", () => {
-  it("admits one complete coalesced window to the continuing instance identified by chatId", async () => {
+describe("production Coalescer-to-Ambience dispatch", () => {
+  it("dispatches one complete coalesced window to the continuing instance identified by chatId", async () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const source = yield* Queue.unbounded<IncomingMessage>();
-          const admissions = yield* Ref.make<readonly AmbienceAdmission[]>([]);
-          const admit = async (admission: AmbienceAdmission) => {
-            await Effect.runPromise(Ref.update(admissions, (current) => [...current, admission]));
+          const dispatches = yield* Ref.make<readonly AmbienceDispatchRequest[]>([]);
+          const dispatch = async (request: AmbienceDispatchRequest) => {
+            await Effect.runPromise(Ref.update(dispatches, (current) => [...current, request]));
             return { dispatchId: "dispatch-27", acceptedAt: "2026-07-13T00:00:00.000Z" };
           };
 
@@ -53,7 +56,7 @@ describe("production Coalescer-to-Ambience doorway", () => {
               Effect.provide(
                 Layer.mergeAll(
                   queueEventSource(source),
-                  makeAmbienceDoorway(admit),
+                  makeAmbienceWindowDispatcher(dispatch),
                   configLayer({ botIds: [BOT], debounceWindow: Duration.millis(25) }),
                 ),
               ),
@@ -63,7 +66,7 @@ describe("production Coalescer-to-Ambience doorway", () => {
           yield* Queue.offer(source, message("first"));
           yield* Queue.offer(source, message("second"));
 
-          const seen = yield* awaitRef(admissions, (current) => current.length === 1);
+          const seen = yield* awaitRef(dispatches, (current) => current.length === 1);
           expect(seen).toEqual([
             {
               id: CHAT,
@@ -96,7 +99,13 @@ describe("say", () => {
     });
     expect(host.events()).toEqual([
       { kind: "typing", chatId: CHAT, on: true },
-      { kind: "send", chatId: CHAT, text: "hello group", outcome: "sent", messageId: "fake-message-1" },
+      {
+        kind: "send",
+        chatId: CHAT,
+        text: "hello group",
+        outcome: "sent",
+        messageId: "fake-message-1",
+      },
       { kind: "typing", chatId: CHAT, on: false },
     ]);
   });
@@ -113,7 +122,13 @@ describe("say", () => {
     });
     expect(host.events()).toEqual([
       { kind: "typing", chatId: CHAT, on: true },
-      { kind: "send", chatId: CHAT, text: "send once", outcome: "unknown", error: "provider outcome unknown" },
+      {
+        kind: "send",
+        chatId: CHAT,
+        text: "send once",
+        outcome: "unknown",
+        error: "provider outcome unknown",
+      },
       { kind: "typing", chatId: CHAT, on: false },
     ]);
   });
@@ -131,8 +146,20 @@ describe("say", () => {
     });
     expect(host.events()).toEqual([
       { kind: "typing", chatId: CHAT, on: true },
-      { kind: "send", chatId: CHAT, text: "delivered once", outcome: "sent", messageId: "fake-message-1" },
-      { kind: "typing", chatId: CHAT, on: false, outcome: "unknown", error: "typing cleanup outcome unknown" },
+      {
+        kind: "send",
+        chatId: CHAT,
+        text: "delivered once",
+        outcome: "sent",
+        messageId: "fake-message-1",
+      },
+      {
+        kind: "typing",
+        chatId: CHAT,
+        on: false,
+        outcome: "unknown",
+        error: "typing cleanup outcome unknown",
+      },
     ]);
   });
 

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import type { IncomingMessage } from "../../src/coalescer/events.ts";
 import type { FakeGitHubProofEvent } from "../../src/host/fake-github-proof-host.ts";
@@ -74,13 +74,15 @@ function expireRunningAgentLeases(): void {
 function inspectAgentSubmissions(chatId: string): unknown[] {
   const database = new DatabaseSync(databasePath, { readOnly: true });
   try {
-    return database.prepare(
-      `SELECT submission_id, status, attempt_id, input_applied_at, recovery_requested_at,
+    return database
+      .prepare(
+        `SELECT submission_id, status, attempt_id, input_applied_at, recovery_requested_at,
               started_at, settled_at, error, attempt_count, lease_expires_at
          FROM flue_agent_submissions
         WHERE payload LIKE ?
         ORDER BY sequence`,
-    ).all(`%${chatId}%`);
+      )
+      .all(`%${chatId}%`);
   } finally {
     database.close();
   }
@@ -193,11 +195,7 @@ async function waitFor(predicate: () => Promise<boolean>, label: string): Promis
 }
 
 let messageSequence = 0;
-async function coalescerMessage(
-  chatId: string,
-  text: string,
-  overrides: Partial<IncomingMessage> = {},
-): Promise<void> {
+async function coalescerMessage(chatId: string, text: string, overrides: Partial<IncomingMessage> = {}): Promise<void> {
   const n = ++messageSequence;
   const input: IncomingMessage = {
     id: `fixture-${n}`,
@@ -243,9 +241,10 @@ async function resetGitHub(): Promise<void> {
 }
 
 async function setNextGitHubCreate(mode: "failure" | "timeout-before" | "timeout-after"): Promise<void> {
-  const path = mode === "failure"
-    ? "fail-next-create"
-    : `timeout-next-create?afterMutation=${mode === "timeout-after" ? "true" : "false"}`;
+  const path =
+    mode === "failure"
+      ? "fail-next-create"
+      : `timeout-next-create?afterMutation=${mode === "timeout-after" ? "true" : "false"}`;
   const response = await fetch(`${origin}/test/github/${path}`, {
     method: "POST",
   });
@@ -274,7 +273,9 @@ async function pendingWorkflowOperations(): Promise<readonly string[]> {
 }
 
 async function releaseWorkflow(operationId: string): Promise<void> {
-  const response = await fetch(`${origin}/test/workflows/${operationId}/release`, { method: "POST" });
+  const response = await fetch(`${origin}/test/workflows/${operationId}/release`, {
+    method: "POST",
+  });
   expect(response.status, await response.text()).toBe(204);
 }
 
@@ -310,7 +311,7 @@ afterAll(async () => {
   rmSync(tempRoot, { recursive: true, force: true });
 });
 
-describe("persisted Ambience doorway", () => {
+describe("persisted Ambience admission", () => {
   it("verifies, normalizes, deduplicates, and routes GitHub ingress without implying speech", async () => {
     const chatId = "github-ingress-29@g.us";
     const deliveryId = "29-valid-signed-delivery";
@@ -385,7 +386,10 @@ describe("persisted Ambience doorway", () => {
 
   it("observes an unconfigured repository without guessing an Ambience destination", async () => {
     const deliveryId = "29-uncorrelated-repository";
-    const response = await githubDelivery({ deliveryId, body: githubIssueOpenedPayload("unconfigured") });
+    const response = await githubDelivery({
+      deliveryId,
+      body: githubIssueOpenedPayload("unconfigured"),
+    });
 
     const responseBody = await response.text();
     expect(response.status, responseBody).toBe(200);
@@ -406,7 +410,10 @@ describe("persisted Ambience doorway", () => {
 
   it("records a verified unsupported GitHub event without dispatching it", async () => {
     const deliveryId = "29-unsupported-event";
-    const body = JSON.stringify({ ref: "refs/heads/main", repository: { full_name: "acme/widgets" } });
+    const body = JSON.stringify({
+      ref: "refs/heads/main",
+      repository: { full_name: "acme/widgets" },
+    });
     const response = await githubDelivery({ deliveryId, body, event: "push" });
 
     const responseBody = await response.text();
@@ -473,7 +480,13 @@ describe("persisted Ambience doorway", () => {
     const events = await whatsappEvents();
     expect(events).toEqual([
       { kind: "typing", chatId, on: true },
-      { kind: "send", chatId, text: "one explicit outbound", outcome: "sent", messageId: "fake-message-1" },
+      {
+        kind: "send",
+        chatId,
+        text: "one explicit outbound",
+        outcome: "sent",
+        messageId: "fake-message-1",
+      },
       { kind: "typing", chatId, on: false },
     ]);
     const history = await historyText(chatId);
@@ -497,7 +510,13 @@ describe("persisted Ambience doorway", () => {
 
     expect(await whatsappEvents()).toEqual([
       { kind: "typing", chatId, on: true },
-      { kind: "send", chatId, text: "uncertain outbound", outcome: "unknown", error: "provider outcome unknown" },
+      {
+        kind: "send",
+        chatId,
+        text: "uncertain outbound",
+        outcome: "unknown",
+        error: "provider outcome unknown",
+      },
       { kind: "typing", chatId, on: false },
     ]);
   });
@@ -559,7 +578,8 @@ describe("persisted Ambience doorway", () => {
 
     await coalescerMessage(chatId, "WHILE_WORKFLOW_HELD");
     await waitFor(
-      async () => (await historyText(chatId)).includes("Private Ambience turn settled while the workflow remained active."),
+      async () =>
+        (await historyText(chatId)).includes("Private Ambience turn settled while the workflow remained active."),
       "another Ambience turn while workflow is active",
     );
     await expect(getRun(runId!)).resolves.toMatchObject({ status: "active" });
@@ -567,8 +587,9 @@ describe("persisted Ambience doorway", () => {
     await releaseWorkflow(operationId!);
     await waitFor(
       async () =>
-        (await historyText(chatId)).includes("Private GitHub workflow completion input processed by the same Ambience instance.") &&
-        (await getRun(runId!)).status === "completed",
+        (await historyText(chatId)).includes(
+          "Private GitHub workflow completion input processed by the same Ambience instance.",
+        ) && (await getRun(runId!)).status === "completed",
       "validated workflow completion input and terminal run record",
     );
 
@@ -616,8 +637,9 @@ describe("persisted Ambience doorway", () => {
     await releaseWorkflow(operationId!);
     await waitFor(
       async () =>
-        (await historyText(chatId)).includes("Private GitHub workflow failure input processed by the same Ambience instance.") &&
-        (await getRun(runId!)).status === "errored",
+        (await historyText(chatId)).includes(
+          "Private GitHub workflow failure input processed by the same Ambience instance.",
+        ) && (await getRun(runId!)).status === "errored",
       "normalized workflow failure input and terminal run record",
     );
 
@@ -652,8 +674,9 @@ describe("persisted Ambience doorway", () => {
     await releaseWorkflow(operationId!);
     await waitFor(
       async () =>
-        (await historyText(chatId)).includes("Private GitHub workflow uncertainty input processed by the same Ambience instance.") &&
-        (await getRun(runId!)).status === "completed",
+        (await historyText(chatId)).includes(
+          "Private GitHub workflow uncertainty input processed by the same Ambience instance.",
+        ) && (await getRun(runId!)).status === "completed",
       "uncertain GitHub workflow result",
     );
 

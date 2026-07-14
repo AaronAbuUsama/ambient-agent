@@ -1,11 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import * as v from "valibot";
 
 import ambience from "../../src/agents/ambience.ts";
-import {
-  createGitHubProofOperation,
-  executeGitHubProof,
-} from "../../src/github/proof-operation.ts";
+import { createGitHubProofOperation, executeGitHubProof } from "../../src/github/proof-operation.ts";
 import {
   configureGitHubProofRuntime,
   createGitHubProofPolicy,
@@ -31,12 +28,14 @@ const input = { chatId: CHAT, operationId: OPERATION, repository: REPOSITORY };
 
 describe("GitHub proof policy", () => {
   it("loads the existing GitHub environment boundary without a model credential", () => {
-    expect(loadGitHubProofSettings({
-      GITHUB_TOKEN: "  github-token  ",
-      GITHUB_REPO: " acme/widgets ",
-      GITHUB_ALLOWED_REPOS: "acme/widgets, acme/other",
-      OPENAI_API_KEY: "must-not-be-consumed",
-    })).toEqual({
+    expect(
+      loadGitHubProofSettings({
+        GITHUB_TOKEN: "  github-token  ",
+        GITHUB_REPO: " acme/widgets ",
+        GITHUB_ALLOWED_REPOS: "acme/widgets, acme/other",
+        OPENAI_API_KEY: "must-not-be-consumed",
+      }),
+    ).toEqual({
       token: "github-token",
       defaultRepository: "acme/widgets",
       allowedRepositories: ["acme/widgets", "acme/other"],
@@ -46,33 +45,35 @@ describe("GitHub proof policy", () => {
   it("fails closed when the GitHub credential or default repository is absent", () => {
     expect(() => loadGitHubProofSettings({ GITHUB_REPO: "acme/widgets" })).toThrow("GITHUB_TOKEN");
     expect(() => loadGitHubProofSettings({ GITHUB_TOKEN: "github-token" })).toThrow("GITHUB_REPO");
-    expect(() => loadGitHubProofSettings({
-      GITHUB_TOKEN: "github-token",
-      GITHUB_REPO: "not-a-repository",
-    })).toThrow("owner/repo");
+    expect(() =>
+      loadGitHubProofSettings({
+        GITHUB_TOKEN: "github-token",
+        GITHUB_REPO: "not-a-repository",
+      }),
+    ).toThrow("owner/repo");
   });
 
   it("rejects an out-of-scope repository before workflow admission", async () => {
     const policy = createGitHubProofPolicy("acme/widgets", ["acme/widgets"]);
-    const admit = vi.fn(async () => ({ runId: "run-30" }));
-    const tool = createStartGitHubProofTool(CHAT, admit, () => OPERATION, policy);
+    const invokeProof = vi.fn(async () => ({ runId: "run-30" }));
+    const tool = createStartGitHubProofTool(CHAT, invokeProof, () => OPERATION, policy);
 
     await expect(tool.run({ input: { repository: "other/repo" } })).rejects.toThrow(
       "not in the configured GitHub write allowlist",
     );
-    expect(admit).not.toHaveBeenCalled();
+    expect(invokeProof).not.toHaveBeenCalled();
   });
 
   it("returns the native runId after admission without awaiting workflow execution", async () => {
     const policy = createGitHubProofPolicy("acme/widgets", ["acme/widgets"]);
-    const admit = vi.fn(async () => ({ runId: "run-30" }));
-    const tool = createStartGitHubProofTool(CHAT, admit, () => OPERATION, policy);
+    const invokeProof = vi.fn(async () => ({ runId: "run-30" }));
+    const tool = createStartGitHubProofTool(CHAT, invokeProof, () => OPERATION, policy);
 
     await expect(tool.run({ input: { repository: "acme/widgets" } })).resolves.toEqual({
       runId: "run-30",
       status: "started",
     });
-    expect(admit).toHaveBeenCalledWith(input);
+    expect(invokeProof).toHaveBeenCalledWith(input);
   });
 });
 
@@ -113,7 +114,13 @@ describe("bounded GitHub proof operation", () => {
       issue: { number: 1, state: "closed", url: "https://github.com/acme/widgets/issues/1" },
     });
     expect(host.events()).toEqual([
-      { kind: "create", repository: "acme/widgets", operationId: OPERATION, outcome: "created", number: 1 },
+      {
+        kind: "create",
+        repository: "acme/widgets",
+        operationId: OPERATION,
+        outcome: "created",
+        number: 1,
+      },
       { kind: "get", repository: "acme/widgets", number: 1, state: "open" },
       { kind: "close", repository: "acme/widgets", number: 1, outcome: "closed" },
       { kind: "get", repository: "acme/widgets", number: 1, state: "closed" },
@@ -158,15 +165,12 @@ describe("bounded GitHub proof operation", () => {
   it("keeps a create outcome uncertain when marker reconciliation itself times out", async () => {
     const fake = createFakeGitHubProofHost();
     fake.timeoutNextCreate({ afterMutation: false });
-    const findIssuesByMarker = vi.fn(async (
-      _repository: typeof REPOSITORY,
-      _operationId: string,
-      _marker: string,
-      signal?: AbortSignal,
-    ) => {
-      expect(signal?.aborted).toBe(false);
-      throw Object.assign(new Error("reconciliation timed out"), { name: "TimeoutError" });
-    });
+    const findIssuesByMarker = vi.fn(
+      async (_repository: typeof REPOSITORY, _operationId: string, _marker: string, signal?: AbortSignal) => {
+        expect(signal?.aborted).toBe(false);
+        throw Object.assign(new Error("reconciliation timed out"), { name: "TimeoutError" });
+      },
+    );
 
     await expect(executeGitHubProof(input, { ...fake, findIssuesByMarker })).resolves.toMatchObject({
       status: "uncertain",
@@ -255,7 +259,9 @@ describe("root Ambience capability boundary", () => {
       "whatsapp_search",
       "start_github_proof",
     ]);
-    expect(config.tools?.some((tool) => tool.name.includes("create_issue") || tool.name.includes("close_issue"))).toBe(false);
+    expect(config.tools?.some((tool) => tool.name.includes("create_issue") || tool.name.includes("close_issue"))).toBe(
+      false,
+    );
   });
 });
 
@@ -297,14 +303,16 @@ describe("GitHub proof terminal delivery", () => {
         },
       ),
     ).resolves.toEqual(completed);
-    expect(delivered).toEqual([{
-      type: "workflow.completed",
-      chatId: CHAT,
-      workflow: GITHUB_PROOF_WORKFLOW_NAME,
-      runId: "run-completed",
-      operationId: OPERATION,
-      output: completed,
-    }]);
+    expect(delivered).toEqual([
+      {
+        type: "workflow.completed",
+        chatId: CHAT,
+        workflow: GITHUB_PROOF_WORKFLOW_NAME,
+        runId: "run-completed",
+        operationId: OPERATION,
+        output: completed,
+      },
+    ]);
   });
 
   it("admits an uncertain outcome as data without manufacturing workflow failure", async () => {
@@ -332,14 +340,16 @@ describe("GitHub proof terminal delivery", () => {
         async () => uncertain,
       ),
     ).resolves.toEqual(uncertain);
-    expect(delivered).toEqual([{
-      type: "workflow.uncertain",
-      chatId: CHAT,
-      workflow: GITHUB_PROOF_WORKFLOW_NAME,
-      runId: "run-uncertain",
-      operationId: OPERATION,
-      output: uncertain,
-    }]);
+    expect(delivered).toEqual([
+      {
+        type: "workflow.uncertain",
+        chatId: CHAT,
+        workflow: GITHUB_PROOF_WORKFLOW_NAME,
+        runId: "run-uncertain",
+        operationId: OPERATION,
+        output: uncertain,
+      },
+    ]);
   });
 
   it("admits one normalized workflow failure with repository correlation", async () => {
@@ -364,14 +374,16 @@ describe("GitHub proof terminal delivery", () => {
         },
       ),
     ).rejects.toBe(failure);
-    expect(delivered).toEqual([{
-      type: "workflow.failed",
-      chatId: CHAT,
-      workflow: GITHUB_PROOF_WORKFLOW_NAME,
-      runId: "run-failed",
-      operationId: OPERATION,
-      repository: REPOSITORY,
-      error: { message: "GitHub rejected the mutation" },
-    }]);
+    expect(delivered).toEqual([
+      {
+        type: "workflow.failed",
+        chatId: CHAT,
+        workflow: GITHUB_PROOF_WORKFLOW_NAME,
+        runId: "run-failed",
+        operationId: OPERATION,
+        repository: REPOSITORY,
+        error: { message: "GitHub rejected the mutation" },
+      },
+    ]);
   });
 });

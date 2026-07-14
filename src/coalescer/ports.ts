@@ -1,6 +1,6 @@
 /**
- * The Coalescer's ports — every boundary to the outside world is a `Context.Tag`
- * service, so each is a swappable Layer. This is the Effect-to-Flue admission
+ * The Coalescer's ports — every boundary to the outside world is a `Context.Service`
+ * service, so each is a swappable Layer. This is the Effect-to-Flue dispatch
  * seam and the test seams, in one place.
  *
  * Decisions D1/D3/D4 in `docs/COALESCER-DESIGN.md`.
@@ -8,29 +8,29 @@
 import { Context, Data, type Effect, type Stream } from "effect";
 import type { ConversationWindow, IncomingMessage } from "./events.ts";
 
-// ── Ambience doorway ────────────────────────────────────────────────────────
-// The Coalescer's sole output. Production provides the Ambience doorway, which
-// admits every accepted window to the continuing Flue agent keyed by chatId.
+// ── Window dispatcher ────────────────────────────────────────────────────────
+// The Coalescer's sole output. Production dispatches every accepted window to
+// the continuing Flue agent keyed by chatId.
 
-export class AmbienceAdmissionError extends Data.TaggedError("AmbienceAdmissionError")<{
+export class WindowDispatchError extends Data.TaggedError("WindowDispatchError")<{
   readonly cause: unknown;
 }> {}
 
-export class AmbienceDoorway extends Context.Tag("AmbienceDoorway")<
-  AmbienceDoorway,
+export class WindowDispatcher extends Context.Service<
+  WindowDispatcher,
   {
-    /** Admit one accepted buffered window to the continuing Ambience instance. */
-    readonly admit: (window: ConversationWindow) => Effect.Effect<void, AmbienceAdmissionError>;
+    /** Dispatch one accepted buffered window to the continuing Ambience instance. */
+    readonly dispatch: (window: ConversationWindow) => Effect.Effect<void, WindowDispatchError>;
   }
->() {}
+>()("WindowDispatcher") {}
 
 // ── EventSource (inbound stream) ────────────────────────────────────────────
 // The raw per-chat event firehose. Mock: a `Stream` fed from a test `Queue`,
 // driven under `TestClock`. Real: the in-process whatsappd subscription.
 
-export class EventSource extends Context.Tag("EventSource")<
+export class EventSource extends Context.Service<
   EventSource,
   {
     readonly events: Stream.Stream<IncomingMessage>;
   }
->() {}
+>()("EventSource") {}
