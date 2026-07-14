@@ -2,10 +2,7 @@ import type { GitHubWebhookDelivery } from "@flue/github";
 import type { DispatchReceipt } from "@flue/runtime";
 import * as v from "valibot";
 
-import {
-  githubIssueOpenedInputSchema,
-  type GitHubIssueOpenedInput,
-} from "../ambience/events.js";
+import { githubIssueOpenedInputSchema, type GitHubIssueOpenedInput } from "../ambience/events.js";
 import type { GitHubIngressRecord, GitHubIngressStore } from "./ingress-store.js";
 
 const nonEmptyString = v.pipe(v.string(), v.minLength(1));
@@ -38,8 +35,7 @@ export interface GitHubIngressSettings {
   readonly routes: ReadonlyMap<string, string>;
 }
 
-const repositoryKey = (owner: string, repo: string): string =>
-  `${owner.trim()}/${repo.trim()}`.toLowerCase();
+const repositoryKey = (owner: string, repo: string): string => `${owner.trim()}/${repo.trim()}`.toLowerCase();
 
 const parseRepository = (value: string): string => {
   const parts = value.trim().split("/");
@@ -119,7 +115,7 @@ const defaultLogger: GitHubIngressLogger = {
 export const createGitHubIngress = (options: {
   readonly store: GitHubIngressStore;
   readonly routes: ReadonlyMap<string, string>;
-  readonly admit: (chatId: string, input: GitHubIssueOpenedInput) => Promise<DispatchReceipt>;
+  readonly dispatch: (chatId: string, input: GitHubIssueOpenedInput) => Promise<DispatchReceipt>;
   readonly logger?: GitHubIngressLogger;
   readonly now?: () => Date;
 }) => {
@@ -133,9 +129,10 @@ export const createGitHubIngress = (options: {
       if (!record) throw new Error(`Claimed GitHub delivery ${delivery.deliveryId} disappeared`);
       if (record.status === "received" || record.status === "uncertain") {
         const error = "Earlier processing was interrupted with Ambience admission outcome unknown";
-        const current = record.status === "received"
-          ? options.store.markUncertain(delivery.deliveryId, error, now().toISOString())
-          : record;
+        const current =
+          record.status === "received"
+            ? options.store.markUncertain(delivery.deliveryId, error, now().toISOString())
+            : record;
         if (current.status === "uncertain") {
           logger.error({
             event: "github.ingress.uncertain",
@@ -232,7 +229,7 @@ export const createGitHubIngress = (options: {
     });
 
     try {
-      const receipt = await options.admit(chatId, input);
+      const receipt = await options.dispatch(chatId, input);
       options.store.settle(delivery.deliveryId, {
         status: "dispatched",
         repository,

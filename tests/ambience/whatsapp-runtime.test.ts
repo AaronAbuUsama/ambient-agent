@@ -11,7 +11,7 @@ import type {
 } from "whatsappd";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import type { AmbienceAdmissionRequest } from "../../src/ambience/admission.ts";
+import type { AmbienceDispatchRequest } from "../../src/ambience/dispatch.ts";
 import { makeChatGate } from "../../src/coalescer/chat-gate.ts";
 import { createWhatsAppHistory, persistWhatsAppMessages } from "../../src/host/whatsapp-history.ts";
 import { createWhatsAppHost, runWhatsAppSession } from "../../src/host/whatsapp-runtime.ts";
@@ -88,11 +88,11 @@ const inbound = (
   }) as WhatsAppMessage;
 
 describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
-  it("uses one managed session for gated ingress, history, Ambience admission, and explicit say", async () => {
+  it("uses one managed session for gated ingress, history, Ambience dispatch, and explicit say", async () => {
     const history = temporaryHistory();
     const fake = fakeSession();
     const persisted = persistWhatsAppMessages(fake.session, history);
-    const admissions: AmbienceAdmissionRequest[] = [];
+    const dispatches: AmbienceDispatchRequest[] = [];
 
     await Effect.runPromise(
       Effect.scoped(
@@ -102,8 +102,8 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
               gate: makeChatGate({ groupIds: CHAT }),
               history,
               coalescer: { debounceWindow: Duration.millis(10), maxWait: Duration.millis(20) },
-              admit: async (admission) => {
-                admissions.push(admission);
+              dispatch: async (request) => {
+                dispatches.push(request);
                 return {
                   dispatchId: "dispatch-whatsapp-31",
                   acceptedAt: "2026-07-13T00:00:00.000Z",
@@ -133,7 +133,7 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
           });
           yield* Effect.sleep(Duration.millis(50));
 
-          expect(admissions).toEqual([
+          expect(dispatches).toEqual([
             {
               id: CHAT,
               input: expect.objectContaining({

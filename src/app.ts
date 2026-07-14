@@ -1,48 +1,30 @@
-import { getRun } from "@flue/runtime";
 import { flue } from "@flue/runtime/routing";
 import { Hono } from "hono";
 
-import { dispatchAmbience } from "./ambience/admission.js";
+import { dispatchAmbience } from "./ambience/dispatch.js";
 import {
   createGitHubProofPolicy,
   configureGitHubProofRuntime,
   loadGitHubProofSettings,
 } from "./github/proof-runtime.js";
-import { createGitHubIngress, loadGitHubIngressSettings } from "./github/ingress.js";
-import { configureGitHubIngressRuntime } from "./github/ingress-runtime.js";
-import { createGitHubIngressStore } from "./github/ingress-store.js";
+import { loadGitHubIngressSettings } from "./github/ingress.js";
+import { installGitHubIngressRuntime } from "./github/ingress-runtime.js";
 import { createOctokitGitHubProofHost } from "./host/github-proof-host.js";
 import { getWhatsAppRuntimeStatus, startWhatsAppRuntime } from "./host/whatsapp-runtime.js";
 import { connectPiChatGptSubscription } from "./model/pi-subscription.js";
-import {
-  configureGitHubProofResultSink,
-  installGitHubProofResultDelivery,
-} from "./workflows/github-proof.js";
+import { installGitHubProofResultDispatch } from "./workflows/github-proof.js";
 
 const subscription = await connectPiChatGptSubscription();
 const githubIngress = loadGitHubIngressSettings();
-const githubIngressStore = createGitHubIngressStore(githubIngress.databasePath);
-configureGitHubIngressRuntime(
-  createGitHubIngress({
-    store: githubIngressStore,
-    routes: githubIngress.routes,
-    admit: async (chatId, input) => await dispatchAmbience({ id: chatId, input }),
-  }),
-);
+installGitHubIngressRuntime(githubIngress, async (chatId, input) => await dispatchAmbience({ id: chatId, input }));
 const github = loadGitHubProofSettings();
 configureGitHubProofRuntime({
   host: createOctokitGitHubProofHost(github.token),
   policy: createGitHubProofPolicy(github.defaultRepository, github.allowedRepositories),
 });
-configureGitHubProofResultSink(async (chatId, input) => {
-  const run = await getRun(input.runId);
-  const expectedStatus = input.type === "workflow.failed" ? "errored" : "completed";
-  if (run?.status !== expectedStatus) {
-    throw new Error(`GitHub proof workflow ${input.runId} is not durably ${expectedStatus}`);
-  }
+installGitHubProofResultDispatch(async (chatId, input) => {
   await dispatchAmbience({ id: chatId, input });
 });
-installGitHubProofResultDelivery();
 
 const app = new Hono();
 app.get("/health", (context) => context.json({ ok: true, ...subscription, whatsapp: getWhatsAppRuntimeStatus() }));

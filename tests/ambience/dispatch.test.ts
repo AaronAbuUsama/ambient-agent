@@ -6,7 +6,7 @@ import * as Coalescer from "../../src/coalescer/coalescer.ts";
 import { configLayer } from "../../src/coalescer/config.ts";
 import type { IncomingMessage } from "../../src/coalescer/events.ts";
 import { queueEventSource } from "../../src/coalescer/mocks.ts";
-import { makeAmbienceAdmission, type AmbienceAdmissionRequest } from "../../src/ambience/admission.ts";
+import { makeAmbienceWindowDispatcher, type AmbienceDispatchRequest } from "../../src/ambience/dispatch.ts";
 import { createFakeWhatsAppHost } from "../../src/host/fake-whatsapp-host.ts";
 import type { WhatsAppHost } from "../../src/host/whatsapp-host.ts";
 import { createSayTool } from "../../src/tools/whatsapp/say.ts";
@@ -39,15 +39,15 @@ const awaitRef = <A>(ref: Ref.Ref<A>, predicate: (value: A) => boolean) =>
     }),
   );
 
-describe("production Coalescer-to-Ambience admission", () => {
-  it("admits one complete coalesced window to the continuing instance identified by chatId", async () => {
+describe("production Coalescer-to-Ambience dispatch", () => {
+  it("dispatches one complete coalesced window to the continuing instance identified by chatId", async () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const source = yield* Queue.unbounded<IncomingMessage>();
-          const admissions = yield* Ref.make<readonly AmbienceAdmissionRequest[]>([]);
-          const admit = async (admission: AmbienceAdmissionRequest) => {
-            await Effect.runPromise(Ref.update(admissions, (current) => [...current, admission]));
+          const dispatches = yield* Ref.make<readonly AmbienceDispatchRequest[]>([]);
+          const dispatch = async (request: AmbienceDispatchRequest) => {
+            await Effect.runPromise(Ref.update(dispatches, (current) => [...current, request]));
             return { dispatchId: "dispatch-27", acceptedAt: "2026-07-13T00:00:00.000Z" };
           };
 
@@ -56,7 +56,7 @@ describe("production Coalescer-to-Ambience admission", () => {
               Effect.provide(
                 Layer.mergeAll(
                   queueEventSource(source),
-                  makeAmbienceAdmission(admit),
+                  makeAmbienceWindowDispatcher(dispatch),
                   configLayer({ botIds: [BOT], debounceWindow: Duration.millis(25) }),
                 ),
               ),
@@ -66,7 +66,7 @@ describe("production Coalescer-to-Ambience admission", () => {
           yield* Queue.offer(source, message("first"));
           yield* Queue.offer(source, message("second"));
 
-          const seen = yield* awaitRef(admissions, (current) => current.length === 1);
+          const seen = yield* awaitRef(dispatches, (current) => current.length === 1);
           expect(seen).toEqual([
             {
               id: CHAT,

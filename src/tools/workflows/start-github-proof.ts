@@ -9,32 +9,32 @@ import gitHubProofWorkflow from "../../workflows/github-proof.js";
 
 const nonEmptyString = v.pipe(v.string(), v.minLength(1));
 
-export const startGitHubProofOutputSchema = v.object({
+const startGitHubProofOutputSchema = v.object({
   runId: nonEmptyString,
   status: v.literal("started"),
 });
 
-export type AdmitGitHubProof = (input: GitHubProofInput) => Promise<WorkflowInvocationReceipt>;
+export type InvokeGitHubProof = (input: GitHubProofInput) => Promise<WorkflowInvocationReceipt>;
 
-const admitGitHubProof: AdmitGitHubProof = (input) => invoke(gitHubProofWorkflow, { input });
+const invokeGitHubProof: InvokeGitHubProof = (input) => invoke(gitHubProofWorkflow, { input });
 
 export const createStartGitHubProofTool = (
   chatId: string,
-  admit: AdmitGitHubProof = admitGitHubProof,
+  invokeProof: InvokeGitHubProof = invokeGitHubProof,
   createOperationId: () => string = randomUUID,
   policy: GitHubProofPolicy = getGitHubProofRuntime().policy,
 ) =>
   defineTool({
     name: "start_github_proof",
     description:
-      "Start one bounded disposable-issue proof in an authorized GitHub repository and return its run ID after admission.",
+      "Start one bounded disposable-issue proof in an authorized GitHub repository and return its run ID after invocation.",
     input: v.object({
       repository: v.optional(nonEmptyString),
     }),
     output: startGitHubProofOutputSchema,
     run: async ({ input }) => {
       const repository = policy.authorize(input.repository);
-      const receipt = await admit({
+      const receipt = await invokeProof({
         chatId,
         operationId: createOperationId(),
         repository,

@@ -19,35 +19,37 @@ import { Clock, Duration, Effect, HashMap, Option, Queue, Ref, type Scope, Strea
 import { appendBounded, type BufferBounds } from "./buffer.ts";
 import { addressesBot, type ConversationWindow, type FireReason, type IncomingMessage, reasonOf } from "./events.ts";
 import { CoalescerConfig, type CoalescerConfigValues } from "./config.ts";
-import { AmbienceAdmission, EventSource } from "./ports.ts";
+import { EventSource, WindowDispatcher } from "./ports.ts";
 
-type AmbienceAdmissionService = {
-  readonly admit: (window: ConversationWindow) => Effect.Effect<void, unknown>;
+type WindowDispatcherService = {
+  readonly dispatch: (window: ConversationWindow) => Effect.Effect<void, unknown>;
 };
 
 /**
- * Admit the buffered window to Ambience. A failed admission must not kill the
+ * Dispatch the buffered window to Ambience. A failed dispatch must not kill the
  * chat's actor loop — one bad input should never wedge the chat. We swallow-and-log
  * both typed failures (`catchAll`) *and* defects (`catchAllDefect`, e.g. an
- * admission implementation throwing), but deliberately let interruption through
+ * dispatcher implementation throwing), but deliberately let interruption through
  * untouched so scope shutdown still tears the loop down cleanly. Empty windows
  * never fire (a config edge, e.g. `maxBufferMessages: 0`) — there is nothing to say.
  */
-const logAdmissionError = (window: ConversationWindow) => (cause: unknown) =>
-  Effect.logError(`Ambience admission failed for ${window.chatId}`).pipe(Effect.annotateLogs({ cause: String(cause) }));
+const logDispatchError = (window: ConversationWindow) => (cause: unknown) =>
+  Effect.logError(`Ambience window dispatch failed for ${window.chatId}`).pipe(
+    Effect.annotateLogs({ cause: String(cause) }),
+  );
 
-const fire = (admission: AmbienceAdmissionService, window: ConversationWindow): Effect.Effect<void> =>
+const fire = (dispatcher: WindowDispatcherService, window: ConversationWindow): Effect.Effect<void> =>
   window.messages.length === 0
     ? Effect.void
-    : admission
-        .admit(window)
-        .pipe(Effect.catch(logAdmissionError(window)), Effect.catchDefect(logAdmissionError(window)));
+    : dispatcher
+        .dispatch(window)
+        .pipe(Effect.catch(logDispatchError(window)), Effect.catchDefect(logDispatchError(window)));
 
 /**
- * Build the per-chat actor loop for a given config + Ambience admission. Returns a function
+ * Build the per-chat actor loop for a given config + window dispatcher. Returns a function
  * that, given a chat's queue, runs its debounce loop forever.
  */
-const makeChatLoop = (config: CoalescerConfigValues, admission: AmbienceAdmissionService) => {
+const makeChatLoop = (config: CoalescerConfigValues, dispatcher: WindowDispatcherService) => {
   const bounds: BufferBounds = {
     maxBufferMessages: config.maxBufferMessages,
     maxBufferAgeMillis: config.maxBufferAgeMillis,
@@ -55,9 +57,9 @@ const makeChatLoop = (config: CoalescerConfigValues, admission: AmbienceAdmissio
   const maxWaitMillis = Duration.toMillis(config.maxWait);
 
   return (chatId: string, queue: Queue.Dequeue<IncomingMessage>): Effect.Effect<never> => {
-    // Admit the buffered window to Ambience, then go cold for the next burst.
+    // Dispatch the buffered window to Ambience, then go cold for the next burst.
     const fireAndReset = (messages: readonly IncomingMessage[], reason: FireReason): Effect.Effect<never> =>
-      fire(admission, { chatId, messages, reason }).pipe(Effect.andThen(cold));
+      fire(dispatcher, { chatId, messages, reason }).pipe(Effect.andThen(cold));
 
     // A message landed: buffer it, and either flush now (bot addressed) or keep
     // waiting. `burstStart` is the clock time of the burst's first message — the
@@ -106,18 +108,18 @@ const makeChatLoop = (config: CoalescerConfigValues, admission: AmbienceAdmissio
 /**
  * Run the Coalescer: drain the inbound stream, route each message to its chat's
  * actor (lazily creating the queue + fiber on first sight of a `chatId`), and
- * let each actor's debounce loop decide when to admit a window to Ambience.
+ * let each actor's debounce loop decide when to dispatch a window to Ambience.
  *
  * Blocks until the source stream ends, so callers fork it. Chat-actor fibers are
  * `forkScoped` — they live until the enclosing `Scope` closes, giving clean
  * shutdown. The router drains sequentially, so lazy queue creation never races.
  */
-export const run: Effect.Effect<void, never, EventSource | AmbienceAdmission | CoalescerConfig | Scope.Scope> =
+export const run: Effect.Effect<void, never, EventSource | WindowDispatcher | CoalescerConfig | Scope.Scope> =
   Effect.gen(function* () {
     const { events } = yield* EventSource;
     const config = yield* CoalescerConfig;
-    const admission = yield* AmbienceAdmission;
-    const chatLoop = makeChatLoop(config, admission);
+    const dispatcher = yield* WindowDispatcher;
+    const chatLoop = makeChatLoop(config, dispatcher);
     const registry = yield* Ref.make(HashMap.empty<string, Queue.Queue<IncomingMessage>>());
 
     const routeTo = (msg: IncomingMessage): Effect.Effect<void, never, Scope.Scope> =>

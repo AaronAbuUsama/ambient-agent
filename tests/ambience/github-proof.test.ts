@@ -55,25 +55,25 @@ describe("GitHub proof policy", () => {
 
   it("rejects an out-of-scope repository before workflow admission", async () => {
     const policy = createGitHubProofPolicy("acme/widgets", ["acme/widgets"]);
-    const admit = vi.fn(async () => ({ runId: "run-30" }));
-    const tool = createStartGitHubProofTool(CHAT, admit, () => OPERATION, policy);
+    const invokeProof = vi.fn(async () => ({ runId: "run-30" }));
+    const tool = createStartGitHubProofTool(CHAT, invokeProof, () => OPERATION, policy);
 
     await expect(tool.run({ input: { repository: "other/repo" } })).rejects.toThrow(
       "not in the configured GitHub write allowlist",
     );
-    expect(admit).not.toHaveBeenCalled();
+    expect(invokeProof).not.toHaveBeenCalled();
   });
 
   it("returns the native runId after admission without awaiting workflow execution", async () => {
     const policy = createGitHubProofPolicy("acme/widgets", ["acme/widgets"]);
-    const admit = vi.fn(async () => ({ runId: "run-30" }));
-    const tool = createStartGitHubProofTool(CHAT, admit, () => OPERATION, policy);
+    const invokeProof = vi.fn(async () => ({ runId: "run-30" }));
+    const tool = createStartGitHubProofTool(CHAT, invokeProof, () => OPERATION, policy);
 
     await expect(tool.run({ input: { repository: "acme/widgets" } })).resolves.toEqual({
       runId: "run-30",
       status: "started",
     });
-    expect(admit).toHaveBeenCalledWith(input);
+    expect(invokeProof).toHaveBeenCalledWith(input);
   });
 });
 

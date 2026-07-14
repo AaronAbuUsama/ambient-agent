@@ -1,6 +1,7 @@
 import {
   defineAgent,
   defineWorkflow,
+  getRun,
   instrument,
   type FlueExecutionContext,
   type FlueExecutionInterceptor,
@@ -29,10 +30,7 @@ import { AMBIENCE_MODEL_SPECIFIER } from "../model/pi-subscription.js";
 
 export const GITHUB_PROOF_WORKFLOW_NAME = "github-proof";
 
-export type GitHubProofResultInput =
-  | WorkflowCompletedInput
-  | WorkflowUncertainInput
-  | WorkflowFailedInput;
+export type GitHubProofResultInput = WorkflowCompletedInput | WorkflowUncertainInput | WorkflowFailedInput;
 export type GitHubProofResultSink = (chatId: string, input: GitHubProofResultInput) => Promise<void>;
 
 let configuredResultSink: GitHubProofResultSink = async () => {
@@ -145,10 +143,22 @@ const resultDeliveryInstrumentation: FlueInstrumentation = {
 
 let resultDeliveryInstalled = false;
 
-export const installGitHubProofResultDelivery = (): void => {
+const installGitHubProofResultDelivery = (): void => {
   if (resultDeliveryInstalled) return;
   instrument(resultDeliveryInstrumentation);
   resultDeliveryInstalled = true;
+};
+
+export const installGitHubProofResultDispatch = (dispatch: GitHubProofResultSink): void => {
+  configureGitHubProofResultSink(async (chatId, input) => {
+    const run = await getRun(input.runId);
+    const expectedStatus = input.type === "workflow.failed" ? "errored" : "completed";
+    if (run?.status !== expectedStatus) {
+      throw new Error(`GitHub proof workflow ${input.runId} is not durably ${expectedStatus}`);
+    }
+    await dispatch(chatId, input);
+  });
+  installGitHubProofResultDelivery();
 };
 
 export default defineWorkflow({
@@ -171,7 +181,8 @@ export default defineWorkflow({
       );
       return operation.result();
     } catch (cause) {
-      const message = cause instanceof Error && cause.message.length > 0 ? cause.message : "GitHub proof workflow failed";
+      const message =
+        cause instanceof Error && cause.message.length > 0 ? cause.message : "GitHub proof workflow failed";
       throw new GitHubProofWorkflowError(message, input, { cause });
     }
   },

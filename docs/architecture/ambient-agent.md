@@ -16,10 +16,10 @@ Ambience is the proper name of the continuing Flue Agent. There is one Ambience 
 | --- | --- | --- |
 | `src/agents/ambience.ts` constructs one flat `tools` array | One continuing Flue Agent can use WhatsApp tools and start a workflow | Skills and Capabilities are not represented; the Agent will become a catalogue of unrelated tools |
 | `src/coalescer/coalescer.ts` catches admission errors and then resets | Busy messages can be grouped into Windows | A failed or ambiguous handoff can lose a Window, and Windows have no stable identity |
-| `src/ambience/admission.ts` converts `DispatchReceipt` to `void` | Flue `dispatch()` accepts input for the correct `chatId` | The application cannot record or reconcile the Admission Receipt |
+| `src/ambience/dispatch.ts` converts `DispatchReceipt` to `void` | Flue `dispatch()` accepts input for the correct `chatId` | The application cannot record or reconcile the Admission Receipt |
 | `src/app.ts`, `src/github/proof-runtime.ts`, and `src/host/whatsapp-runtime.ts` read global configuration | The complete hard-cut proof can run in one process | Startup is environment-driven, provider construction is mixed into the application entrypoint, and there is no guided installation |
 | `src/workflows/github-proof.ts` and `src/github/proof-operation.ts` perform a temporary issue round trip | Workflow result delivery and uncertain GitHub mutation handling were proven | It is a proof-shaped workflow rather than production Issue Management |
-| `package.json` is private and has no `bin` entry | Repository development works | A user cannot run or configure the product through `npx ambient-agent` |
+| `package.json` now exposes a publishable `ambient-agent` bin and the first `init`/`status`/`doctor` slice | A packed tarball installs and runs on the supported POSIX floor | The package is not published yet, and `config`, `start`, and runtime composition remain rollout work |
 
 The rollout replaces these paths. It does not layer a second production path beside them.
 

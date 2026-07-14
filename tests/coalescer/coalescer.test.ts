@@ -17,8 +17,8 @@ import { TestClock } from "effect/testing";
 import * as Coalescer from "../../src/coalescer/coalescer.ts";
 import { type CoalescerConfigValues, configLayer } from "../../src/coalescer/config.ts";
 import type { ConversationWindow, IncomingMessage } from "../../src/coalescer/events.ts";
-import { queueEventSource, recordingAmbienceAdmission } from "../../src/coalescer/mocks.ts";
-import { AmbienceAdmission } from "../../src/coalescer/ports.ts";
+import { queueEventSource, recordingWindowDispatcher } from "../../src/coalescer/mocks.ts";
+import { WindowDispatcher } from "../../src/coalescer/ports.ts";
 
 const BOT = "bot@s.whatsapp.net";
 const CHAT = "team@g.us";
@@ -43,7 +43,7 @@ const mkMsg = (text: string, over: Partial<IncomingMessage> = {}): IncomingMessa
   };
 };
 
-/** Fork the real Coalescer over a test source + recording Ambience admission + given config. */
+/** Fork the real Coalescer over a test source + recording window dispatcher + given config. */
 const startRecording = (
   source: Queue.Dequeue<IncomingMessage>,
   turns: Ref.Ref<readonly ConversationWindow[]>,
@@ -54,7 +54,7 @@ const startRecording = (
       Effect.provide(
         Layer.mergeAll(
           queueEventSource(source),
-          recordingAmbienceAdmission(turns),
+          recordingWindowDispatcher(turns),
           configLayer({ botIds: [BOT], debounceWindow: WINDOW, ...cfg }),
         ),
       ),
@@ -271,9 +271,9 @@ describe("Coalescer", () => {
       const turns = yield* Ref.make<readonly ConversationWindow[]>([]);
       const calls = yield* Ref.make(0);
 
-      // An Ambience admission that throws (defect, not a typed error) on its first admission.
-      const flakyAdmission = Layer.succeed(AmbienceAdmission, {
-        admit: (window: ConversationWindow) =>
+      // A window dispatcher that throws (defect, not a typed error) on its first dispatch.
+      const flakyDispatcher = Layer.succeed(WindowDispatcher, {
+        dispatch: (window: ConversationWindow) =>
           Effect.gen(function* () {
             const n = yield* Ref.updateAndGet(calls, (c) => c + 1);
             if (n === 1) return yield* Effect.die(new Error("boom"));
@@ -286,14 +286,14 @@ describe("Coalescer", () => {
           Effect.provide(
             Layer.mergeAll(
               queueEventSource(source),
-              flakyAdmission,
+              flakyDispatcher,
               configLayer({ botIds: [BOT], debounceWindow: WINDOW }),
             ),
           ),
         ),
       );
 
-      // First burst fires → admission dies. The chat's actor must survive it.
+      // First burst fires → dispatch dies. The chat's actor must survive it.
       yield* Queue.offer(source, mkMsg("first"));
       yield* TestClock.adjust(WINDOW);
       expect(yield* Ref.get(calls)).toBe(1);

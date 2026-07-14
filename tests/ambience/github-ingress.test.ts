@@ -72,7 +72,7 @@ describe("GitHub ingress delivery ledger", () => {
       const ingress = createGitHubIngress({
         store,
         routes: new Map([["acme/widgets", "chat-29@g.us"]]),
-        admit: async () => {
+        dispatch: async () => {
           admissions += 1;
           return { dispatchId: "must-not-dispatch", acceptedAt: "2026-07-13T00:00:00.000Z" };
         },

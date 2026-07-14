@@ -42,18 +42,26 @@ Requirements: macOS or Linux, Node 22.19 or newer, pnpm 9, a paired WhatsApp acc
 and a Pi ChatGPT OAuth login. Windows setup currently fails closed until equivalent private ACL enforcement is
 implemented.
 
-Install or run the package and create its managed data skeleton:
+Until the package is published, build a local tarball, install that tarball, and
+create its managed data skeleton:
 
 ```bash
-npx ambient-agent init \
+pnpm install --frozen-lockfile
+pnpm pack --pack-destination ./artifacts
+npm install --global ./artifacts/ambient-agent-0.1.0.tgz
+
+ambient-agent init \
   --chat 120363000000000000@g.us \
   --repository owner/repository \
   --github-token-file /secure/path/github-token.txt \
   --pi-auth-file ~/.pi/agent/auth.json
 
-npx ambient-agent status
-npx ambient-agent doctor
+ambient-agent status
+ambient-agent doctor
 ```
+
+After the package is published, `npx ambient-agent` will be the equivalent
+one-command entry point.
 
 With no arguments, the executable enters guided setup on a first run and
 reports status thereafter. It stores non-secret configuration and credential

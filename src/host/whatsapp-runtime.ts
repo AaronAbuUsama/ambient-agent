@@ -1,7 +1,7 @@
 import { Effect, Exit, Fiber, Layer, type Scope } from "effect";
 import type { WhatsAppSession } from "whatsappd";
 
-import { makeAmbienceAdmission, type AdmitAmbience } from "../ambience/admission.js";
+import { makeAmbienceWindowDispatcher, type DispatchAmbience } from "../ambience/dispatch.js";
 import { makeChatGate, type ChatGate } from "../coalescer/chat-gate.js";
 import * as Coalescer from "../coalescer/coalescer.js";
 import { configLayer, type CoalescerConfigValues } from "../coalescer/config.js";
@@ -15,17 +15,14 @@ import {
 } from "./whatsapp-history.js";
 import { configureWhatsAppHost, type WhatsAppHost, type WhatsAppSayResult } from "./whatsapp-host.js";
 
-const errorMessage = (cause: unknown): string => cause instanceof Error ? cause.message : String(cause);
+const errorMessage = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
 const isKnownPreSendFailure = (message: string): boolean => /^not online \(phase: [^)]+\)$/.test(message);
 
 type DeliveryReceipt =
   | { readonly delivery: "sent"; readonly messageId: string }
   | { readonly delivery: "failed" | "unknown"; readonly deliveryError: string };
 
-const combineReceipt = (
-  delivery: DeliveryReceipt,
-  typingError?: string,
-): WhatsAppSayResult => {
+const combineReceipt = (delivery: DeliveryReceipt, typingError?: string): WhatsAppSayResult => {
   if (delivery.delivery === "sent") {
     return typingError === undefined
       ? { ...delivery, typing: "cleared" }
@@ -54,11 +51,13 @@ export const createWhatsAppHost = (session: WhatsAppSession): WhatsAppHost => ({
       const deliveryError = errorMessage(cause);
       const outcome = isKnownPreSendFailure(deliveryError) ? "failed" : "unknown";
       delivery = { delivery: outcome, deliveryError };
-      console.error(JSON.stringify({
-        event: `whatsapp.say.${outcome}`,
-        chatId,
-        error: deliveryError,
-      }));
+      console.error(
+        JSON.stringify({
+          event: `whatsapp.say.${outcome}`,
+          chatId,
+          error: deliveryError,
+        }),
+      );
     }
 
     let typingError: string | undefined;
@@ -76,12 +75,12 @@ export const createWhatsAppHost = (session: WhatsAppSession): WhatsAppHost => ({
 export interface WhatsAppSessionRuntimeOptions {
   readonly gate: ChatGate;
   readonly history: WhatsAppHistory;
-  readonly admit?: AdmitAmbience;
+  readonly dispatch?: DispatchAmbience;
   readonly coalescer?: Partial<CoalescerConfigValues>;
   readonly botLid?: string;
 }
 
-/** Shared production/test seam: one full-fidelity whatsappd session -> retained Coalescer -> Ambience admission. */
+/** Shared production/test seam: one full-fidelity whatsappd session -> retained Coalescer -> Ambience dispatch. */
 export const runWhatsAppSession = (
   session: WhatsAppSession,
   options: WhatsAppSessionRuntimeOptions,
@@ -93,7 +92,7 @@ export const runWhatsAppSession = (
     Effect.provide(
       Layer.mergeAll(
         whatsappEventSource(session, options.gate.allowed),
-        makeAmbienceAdmission(options.admit),
+        makeAmbienceWindowDispatcher(options.dispatch),
         configLayer({ ...options.coalescer, botIds }),
       ),
     ),

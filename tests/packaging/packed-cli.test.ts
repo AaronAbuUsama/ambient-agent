@@ -25,6 +25,8 @@ const environment = {
   ...process.env,
   HOME: homeDirectory,
   USERPROFILE: homeDirectory,
+  XDG_DATA_HOME: join(homeDirectory, ".local", "share"),
+  LOCALAPPDATA: join(homeDirectory, "AppData", "Local"),
   PATH: `${join(installDirectory, "node_modules", ".bin")}${delimiter}${process.env.PATH ?? ""}`,
 };
 const paths = managedPaths({
@@ -89,6 +91,14 @@ describe("packed ambient-agent executable", () => {
       "--pi-auth-file",
       piAuthPath,
     ];
+    if (process.platform === "win32") {
+      await expect(execute(executable, args, { env: environment })).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining("setup fails closed"),
+      });
+      return;
+    }
+
     const first = await execute(executable, args, { env: environment });
     expect(first.stdout).toContain("Created secure managed installation");
 
@@ -100,10 +110,8 @@ describe("packed ambient-agent executable", () => {
     const config = await readFile(paths.config, "utf8");
     expect(config).not.toContain("packed-github-secret");
     expect(config).not.toContain("packed-access-secret");
-    if (process.platform !== "win32") {
-      expect((await stat(paths.root)).mode & 0o777).toBe(0o700);
-      expect((await stat(paths.githubCredential)).mode & 0o777).toBe(0o600);
-    }
+    expect((await stat(paths.root)).mode & 0o777).toBe(0o700);
+    expect((await stat(paths.githubCredential)).mode & 0o777).toBe(0o600);
 
     const second = await execute(executable, args, { env: environment });
     expect(second.stdout).toContain("no files changed");
@@ -113,6 +121,16 @@ describe("packed ambient-agent executable", () => {
     await expect(execute(executable, ["doctor", "--json"], { env: environment })).rejects.toMatchObject({
       code: 1,
       stdout: expect.stringContaining('"state": "damaged"'),
+    });
+  });
+
+  it("fails promptly instead of prompting when scripted init values are missing", async () => {
+    if (process.platform === "win32") return;
+    await expect(
+      execute(executable, ["--data-dir", join(root, "non-interactive"), "init"], { env: environment }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("Non-interactive init requires"),
     });
   });
 });

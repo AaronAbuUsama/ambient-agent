@@ -5,7 +5,7 @@ import { getWhatsAppHost, type WhatsAppHost } from "../../host/whatsapp-host.ts"
 
 const nonEmptyString = v.pipe(v.string(), v.minLength(1));
 
-export const sayOutputSchema = v.union([
+const sayOutputSchema = v.union([
   v.object({ delivery: v.literal("sent"), messageId: nonEmptyString, typing: v.literal("cleared") }),
   v.object({
     delivery: v.literal("sent"),

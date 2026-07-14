@@ -35,7 +35,7 @@ An immutable, normalized fact about a WhatsApp message: its arrival, edit, revoc
 _Avoid_: Database row, raw provider event, message snapshot
 
 **Managed Chat**:
-A WhatsApp chat the Ambient Agent is explicitly configured to participate in. All other chats are ignored, fail-closed.
+A WhatsApp chat the Ambient Agent is explicitly configured to participate in. Events from other chats remain in the Conversation Archive but are not admitted to Ambience, fail-closed.
 _Avoid_: Allowed group, whitelisted chat
 
 **Window**:

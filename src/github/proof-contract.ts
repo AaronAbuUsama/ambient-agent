@@ -17,7 +17,7 @@ export const gitHubProofInputSchema = v.object({
 
 export type GitHubProofInput = v.InferOutput<typeof gitHubProofInputSchema>;
 
-export const gitHubProofIssueSchema = v.object({
+const gitHubProofIssueSchema = v.object({
   number: v.pipe(v.number(), v.integer(), v.minValue(1)),
   url: v.pipe(v.string(), v.url()),
   title: nonEmptyString,
@@ -46,10 +46,7 @@ export const gitHubProofUncertainSchema = v.object({
   issue: v.optional(gitHubProofIssueSchema),
 });
 
-export const gitHubProofResultSchema = v.union([
-  gitHubProofCompletedSchema,
-  gitHubProofUncertainSchema,
-]);
+export const gitHubProofResultSchema = v.union([gitHubProofCompletedSchema, gitHubProofUncertainSchema]);
 
 export type GitHubProofResult = v.InferOutput<typeof gitHubProofResultSchema>;
 

@@ -74,9 +74,9 @@ describe("the post-Eve production cut", () => {
     );
   });
 
-  it("keeps the canonical Coalescer-to-Ambience admission free of API-key fallback", async () => {
+  it("keeps the canonical Coalescer-to-Ambience dispatch free of API-key fallback", async () => {
     const runtime = await readFile(path.join(root, "src/host/whatsapp-runtime.ts"), "utf8");
-    expect(runtime).toContain("makeAmbienceAdmission");
+    expect(runtime).toContain("makeAmbienceWindowDispatcher");
 
     const files = await sourceFiles("src");
     const productionSource = await Promise.all(

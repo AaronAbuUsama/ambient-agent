@@ -28,7 +28,7 @@ const qr = createRequire(import.meta.url)("qrcode-terminal") as {
   generate(text: string, opts?: { small?: boolean }): void;
 };
 
-export class WhatsAppError extends Data.TaggedError("WhatsAppError")<{ readonly cause: unknown }> {}
+class WhatsAppError extends Data.TaggedError("WhatsAppError")<{ readonly cause: unknown }> {}
 
 /** Plain-text body of an inbound message (media captions included; non-text → ""). */
 const textOf = (msg: WaMessage): string => {
@@ -147,7 +147,7 @@ export const openSession = (
  * `identity().jid` carries a `:<device>` suffix (e.g. `2294…:16@s.whatsapp.net`)
  * that WhatsApp @-mention JIDs do NOT, so strip it or mentions never match.
  */
-export const botIdOf = (session: WhatsAppSession): string =>
+const botIdOf = (session: WhatsAppSession): string =>
   (session.identity()?.jid ?? "unknown@s.whatsapp.net").replace(/:\d+(?=@)/, "");
 
 /**
@@ -166,7 +166,7 @@ export const botIdsOf = (session: WhatsAppSession, rawLid?: string): readonly st
 /**
  * EventSource over `session.onMessage`. Messages are pushed onto an unbounded
  * queue (WhatsApp's inbound rate is low) and surfaced as a Stream; `allow` gates
- * which chats reach the loop before Ambience admission. The listener is
+ * which chats reach the loop before Ambience dispatch. The listener is
  * removed on scope close.
  */
 export const whatsappEventSource = (

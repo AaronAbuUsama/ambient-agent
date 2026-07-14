@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { posix, win32, type PlatformPath } from "node:path";
 
 export interface ManagedPathEnvironment {
   readonly platform?: NodeJS.Platform;
@@ -21,33 +21,45 @@ export interface ManagedPaths {
 }
 
 export const resolveManagedDataDirectory = (options: ManagedPathEnvironment = {}): string => {
-  if (options.dataDirectory) return options.dataDirectory;
-
   const platform = options.platform ?? process.platform;
+  const paths: PlatformPath = platform === "win32" ? win32 : posix;
+  if (options.dataDirectory !== undefined) {
+    const dataDirectory = options.dataDirectory.trim();
+    if (!dataDirectory || !paths.isAbsolute(dataDirectory)) {
+      throw new Error("The managed data directory must be an absolute path.");
+    }
+    return dataDirectory;
+  }
+
   const home = options.homeDirectory ?? homedir();
   const environment = options.environment ?? process.env;
 
   if (platform === "win32") {
-    return join(environment.LOCALAPPDATA ?? join(home, "AppData", "Local"), "ambient-agent");
+    const configured = environment.LOCALAPPDATA?.trim();
+    const base = configured && win32.isAbsolute(configured) ? configured : win32.join(home, "AppData", "Local");
+    return win32.join(base, "ambient-agent");
   }
   if (platform === "darwin") {
-    return join(home, "Library", "Application Support", "ambient-agent");
+    return posix.join(home, "Library", "Application Support", "ambient-agent");
   }
-  return join(environment.XDG_DATA_HOME ?? join(home, ".local", "share"), "ambient-agent");
+  const configured = environment.XDG_DATA_HOME?.trim();
+  const base = configured && posix.isAbsolute(configured) ? configured : posix.join(home, ".local", "share");
+  return posix.join(base, "ambient-agent");
 };
 
 export const managedPaths = (options: ManagedPathEnvironment = {}): ManagedPaths => {
   const root = resolveManagedDataDirectory(options);
-  const credentials = join(root, "credentials");
+  const paths: PlatformPath = (options.platform ?? process.platform) === "win32" ? win32 : posix;
+  const credentials = paths.join(root, "credentials");
   return {
     root,
-    config: join(root, "config.json"),
+    config: paths.join(root, "config.json"),
     credentials,
-    githubCredential: join(credentials, "github.json"),
-    piAuthCredential: join(credentials, "pi-auth.json"),
-    applicationDatabase: join(root, "application.sqlite"),
-    flueDatabase: join(root, "flue.sqlite"),
-    whatsapp: join(root, "whatsapp"),
-    logs: join(root, "logs"),
+    githubCredential: paths.join(credentials, "github.json"),
+    piAuthCredential: paths.join(credentials, "pi-auth.json"),
+    applicationDatabase: paths.join(root, "application.sqlite"),
+    flueDatabase: paths.join(root, "flue.sqlite"),
+    whatsapp: paths.join(root, "whatsapp"),
+    logs: paths.join(root, "logs"),
   };
 };

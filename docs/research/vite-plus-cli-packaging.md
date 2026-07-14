@@ -75,7 +75,7 @@ Sources: [Vite+ pack configuration](https://viteplus.dev/guide/pack), [tsdown sm
 
 ## Coexistence with the Flue server build
 
-The repository currently uses:
+Before the Vite+ migration in issue #46, the repository used:
 
 ```json
 {

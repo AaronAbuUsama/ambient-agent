@@ -108,7 +108,7 @@ describe("managed installation", () => {
     const inspection = await inspectManagedData(base);
     const output = JSON.stringify(inspection);
     expect(inspection.state).toBe("damaged");
-    expect(output).toContain("chmod 600");
+    expect(output).toContain("mode 0600");
     expect(output).not.toContain(base.githubToken);
     expect(output).not.toContain(base.piAuth["openai-codex"].access);
   });
@@ -165,6 +165,31 @@ describe("managed installation", () => {
     expect(output).not.toContain("hidden-refresh");
   });
 
+  it("never reflects unknown property names from credential files into diagnostics", async () => {
+    const base = await fixture();
+    await installManagedData({
+      ...base,
+      managedChats: ["120363000@g.us"],
+      defaultRepository: "owner/repo",
+    });
+    const paths = managedPaths(base);
+    const secretAsPropertyName = "github_pat_secret_must_not_be_echoed";
+    await writeFile(
+      paths.githubCredential,
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: "personal-token",
+        token: "still-valid",
+        [secretAsPropertyName]: true,
+      }),
+      { mode: 0o600 },
+    );
+
+    const output = JSON.stringify(await inspectManagedData(base));
+    expect(output).toContain("<unknown field>");
+    expect(output).not.toContain(secretAsPropertyName);
+  });
+
   it("never follows a managed JSON symlink while diagnosing it", async () => {
     const base = await fixture();
     await installManagedData({
@@ -182,6 +207,31 @@ describe("managed installation", () => {
     expect(inspection.state).toBe("damaged");
     expect(inspection.diagnostics.map((item) => item.code)).toContain("path.not-file");
     expect(JSON.stringify(inspection)).not.toContain("must-never-be-read");
+  });
+
+  it("stops before credential children when the credential directory is a symlink", async () => {
+    const base = await fixture();
+    await installManagedData({
+      ...base,
+      managedChats: ["120363000@g.us"],
+      defaultRepository: "owner/repo",
+    });
+    const paths = managedPaths(base);
+    const outside = join(base.parent, "outside-credentials");
+    const secretAsPropertyName = "outside_secret_property_name";
+    await mkdir(outside, { mode: 0o700 });
+    await writeFile(
+      join(outside, "github.json"),
+      JSON.stringify({ schemaVersion: 1, kind: "personal-token", token: "valid", [secretAsPropertyName]: true }),
+      { mode: 0o600 },
+    );
+    await rm(paths.credentials, { recursive: true });
+    await symlink(outside, paths.credentials);
+
+    const inspection = await inspectManagedData(base);
+    expect(inspection.state).toBe("damaged");
+    expect(inspection.diagnostics.map((item) => item.code)).toContain("path.not-directory");
+    expect(JSON.stringify(inspection)).not.toContain(secretAsPropertyName);
   });
 
   it("classifies a dangling root symlink as damaged instead of unconfigured", async () => {
@@ -210,6 +260,29 @@ describe("managed installation", () => {
     const attempts = await Promise.allSettled([installManagedData(input), installManagedData(input)]);
     expect(attempts.some((attempt) => attempt.status === "fulfilled")).toBe(true);
     expect(await inspectManagedData(base)).toMatchObject({ state: "configured" });
+    await expect(lstat(lock)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("recovers a stale lock beside a complete installation and remains idempotent", async () => {
+    const base = await fixture();
+    const input = {
+      ...base,
+      managedChats: ["120363000@g.us"],
+      defaultRepository: "owner/repo",
+    };
+    await installManagedData(input);
+    const lock = join(base.parent, ".managed.setup.lock");
+    await mkdir(lock, { mode: 0o700 });
+    await writeFile(
+      join(lock, "owner.json"),
+      JSON.stringify({ pid: process.pid, createdAt: "2000-01-01T00:00:00.000Z", token: "stale-complete" }),
+      { mode: 0o600 },
+    );
+
+    await expect(installManagedData(input)).resolves.toMatchObject({
+      created: false,
+      inspection: { state: "configured" },
+    });
     await expect(lstat(lock)).rejects.toMatchObject({ code: "ENOENT" });
   });
 

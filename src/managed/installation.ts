@@ -19,6 +19,30 @@ const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
 const SETUP_LOCK_OWNER = "owner.json";
 const SETUP_LOCK_MAX_AGE_MILLIS = 10 * 60 * 1000;
+const CONFIG_ISSUE_PATHS = new Set([
+  "<root>",
+  "schemaVersion",
+  "managedChats",
+  "managedChats.[]",
+  "model",
+  "model.provider",
+  "model.credential",
+  "github",
+  "github.kind",
+  "github.credential",
+  "github.defaultRepository",
+  "github.allowedRepositories",
+  "github.allowedRepositories.[]",
+]);
+const GITHUB_CREDENTIAL_ISSUE_PATHS = new Set(["<root>", "schemaVersion", "kind", "token"]);
+const PI_AUTH_ISSUE_PATHS = new Set([
+  "<root>",
+  "openai-codex",
+  "openai-codex.type",
+  "openai-codex.access",
+  "openai-codex.refresh",
+  "openai-codex.expires",
+]);
 
 export type InstallationState = "unconfigured" | "configured" | "damaged";
 
@@ -92,7 +116,7 @@ const inspectDirectory = async (
           "permissions.directory",
           path,
           `${label} must have mode 0700.`,
-          `Run chmod 700 ${JSON.stringify(path)}.`,
+          "Restrict this directory to owner-only access (mode 0700), then run ambient-agent doctor.",
         ),
       ];
     }
@@ -138,7 +162,12 @@ const inspectFile = async (
     }
     if (enforcePermissions && modeOf(stat.mode) !== FILE_MODE) {
       return [
-        diagnostic("permissions.file", path, `${label} must have mode 0600.`, `Run chmod 600 ${JSON.stringify(path)}.`),
+        diagnostic(
+          "permissions.file",
+          path,
+          `${label} must have mode 0600.`,
+          "Restrict this file to owner read/write access (mode 0600), then run ambient-agent doctor.",
+        ),
       ];
     }
     return [];
@@ -169,8 +198,12 @@ interface JsonInspection {
   readonly value?: unknown;
 }
 
-const issuePaths = (issues: readonly v.BaseIssue<unknown>[]): string => {
-  const paths = issues.map((issue) => issue.path?.map((item) => String(item.key)).join(".") || "<root>");
+const issuePaths = (issues: readonly v.BaseIssue<unknown>[], allowedPaths: ReadonlySet<string>): string => {
+  const paths = issues.map((issue) => {
+    const path =
+      issue.path?.map((item) => (typeof item.key === "number" ? "[]" : String(item.key))).join(".") || "<root>";
+    return allowedPaths.has(path) ? path : "<unknown field>";
+  });
   return [...new Set(paths)].join(", ");
 };
 
@@ -178,6 +211,7 @@ const inspectJson = async <TSchema extends v.BaseSchema<unknown, unknown, v.Base
   path: string,
   label: string,
   schema: TSchema,
+  allowedIssuePaths: ReadonlySet<string>,
 ): Promise<JsonInspection> => {
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   let parsed: unknown;
@@ -199,7 +233,7 @@ const inspectJson = async <TSchema extends v.BaseSchema<unknown, unknown, v.Base
             "json.invalid",
             path,
             `${label} is not valid JSON.`,
-            `Repair or replace ${JSON.stringify(path)}, then run ambient-agent doctor.`,
+            "Repair or replace this file, then run ambient-agent doctor.",
           ),
         ],
       };
@@ -225,8 +259,8 @@ const inspectJson = async <TSchema extends v.BaseSchema<unknown, unknown, v.Base
           diagnostic(
             "schema.invalid",
             path,
-            `${label} has invalid fields: ${issuePaths(result.issues)}.`,
-            `Repair the named fields in ${JSON.stringify(path)}, then run ambient-agent doctor.`,
+            `${label} has invalid fields: ${issuePaths(result.issues, allowedIssuePaths)}.`,
+            "Repair the named fields in this file, then run ambient-agent doctor.",
           ),
         ],
         value: parsed,
@@ -310,7 +344,10 @@ const setupLockIsStale = (owner: SetupLockOwner): boolean => {
   return tooOld || !processIsAlive(owner.pid);
 };
 
-const inspectSetupLock = async (root: string): Promise<readonly InstallationDiagnostic[]> => {
+const inspectSetupLock = async (
+  root: string,
+  ignoredOwnerToken?: string,
+): Promise<readonly InstallationDiagnostic[]> => {
   const lockPath = setupLockPath(root);
   try {
     if (!(await exists(lockPath))) return [];
@@ -325,13 +362,14 @@ const inspectSetupLock = async (root: string): Promise<readonly InstallationDiag
     ];
   }
   const owner = await readSetupLockOwner(lockPath);
+  if (owner?.token === ignoredOwnerToken) return [];
   if (owner && setupLockIsStale(owner)) {
     return [
       diagnostic(
         "setup.stale-lock",
         lockPath,
         `Setup lock from process ${owner.pid} is stale.`,
-        `Remove ${JSON.stringify(lockPath)} and run ambient-agent init again.`,
+        "If no setup is running, remove this stale lock and run ambient-agent init again.",
       ),
     ];
   }
@@ -342,7 +380,7 @@ const inspectSetupLock = async (root: string): Promise<readonly InstallationDiag
       owner ? `Setup is owned by running process ${owner.pid}.` : "Setup lock ownership is unreadable.",
       owner
         ? "Wait for setup to finish, then run ambient-agent doctor."
-        : `Inspect and remove ${JSON.stringify(lockPath)} if no setup is running.`,
+        : "Inspect and remove this lock if no setup is running.",
     ),
   ];
 };
@@ -434,10 +472,17 @@ const releaseSetupLock = async (lock: AcquiredSetupLock): Promise<void> => {
   }
 };
 
-export const inspectManagedData = async (options: ManagedPathEnvironment = {}): Promise<InstallationInspection> => {
+interface InspectionOptions {
+  readonly ignoredSetupLockToken?: string;
+}
+
+export const inspectManagedData = async (
+  options: ManagedPathEnvironment = {},
+  inspectionOptions: InspectionOptions = {},
+): Promise<InstallationInspection> => {
   const paths = managedPaths(options);
   const platform = options.platform ?? process.platform;
-  const lockDiagnostics = await inspectSetupLock(paths.root);
+  const lockDiagnostics = await inspectSetupLock(paths.root, inspectionOptions.ignoredSetupLockToken);
   let rootExists: boolean;
   try {
     rootExists = await exists(paths.root);
@@ -482,26 +527,58 @@ export const inspectManagedData = async (options: ManagedPathEnvironment = {}): 
     };
   }
 
-  const diagnostics = [
-    ...lockDiagnostics,
-    ...(await inspectDirectory(paths.root, "Managed data directory", true)),
-    ...(await inspectDirectory(paths.credentials, "Credential directory", true)),
+  const rootDiagnostics = await inspectDirectory(paths.root, "Managed data directory", true);
+  if (rootDiagnostics.length > 0) {
+    return {
+      state: "damaged",
+      dataDirectory: paths.root,
+      diagnostics: [...lockDiagnostics, ...rootDiagnostics],
+    };
+  }
+
+  const diagnostics = [...lockDiagnostics];
+  const credentialDirectoryDiagnostics = await inspectDirectory(paths.credentials, "Credential directory", true);
+  diagnostics.push(
+    ...credentialDirectoryDiagnostics,
     ...(await inspectDirectory(paths.whatsapp, "WhatsApp data directory", true)),
     ...(await inspectDirectory(paths.logs, "Log directory", true)),
-    ...(await inspectFile(paths.config, "Configuration file", true)),
-    ...(await inspectFile(paths.githubCredential, "GitHub credential file", true)),
-    ...(await inspectFile(paths.piAuthCredential, "Pi credential file", true)),
+  );
+
+  const configFileDiagnostics = await inspectFile(paths.config, "Configuration file", true);
+  diagnostics.push(
+    ...configFileDiagnostics,
     ...(await inspectFile(paths.applicationDatabase, "Application database", true)),
     ...(await inspectFile(paths.flueDatabase, "Flue database", true)),
-  ];
-
-  const config = await inspectJson(paths.config, "Configuration file", ManagedConfigSchema);
-  diagnostics.push(...config.diagnostics);
-  if (config.value !== undefined) diagnostics.push(...inspectConfigReferences(paths.config, config.value));
-  diagnostics.push(
-    ...(await inspectJson(paths.githubCredential, "GitHub credential file", GitHubCredentialSchema)).diagnostics,
   );
-  diagnostics.push(...(await inspectJson(paths.piAuthCredential, "Pi credential file", PiAuthSchema)).diagnostics);
+  if (configFileDiagnostics.length === 0) {
+    const config = await inspectJson(paths.config, "Configuration file", ManagedConfigSchema, CONFIG_ISSUE_PATHS);
+    diagnostics.push(...config.diagnostics);
+    if (config.value !== undefined) diagnostics.push(...inspectConfigReferences(paths.config, config.value));
+  }
+
+  if (credentialDirectoryDiagnostics.length === 0) {
+    const githubFileDiagnostics = await inspectFile(paths.githubCredential, "GitHub credential file", true);
+    const piFileDiagnostics = await inspectFile(paths.piAuthCredential, "Pi credential file", true);
+    diagnostics.push(...githubFileDiagnostics, ...piFileDiagnostics);
+    if (githubFileDiagnostics.length === 0) {
+      diagnostics.push(
+        ...(
+          await inspectJson(
+            paths.githubCredential,
+            "GitHub credential file",
+            GitHubCredentialSchema,
+            GITHUB_CREDENTIAL_ISSUE_PATHS,
+          )
+        ).diagnostics,
+      );
+    }
+    if (piFileDiagnostics.length === 0) {
+      diagnostics.push(
+        ...(await inspectJson(paths.piAuthCredential, "Pi credential file", PiAuthSchema, PI_AUTH_ISSUE_PATHS))
+          .diagnostics,
+      );
+    }
+  }
 
   return {
     state: diagnostics.length === 0 ? "configured" : "damaged",
@@ -553,7 +630,11 @@ export const installManagedData = async (input: InstallManagedDataInput): Promis
   }
   const before = await inspectManagedData(input);
   if (before.state === "configured") return { created: false, inspection: before };
-  if (before.state === "damaged") {
+  const staleLockOnly =
+    before.state === "damaged" &&
+    before.diagnostics.length > 0 &&
+    before.diagnostics.every((item) => item.code === "setup.stale-lock");
+  if (before.state === "damaged" && !staleLockOnly) {
     throw new Error(`Refusing to replace damaged managed data at ${targetPaths.root}; run ambient-agent doctor.`);
   }
 
@@ -579,9 +660,9 @@ export const installManagedData = async (input: InstallManagedDataInput): Promis
     `.${basename(targetPaths.root)}.setup-${process.pid}-${randomUUID()}`,
   );
   try {
-    if (await exists(targetPaths.root)) {
-      const current = await inspectManagedData(input);
-      if (current.state === "configured") return { created: false, inspection: current };
+    const current = await inspectManagedData(input, { ignoredSetupLockToken: lock.token });
+    if (current.state === "configured") return { created: false, inspection: current };
+    if (current.state === "damaged") {
       throw new Error(`Refusing to replace existing managed data at ${targetPaths.root}.`);
     }
     const stagingPaths = managedPaths({ dataDirectory: stagingRoot });

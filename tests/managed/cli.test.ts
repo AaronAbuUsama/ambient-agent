@@ -118,6 +118,58 @@ describe("managed CLI", () => {
     ).toContain("prompted-github-secret");
   });
 
+  it("routes global-only data-directory invocations through the selected installation", async () => {
+    const paths = await files();
+    const prompted = harness();
+    const setupPrompts = {
+      managedChat: async () => "120363000@g.us",
+      repository: async () => "owner/repo",
+      githubToken: async () => "prompted-github-secret",
+      piAuthPath: async () => paths.auth,
+    };
+    expect(await runCli(["--data-dir", paths.data], { ...prompted, setupPrompts })).toBe(0);
+    expect(prompted.stdout()).toContain("Created secure managed installation");
+
+    const status = harness();
+    expect(await runCli(["--data-dir", paths.data], status)).toBe(0);
+    expect(status.stdout()).toContain(`Data directory: ${paths.data}`);
+    expect(status.stdout()).toContain("configured");
+  });
+
+  it("never opens prompts in a non-interactive process with missing scripted values", async () => {
+    const paths = await files();
+    const cli = harness();
+    let promptsOpened = 0;
+    const setupPrompts = {
+      managedChat: async () => {
+        promptsOpened += 1;
+        return "120363000@g.us";
+      },
+      repository: async () => {
+        promptsOpened += 1;
+        return "owner/repo";
+      },
+      githubToken: async () => {
+        promptsOpened += 1;
+        return "secret";
+      },
+      piAuthPath: async () => {
+        promptsOpened += 1;
+        return paths.auth;
+      },
+    };
+
+    expect(
+      await runCli(["--data-dir", paths.data, "init", "--chat", "120363000@g.us"], {
+        ...cli,
+        setupPrompts,
+        interactive: false,
+      }),
+    ).toBe(1);
+    expect(promptsOpened).toBe(0);
+    expect(cli.stderr()).toContain("Non-interactive init requires --repository, --github-token-file, --pi-auth-file");
+  });
+
   it("returns stable nonzero codes for unconfigured and damaged installs", async () => {
     const paths = await files();
     const missing = harness();

@@ -21,6 +21,7 @@ export interface SetupPrompts {
 export interface CliDependencies {
   readonly output?: CliOutput;
   readonly setupPrompts?: SetupPrompts;
+  readonly interactive?: boolean;
 }
 
 const defaultOutput: CliOutput = {
@@ -98,9 +99,33 @@ const readGitHubToken = async (path: string): Promise<string> => {
   }
 };
 
+const bareDataDirectory = (args: readonly string[]): { readonly dataDirectory?: string } | undefined => {
+  if (args.some((arg) => arg === "--help" || arg === "-h" || arg === "--version" || arg === "-V")) return undefined;
+  let dataDirectory: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if (arg === "--data-dir") {
+      const value = args[index + 1];
+      if (value === undefined) return undefined;
+      dataDirectory = value;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--data-dir=")) {
+      dataDirectory = arg.slice("--data-dir=".length);
+      continue;
+    }
+    return undefined;
+  }
+  return dataDirectory === undefined ? {} : { dataDirectory };
+};
+
 export const runCli = async (argv: readonly string[], dependencies: CliDependencies = {}): Promise<number> => {
   const output = dependencies.output ?? defaultOutput;
   const setupPrompts = dependencies.setupPrompts ?? defaultSetupPrompts;
+  const interactive =
+    dependencies.interactive ??
+    (dependencies.setupPrompts !== undefined || (process.stdin.isTTY === true && process.stdout.isTTY === true));
   let exitCode = 0;
   const program = new Command()
     .name("ambient-agent")
@@ -109,6 +134,11 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .option("--data-dir <path>", "override the managed data directory")
     .configureOutput({ writeOut: output.stdout, writeErr: output.stderr })
     .exitOverride();
+  const reportInspection = async (json: boolean): Promise<InstallationInspection> => {
+    const inspection = await inspectManagedData({ dataDirectory: program.opts().dataDir });
+    output.stdout(renderInspection(inspection, json));
+    return inspection;
+  };
 
   program
     .command("init")
@@ -128,6 +158,17 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
         throw new Error(
           `Refusing to replace damaged managed data at ${current.dataDirectory}; run ambient-agent doctor.`,
         );
+      }
+      if (!interactive) {
+        const missing = [
+          options.chat === undefined ? "--chat" : undefined,
+          options.repository === undefined ? "--repository" : undefined,
+          options.githubTokenFile === undefined ? "--github-token-file" : undefined,
+          options.piAuthFile === undefined ? "--pi-auth-file" : undefined,
+        ].filter((flag): flag is string => flag !== undefined);
+        if (missing.length > 0) {
+          throw new Error(`Non-interactive init requires ${missing.join(", ")}.`);
+        }
       }
       const managedChat = options.chat ?? (await setupPrompts.managedChat());
       const repository = options.repository ?? (await setupPrompts.repository());
@@ -154,8 +195,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .description("report whether the managed installation is ready")
     .option("--json", "emit machine-readable JSON")
     .action(async (options) => {
-      const inspection = await inspectManagedData({ dataDirectory: program.opts().dataDir });
-      output.stdout(renderInspection(inspection, options.json ?? false));
+      const inspection = await reportInspection(options.json ?? false);
       if (inspection.state === "unconfigured") exitCode = 2;
       if (inspection.state === "damaged") exitCode = 3;
     });
@@ -165,16 +205,16 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .description("diagnose managed configuration, permissions, and credential references")
     .option("--json", "emit machine-readable JSON")
     .action(async (options) => {
-      const inspection = await inspectManagedData({ dataDirectory: program.opts().dataDir });
-      output.stdout(renderInspection(inspection, options.json ?? false));
+      const inspection = await reportInspection(options.json ?? false);
       if (inspection.state !== "configured") exitCode = 1;
     });
 
   try {
     let args = [...argv];
-    if (args.length === 0) {
-      const inspection = await inspectManagedData();
-      args = inspection.state === "unconfigured" ? ["init"] : ["status"];
+    const bare = bareDataDirectory(args);
+    if (bare !== undefined) {
+      const inspection = await inspectManagedData({ dataDirectory: bare.dataDirectory });
+      args.push(inspection.state === "unconfigured" ? "init" : "status");
     }
     await program.parseAsync(["node", "ambient-agent", ...args]);
     return exitCode;
