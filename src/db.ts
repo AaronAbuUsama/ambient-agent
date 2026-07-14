@@ -1,3 +1,5 @@
 import { sqlite } from "@flue/runtime/node";
 
-export default sqlite("./flue.sqlite");
+import { managedPaths } from "./managed/paths.js";
+
+export default sqlite(managedPaths().flueDatabase);
