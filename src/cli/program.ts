@@ -1,10 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Command, CommanderError } from "@commander-js/extra-typings";
 import * as prompts from "@clack/prompts";
 
 import { inspectManagedData, installManagedData, type InstallationInspection } from "../managed/installation.js";
+import { managedPaths, type ManagedPaths } from "../managed/paths.js";
+import { loadManagedRuntimeEnvironment } from "../managed/runtime-environment.js";
 
 export interface CliOutput {
   readonly stdout: (text: string) => void;
@@ -22,11 +25,28 @@ export interface CliDependencies {
   readonly output?: CliOutput;
   readonly setupPrompts?: SetupPrompts;
   readonly interactive?: boolean;
+  readonly startRuntime?: StartRuntime;
+  readonly importRuntime?: ImportRuntime;
 }
+
+export type StartRuntime = (paths: ManagedPaths) => Promise<void>;
+export type ImportRuntime = (specifier: string) => Promise<unknown>;
 
 const defaultOutput: CliOutput = {
   stdout: (text) => process.stdout.write(text),
   stderr: (text) => process.stderr.write(text),
+};
+
+const importRuntime: ImportRuntime = async (specifier) => await import(specifier);
+
+const startGeneratedRuntime = async (
+  paths: ManagedPaths,
+  importServer: ImportRuntime = importRuntime,
+): Promise<void> => {
+  await loadManagedRuntimeEnvironment(paths);
+  process.chdir(paths.root);
+  const serverEntry = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "server.mjs"));
+  await importServer(serverEntry.href);
 };
 
 const requiredPrompt = async (label: string, prompt: () => Promise<string | symbol>): Promise<string> => {
@@ -123,6 +143,8 @@ const bareDataDirectory = (args: readonly string[]): { readonly dataDirectory?: 
 export const runCli = async (argv: readonly string[], dependencies: CliDependencies = {}): Promise<number> => {
   const output = dependencies.output ?? defaultOutput;
   const setupPrompts = dependencies.setupPrompts ?? defaultSetupPrompts;
+  const startRuntime =
+    dependencies.startRuntime ?? ((paths: ManagedPaths) => startGeneratedRuntime(paths, dependencies.importRuntime));
   const interactive =
     dependencies.interactive ??
     (dependencies.setupPrompts !== undefined || (process.stdin.isTTY === true && process.stdout.isTTY === true));
@@ -188,6 +210,13 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           ? `Created secure managed installation at ${result.inspection.dataDirectory}.\n`
           : `Managed installation already configured at ${result.inspection.dataDirectory}; no files changed.\n`,
       );
+    });
+
+  program
+    .command("start")
+    .description("start the generated Flue server in the foreground")
+    .action(async () => {
+      await startRuntime(managedPaths({ dataDirectory: program.opts().dataDir }));
     });
 
   program

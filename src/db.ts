@@ -1,5 +1,6 @@
 import { sqlite } from "@flue/runtime/node";
 
-const databasePath = process.env.FLUE_DB_PATH?.trim() || "./data/flue.db";
+export const flueDatabasePath = (env: Readonly<Record<string, string | undefined>> = process.env): string =>
+  env.FLUE_DB_PATH?.trim() || "./flue.sqlite";
 
-export default sqlite(databasePath);
+export default sqlite(flueDatabasePath());
