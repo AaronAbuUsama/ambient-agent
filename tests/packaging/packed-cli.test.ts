@@ -29,6 +29,10 @@ const environment = {
   LOCALAPPDATA: join(homeDirectory, "AppData", "Local"),
   PATH: `${join(installDirectory, "node_modules", ".bin")}${delimiter}${process.env.PATH ?? ""}`,
 };
+const executeAmbientAgent = (args: string[]) =>
+  process.platform === "win32"
+    ? execute(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", executable, ...args], { env: environment })
+    : execute(executable, args, { env: environment });
 const paths = managedPaths({
   platform: process.platform,
   homeDirectory,
@@ -92,17 +96,17 @@ describe("packed ambient-agent executable", () => {
       piAuthPath,
     ];
     if (process.platform === "win32") {
-      await expect(execute(executable, args, { env: environment })).rejects.toMatchObject({
+      await expect(executeAmbientAgent(args)).rejects.toMatchObject({
         code: 1,
         stderr: expect.stringContaining("setup fails closed"),
       });
       return;
     }
 
-    const first = await execute(executable, args, { env: environment });
+    const first = await executeAmbientAgent(args);
     expect(first.stdout).toContain("Created secure managed installation");
 
-    const status = await execute(executable, ["status", "--json"], { env: environment });
+    const status = await executeAmbientAgent(["status", "--json"]);
     expect(JSON.parse(status.stdout)).toMatchObject({
       state: "configured",
       dataDirectory: paths.root,
@@ -113,12 +117,12 @@ describe("packed ambient-agent executable", () => {
     expect((await stat(paths.root)).mode & 0o777).toBe(0o700);
     expect((await stat(paths.githubCredential)).mode & 0o777).toBe(0o600);
 
-    const second = await execute(executable, args, { env: environment });
+    const second = await executeAmbientAgent(args);
     expect(second.stdout).toContain("no files changed");
 
     await writeFile(paths.config, "invalid json", "utf8");
     await chmod(paths.config, 0o600);
-    await expect(execute(executable, ["doctor", "--json"], { env: environment })).rejects.toMatchObject({
+    await expect(executeAmbientAgent(["doctor", "--json"])).rejects.toMatchObject({
       code: 1,
       stdout: expect.stringContaining('"state": "damaged"'),
     });
@@ -127,7 +131,7 @@ describe("packed ambient-agent executable", () => {
   it("fails promptly instead of prompting when scripted init values are missing", async () => {
     if (process.platform === "win32") return;
     await expect(
-      execute(executable, ["--data-dir", join(root, "non-interactive"), "init"], { env: environment }),
+      executeAmbientAgent(["--data-dir", join(root, "non-interactive"), "init"]),
     ).rejects.toMatchObject({
       code: 1,
       stderr: expect.stringContaining("Non-interactive init requires"),

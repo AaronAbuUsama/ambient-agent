@@ -19,7 +19,7 @@ Vite+ has two pieces:
 - `vp` is the global command-line tool.
 - `vite-plus` is the project-local npm package. Its npm binary is also named `vp`.
 
-The current release is `vite-plus@0.2.4`. Its declared Node range is `^20.19.0 || ^22.18.0 || >=24.11.0`; this repository's intended `engines.node: ">=22.19.0"` is therefore compatible. Vite+ can manage Node itself, but the local package and lockfile are what make repository and CI behavior reproducible.
+The current release is `vite-plus@0.2.4`. Its declared Node range is `^20.19.0 || ^22.18.0 || >=24.11.0`. The installed Ambient Agent CLI supports `>=22.19.0`, while building this repository from source requires the intersection of those ranges: `^22.19.0 || >=24.11.0`. In particular, Node 23 and Node 24.0-24.10 satisfy the installed CLI range but cannot run this Vite+ release. Vite+ can manage Node itself, but the local package and lockfile are what make repository and CI behavior reproducible.
 
 Sources: [Getting Started](https://viteplus.dev/guide/), [`vite-plus@0.2.4` package manifest](https://github.com/voidzero-dev/vite-plus/blob/v0.2.4/packages/cli/package.json), and [Vite+ environment resolution](https://viteplus.dev/guide/env).
 

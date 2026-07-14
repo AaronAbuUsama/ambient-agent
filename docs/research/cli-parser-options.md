@@ -18,11 +18,11 @@ import * as prompts from "@clack/prompts";
 
 Commander is larger than citty or CAC, but this is a long-running application rather than a size-sensitive library. Its strict parsing, mature nested-command model, generated help, spelling suggestions, controllable output and exits, and direct test seams are worth roughly 200 KiB of unpacked package content. `@commander-js/extra-typings` adds definition-driven inference for `.opts()` and `.action()` instead of accepting `any` at the command boundary.
 
-There is one compatibility action: Commander 15 declares Node `>=22.12.0`, while this repository currently declares Node `>=22`. Adoption should make the application floor honest by changing the repository engine to at least `>=22.12.0` (or the higher runtime floor independently required by the rest of the application). Do not silently claim support for Node 22.0–22.11.
+At the time of this pre-issue-#46 research, Commander 15 declared Node `>=22.12.0` while the repository declared Node `>=22`. The subsequent implementation made the application floor honest at `>=22.19.0`, the higher runtime floor required by the rest of the application. The compatibility action described here is therefore complete.
 
-## Current application boundary
+## Pre-issue-#46 application boundary
 
-The current package is already ESM and TypeScript, but it has no executable entry and its `start` script bypasses a lifecycle CLI:
+Before issue #46, the package was already ESM and TypeScript, but it had no executable entry and its `start` script bypassed a lifecycle CLI:
 
 ```json
 {
@@ -187,7 +187,7 @@ Parser choice does not make a package executable. npm creates executable shims f
 
 All three parsers work behind such an entry. Commander also supports stand-alone executable subcommands, but this application should begin with in-process command modules: one `npx` package, one process, one validated runtime seam. See npm's official [`package.json` `bin` documentation](https://docs.npmjs.com/files/package.json/#bin) and [`npm exec` binary-selection rules](https://docs.npmjs.com/cli/v11/commands/npm-exec/).
 
-The current package is also marked `"private": true`; a public `npx <package-name>` distribution path requires a publishable package (or a separate publishable CLI package). That distribution decision is independent of the parser and should not be hidden inside this choice.
+At the time of this research, the package was also marked `"private": true`; issue #46 subsequently made it publishable and added the `ambient-agent` executable. A public registry release is still required before `npx ambient-agent` works from the registry. That distribution decision is independent of the parser and should not be hidden inside this choice.
 
 ## Adoption constraints
 

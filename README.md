@@ -38,9 +38,12 @@ state by operation identity and never blindly retries an uncertain write.
 
 ## Run it
 
-Requirements: macOS or Linux, Node 22.19 or newer, pnpm 9, a paired WhatsApp account, a scoped GitHub token,
-and a Pi ChatGPT OAuth login. Windows setup currently fails closed until equivalent private ACL enforcement is
-implemented.
+The installed CLI requires macOS or Linux and Node 22.19 or newer. Building this
+repository from source additionally requires a Vite+-supported Node release:
+`^22.19.0` or `>=24.11.0`. Development uses pnpm 9. Runtime setup also needs a
+paired WhatsApp account, a scoped GitHub token, and a Pi ChatGPT OAuth login.
+Windows setup currently fails closed until equivalent private ACL enforcement
+is implemented.
 
 Until the package is published, build a local tarball, install that tarball, and
 create its managed data skeleton:
@@ -68,6 +71,8 @@ reports status thereafter. It stores non-secret configuration and credential
 references in the OS data directory while keeping credentials in private
 `0600` files beneath a `0700` root. Running setup again verifies the existing
 installation and does not replace credentials.
+Managed JSON diagnostics read at most 1 MiB per file and fail closed if a file
+exceeds that limit or changes during inspection.
 
 For current source development of the runtime baseline:
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { join, win32 } from "node:path";
+import { posix, win32 } from "node:path";
 
 import { managedPaths, resolveManagedDataDirectory } from "../../src/managed/paths.ts";
 
@@ -11,7 +11,7 @@ describe("managed data paths", () => {
         homeDirectory: "/Users/alice",
         environment: {},
       }),
-    ).toBe(join("/Users/alice", "Library", "Application Support", "ambient-agent"));
+    ).toBe(posix.join("/Users/alice", "Library", "Application Support", "ambient-agent"));
   });
 
   it("honours XDG_DATA_HOME on Linux", () => {
@@ -21,7 +21,7 @@ describe("managed data paths", () => {
         homeDirectory: "/home/alice",
         environment: { XDG_DATA_HOME: "/data" },
       }),
-    ).toBe(join("/data", "ambient-agent"));
+    ).toBe(posix.join("/data", "ambient-agent"));
   });
 
   it("uses LOCALAPPDATA on Windows", () => {
@@ -68,18 +68,42 @@ describe("managed data paths", () => {
     );
   });
 
+  it("rejects a relative fallback home without rejecting an absolute environment override", () => {
+    expect(() =>
+      resolveManagedDataDirectory({
+        platform: "linux",
+        homeDirectory: "relative-home",
+        environment: {},
+      }),
+    ).toThrow("home directory must be an absolute path");
+    expect(() =>
+      resolveManagedDataDirectory({
+        platform: "win32",
+        homeDirectory: "relative-home",
+        environment: {},
+      }),
+    ).toThrow("home directory must be an absolute path");
+    expect(
+      resolveManagedDataDirectory({
+        platform: "linux",
+        homeDirectory: "relative-home",
+        environment: { XDG_DATA_HOME: "/data" },
+      }),
+    ).toBe("/data/ambient-agent");
+  });
+
   it("derives the complete stable skeleton from an injected root", () => {
-    const paths = managedPaths({ dataDirectory: "/managed" });
+    const paths = managedPaths({ platform: "linux", dataDirectory: "/managed" });
     expect(paths).toEqual({
       root: "/managed",
-      config: join("/managed", "config.json"),
-      credentials: join("/managed", "credentials"),
-      githubCredential: join("/managed", "credentials", "github.json"),
-      piAuthCredential: join("/managed", "credentials", "pi-auth.json"),
-      applicationDatabase: join("/managed", "application.sqlite"),
-      flueDatabase: join("/managed", "flue.sqlite"),
-      whatsapp: join("/managed", "whatsapp"),
-      logs: join("/managed", "logs"),
+      config: posix.join("/managed", "config.json"),
+      credentials: posix.join("/managed", "credentials"),
+      githubCredential: posix.join("/managed", "credentials", "github.json"),
+      piAuthCredential: posix.join("/managed", "credentials", "pi-auth.json"),
+      applicationDatabase: posix.join("/managed", "application.sqlite"),
+      flueDatabase: posix.join("/managed", "flue.sqlite"),
+      whatsapp: posix.join("/managed", "whatsapp"),
+      logs: posix.join("/managed", "logs"),
     });
   });
 });

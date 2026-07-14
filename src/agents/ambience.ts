@@ -5,6 +5,9 @@ import { createStartGitHubProofTool } from "../tools/workflows/start-github-proo
 import { createSayTool } from "../tools/whatsapp/say.js";
 import { createReadWhatsAppThreadTool, createSearchWhatsAppHistoryTool } from "../tools/whatsapp/history.js";
 
+export const description =
+  "A continuing private ambient agent instance identified by its managed WhatsApp chatId.";
+
 export default defineAgent(({ id }) => ({
   model: AMBIENCE_MODEL_SPECIFIER,
   thinkingLevel: "low",

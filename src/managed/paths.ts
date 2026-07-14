@@ -31,19 +31,29 @@ export const resolveManagedDataDirectory = (options: ManagedPathEnvironment = {}
     return dataDirectory;
   }
 
-  const home = options.homeDirectory ?? homedir();
   const environment = options.environment ?? process.env;
+  const fallbackHome = (): string => {
+    const home = (options.homeDirectory ?? homedir()).trim();
+    if (!home || !paths.isAbsolute(home)) {
+      throw new Error("The home directory must be an absolute path.");
+    }
+    return home;
+  };
 
   if (platform === "win32") {
     const configured = environment.LOCALAPPDATA?.trim();
-    const base = configured && win32.isAbsolute(configured) ? configured : win32.join(home, "AppData", "Local");
+    const base =
+      configured && win32.isAbsolute(configured)
+        ? configured
+        : win32.join(fallbackHome(), "AppData", "Local");
     return win32.join(base, "ambient-agent");
   }
   if (platform === "darwin") {
-    return posix.join(home, "Library", "Application Support", "ambient-agent");
+    return posix.join(fallbackHome(), "Library", "Application Support", "ambient-agent");
   }
   const configured = environment.XDG_DATA_HOME?.trim();
-  const base = configured && posix.isAbsolute(configured) ? configured : posix.join(home, ".local", "share");
+  const base =
+    configured && posix.isAbsolute(configured) ? configured : posix.join(fallbackHome(), ".local", "share");
   return posix.join(base, "ambient-agent");
 };
 

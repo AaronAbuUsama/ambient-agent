@@ -17,6 +17,7 @@ import {
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
+const MAX_MANAGED_JSON_BYTES = 1024 * 1024;
 const SETUP_LOCK_OWNER = "owner.json";
 const SETUP_LOCK_MAX_AGE_MILLIS = 10 * 60 * 1000;
 const CONFIG_ISSUE_PATHS = new Set([
@@ -92,6 +93,33 @@ const exists = async (path: string): Promise<boolean> => {
 };
 
 const modeOf = (mode: number): number => mode & 0o777;
+
+const boundedReadError = (code: string, message: string): Error & { readonly code: string } =>
+  Object.assign(new Error(message), { code });
+
+const readBoundedUtf8 = async (handle: Awaited<ReturnType<typeof open>>): Promise<string> => {
+  const before = await handle.stat();
+  if (before.size > MAX_MANAGED_JSON_BYTES) {
+    throw boundedReadError("EMANAGEDJSONTOOLARGE", "Managed JSON exceeds the 1 MiB diagnostic limit.");
+  }
+
+  const bytes = Buffer.allocUnsafe(MAX_MANAGED_JSON_BYTES + 1);
+  let offset = 0;
+  while (offset < bytes.length) {
+    const result = await handle.read(bytes, offset, bytes.length - offset, null);
+    if (result.bytesRead === 0) break;
+    offset += result.bytesRead;
+  }
+  if (offset > MAX_MANAGED_JSON_BYTES) {
+    throw boundedReadError("EMANAGEDJSONTOOLARGE", "Managed JSON exceeds the 1 MiB diagnostic limit.");
+  }
+
+  const after = await handle.stat();
+  if (after.size !== before.size || after.size !== offset || after.mtimeMs !== before.mtimeMs) {
+    throw boundedReadError("EMANAGEDJSONCHANGED", "Managed JSON changed while it was being diagnosed.");
+  }
+  return bytes.subarray(0, offset).toString("utf8");
+};
 
 const inspectDirectory = async (
   path: string,
@@ -222,10 +250,34 @@ const inspectJson = async <TSchema extends v.BaseSchema<unknown, unknown, v.Base
     const nonBlocking = "O_NONBLOCK" in constants ? constants.O_NONBLOCK : 0;
     handle = await open(path, constants.O_RDONLY | noFollow | nonBlocking);
     if (!(await handle.stat()).isFile()) return { diagnostics: [] };
-    parsed = JSON.parse(await handle.readFile("utf8"));
+    parsed = JSON.parse(await readBoundedUtf8(handle));
   } catch (cause) {
     if (errorCode(cause) === "ENOENT") return { diagnostics: [] };
     const code = errorCode(cause);
+    if (code === "EMANAGEDJSONTOOLARGE") {
+      return {
+        diagnostics: [
+          diagnostic(
+            "file.too-large",
+            path,
+            `${label} exceeds the 1 MiB diagnostic limit.`,
+            "Replace it with the expected small private JSON file, then run ambient-agent doctor.",
+          ),
+        ],
+      };
+    }
+    if (code === "EMANAGEDJSONCHANGED") {
+      return {
+        diagnostics: [
+          diagnostic(
+            "file.changed-during-read",
+            path,
+            `${label} changed while it was being diagnosed.`,
+            "Stop the process changing this file, then run ambient-agent doctor again.",
+          ),
+        ],
+      };
+    }
     if (cause instanceof SyntaxError) {
       return {
         diagnostics: [
@@ -306,6 +358,7 @@ interface SetupLockOwner {
   readonly pid: number;
   readonly createdAt: string;
   readonly token: string;
+  readonly stagingRoot?: string;
 }
 
 const readSetupLockOwner = async (lockPath: string): Promise<SetupLockOwner | undefined> => {
@@ -318,11 +371,17 @@ const readSetupLockOwner = async (lockPath: string): Promise<SetupLockOwner | un
     const nonBlocking = "O_NONBLOCK" in constants ? constants.O_NONBLOCK : 0;
     handle = await open(ownerPath, constants.O_RDONLY | noFollow | nonBlocking);
     if (!(await handle.stat()).isFile()) return undefined;
-    const value = JSON.parse(await handle.readFile("utf8")) as Record<string, unknown>;
+    const value = JSON.parse(await readBoundedUtf8(handle)) as Record<string, unknown>;
     return typeof value.pid === "number" && typeof value.createdAt === "string" && typeof value.token === "string"
-      ? { pid: value.pid, createdAt: value.createdAt, token: value.token }
+      ? {
+          pid: value.pid,
+          createdAt: value.createdAt,
+          token: value.token,
+          ...(typeof value.stagingRoot === "string" ? { stagingRoot: value.stagingRoot } : {}),
+        }
       : undefined;
-  } catch {
+  } catch (cause) {
+    if (["EMANAGEDJSONTOOLARGE", "EMANAGEDJSONCHANGED"].includes(errorCode(cause) ?? "")) throw cause;
     return undefined;
   } finally {
     await handle?.close();
@@ -361,7 +420,19 @@ const inspectSetupLock = async (
       ),
     ];
   }
-  const owner = await readSetupLockOwner(lockPath);
+  let owner: SetupLockOwner | undefined;
+  try {
+    owner = await readSetupLockOwner(lockPath);
+  } catch (cause) {
+    return [
+      diagnostic(
+        "setup.lock-unreadable",
+        join(lockPath, SETUP_LOCK_OWNER),
+        `Setup lock ownership could not be read safely (${errorCode(cause) ?? "unknown error"}).`,
+        "Inspect and remove this lock if no setup is running, then run ambient-agent init again.",
+      ),
+    ];
+  }
   if (owner?.token === ignoredOwnerToken) return [];
   if (owner && setupLockIsStale(owner)) {
     return [
@@ -388,7 +459,66 @@ const inspectSetupLock = async (
 interface AcquiredSetupLock {
   readonly path: string;
   readonly token: string;
+  readonly stagingRoot: string;
 }
+
+const setupStagingPath = (root: string, token: string): string =>
+  join(dirname(root), `.${basename(root)}.setup-${token}`);
+
+const isSetupToken = (token: string): boolean =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(token);
+
+const assertOwnedStagingDirectory = async (path: string): Promise<void> => {
+  const stat = await lstat(path);
+  if (!stat.isDirectory() || modeOf(stat.mode) !== DIRECTORY_MODE) {
+    throw new Error(`Refusing to remove unsafe stale setup staging path ${path}.`);
+  }
+  if (process.getuid && stat.uid !== process.getuid()) {
+    throw new Error(`Refusing to remove stale setup staging path ${path} owned by another user.`);
+  }
+};
+
+const ownedStagingDirectoryExists = async (path: string): Promise<boolean> => {
+  try {
+    await assertOwnedStagingDirectory(path);
+    return true;
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return false;
+    throw cause;
+  }
+};
+
+const renameIfPresent = async (source: string, destination: string): Promise<boolean> => {
+  try {
+    await rename(source, destination);
+    return true;
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return false;
+    throw cause;
+  }
+};
+
+const removeOwnedStagingDirectory = async (path: string): Promise<void> => {
+  if (!(await ownedStagingDirectoryExists(path))) return;
+  await rm(path, { recursive: true, force: true });
+};
+
+const reconcileStaleStaging = async (root: string, owner: SetupLockOwner): Promise<void> => {
+  if (owner.stagingRoot === undefined) return;
+  if (!isSetupToken(owner.token)) {
+    throw new Error(`Refusing invalid stale setup token recorded for ${root}.`);
+  }
+  const expected = setupStagingPath(root, owner.token);
+  if (owner.stagingRoot !== expected) {
+    throw new Error(`Refusing untrusted stale setup staging path recorded for ${root}.`);
+  }
+  const recoveryPath = `${expected}.recovering`;
+  await removeOwnedStagingDirectory(recoveryPath);
+  if (!(await ownedStagingDirectoryExists(expected))) return;
+
+  await renameIfPresent(expected, recoveryPath);
+  await removeOwnedStagingDirectory(recoveryPath);
+};
 
 const quarantineLock = async (lockPath: string, reason: string): Promise<string | undefined> => {
   const quarantinePath = `${lockPath}.${reason}-${randomUUID()}`;
@@ -404,6 +534,7 @@ const quarantineLock = async (lockPath: string, reason: string): Promise<string 
 const acquireSetupLock = async (root: string): Promise<AcquiredSetupLock> => {
   const lockPath = setupLockPath(root);
   const token = randomUUID();
+  const stagingRoot = setupStagingPath(root, token);
   const create = async () => {
     let created = false;
     try {
@@ -412,7 +543,7 @@ const acquireSetupLock = async (root: string): Promise<AcquiredSetupLock> => {
       await chmod(lockPath, DIRECTORY_MODE);
       await writeSecureFile(
         join(lockPath, SETUP_LOCK_OWNER),
-        json({ pid: process.pid, createdAt: new Date().toISOString(), token }),
+        json({ pid: process.pid, createdAt: new Date().toISOString(), token, stagingRoot }),
       );
     } catch (cause) {
       if (created) await rm(lockPath, { recursive: true, force: true });
@@ -421,13 +552,18 @@ const acquireSetupLock = async (root: string): Promise<AcquiredSetupLock> => {
   };
   try {
     await create();
-    return { path: lockPath, token };
+    return { path: lockPath, token, stagingRoot };
   } catch (cause) {
     if (errorCode(cause) !== "EEXIST") throw cause;
   }
 
   const owner = await readSetupLockOwner(lockPath);
   if (owner && setupLockIsStale(owner)) {
+    await reconcileStaleStaging(root, owner);
+    const reconciledOwner = await readSetupLockOwner(lockPath);
+    if (reconciledOwner?.token !== owner.token) {
+      throw new Error(`Setup lock ownership changed while recovering ${lockPath}; retry after inspection.`);
+    }
     const quarantinePath = await quarantineLock(lockPath, "stale");
     if (quarantinePath) {
       const movedOwner = await readSetupLockOwner(quarantinePath);
@@ -443,7 +579,7 @@ const acquireSetupLock = async (root: string): Promise<AcquiredSetupLock> => {
     }
     try {
       await create();
-      return { path: lockPath, token };
+      return { path: lockPath, token, stagingRoot };
     } catch (cause) {
       if (errorCode(cause) !== "EEXIST") throw cause;
     }
@@ -655,10 +791,7 @@ export const installManagedData = async (input: InstallManagedDataInput): Promis
   await mkdir(dirname(targetPaths.root), { recursive: true, mode: DIRECTORY_MODE });
   const lock = await acquireSetupLock(targetPaths.root);
 
-  const stagingRoot = join(
-    dirname(targetPaths.root),
-    `.${basename(targetPaths.root)}.setup-${process.pid}-${randomUUID()}`,
-  );
+  const stagingRoot = lock.stagingRoot;
   try {
     const current = await inspectManagedData(input, { ignoredSetupLockToken: lock.token });
     if (current.state === "configured") return { created: false, inspection: current };

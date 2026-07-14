@@ -27,7 +27,7 @@ const fixture = async () => {
   return { parent, dataDirectory, githubToken, piAuth };
 };
 
-describe("managed installation", () => {
+describe.skipIf(process.platform === "win32")("managed installation on POSIX", () => {
   it("creates the complete skeleton with private permissions and secret references", async () => {
     const input = {
       ...(await fixture()),
@@ -93,6 +93,30 @@ describe("managed installation", () => {
     const damaged = await inspectManagedData(base);
     expect(damaged.state).toBe("damaged");
     expect(damaged.diagnostics.map((item) => item.code)).toContain("json.invalid");
+  });
+
+  it("rejects oversized managed JSON without reading the full payload", async () => {
+    const base = await fixture();
+    await installManagedData({
+      ...base,
+      managedChats: ["120363000@g.us"],
+      defaultRepository: "owner/repo",
+    });
+    await writeFile(managedPaths(base).config, Buffer.alloc(1024 * 1024 + 1, 0x20), { mode: 0o600 });
+
+    const inspection = await inspectManagedData(base);
+    expect(inspection.state).toBe("damaged");
+    expect(inspection.diagnostics.map((item) => item.code)).toContain("file.too-large");
+  });
+
+  it("rejects an oversized setup lock owner without reading the full payload", async () => {
+    const base = await fixture();
+    const lock = join(base.parent, ".managed.setup.lock");
+    await mkdir(lock, { mode: 0o700 });
+    await writeFile(join(lock, "owner.json"), Buffer.alloc(1024 * 1024 + 1, 0x20), { mode: 0o600 });
+
+    const inspection = await inspectManagedData(base);
+    expect(inspection.diagnostics.map((item) => item.code)).toContain("setup.lock-unreadable");
   });
 
   it("reports actionable permission failures without exposing credential contents", async () => {
@@ -263,6 +287,68 @@ describe("managed installation", () => {
     await expect(lstat(lock)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("removes only the staging directory recorded by a stale setup lock", async () => {
+    const base = await fixture();
+    const token = "88c97341-9588-4747-88f8-14d84f46f522";
+    const lock = join(base.parent, ".managed.setup.lock");
+    const stagingRoot = join(base.parent, `.managed.setup-${token}`);
+    const unrelated = join(base.parent, ".managed.setup-unrelated");
+    await mkdir(lock, { mode: 0o700 });
+    await mkdir(stagingRoot, { mode: 0o700 });
+    await mkdir(unrelated, { mode: 0o700 });
+    await writeFile(join(stagingRoot, "credential-copy"), base.githubToken, { mode: 0o600 });
+    await writeFile(
+      join(lock, "owner.json"),
+      JSON.stringify({
+        pid: process.pid,
+        createdAt: "2000-01-01T00:00:00.000Z",
+        token,
+        stagingRoot,
+      }),
+      { mode: 0o600 },
+    );
+
+    await installManagedData({
+      ...base,
+      managedChats: ["120363000@g.us"],
+      defaultRepository: "owner/repo",
+    });
+
+    await expect(lstat(stagingRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(unrelated)).resolves.toMatchObject({ mode: expect.any(Number) });
+    expect((await inspectManagedData(base)).state).toBe("configured");
+  });
+
+  it("resumes credential staging cleanup interrupted during stale-lock recovery", async () => {
+    const base = await fixture();
+    const token = "d237d9a3-b780-4e8e-9f35-4f106a2d14d7";
+    const lock = join(base.parent, ".managed.setup.lock");
+    const stagingRoot = join(base.parent, `.managed.setup-${token}`);
+    const recoveryRoot = `${stagingRoot}.recovering`;
+    await mkdir(lock, { mode: 0o700 });
+    await mkdir(recoveryRoot, { mode: 0o700 });
+    await writeFile(join(recoveryRoot, "credential-copy"), base.githubToken, { mode: 0o600 });
+    await writeFile(
+      join(lock, "owner.json"),
+      JSON.stringify({
+        pid: process.pid,
+        createdAt: "2000-01-01T00:00:00.000Z",
+        token,
+        stagingRoot,
+      }),
+      { mode: 0o600 },
+    );
+
+    await installManagedData({
+      ...base,
+      managedChats: ["120363000@g.us"],
+      defaultRepository: "owner/repo",
+    });
+
+    await expect(lstat(recoveryRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await inspectManagedData(base)).state).toBe("configured");
+  });
+
   it("recovers a stale lock beside a complete installation and remains idempotent", async () => {
     const base = await fixture();
     const input = {
@@ -285,7 +371,9 @@ describe("managed installation", () => {
     });
     await expect(lstat(lock)).rejects.toMatchObject({ code: "ENOENT" });
   });
+});
 
+describe("managed installation platform support", () => {
   it("fails closed on Windows until private ACL enforcement exists", async () => {
     const base = await fixture();
     await expect(
