@@ -1,62 +1,41 @@
-import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import type { ProviderStreams } from "@earendil-works/pi-ai";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   AMBIENCE_MODEL_ID,
   AMBIENCE_MODEL_SPECIFIER,
+  ChatGptReadinessError,
   connectPiChatGptSubscription,
   prepareLunaResponsesLiteRequest,
+  runChatGptReadinessCheck,
 } from "../../src/model/pi-subscription.js";
+import {
+  createChatGptAuthentication,
+  createManagedChatGptCredentialStore,
+  type ChatGptAuthentication,
+} from "../../src/model/chatgpt-authentication.js";
+import { managedPaths } from "../../src/managed/paths.js";
 
-const oauthStorage = () =>
-  AuthStorage.inMemory({
-    "openai-codex": {
-      type: "oauth",
-      access: "header.payload.signature",
-      refresh: "fixture-refresh-token",
-      expires: Date.now() + 60_000,
-    },
-  });
+const authentication = (apiKey = "header.payload.signature"): ChatGptAuthentication => ({
+  authenticate: vi.fn(async () => undefined),
+  inspect: vi.fn(async () => ({ state: "ready" as const })),
+  authorization: vi.fn(async () => ({ apiKey })),
+});
 
 describe("connectPiChatGptSubscription", () => {
-  it("loads the managed Pi credential selected by the runtime environment", async () => {
-    const root = await mkdtemp(join(tmpdir(), "ambient-agent-pi-auth-"));
-    const authPath = join(root, "pi-auth.json");
-    await writeFile(
-      authPath,
-      JSON.stringify({
-        "openai-codex": {
-          type: "oauth",
-          access: "managed-access-token",
-          refresh: "managed-refresh-token",
-          expires: 2_000_000_000_000,
-        },
-      }),
-      { mode: 0o600 },
-    );
-    const previous = process.env.AMBIENCE_PI_AUTH_PATH;
-    process.env.AMBIENCE_PI_AUTH_PATH = authPath;
+  it("loads model authorization only from the injected Ambient Agent authentication service", async () => {
     const registerProvider = vi.fn();
     const codexApi: ProviderStreams = {
       stream: vi.fn(() => ({}) as ReturnType<ProviderStreams["stream"]>),
       streamSimple: vi.fn(() => ({}) as ReturnType<ProviderStreams["streamSimple"]>),
     };
 
-    try {
-      await connectPiChatGptSubscription({
-        codexApi,
-        registerApiProvider: vi.fn(),
-        registerProvider,
-      });
-    } finally {
-      if (previous === undefined) delete process.env.AMBIENCE_PI_AUTH_PATH;
-      else process.env.AMBIENCE_PI_AUTH_PATH = previous;
-      await rm(root, { recursive: true, force: true });
-    }
+    await connectPiChatGptSubscription({
+      authentication: authentication("managed-access-token"),
+      codexApi,
+      registerApiProvider: vi.fn(),
+      registerProvider,
+    });
 
     expect(registerProvider).toHaveBeenCalledWith(
       "openai-codex",
@@ -64,7 +43,7 @@ describe("connectPiChatGptSubscription", () => {
     );
   });
 
-  it("ignores OPENAI_API_KEY and registers only the Pi OAuth token", async () => {
+  it("ignores OPENAI_API_KEY and registers only the managed ChatGPT OAuth token", async () => {
     const previous = process.env.OPENAI_API_KEY;
     process.env.OPENAI_API_KEY = "must-not-be-used";
     const registerProvider = vi.fn();
@@ -75,7 +54,7 @@ describe("connectPiChatGptSubscription", () => {
 
     try {
       await connectPiChatGptSubscription({
-        authStorage: oauthStorage(),
+        authentication: authentication(),
         codexApi,
         registerApiProvider: vi.fn(),
         registerProvider,
@@ -95,16 +74,12 @@ describe("connectPiChatGptSubscription", () => {
     );
   });
 
-  it("requires a Pi OAuth credential for openai-codex", async () => {
-    const apiKeyStorage = AuthStorage.inMemory({
-      "openai-codex": { type: "api_key", key: "must-not-be-used" },
-    });
+  it("requires usable authorization from the injected service", async () => {
+    const missing = authentication();
+    vi.mocked(missing.authorization).mockRejectedValue(new Error("ChatGPT authentication is missing"));
 
-    await expect(connectPiChatGptSubscription({ authStorage: apiKeyStorage })).rejects.toThrow(
-      /Pi OAuth credential.*openai-codex/i,
-    );
-    await expect(connectPiChatGptSubscription({ authStorage: AuthStorage.inMemory() })).rejects.toThrow(
-      /Pi OAuth credential.*openai-codex/i,
+    await expect(connectPiChatGptSubscription({ authentication: missing })).rejects.toThrow(
+      /ChatGPT authentication is missing/i,
     );
   });
 
@@ -118,14 +93,14 @@ describe("connectPiChatGptSubscription", () => {
     };
 
     const receipt = await connectPiChatGptSubscription({
-      authStorage: oauthStorage(),
+      authentication: authentication(),
       codexApi,
       registerApiProvider,
       registerProvider,
     });
 
     expect(receipt).toEqual({
-      authentication: "pi-oauth",
+      authentication: "chatgpt-oauth",
       model: AMBIENCE_MODEL_SPECIFIER,
       provider: "openai-codex",
     });
@@ -210,4 +185,57 @@ describe("connectPiChatGptSubscription", () => {
     expect(prepared.body).not.toHaveProperty("instructions");
     expect(prepared.body).not.toHaveProperty("tools");
   });
+
+  it("runs readiness through the same production authorization interface", async () => {
+    const managedAuthentication = authentication("managed-readiness-token");
+    const request = vi.fn(async () => undefined);
+
+    await expect(runChatGptReadinessCheck(managedAuthentication, { request })).resolves.toEqual({
+      model: AMBIENCE_MODEL_SPECIFIER,
+      request: "complete",
+    });
+    expect(managedAuthentication.authorization).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith({ apiKey: "managed-readiness-token" }, undefined);
+  });
+
+  it("types transport and credential failures without exposing provider details", async () => {
+    const transportFailure = runChatGptReadinessCheck(authentication(), {
+      request: async () => {
+        throw new Error("network response with must-not-be-printed");
+      },
+    });
+    await expect(transportFailure).rejects.toMatchObject({
+      name: "ChatGptReadinessError",
+      code: "request-failed",
+    });
+    await expect(transportFailure).rejects.not.toThrow("must-not-be-printed");
+
+    await expect(
+      runChatGptReadinessCheck(authentication(), {
+        request: async () => {
+          throw new ChatGptReadinessError("credential-rejected", "ChatGPT rejected the managed credential.");
+        },
+      }),
+    ).rejects.toMatchObject({ code: "credential-rejected" });
+  });
+
+  it.runIf(process.env.AMBIENT_AGENT_LIVE_CHATGPT === "1")(
+    "makes one gated real model request with the managed credential",
+    async () => {
+      const dataDirectory = process.env.AMBIENT_AGENT_LIVE_DATA_DIR?.trim();
+      if (!dataDirectory) throw new Error("AMBIENT_AGENT_LIVE_DATA_DIR is required for the live ChatGPT check.");
+      const paths = managedPaths({ dataDirectory });
+      const managedAuthentication = createChatGptAuthentication({
+        store: createManagedChatGptCredentialStore({
+          path: paths.chatGptOAuthCredential,
+          legacyPath: paths.legacyPiAuthCredential,
+        }),
+      });
+
+      await expect(
+        runChatGptReadinessCheck(managedAuthentication, { signal: AbortSignal.timeout(60_000) }),
+      ).resolves.toMatchObject({ request: "complete" });
+    },
+    70_000,
+  );
 });

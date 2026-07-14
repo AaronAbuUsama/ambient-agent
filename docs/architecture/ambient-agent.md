@@ -19,7 +19,7 @@ Ambience is the proper name of the continuing Flue Agent. There is one Ambience 
 | `src/ambience/dispatch.ts` converts `DispatchReceipt` to `void` | Flue `dispatch()` accepts input for the correct `chatId` | The application cannot record or reconcile the Admission Receipt |
 | `src/app.ts`, `src/github/proof-runtime.ts`, and `src/host/whatsapp-runtime.ts` read global configuration | The complete hard-cut proof can run in one process | Startup is environment-driven, provider construction is mixed into the application entrypoint, and there is no guided installation |
 | `src/workflows/github-proof.ts` and `src/github/proof-operation.ts` perform a temporary issue round trip | Workflow result delivery and uncertain GitHub mutation handling were proven | It is a proof-shaped workflow rather than production Issue Management |
-| `package.json` now exposes a publishable `ambient-agent` bin and the first `init`/`status`/`doctor` slice | A packed tarball installs and runs on the supported POSIX floor | The package is not published yet, and `config`, `start`, and runtime composition remain rollout work |
+| `package.json` exposes a publishable `ambient-agent` bin with managed `init`, `auth`, `status`, `doctor`, and foreground `start` paths | A packed tarball installs and runs the managed composition root on the supported POSIX floor | The package is not published yet, `config` remains rollout work, and production Issue Management is not complete |
 
 The rollout replaces these paths. It does not layer a second production path beside them.
 
@@ -199,24 +199,36 @@ The published package and executable are both named `ambient-agent`. A normal in
 ├── config.json                 # validated non-secret settings and secret references
 ├── credentials/
 │   ├── github.json             # fine-grained PAT, mode 0600
-│   └── pi-auth.json            # Pi OAuth storage, mode 0600
+│   └── chatgpt-oauth.json      # complete ChatGPT OAuth record, mode 0600
 ├── application.sqlite         # archive, inbox, projections, relay and operation ledgers
 ├── flue.sqlite                # Flue canonical streams, submissions and runs
 ├── whatsapp/                  # whatsappd credentials
 └── logs/
 ```
 
-The directory is created with mode `0700`; credential files use mode `0600`. The composition root loads configuration and credentials once and passes typed dependencies into modules. Raw credentials are not added to model instructions, Tool schemas, event payloads, or the Agent sandbox.
+The directory is created with mode `0700`; credential files use mode `0600`.
+Ambient Agent starts the headless `openai-codex` device-code flow itself and
+stores the complete provider record with lock-protected atomic replacement.
+Expired credentials are refreshed once under the same lock and the rotated
+record must reach disk before model authorization becomes ready. A provisional
+`credentials/pi-auth.json` created by the earlier managed-installer slice may
+be migrated once; global Pi state is never searched or adopted. The composition
+root passes the authentication service explicitly into the Pi/Flue adapter.
+Raw credentials are not added to model instructions, Tool schemas, event
+payloads, diagnostics, or the Agent sandbox.
 
 The command surface is:
 
 ```text
 npx ambient-agent              # guided setup when unconfigured; help/status when configured
 npx ambient-agent init         # Clack first-run setup
+npx ambient-agent auth         # replace managed ChatGPT authentication only
 npx ambient-agent config       # inspect or change validated configuration
 npx ambient-agent start        # non-interactive foreground runtime
 npx ambient-agent status       # read-only state and health
-npx ambient-agent doctor       # configuration, credentials, DBs and uncertainty checks
+npx ambient-agent doctor       # offline configuration, credential and DB diagnostics
+npx ambient-agent doctor --refresh # opt-in credential refresh verification
+npx ambient-agent doctor --live    # opt-in real model request through production auth
 ```
 
 Commander 15 with `@commander-js/extra-typings` owns command parsing; Clack owns interactive prompts. The package requires Node `>=22.19.0`, the effective current Flue floor. A system process manager owns background supervision.

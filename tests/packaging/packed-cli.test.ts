@@ -13,7 +13,7 @@ const packDirectory = join(root, "pack");
 const installDirectory = join(root, "install");
 const homeDirectory = join(root, "home");
 const tokenPath = join(root, "github-token.txt");
-const piAuthPath = join(root, "pi-auth.json");
+const oauthPreload = join(process.cwd(), "tests", "fixtures", "packed-oauth-fetch.cjs");
 const tarball = join(packDirectory, "ambient-agent-0.1.0.tgz");
 const executable = join(
   installDirectory,
@@ -28,6 +28,7 @@ const environment = {
   XDG_DATA_HOME: join(homeDirectory, ".local", "share"),
   LOCALAPPDATA: join(homeDirectory, "AppData", "Local"),
   PATH: `${join(installDirectory, "node_modules", ".bin")}${delimiter}${process.env.PATH ?? ""}`,
+  NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${oauthPreload}`].filter(Boolean).join(" "),
 };
 const executeAmbientAgent = (args: string[]) =>
   process.platform === "win32"
@@ -58,18 +59,6 @@ beforeAll(async () => {
     maxBuffer: 4 * 1024 * 1024,
   });
   await writeFile(tokenPath, "packed-github-secret\n", { mode: 0o600 });
-  await writeFile(
-    piAuthPath,
-    JSON.stringify({
-      "openai-codex": {
-        type: "oauth",
-        access: "packed-access-secret",
-        refresh: "packed-refresh-secret",
-        expires: 2_000_000_000_000,
-      },
-    }),
-    { mode: 0o600 },
-  );
 }, 240_000);
 
 afterAll(async () => {
@@ -83,8 +72,15 @@ describe("packed ambient-agent executable", () => {
     if (process.platform !== "win32") expect((await stat(installedEntry)).mode & 0o111).not.toBe(0);
   });
 
-  it("creates and diagnoses a secure installation in a clean temporary home", async () => {
-    const args = [
+  it("diagnoses a secure managed installation from the packed executable", async () => {
+    if (process.platform === "win32") {
+      await expect(executeAmbientAgent(["init"])).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining("Non-interactive init requires"),
+      });
+      return;
+    }
+    const init = await executeAmbientAgent([
       "init",
       "--chat",
       "120363000@g.us",
@@ -92,19 +88,9 @@ describe("packed ambient-agent executable", () => {
       "owner/repo",
       "--github-token-file",
       tokenPath,
-      "--pi-auth-file",
-      piAuthPath,
-    ];
-    if (process.platform === "win32") {
-      await expect(executeAmbientAgent(args)).rejects.toMatchObject({
-        code: 1,
-        stderr: expect.stringContaining("setup fails closed"),
-      });
-      return;
-    }
-
-    const first = await executeAmbientAgent(args);
-    expect(first.stdout).toContain("Created secure managed installation");
+    ]);
+    expect(init.stdout).toContain("PACK-TEST");
+    expect(init.stdout).toContain("Created secure managed installation");
 
     const status = await executeAmbientAgent(["status", "--json"]);
     expect(JSON.parse(status.stdout)).toMatchObject({
@@ -113,11 +99,12 @@ describe("packed ambient-agent executable", () => {
     });
     const config = await readFile(paths.config, "utf8");
     expect(config).not.toContain("packed-github-secret");
-    expect(config).not.toContain("packed-access-secret");
+    expect(config).not.toContain("packed-refresh-secret");
     expect((await stat(paths.root)).mode & 0o777).toBe(0o700);
     expect((await stat(paths.githubCredential)).mode & 0o777).toBe(0o600);
+    expect((await stat(paths.chatGptOAuthCredential)).mode & 0o777).toBe(0o600);
 
-    const second = await executeAmbientAgent(args);
+    const second = await executeAmbientAgent(["init"]);
     expect(second.stdout).toContain("no files changed");
 
     await writeFile(paths.config, "invalid json", "utf8");

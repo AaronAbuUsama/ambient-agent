@@ -1,14 +1,15 @@
 # Ambient Agent
 
-> The secure `ambient-agent` installer, managed filesystem, `status`, and
-> `doctor` commands are shipped. The foreground managed runtime and production
-> Issue Management rollout are still tracked by the remaining stable-base work
-> in [the architecture plan](./docs/architecture/ambient-agent.md).
+> The secure `ambient-agent` installer, managed filesystem, foreground runtime,
+> `status`, and `doctor` commands are shipped. The production Issue Management
+> rollout is still tracked by the remaining stable-base work in
+> [the architecture plan](./docs/architecture/ambient-agent.md).
 
 A continuing ambient agent for managed WhatsApp chats. Each accepted coalesced
 window is admitted to one canonical instance of Ambience — this application's
 Flue agent — keyed by WhatsApp `chatId`. Ambience uses Luna 5.6 at low
-reasoning through Pi's ChatGPT subscription OAuth adapter.
+reasoning through Ambient Agent's managed ChatGPT subscription authentication;
+Pi remains a private model-runtime adapter.
 
 ## Production architecture
 
@@ -41,7 +42,7 @@ state by operation identity and never blindly retries an uncertain write.
 The installed CLI requires macOS or Linux and Node 22.19 or newer. Building this
 repository from source additionally requires a Vite+-supported Node release:
 `^22.19.0` or `>=24.11.0`. Development uses pnpm 9. Runtime setup also needs a
-paired WhatsApp account, a scoped GitHub token, and a Pi ChatGPT OAuth login.
+paired WhatsApp account, a scoped GitHub token, and a ChatGPT Plus/Pro account.
 Windows setup currently fails closed until equivalent private ACL enforcement
 is implemented.
 
@@ -56,11 +57,15 @@ npm install --global ./artifacts/ambient-agent-0.1.0.tgz
 ambient-agent init \
   --chat 120363000000000000@g.us \
   --repository owner/repository \
-  --github-token-file /secure/path/github-token.txt \
-  --pi-auth-file ~/.pi/agent/auth.json
+  --github-token-file /secure/path/github-token.txt
+
+# Open the verification URI printed by Ambient Agent and enter its device code.
 
 ambient-agent status
+ambient-agent auth              # replace missing, malformed, or rejected ChatGPT authentication
 ambient-agent doctor
+ambient-agent doctor --refresh  # safely rotate an expired credential
+ambient-agent doctor --live     # opt-in real model readiness request
 ```
 
 After the package is published, `npx ambient-agent` will be the equivalent
@@ -70,17 +75,20 @@ With no arguments, the executable enters guided setup on a first run and
 reports status thereafter. It stores non-secret configuration and credential
 references in the OS data directory while keeping credentials in private
 `0600` files beneath a `0700` root. Running setup again verifies the existing
-installation and does not replace credentials.
+installation and does not replace credentials. Use `ambient-agent auth` for an
+explicit ChatGPT reauthentication without changing the rest of the installation.
 Managed JSON diagnostics read at most 1 MiB per file and fail closed if a file
 exceeds that limit or changes during inspection.
 
-For current source development of the runtime baseline:
+For current source development, build and use the same managed CLI path:
 
 ```bash
 pnpm install --frozen-lockfile
-pi /login                    # select ChatGPT and complete OAuth
-cp .env.example .env         # configure GitHub and managed chat values
-pnpm run dev
+pnpm run build
+node dist/cli/main.js init --chat 120363000000000000@g.us \
+  --repository owner/repository \
+  --github-token-file /secure/path/github-token.txt
+node dist/cli/main.js start
 ```
 
 With `AMBIENCE_WHATSAPP=1`, the one Flue process owns the whatsappd session.
@@ -104,7 +112,9 @@ WhatsApp runtime phase. No model API-key environment variable is supported.
 - `GITHUB_CHAT_ROUTES` keeps repository-to-chat ownership application-owned.
 - `WHATSAPP_GROUP_ID(S)` and `WHATSAPP_ALLOW_DM` keep admission fail-closed.
 - `WHATSAPP_HISTORY_DB` retains full-fidelity history for the chat-bound tools.
-- Pi's `openai-codex` OAuth credential is the only accepted model credential.
+- The application-owned `credentials/chatgpt-oauth.json` record is the only
+  accepted model credential. Pi global state and model API-key environment
+  variables are not authentication sources.
 
 See [Ambience recovery](./docs/architecture/ambience-recovery.md) for durable
 ownership and failure semantics. The post-deletion production proof is in

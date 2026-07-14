@@ -7,19 +7,17 @@ import * as v from "valibot";
 import { managedPaths, type ManagedPathEnvironment, type ManagedPaths } from "./paths.js";
 import {
   createManagedConfig,
+  ChatGptOAuthCredentialSchema,
   GitHubCredentialSchema,
   ManagedConfigSchema,
   PiAuthSchema,
   type GitHubCredential,
   type ManagedConfig,
-  type PiAuth,
 } from "./schema.js";
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
 const MAX_MANAGED_JSON_BYTES = 1024 * 1024;
-const SETUP_LOCK_OWNER = "owner.json";
-const SETUP_LOCK_MAX_AGE_MILLIS = 10 * 60 * 1000;
 const CONFIG_ISSUE_PATHS = new Set([
   "<root>",
   "schemaVersion",
@@ -36,7 +34,8 @@ const CONFIG_ISSUE_PATHS = new Set([
   "github.allowedRepositories.[]",
 ]);
 const GITHUB_CREDENTIAL_ISSUE_PATHS = new Set(["<root>", "schemaVersion", "kind", "token"]);
-const PI_AUTH_ISSUE_PATHS = new Set([
+const CHATGPT_OAUTH_ISSUE_PATHS = new Set(["<root>", "type", "access", "refresh", "expires"]);
+const LEGACY_PI_AUTH_ISSUE_PATHS = new Set([
   "<root>",
   "openai-codex",
   "openai-codex.type",
@@ -64,7 +63,7 @@ export interface InstallManagedDataInput extends ManagedPathEnvironment {
   readonly managedChats: readonly string[];
   readonly defaultRepository: string;
   readonly githubToken: string;
-  readonly piAuth: unknown;
+  readonly authenticateChatGpt: (paths: ManagedPaths) => Promise<void>;
 }
 
 export interface InstallManagedDataResult {
@@ -329,13 +328,13 @@ const inspectConfigReferences = (path: string, value: unknown): readonly Install
       ? (config.github as Record<string, unknown>)
       : undefined;
   const issues: InstallationDiagnostic[] = [];
-  if (model?.credential !== "pi-auth") {
+  if (model?.credential !== "chatgpt-oauth" && model?.credential !== "pi-auth") {
     issues.push(
       diagnostic(
         "credential.reference",
         path,
-        "The model credential reference must be pi-auth.",
-        "Set model.credential to pi-auth and run ambient-agent doctor.",
+        "The model credential reference must be chatgpt-oauth.",
+        "Set model.credential to chatgpt-oauth and run ambient-agent doctor.",
       ),
     );
   }
@@ -354,59 +353,7 @@ const inspectConfigReferences = (path: string, value: unknown): readonly Install
 
 const setupLockPath = (root: string): string => join(dirname(root), `.${basename(root)}.setup.lock`);
 
-interface SetupLockOwner {
-  readonly pid: number;
-  readonly createdAt: string;
-  readonly token: string;
-  readonly stagingRoot?: string;
-}
-
-const readSetupLockOwner = async (lockPath: string): Promise<SetupLockOwner | undefined> => {
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
-  try {
-    if (!(await lstat(lockPath)).isDirectory()) return undefined;
-    const ownerPath = join(lockPath, SETUP_LOCK_OWNER);
-    if (!(await lstat(ownerPath)).isFile()) return undefined;
-    const noFollow = "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
-    const nonBlocking = "O_NONBLOCK" in constants ? constants.O_NONBLOCK : 0;
-    handle = await open(ownerPath, constants.O_RDONLY | noFollow | nonBlocking);
-    if (!(await handle.stat()).isFile()) return undefined;
-    const value = JSON.parse(await readBoundedUtf8(handle)) as Record<string, unknown>;
-    return typeof value.pid === "number" && typeof value.createdAt === "string" && typeof value.token === "string"
-      ? {
-          pid: value.pid,
-          createdAt: value.createdAt,
-          token: value.token,
-          ...(typeof value.stagingRoot === "string" ? { stagingRoot: value.stagingRoot } : {}),
-        }
-      : undefined;
-  } catch (cause) {
-    if (["EMANAGEDJSONTOOLARGE", "EMANAGEDJSONCHANGED"].includes(errorCode(cause) ?? "")) throw cause;
-    return undefined;
-  } finally {
-    await handle?.close();
-  }
-};
-
-const processIsAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (cause) {
-    return errorCode(cause) !== "ESRCH";
-  }
-};
-
-const setupLockIsStale = (owner: SetupLockOwner): boolean => {
-  const createdAt = Date.parse(owner.createdAt);
-  const tooOld = Number.isFinite(createdAt) && Date.now() - createdAt > SETUP_LOCK_MAX_AGE_MILLIS;
-  return tooOld || !processIsAlive(owner.pid);
-};
-
-const inspectSetupLock = async (
-  root: string,
-  ignoredOwnerToken?: string,
-): Promise<readonly InstallationDiagnostic[]> => {
+const inspectSetupLock = async (root: string): Promise<readonly InstallationDiagnostic[]> => {
   const lockPath = setupLockPath(root);
   try {
     if (!(await exists(lockPath))) return [];
@@ -420,205 +367,51 @@ const inspectSetupLock = async (
       ),
     ];
   }
-  let owner: SetupLockOwner | undefined;
-  try {
-    owner = await readSetupLockOwner(lockPath);
-  } catch (cause) {
-    return [
-      diagnostic(
-        "setup.lock-unreadable",
-        join(lockPath, SETUP_LOCK_OWNER),
-        `Setup lock ownership could not be read safely (${errorCode(cause) ?? "unknown error"}).`,
-        "Inspect and remove this lock if no setup is running, then run ambient-agent init again.",
-      ),
-    ];
-  }
-  if (owner?.token === ignoredOwnerToken) return [];
-  if (owner && setupLockIsStale(owner)) {
-    return [
-      diagnostic(
-        "setup.stale-lock",
-        lockPath,
-        `Setup lock from process ${owner.pid} is stale.`,
-        "If no setup is running, remove this stale lock and run ambient-agent init again.",
-      ),
-    ];
-  }
   return [
     diagnostic(
       "setup.locked",
       lockPath,
-      owner ? `Setup is owned by running process ${owner.pid}.` : "Setup lock ownership is unreadable.",
-      owner
-        ? "Wait for setup to finish, then run ambient-agent doctor."
-        : "Inspect and remove this lock if no setup is running.",
+      "Another setup is in progress or an earlier setup was interrupted.",
+      "Wait for setup to finish. If it is not running, remove this lock and run ambient-agent init again.",
     ),
   ];
 };
 
 interface AcquiredSetupLock {
   readonly path: string;
-  readonly token: string;
   readonly stagingRoot: string;
 }
 
 const setupStagingPath = (root: string, token: string): string =>
   join(dirname(root), `.${basename(root)}.setup-${token}`);
 
-const isSetupToken = (token: string): boolean =>
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(token);
-
-const assertOwnedStagingDirectory = async (path: string): Promise<void> => {
-  const stat = await lstat(path);
-  if (!stat.isDirectory() || modeOf(stat.mode) !== DIRECTORY_MODE) {
-    throw new Error(`Refusing to remove unsafe stale setup staging path ${path}.`);
-  }
-  if (process.getuid && stat.uid !== process.getuid()) {
-    throw new Error(`Refusing to remove stale setup staging path ${path} owned by another user.`);
-  }
-};
-
-const ownedStagingDirectoryExists = async (path: string): Promise<boolean> => {
-  try {
-    await assertOwnedStagingDirectory(path);
-    return true;
-  } catch (cause) {
-    if (errorCode(cause) === "ENOENT") return false;
-    throw cause;
-  }
-};
-
-const renameIfPresent = async (source: string, destination: string): Promise<boolean> => {
-  try {
-    await rename(source, destination);
-    return true;
-  } catch (cause) {
-    if (errorCode(cause) === "ENOENT") return false;
-    throw cause;
-  }
-};
-
-const removeOwnedStagingDirectory = async (path: string): Promise<void> => {
-  if (!(await ownedStagingDirectoryExists(path))) return;
-  await rm(path, { recursive: true, force: true });
-};
-
-const reconcileStaleStaging = async (root: string, owner: SetupLockOwner): Promise<void> => {
-  if (owner.stagingRoot === undefined) return;
-  if (!isSetupToken(owner.token)) {
-    throw new Error(`Refusing invalid stale setup token recorded for ${root}.`);
-  }
-  const expected = setupStagingPath(root, owner.token);
-  if (owner.stagingRoot !== expected) {
-    throw new Error(`Refusing untrusted stale setup staging path recorded for ${root}.`);
-  }
-  const recoveryPath = `${expected}.recovering`;
-  await removeOwnedStagingDirectory(recoveryPath);
-  if (!(await ownedStagingDirectoryExists(expected))) return;
-
-  await renameIfPresent(expected, recoveryPath);
-  await removeOwnedStagingDirectory(recoveryPath);
-};
-
-const quarantineLock = async (lockPath: string, reason: string): Promise<string | undefined> => {
-  const quarantinePath = `${lockPath}.${reason}-${randomUUID()}`;
-  try {
-    await rename(lockPath, quarantinePath);
-    return quarantinePath;
-  } catch (cause) {
-    if (errorCode(cause) === "ENOENT") return undefined;
-    throw cause;
-  }
-};
-
 const acquireSetupLock = async (root: string): Promise<AcquiredSetupLock> => {
   const lockPath = setupLockPath(root);
   const token = randomUUID();
   const stagingRoot = setupStagingPath(root, token);
-  const create = async () => {
-    let created = false;
-    try {
-      await mkdir(lockPath, { mode: DIRECTORY_MODE });
-      created = true;
-      await chmod(lockPath, DIRECTORY_MODE);
-      await writeSecureFile(
-        join(lockPath, SETUP_LOCK_OWNER),
-        json({ pid: process.pid, createdAt: new Date().toISOString(), token, stagingRoot }),
-      );
-    } catch (cause) {
-      if (created) await rm(lockPath, { recursive: true, force: true });
-      throw cause;
-    }
-  };
   try {
-    await create();
-    return { path: lockPath, token, stagingRoot };
+    await mkdir(lockPath, { mode: DIRECTORY_MODE });
+    await chmod(lockPath, DIRECTORY_MODE);
+    return { path: lockPath, stagingRoot };
   } catch (cause) {
-    if (errorCode(cause) !== "EEXIST") throw cause;
+    if (errorCode(cause) === "EEXIST") {
+      throw new Error(`Setup is already in progress for ${root}; wait for it to finish or clear the lock after confirming it stopped.`);
+    }
+    throw cause;
   }
-
-  const owner = await readSetupLockOwner(lockPath);
-  if (owner && setupLockIsStale(owner)) {
-    await reconcileStaleStaging(root, owner);
-    const reconciledOwner = await readSetupLockOwner(lockPath);
-    if (reconciledOwner?.token !== owner.token) {
-      throw new Error(`Setup lock ownership changed while recovering ${lockPath}; retry after inspection.`);
-    }
-    const quarantinePath = await quarantineLock(lockPath, "stale");
-    if (quarantinePath) {
-      const movedOwner = await readSetupLockOwner(quarantinePath);
-      if (movedOwner?.token !== owner.token) {
-        try {
-          await rename(quarantinePath, lockPath);
-        } catch {
-          // Preserve the quarantined lock when its ownership changed; never delete it.
-        }
-        throw new Error(`Setup lock ownership changed while recovering ${lockPath}; retry after inspection.`);
-      }
-      await rm(quarantinePath, { recursive: true, force: true });
-    }
-    try {
-      await create();
-      return { path: lockPath, token, stagingRoot };
-    } catch (cause) {
-      if (errorCode(cause) !== "EEXIST") throw cause;
-    }
-  }
-  throw new Error(
-    owner
-      ? `Another setup is already running for ${root} (process ${owner.pid}).`
-      : `Setup lock ${lockPath} is unreadable; inspect it before retrying.`,
-  );
 };
 
 const releaseSetupLock = async (lock: AcquiredSetupLock): Promise<void> => {
-  const owner = await readSetupLockOwner(lock.path);
-  if (owner?.token !== lock.token) return;
-  const quarantinePath = await quarantineLock(lock.path, `release-${lock.token}`);
-  if (!quarantinePath) return;
-  const movedOwner = await readSetupLockOwner(quarantinePath);
-  if (movedOwner?.token === lock.token) {
-    await rm(quarantinePath, { recursive: true, force: true });
-    return;
-  }
-  try {
-    await rename(quarantinePath, lock.path);
-  } catch {
-    // Never delete a lock whose ownership changed during release.
-  }
+  await rm(lock.path, { recursive: true, force: true });
 };
-
-interface InspectionOptions {
-  readonly ignoredSetupLockToken?: string;
-}
 
 export const inspectManagedData = async (
   options: ManagedPathEnvironment = {},
-  inspectionOptions: InspectionOptions = {},
+  inspectionOptions: { readonly ignoreSetupLock?: boolean } = {},
 ): Promise<InstallationInspection> => {
   const paths = managedPaths(options);
   const platform = options.platform ?? process.platform;
-  const lockDiagnostics = await inspectSetupLock(paths.root, inspectionOptions.ignoredSetupLockToken);
+  const lockDiagnostics = inspectionOptions.ignoreSetupLock ? [] : await inspectSetupLock(paths.root);
   let rootExists: boolean;
   try {
     rootExists = await exists(paths.root);
@@ -694,8 +487,15 @@ export const inspectManagedData = async (
 
   if (credentialDirectoryDiagnostics.length === 0) {
     const githubFileDiagnostics = await inspectFile(paths.githubCredential, "GitHub credential file", true);
-    const piFileDiagnostics = await inspectFile(paths.piAuthCredential, "Pi credential file", true);
-    diagnostics.push(...githubFileDiagnostics, ...piFileDiagnostics);
+    const useLegacyCredential =
+      !(await exists(paths.chatGptOAuthCredential)) && (await exists(paths.legacyPiAuthCredential));
+    const chatGptCredentialPath = useLegacyCredential ? paths.legacyPiAuthCredential : paths.chatGptOAuthCredential;
+    const chatGptFileDiagnostics = await inspectFile(
+      chatGptCredentialPath,
+      useLegacyCredential ? "Provisional managed ChatGPT credential file" : "ChatGPT OAuth credential file",
+      true,
+    );
+    diagnostics.push(...githubFileDiagnostics, ...chatGptFileDiagnostics);
     if (githubFileDiagnostics.length === 0) {
       diagnostics.push(
         ...(
@@ -708,10 +508,16 @@ export const inspectManagedData = async (
         ).diagnostics,
       );
     }
-    if (piFileDiagnostics.length === 0) {
+    if (chatGptFileDiagnostics.length === 0) {
       diagnostics.push(
-        ...(await inspectJson(paths.piAuthCredential, "Pi credential file", PiAuthSchema, PI_AUTH_ISSUE_PATHS))
-          .diagnostics,
+        ...(
+          await inspectJson(
+            chatGptCredentialPath,
+            useLegacyCredential ? "Provisional managed ChatGPT credential file" : "ChatGPT OAuth credential file",
+            useLegacyCredential ? PiAuthSchema : ChatGptOAuthCredentialSchema,
+            useLegacyCredential ? LEGACY_PI_AUTH_ISSUE_PATHS : CHATGPT_OAUTH_ISSUE_PATHS,
+          )
+        ).diagnostics,
       );
     }
   }
@@ -740,7 +546,6 @@ const createSkeleton = async (
   paths: ManagedPaths,
   config: ManagedConfig,
   github: GitHubCredential,
-  piAuth: PiAuth,
 ): Promise<void> => {
   await mkdir(paths.root, { mode: DIRECTORY_MODE });
   await chmod(paths.root, DIRECTORY_MODE);
@@ -754,7 +559,6 @@ const createSkeleton = async (
   ]);
   await writeSecureFile(paths.config, json(config));
   await writeSecureFile(paths.githubCredential, json(github));
-  await writeSecureFile(paths.piAuthCredential, json(piAuth));
   await writeSecureFile(paths.applicationDatabase, "");
   await writeSecureFile(paths.flueDatabase, "");
 };
@@ -766,11 +570,7 @@ export const installManagedData = async (input: InstallManagedDataInput): Promis
   }
   const before = await inspectManagedData(input);
   if (before.state === "configured") return { created: false, inspection: before };
-  const staleLockOnly =
-    before.state === "damaged" &&
-    before.diagnostics.length > 0 &&
-    before.diagnostics.every((item) => item.code === "setup.stale-lock");
-  if (before.state === "damaged" && !staleLockOnly) {
+  if (before.state === "damaged") {
     throw new Error(`Refusing to replace damaged managed data at ${targetPaths.root}; run ambient-agent doctor.`);
   }
 
@@ -785,25 +585,30 @@ export const installManagedData = async (input: InstallManagedDataInput): Promis
     token: input.githubToken,
   });
   if (!githubResult.success) throw new Error("The GitHub token must not be empty.");
-  const piResult = v.safeParse(PiAuthSchema, input.piAuth);
-  if (!piResult.success) throw new Error("The Pi auth file must contain an openai-codex OAuth credential.");
-
   await mkdir(dirname(targetPaths.root), { recursive: true, mode: DIRECTORY_MODE });
   const lock = await acquireSetupLock(targetPaths.root);
 
   const stagingRoot = lock.stagingRoot;
   try {
-    const current = await inspectManagedData(input, { ignoredSetupLockToken: lock.token });
+    const current = await inspectManagedData(input, { ignoreSetupLock: true });
     if (current.state === "configured") return { created: false, inspection: current };
     if (current.state === "damaged") {
       throw new Error(`Refusing to replace existing managed data at ${targetPaths.root}.`);
     }
     const stagingPaths = managedPaths({ dataDirectory: stagingRoot });
-    await createSkeleton(stagingPaths, configResult.output, githubResult.output, piResult.output);
+    await createSkeleton(stagingPaths, configResult.output, githubResult.output);
+    await input.authenticateChatGpt(stagingPaths);
+    const stagingInspection = await inspectManagedData({ dataDirectory: stagingRoot });
+    if (stagingInspection.state !== "configured") {
+      throw new Error("Managed staging verification failed; setup did not commit any files.");
+    }
     await rename(stagingRoot, targetPaths.root);
   } finally {
-    await rm(stagingRoot, { recursive: true, force: true });
-    await releaseSetupLock(lock);
+    try {
+      await rm(stagingRoot, { recursive: true, force: true });
+    } finally {
+      await releaseSetupLock(lock);
+    }
   }
 
   const inspection = await inspectManagedData(input);

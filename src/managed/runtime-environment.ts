@@ -39,7 +39,6 @@ export const loadManagedRuntimeEnvironment = async (
   const primaryChat = config.managedChats[0]!;
 
   applyDefaults(environment, {
-    AMBIENCE_PI_AUTH_PATH: paths.piAuthCredential,
     AMBIENCE_WHATSAPP: "1",
     GITHUB_ALLOWED_REPOS: config.github.allowedRepositories.join(","),
     GITHUB_INGRESS_DB_PATH: paths.applicationDatabase,
