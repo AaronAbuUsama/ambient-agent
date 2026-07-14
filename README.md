@@ -1,9 +1,9 @@
 # Ambient Agent
 
-> The secure `ambient-agent` installer, managed filesystem, `status`, and
-> `doctor` commands are shipped. The foreground managed runtime and production
-> Issue Management rollout are still tracked by the remaining stable-base work
-> in [the architecture plan](./docs/architecture/ambient-agent.md).
+> The secure `ambient-agent` installer, managed filesystem, foreground runtime,
+> `status`, and `doctor` commands are shipped. The production Issue Management
+> rollout is still tracked by the remaining stable-base work in
+> [the architecture plan](./docs/architecture/ambient-agent.md).
 
 A continuing ambient agent for managed WhatsApp chats. Each accepted coalesced
 window is admitted to one canonical instance of Ambience — this application's
@@ -62,6 +62,7 @@ ambient-agent init \
 # Open the verification URI printed by Ambient Agent and enter its device code.
 
 ambient-agent status
+ambient-agent auth              # replace missing, malformed, or rejected ChatGPT authentication
 ambient-agent doctor
 ambient-agent doctor --refresh  # safely rotate an expired credential
 ambient-agent doctor --live     # opt-in real model readiness request
@@ -74,7 +75,8 @@ With no arguments, the executable enters guided setup on a first run and
 reports status thereafter. It stores non-secret configuration and credential
 references in the OS data directory while keeping credentials in private
 `0600` files beneath a `0700` root. Running setup again verifies the existing
-installation and does not replace credentials.
+installation and does not replace credentials. Use `ambient-agent auth` for an
+explicit ChatGPT reauthentication without changing the rest of the installation.
 Managed JSON diagnostics read at most 1 MiB per file and fail closed if a file
 exceeds that limit or changes during inspection.
 

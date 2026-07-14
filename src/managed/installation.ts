@@ -20,6 +20,7 @@ const FILE_MODE = 0o600;
 const MAX_MANAGED_JSON_BYTES = 1024 * 1024;
 const SETUP_LOCK_OWNER = "owner.json";
 const SETUP_LOCK_MAX_AGE_MILLIS = 10 * 60 * 1000;
+const SETUP_LOCK_HEARTBEAT_MILLIS = 30 * 1000;
 const CONFIG_ISSUE_PATHS = new Set([
   "<root>",
   "schemaVersion",
@@ -66,6 +67,7 @@ export interface InstallManagedDataInput extends ManagedPathEnvironment {
   readonly defaultRepository: string;
   readonly githubToken: string;
   readonly authenticateChatGpt: (paths: ManagedPaths) => Promise<void>;
+  readonly setupLockHeartbeatMillis?: number;
 }
 
 export interface InstallManagedDataResult {
@@ -358,6 +360,7 @@ const setupLockPath = (root: string): string => join(dirname(root), `.${basename
 interface SetupLockOwner {
   readonly pid: number;
   readonly createdAt: string;
+  readonly heartbeatAt?: string;
   readonly token: string;
   readonly stagingRoot?: string;
 }
@@ -377,6 +380,7 @@ const readSetupLockOwner = async (lockPath: string): Promise<SetupLockOwner | un
       ? {
           pid: value.pid,
           createdAt: value.createdAt,
+          ...(typeof value.heartbeatAt === "string" ? { heartbeatAt: value.heartbeatAt } : {}),
           token: value.token,
           ...(typeof value.stagingRoot === "string" ? { stagingRoot: value.stagingRoot } : {}),
         }
@@ -399,8 +403,8 @@ const processIsAlive = (pid: number): boolean => {
 };
 
 const setupLockIsStale = (owner: SetupLockOwner): boolean => {
-  const createdAt = Date.parse(owner.createdAt);
-  const tooOld = Number.isFinite(createdAt) && Date.now() - createdAt > SETUP_LOCK_MAX_AGE_MILLIS;
+  const lastHeartbeat = Date.parse(owner.heartbeatAt ?? owner.createdAt);
+  const tooOld = Number.isFinite(lastHeartbeat) && Date.now() - lastHeartbeat > SETUP_LOCK_MAX_AGE_MILLIS;
   return tooOld || !processIsAlive(owner.pid);
 };
 
@@ -544,7 +548,13 @@ const acquireSetupLock = async (root: string): Promise<AcquiredSetupLock> => {
       await chmod(lockPath, DIRECTORY_MODE);
       await writeSecureFile(
         join(lockPath, SETUP_LOCK_OWNER),
-        json({ pid: process.pid, createdAt: new Date().toISOString(), token, stagingRoot }),
+        json({
+          pid: process.pid,
+          createdAt: new Date().toISOString(),
+          heartbeatAt: new Date().toISOString(),
+          token,
+          stagingRoot,
+        }),
       );
     } catch (cause) {
       if (created) await rm(lockPath, { recursive: true, force: true });
@@ -607,6 +617,43 @@ const releaseSetupLock = async (lock: AcquiredSetupLock): Promise<void> => {
   } catch {
     // Never delete a lock whose ownership changed during release.
   }
+};
+
+interface SetupLockHeartbeat {
+  readonly assertHealthy: () => Promise<void>;
+  readonly stop: () => void;
+}
+
+const startSetupLockHeartbeat = (
+  lock: AcquiredSetupLock,
+  intervalMillis: number = SETUP_LOCK_HEARTBEAT_MILLIS,
+): SetupLockHeartbeat => {
+  let failure: unknown;
+  let update = Promise.resolve();
+  const timer = setInterval(() => {
+    update = update
+      .then(async () => {
+        const owner = await readSetupLockOwner(lock.path);
+        if (owner?.token !== lock.token) throw new Error("Setup lock ownership changed during authentication.");
+        const temporary = join(lock.path, `${SETUP_LOCK_OWNER}.${randomUUID()}.tmp`);
+        await writeSecureFile(temporary, json({ ...owner, heartbeatAt: new Date().toISOString() }));
+        await rename(temporary, join(lock.path, SETUP_LOCK_OWNER));
+      })
+      .catch((cause: unknown) => {
+        failure ??= cause;
+      });
+  }, intervalMillis);
+  return {
+    async assertHealthy() {
+      await update;
+      if (failure !== undefined) {
+        throw new Error("Could not maintain the setup lock during authentication.", { cause: failure });
+      }
+    },
+    stop() {
+      clearInterval(timer);
+    },
+  };
 };
 
 interface InspectionOptions {
@@ -799,6 +846,7 @@ export const installManagedData = async (input: InstallManagedDataInput): Promis
   if (!githubResult.success) throw new Error("The GitHub token must not be empty.");
   await mkdir(dirname(targetPaths.root), { recursive: true, mode: DIRECTORY_MODE });
   const lock = await acquireSetupLock(targetPaths.root);
+  const heartbeat = startSetupLockHeartbeat(lock, input.setupLockHeartbeatMillis);
 
   const stagingRoot = lock.stagingRoot;
   try {
@@ -810,8 +858,14 @@ export const installManagedData = async (input: InstallManagedDataInput): Promis
     const stagingPaths = managedPaths({ dataDirectory: stagingRoot });
     await createSkeleton(stagingPaths, configResult.output, githubResult.output);
     await input.authenticateChatGpt(stagingPaths);
+    await heartbeat.assertHealthy();
+    const stagingInspection = await inspectManagedData({ dataDirectory: stagingRoot });
+    if (stagingInspection.state !== "configured") {
+      throw new Error("Managed staging verification failed; setup did not commit any files.");
+    }
     await rename(stagingRoot, targetPaths.root);
   } finally {
+    heartbeat.stop();
     await rm(stagingRoot, { recursive: true, force: true });
     await releaseSetupLock(lock);
   }

@@ -300,4 +300,88 @@ describe("ChatGPT authentication", () => {
     ]);
     expect(oauth.refresh).toHaveBeenCalledTimes(1);
   });
+
+  it("waits beyond five seconds for a peer that is refreshing under the credential lock", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ambient-agent-chatgpt-slow-refresh-"));
+    roots.push(root);
+    const path = join(root, "credentials", "chatgpt-oauth.json");
+    await createManagedChatGptCredentialStore({ path }).modify("openai-codex", async () => credential({ expires: 1 }));
+    let refreshStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      refreshStarted = resolve;
+    });
+    const oauth = adapter({
+      refresh: vi.fn(async () => {
+        refreshStarted();
+        await new Promise((resolve) => setTimeout(resolve, 5_100));
+        return credential({ access: "slow-rotated", refresh: "slow-refresh", expires: 3_000 });
+      }),
+    });
+    const first = createChatGptAuthentication({
+      store: createManagedChatGptCredentialStore({ path }),
+      oauth,
+      now: () => 2_000,
+    });
+    const second = createChatGptAuthentication({
+      store: createManagedChatGptCredentialStore({ path }),
+      oauth,
+      now: () => 2_000,
+    });
+
+    const firstAuthorization = first.authorization();
+    await started;
+    await expect(Promise.all([firstAuthorization, second.authorization()])).resolves.toEqual([
+      { apiKey: "slow-rotated" },
+      { apiKey: "slow-rotated" },
+    ]);
+    expect(oauth.refresh).toHaveBeenCalledTimes(1);
+  }, 8_000);
+
+  it("reclaims one stale credential lock safely across concurrent contenders", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ambient-agent-chatgpt-stale-lock-"));
+    roots.push(root);
+    const path = join(root, "credentials", "chatgpt-oauth.json");
+    const store = createManagedChatGptCredentialStore({ path });
+    await store.modify("openai-codex", async () => credential());
+    const lockPath = `${path}.lock`;
+    await mkdir(lockPath, { mode: 0o700 });
+    await writeFile(
+      join(lockPath, "owner.json"),
+      JSON.stringify({ pid: 2_147_483_647, createdAt: new Date(0).toISOString(), token: "stale-owner" }),
+      { mode: 0o600 },
+    );
+
+    const first = createManagedChatGptCredentialStore({ path });
+    const second = createManagedChatGptCredentialStore({ path });
+    await expect(Promise.all([first.read("openai-codex"), second.read("openai-codex")])).resolves.toEqual([
+      credential(),
+      credential(),
+    ]);
+    await expect(lstat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await readdir(join(root, "credentials"))).filter((entry) => entry.includes(".stale-"))).toEqual([]);
+  });
+
+  it("does not let an old owner release a successor credential lock", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ambient-agent-chatgpt-lock-owner-"));
+    roots.push(root);
+    const path = join(root, "credentials", "chatgpt-oauth.json");
+    const lockPath = `${path}.lock`;
+    const store = createManagedChatGptCredentialStore({
+      path,
+      beforeCommit: async () => {
+        await writeFile(
+          join(lockPath, "owner.json"),
+          JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString(), token: "successor-owner" }),
+          { mode: 0o600 },
+        );
+      },
+    });
+
+    await store.replace("openai-codex", credential());
+
+    expect(JSON.parse(await readFile(join(lockPath, "owner.json"), "utf8"))).toMatchObject({
+      token: "successor-owner",
+    });
+    await rm(lockPath, { recursive: true });
+  });
 });

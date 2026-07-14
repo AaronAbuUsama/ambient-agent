@@ -222,6 +222,7 @@ The command surface is:
 ```text
 npx ambient-agent              # guided setup when unconfigured; help/status when configured
 npx ambient-agent init         # Clack first-run setup
+npx ambient-agent auth         # replace managed ChatGPT authentication only
 npx ambient-agent config       # inspect or change validated configuration
 npx ambient-agent start        # non-interactive foreground runtime
 npx ambient-agent status       # read-only state and health

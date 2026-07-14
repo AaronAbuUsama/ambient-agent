@@ -41,6 +41,7 @@ export interface CliDependencies {
   readonly importRuntime?: ImportRuntime;
   readonly chatGptOAuth?: ChatGptOAuthAdapter;
   readonly signal?: AbortSignal;
+  readonly readinessTimeoutMillis?: number;
   readonly readinessCheck?: (
     authentication: ChatGptAuthentication,
     signal?: AbortSignal,
@@ -116,14 +117,20 @@ const renderInspection = (
     lines.push(`[${item.code}] ${item.message}`, `  Path: ${item.path}`, `  Fix: ${item.remediation}`);
   }
   lines.push(`ChatGPT authentication: ${authentication.state}`);
-  if (authentication.state === "missing") lines.push("  Fix: Run ambient-agent init.");
+  if (authentication.state === "missing") {
+    lines.push(
+      inspection.state === "unconfigured"
+        ? "  Fix: Run ambient-agent init."
+        : "  Fix: Run ambient-agent auth to authenticate again.",
+    );
+  }
   if (authentication.state === "malformed")
-    lines.push(`  ${authentication.message}`, "  Fix: Repair the managed credential or run ambient-agent init.");
+    lines.push(`  ${authentication.message}`, "  Fix: Run ambient-agent auth to authenticate again.");
   if (authentication.state === "expired-refreshable") {
     lines.push("  Fix: Run ambient-agent doctor --refresh to rotate the managed credential.");
   }
   if (authentication.state === "unusable")
-    lines.push(`  ${authentication.message}`, "  Fix: Run ambient-agent init to authenticate again.");
+    lines.push(`  ${authentication.message}`, "  Fix: Run ambient-agent auth to authenticate again.");
   if (liveCheck !== undefined) {
     lines.push(
       `ChatGPT live readiness: ${liveCheck.request}${liveCheck.reason === undefined ? "" : ` (${liveCheck.reason})`}`,
@@ -174,9 +181,16 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
   const startRuntime =
     dependencies.startRuntime ??
     ((paths: ManagedPaths) => startGeneratedRuntime(paths, authenticationFor(paths), dependencies.importRuntime));
-  const authenticationSignal = (): AbortSignal => {
-    const timeout = AbortSignal.timeout(20 * 60 * 1_000);
+  const operationSignal = (timeoutMillis: number): AbortSignal => {
+    const timeout = AbortSignal.timeout(timeoutMillis);
     return dependencies.signal === undefined ? timeout : AbortSignal.any([dependencies.signal, timeout]);
+  };
+  const authenticationSignal = (): AbortSignal => operationSignal(20 * 60 * 1_000);
+  const readinessSignal = (): AbortSignal => operationSignal(dependencies.readinessTimeoutMillis ?? 60_000);
+  const credentialDamageOnly = (inspection: InstallationInspection, paths: ManagedPaths): boolean => {
+    if (inspection.state !== "damaged" || inspection.diagnostics.length === 0) return false;
+    const credentialPaths = new Set([paths.chatGptOAuthCredential, paths.legacyPiAuthCredential]);
+    return inspection.diagnostics.every((item) => credentialPaths.has(item.path));
   };
   const deviceCodeCallbacks: DeviceCodeCallbacks = {
     onDeviceCode: (info) => {
@@ -210,22 +224,31 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
   }> => {
     const paths = managedPaths({ dataDirectory: program.opts().dataDir });
     const inspection = await inspectManagedData({ dataDirectory: paths.root });
-    const authentication = authenticationFor(paths);
-    let authenticationStatus = await authentication.inspect();
+    const authenticationSafe = inspection.state === "configured" || credentialDamageOnly(inspection, paths);
+    const authentication = authenticationSafe ? authenticationFor(paths) : undefined;
+    let authenticationStatus: ChatGptAuthenticationStatus =
+      inspection.state === "unconfigured"
+        ? { state: "missing" }
+        : !authenticationSafe
+          ? {
+              state: "unusable",
+              message: "ChatGPT authentication was not inspected because the managed installation is damaged.",
+            }
+          : await authentication!.inspect();
     if (refresh && authenticationStatus.state === "expired-refreshable") {
       try {
-        await authentication.authorization();
+        await authentication!.authorization();
       } catch {
         // inspect() reports the sanitized unusable state from the same service instance.
       }
-      authenticationStatus = await authentication.inspect();
+      authenticationStatus = await authentication!.inspect();
     }
     let liveCheck: ChatGptReadinessReceipt | undefined;
     if (live && authenticationStatus.state === "ready") {
       try {
         liveCheck = await (
           dependencies.readinessCheck ?? ((service, signal) => runChatGptReadinessCheck(service, { signal }))
-        )(authentication, dependencies.signal);
+        )(authentication!, readinessSignal());
       } catch (cause) {
         const failure =
           cause instanceof ChatGptReadinessError
@@ -291,6 +314,29 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           ? `Created secure managed installation at ${result.inspection.dataDirectory}.\n`
           : `Managed installation already configured at ${result.inspection.dataDirectory}; no files changed.\n`,
       );
+    });
+
+  program
+    .command("auth")
+    .description("authenticate ChatGPT for an existing managed installation")
+    .action(async () => {
+      const paths = managedPaths({ dataDirectory: program.opts().dataDir });
+      const inspection = await inspectManagedData({ dataDirectory: paths.root });
+      if (inspection.state === "unconfigured") {
+        throw new Error("Ambient Agent is not configured; run ambient-agent init first.");
+      }
+      const credentialOnlyDamage = credentialDamageOnly(inspection, paths);
+      if (inspection.state === "damaged" && !credentialOnlyDamage) {
+        throw new Error(
+          `Refusing to authenticate against damaged managed data at ${paths.root}; run ambient-agent doctor.`,
+        );
+      }
+      await authenticationFor(paths).authenticate(deviceCodeCallbacks, authenticationSignal());
+      const verified = await inspectManagedData({ dataDirectory: paths.root });
+      if (verified.state !== "configured") {
+        throw new Error(`ChatGPT authentication was saved, but managed data verification failed at ${paths.root}.`);
+      }
+      output.stdout(`ChatGPT authentication updated at ${paths.chatGptOAuthCredential}.\n`);
     });
 
   program

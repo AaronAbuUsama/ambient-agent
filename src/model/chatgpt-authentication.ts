@@ -73,13 +73,23 @@ export interface ManagedChatGptCredentialStoreOptions {
   readonly beforeCommit?: (temporaryPath: string, targetPath: string) => Promise<void>;
 }
 
+export interface ChatGptCredentialStore extends CredentialStore {
+  replace(providerId: string, credential: OAuthCredential): Promise<void>;
+}
+
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
 const MAX_CREDENTIAL_BYTES = 1024 * 1024;
 const LOCK_WAIT_MILLIS = 20;
-const LOCK_TIMEOUT_MILLIS = 5_000;
+const LOCK_TIMEOUT_MILLIS = 20 * 60 * 1_000;
 const STALE_LOCK_MILLIS = 30_000;
 const LOCK_OWNER_FILE = "owner.json";
+
+interface CredentialLockOwner {
+  readonly pid: number;
+  readonly createdAt: string;
+  readonly token: string;
+}
 
 const errorCode = (cause: unknown): string | undefined =>
   typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code) : undefined;
@@ -172,9 +182,47 @@ const atomicWriteCredential = async (
   }
 };
 
+const parseCredentialLockOwner = (value: unknown): CredentialLockOwner | undefined => {
+  if (typeof value !== "object" || value === null) return undefined;
+  const owner = value as Record<string, unknown>;
+  return typeof owner.pid === "number" && typeof owner.createdAt === "string" && typeof owner.token === "string"
+    ? { pid: owner.pid, createdAt: owner.createdAt, token: owner.token }
+    : undefined;
+};
+
+const readCredentialLockOwner = async (lockPath: string): Promise<CredentialLockOwner | undefined> =>
+  parseCredentialLockOwner(await readPrivateJson(join(lockPath, LOCK_OWNER_FILE)));
+
+const restoreCredentialLock = async (quarantinePath: string, lockPath: string): Promise<void> => {
+  try {
+    await rename(quarantinePath, lockPath);
+  } catch {
+    // Keep the quarantine intact rather than deleting a lock whose ownership changed.
+  }
+};
+
+const releaseCredentialLock = async (lockPath: string, token: string): Promise<void> => {
+  const owner = await readCredentialLockOwner(lockPath);
+  if (owner?.token !== token) return;
+  const quarantinePath = `${lockPath}.release-${token}`;
+  try {
+    await rename(lockPath, quarantinePath);
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return;
+    throw cause;
+  }
+  const movedOwner = await readCredentialLockOwner(quarantinePath);
+  if (movedOwner?.token !== token) {
+    await restoreCredentialLock(quarantinePath, lockPath);
+    return;
+  }
+  await rm(quarantinePath, { recursive: true, force: true });
+};
+
 const acquireCredentialLock = async (path: string): Promise<() => Promise<void>> => {
   const lockPath = `${path}.lock`;
   const started = Date.now();
+  const token = randomUUID();
   await ensurePrivateDirectory(dirname(path));
   while (true) {
     try {
@@ -182,7 +230,10 @@ const acquireCredentialLock = async (path: string): Promise<() => Promise<void>>
       await chmod(lockPath, DIRECTORY_MODE);
       const owner = await open(join(lockPath, LOCK_OWNER_FILE), "wx", FILE_MODE);
       try {
-        await owner.writeFile(JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }), "utf8");
+        await owner.writeFile(
+          JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString(), token }),
+          "utf8",
+        );
         await owner.sync();
       } catch (cause) {
         await rm(lockPath, { recursive: true, force: true });
@@ -190,26 +241,41 @@ const acquireCredentialLock = async (path: string): Promise<() => Promise<void>>
       } finally {
         await owner.close();
       }
-      return async () => await rm(lockPath, { recursive: true, force: true });
+      await chmod(join(lockPath, LOCK_OWNER_FILE), FILE_MODE);
+      return async () => await releaseCredentialLock(lockPath, token);
     } catch (cause) {
       if (errorCode(cause) !== "EEXIST") throw cause;
       try {
         const lock = await lstat(lockPath);
         if (!lock.isDirectory()) throw new Error("The managed ChatGPT credential lock is not a directory.");
-        let owner: unknown;
+        let owner: CredentialLockOwner | undefined;
         try {
-          owner = await readPrivateJson(join(lockPath, LOCK_OWNER_FILE));
+          owner = await readCredentialLockOwner(lockPath);
         } catch {
           owner = undefined;
         }
-        const ownerPid =
-          typeof owner === "object" && owner !== null && typeof (owner as Record<string, unknown>).pid === "number"
-            ? (owner as Record<string, number>).pid
-            : undefined;
-        const stale =
-          ownerPid !== undefined ? !processIsAlive(ownerPid) : Date.now() - lock.mtimeMs > STALE_LOCK_MILLIS;
+        const stale = owner !== undefined ? !processIsAlive(owner.pid) : Date.now() - lock.mtimeMs > STALE_LOCK_MILLIS;
         if (stale) {
-          await rm(lockPath, { recursive: true, force: true });
+          const candidate = await lstat(lockPath);
+          const candidateOwner = await readCredentialLockOwner(lockPath).catch(() => undefined);
+          const candidateIsStale =
+            candidateOwner !== undefined
+              ? !processIsAlive(candidateOwner.pid)
+              : Date.now() - candidate.mtimeMs > STALE_LOCK_MILLIS;
+          if (!candidateIsStale) continue;
+          const quarantinePath = `${lockPath}.stale-${randomUUID()}`;
+          try {
+            await rename(lockPath, quarantinePath);
+          } catch (renameCause) {
+            if (errorCode(renameCause) === "ENOENT") continue;
+            throw renameCause;
+          }
+          const moved = await lstat(quarantinePath);
+          if (moved.dev !== candidate.dev || moved.ino !== candidate.ino) {
+            await restoreCredentialLock(quarantinePath, lockPath);
+            throw new Error("The managed ChatGPT credential lock changed ownership during stale recovery.");
+          }
+          await rm(quarantinePath, { recursive: true, force: true });
           continue;
         }
       } catch (inspectionCause) {
@@ -230,7 +296,9 @@ const assertProvider = (providerId: string): void => {
   }
 };
 
-export const createManagedChatGptCredentialStore = (options: ManagedChatGptCredentialStoreOptions): CredentialStore => {
+export const createManagedChatGptCredentialStore = (
+  options: ManagedChatGptCredentialStoreOptions,
+): ChatGptCredentialStore => {
   const readUnlocked = async (): Promise<OAuthCredential | undefined> => {
     const current = await readPrivateJson(options.path);
     if (current !== undefined) {
@@ -285,6 +353,17 @@ export const createManagedChatGptCredentialStore = (options: ManagedChatGptCrede
         const credential = validateChatGptOAuthCredential(next);
         await atomicWriteCredential(options.path, credential, options.beforeCommit);
         return credential;
+      });
+    },
+    async replace(providerId, next) {
+      assertProvider(providerId);
+      const credential = validateChatGptOAuthCredential(next);
+      await locked(async () => {
+        await atomicWriteCredential(options.path, credential, options.beforeCommit);
+        if (options.legacyPath !== undefined && (await pathExists(options.legacyPath))) {
+          await options.onLegacyMigration?.();
+          await rm(options.legacyPath, { force: true });
+        }
       });
     },
     async delete(providerId) {
@@ -387,7 +466,11 @@ export const createChatGptAuthentication = (options: CreateChatGptAuthentication
         throw loginFailure(cause, signal);
       }
       try {
-        await options.store.modify(CHATGPT_PROVIDER_ID, async () => credential);
+        if ("replace" in options.store && typeof options.store.replace === "function") {
+          await options.store.replace(CHATGPT_PROVIDER_ID, credential);
+        } else {
+          await options.store.modify(CHATGPT_PROVIDER_ID, async () => credential);
+        }
       } catch (cause) {
         throw new ChatGptAuthenticationError(
           "persistence-failed",
@@ -430,7 +513,7 @@ export const createChatGptAuthentication = (options: CreateChatGptAuthentication
           );
         }
         if (current === undefined) {
-          throw new ChatGptAuthenticationError("missing", "ChatGPT authentication is missing; run ambient-agent init.");
+          throw new ChatGptAuthenticationError("missing", "ChatGPT authentication is missing; run ambient-agent auth.");
         }
         let credential: OAuthCredential;
         try {
@@ -438,7 +521,7 @@ export const createChatGptAuthentication = (options: CreateChatGptAuthentication
         } catch (cause) {
           throw new ChatGptAuthenticationError(
             "malformed",
-            "The managed ChatGPT OAuth credential is malformed; run ambient-agent doctor.",
+            "The managed ChatGPT OAuth credential is malformed; run ambient-agent auth.",
             { cause },
           );
         }
@@ -461,7 +544,7 @@ export const createChatGptAuthentication = (options: CreateChatGptAuthentication
             throw new ChatGptAuthenticationError(
               refreshFailed ? "refresh-failed" : "persistence-failed",
               refreshFailed
-                ? "ChatGPT rejected the credential refresh; run ambient-agent init to authenticate again."
+                ? "ChatGPT rejected the credential refresh; run ambient-agent auth to authenticate again."
                 : "ChatGPT refreshed the credential, but the rotation could not be saved; authorization is not ready.",
               { cause },
             );
@@ -469,7 +552,7 @@ export const createChatGptAuthentication = (options: CreateChatGptAuthentication
           if (refreshed === undefined) {
             throw new ChatGptAuthenticationError(
               "missing",
-              "ChatGPT authentication was removed during refresh; run ambient-agent init.",
+              "ChatGPT authentication was removed during refresh; run ambient-agent auth.",
             );
           }
           credential = validateChatGptOAuthCredential(refreshed);
@@ -487,7 +570,7 @@ export const createChatGptAuthentication = (options: CreateChatGptAuthentication
         if (!nonBlank(authorization.apiKey)) {
           throw new ChatGptAuthenticationError(
             "malformed",
-            "ChatGPT authorization did not contain a usable token; run ambient-agent init.",
+            "ChatGPT authorization did not contain a usable token; run ambient-agent auth.",
           );
         }
         unusableMessage = undefined;

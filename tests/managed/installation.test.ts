@@ -100,6 +100,61 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
     await expect(inspectManagedData(base)).resolves.toMatchObject({ state: "unconfigured" });
   });
 
+  it("validates the complete staging tree before committing it", async () => {
+    const base = await fixture();
+    await expect(
+      installManagedData({
+        ...base,
+        managedChats: ["120363000@g.us"],
+        defaultRepository: "owner/repo",
+        authenticateChatGpt: async () => undefined,
+      }),
+    ).rejects.toThrow("Managed staging verification failed");
+
+    await expect(lstat(base.dataDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(inspectManagedData(base)).resolves.toMatchObject({ state: "unconfigured" });
+  });
+
+  it("keeps a live setup lock fresh while device authentication is pending", async () => {
+    const base = await fixture();
+    let releaseAuthentication!: () => void;
+    let authenticationStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      authenticationStarted = resolve;
+    });
+    const hold = new Promise<void>((resolve) => {
+      releaseAuthentication = resolve;
+    });
+    const first = installManagedData({
+      ...base,
+      managedChats: ["120363000@g.us"],
+      defaultRepository: "owner/repo",
+      setupLockHeartbeatMillis: 5,
+      authenticateChatGpt: async (paths) => {
+        await base.authenticateChatGpt(paths);
+        authenticationStarted();
+        await hold;
+      },
+    });
+    await started;
+    const ownerPath = join(base.parent, ".managed.setup.lock", "owner.json");
+    const before = JSON.parse(await readFile(ownerPath, "utf8")) as { heartbeatAt: string };
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const after = JSON.parse(await readFile(ownerPath, "utf8")) as { heartbeatAt: string };
+    expect(Date.parse(after.heartbeatAt)).toBeGreaterThan(Date.parse(before.heartbeatAt));
+
+    await expect(
+      installManagedData({
+        ...base,
+        managedChats: ["120363000@g.us"],
+        defaultRepository: "owner/repo",
+      }),
+    ).rejects.toThrow(/setup.*running|setup.*owned|damaged managed data/i);
+
+    releaseAuthentication();
+    await expect(first).resolves.toMatchObject({ created: true });
+  });
+
   it("distinguishes an absent install from a damaged install", async () => {
     const base = await fixture();
     expect((await inspectManagedData(base)).state).toBe("unconfigured");

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -259,6 +259,39 @@ describe("managed CLI", () => {
     expect(JSON.parse(live.stdout())).toMatchObject({ liveCheck: { request: "complete" } });
   });
 
+  it("bounds the live readiness request with a dedicated timeout", async () => {
+    const paths = await files();
+    await runCli(
+      [
+        "--data-dir",
+        paths.data,
+        "init",
+        "--chat",
+        "120363000@g.us",
+        "--repository",
+        "owner/repo",
+        "--github-token-file",
+        paths.token,
+      ],
+      harness(),
+    );
+    const live = harness();
+    const result = await runCli(["--data-dir", paths.data, "doctor", "--live", "--json"], {
+      ...live,
+      readinessTimeoutMillis: 10,
+      readinessCheck: async (_authentication, signal) =>
+        await new Promise((_, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    });
+
+    expect(result).toBe(1);
+    expect(JSON.parse(live.stdout())).toMatchObject({
+      modelAuthentication: { state: "ready" },
+      liveCheck: { request: "failed", reason: "request-failed" },
+    });
+  });
+
   it("classifies a revoked credential as unusable when the gated live check rejects it", async () => {
     const paths = await files();
     const init = harness();
@@ -388,6 +421,81 @@ describe("managed CLI", () => {
     ).toBe(1);
     expect(JSON.parse(unusable.stdout())).toMatchObject({ modelAuthentication: { state: "unusable" } });
     expect(unusable.stdout()).not.toContain("must-not-be-printed");
+  });
+
+  it("reauthenticates a configured installation and repairs a malformed model credential", async () => {
+    const paths = await files();
+    await runCli(
+      [
+        "--data-dir",
+        paths.data,
+        "init",
+        "--chat",
+        "120363000@g.us",
+        "--repository",
+        "owner/repo",
+        "--github-token-file",
+        paths.token,
+      ],
+      harness(),
+    );
+    const credentialPath = managedPaths({ dataDirectory: paths.data }).chatGptOAuthCredential;
+    await writeFile(credentialPath, "{malformed", { mode: 0o600 });
+    const reauth = harness();
+
+    expect(await runCli(["--data-dir", paths.data, "auth"], reauth)).toBe(0);
+    expect(reauth.stdout()).toContain("ChatGPT authentication updated");
+    expect(JSON.parse(await readFile(credentialPath, "utf8"))).toMatchObject({
+      type: "oauth",
+      access: "access-secret",
+      refresh: "refresh-secret",
+    });
+    expect((await lstat(credentialPath)).mode & 0o777).toBe(0o600);
+  });
+
+  it("does not inspect or migrate authentication through a damaged credential-directory symlink", async () => {
+    const paths = await files();
+    await runCli(
+      [
+        "--data-dir",
+        paths.data,
+        "init",
+        "--chat",
+        "120363000@g.us",
+        "--repository",
+        "owner/repo",
+        "--github-token-file",
+        paths.token,
+      ],
+      harness(),
+    );
+    const managed = managedPaths({ dataDirectory: paths.data });
+    const outside = join(paths.parent, "outside-credentials");
+    await mkdir(outside, { mode: 0o700 });
+    await writeFile(
+      join(outside, "pi-auth.json"),
+      JSON.stringify({
+        "openai-codex": {
+          type: "oauth",
+          access: "outside-access-secret",
+          refresh: "outside-refresh-secret",
+          expires: 2_000_000_000_000,
+        },
+      }),
+      { mode: 0o600 },
+    );
+    await rm(managed.credentials, { recursive: true });
+    await symlink(outside, managed.credentials);
+    const status = harness();
+
+    expect(await runCli(["--data-dir", paths.data, "status", "--json"], status)).toBe(3);
+    expect(JSON.parse(status.stdout())).toMatchObject({
+      state: "damaged",
+      modelAuthentication: { state: "unusable" },
+    });
+    await expect(lstat(join(outside, "pi-auth.json"))).resolves.toBeDefined();
+    await expect(lstat(join(outside, "chatgpt-oauth.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(join(outside, "chatgpt-oauth.json.lock"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("uses injectable prompt answers and setup remains non-destructive", async () => {
