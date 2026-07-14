@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { inspectManagedData, installManagedData } from "../../src/managed/installation.ts";
-import { managedPaths } from "../../src/managed/paths.ts";
+import { managedPaths, type ManagedPaths } from "../../src/managed/paths.ts";
+import { createManagedChatGptCredentialStore } from "../../src/model/chatgpt-authentication.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -16,15 +17,18 @@ const fixture = async () => {
   roots.push(parent);
   const dataDirectory = join(parent, "managed");
   const githubToken = "github-secret-token";
-  const piAuth = {
-    "openai-codex": {
-      type: "oauth" as const,
-      access: "pi-access-secret",
-      refresh: "pi-refresh-secret",
-      expires: 2_000_000_000_000,
-    },
+  const chatGptCredential = {
+    type: "oauth" as const,
+    access: "chatgpt-access-secret",
+    refresh: "chatgpt-refresh-secret",
+    expires: 2_000_000_000_000,
+    accountId: "provider-metadata",
   };
-  return { parent, dataDirectory, githubToken, piAuth };
+  const authenticateChatGpt = async (paths: ManagedPaths) => {
+    const store = createManagedChatGptCredentialStore({ path: paths.chatGptOAuthCredential });
+    await store.modify("openai-codex", async () => chatGptCredential);
+  };
+  return { parent, dataDirectory, githubToken, chatGptCredential, authenticateChatGpt };
 };
 
 describe.skipIf(process.platform === "win32")("managed installation on POSIX", () => {
@@ -47,7 +51,7 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
     for (const path of [
       paths.config,
       paths.githubCredential,
-      paths.piAuthCredential,
+      paths.chatGptOAuthCredential,
       paths.applicationDatabase,
       paths.flueDatabase,
     ]) {
@@ -56,9 +60,9 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
 
     const config = await readFile(paths.config, "utf8");
     expect(config).toContain('"credential": "github"');
-    expect(config).toContain('"credential": "pi-auth"');
+    expect(config).toContain('"credential": "chatgpt-oauth"');
     expect(config).not.toContain(input.githubToken);
-    expect(config).not.toContain(input.piAuth["openai-codex"].access);
+    expect(config).not.toContain(input.chatGptCredential.access);
     expect(await readFile(paths.githubCredential, "utf8")).toContain(input.githubToken);
   });
 
@@ -77,6 +81,23 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
     expect(second.created).toBe(false);
     expect(await readFile(paths.githubCredential, "utf8")).toBe(original);
     expect(original).not.toContain("replacement-secret");
+  });
+
+  it("removes staged files when ChatGPT authentication is cancelled", async () => {
+    const base = await fixture();
+    await expect(
+      installManagedData({
+        ...base,
+        managedChats: ["120363000@g.us"],
+        defaultRepository: "owner/repo",
+        authenticateChatGpt: async () => {
+          throw new Error("ChatGPT device-code authentication was cancelled.");
+        },
+      }),
+    ).rejects.toThrow("cancelled");
+
+    await expect(lstat(base.dataDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(inspectManagedData(base)).resolves.toMatchObject({ state: "unconfigured" });
   });
 
   it("distinguishes an absent install from a damaged install", async () => {
@@ -134,7 +155,7 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
     expect(inspection.state).toBe("damaged");
     expect(output).toContain("mode 0600");
     expect(output).not.toContain(base.githubToken);
-    expect(output).not.toContain(base.piAuth["openai-codex"].access);
+    expect(output).not.toContain(base.chatGptCredential.access);
   });
 
   it("diagnoses invalid credential references without printing secrets", async () => {
@@ -173,17 +194,15 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
       { mode: 0o600 },
     );
     await writeFile(
-      paths.piAuthCredential,
-      JSON.stringify({
-        "openai-codex": { type: "oauth", access: 987654321, refresh: "hidden-refresh", expires: 0 },
-      }),
+      paths.chatGptOAuthCredential,
+      JSON.stringify({ type: "oauth", access: 987654321, refresh: "hidden-refresh", expires: 0 }),
       { mode: 0o600 },
     );
 
     const output = JSON.stringify(await inspectManagedData(base));
     expect(output).toContain("managedChats");
     expect(output).toContain("token");
-    expect(output).toContain("openai-codex.access");
+    expect(output).toContain("access");
     expect(output).not.toContain("123456789");
     expect(output).not.toContain("987654321");
     expect(output).not.toContain("hidden-refresh");

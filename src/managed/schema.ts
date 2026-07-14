@@ -1,7 +1,8 @@
 import * as v from "valibot";
 
 const GITHUB_CREDENTIAL_REFERENCE = "github";
-const PI_AUTH_CREDENTIAL_REFERENCE = "pi-auth";
+const CHATGPT_OAUTH_CREDENTIAL_REFERENCE = "chatgpt-oauth";
+const LEGACY_PI_AUTH_CREDENTIAL_REFERENCE = "pi-auth";
 
 const NonBlankString = v.pipe(v.string(), v.trim(), v.nonEmpty());
 const Repository = v.pipe(
@@ -19,7 +20,10 @@ export const ManagedConfigSchema = v.pipe(
     managedChats: v.pipe(v.array(ManagedChat), v.nonEmpty()),
     model: v.strictObject({
       provider: v.literal("openai-codex"),
-      credential: v.literal(PI_AUTH_CREDENTIAL_REFERENCE),
+      credential: v.union([
+        v.literal(CHATGPT_OAUTH_CREDENTIAL_REFERENCE),
+        v.literal(LEGACY_PI_AUTH_CREDENTIAL_REFERENCE),
+      ]),
     }),
     github: v.strictObject({
       kind: v.literal("personal-token"),
@@ -47,7 +51,7 @@ export const GitHubCredentialSchema = v.strictObject({
 
 export type GitHubCredential = v.InferOutput<typeof GitHubCredentialSchema>;
 
-const PiOAuthCredentialSchema = v.looseObject({
+export const ChatGptOAuthCredentialSchema = v.looseObject({
   type: v.literal("oauth"),
   access: NonBlankString,
   refresh: NonBlankString,
@@ -55,7 +59,7 @@ const PiOAuthCredentialSchema = v.looseObject({
 });
 
 export const PiAuthSchema = v.object({
-  "openai-codex": PiOAuthCredentialSchema,
+  "openai-codex": ChatGptOAuthCredentialSchema,
 });
 
 export type PiAuth = v.InferOutput<typeof PiAuthSchema>;
@@ -63,7 +67,7 @@ export type PiAuth = v.InferOutput<typeof PiAuthSchema>;
 export const createManagedConfig = (managedChats: readonly string[], defaultRepository: string): ManagedConfig => ({
   schemaVersion: 1,
   managedChats: [...managedChats],
-  model: { provider: "openai-codex", credential: PI_AUTH_CREDENTIAL_REFERENCE },
+  model: { provider: "openai-codex", credential: CHATGPT_OAUTH_CREDENTIAL_REFERENCE },
   github: {
     kind: "personal-token",
     credential: GITHUB_CREDENTIAL_REFERENCE,

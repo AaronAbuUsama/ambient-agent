@@ -13,7 +13,8 @@ export interface ManagedPaths {
   readonly config: string;
   readonly credentials: string;
   readonly githubCredential: string;
-  readonly piAuthCredential: string;
+  readonly chatGptOAuthCredential: string;
+  readonly legacyPiAuthCredential: string;
   readonly applicationDatabase: string;
   readonly flueDatabase: string;
   readonly whatsapp: string;
@@ -66,7 +67,8 @@ export const managedPaths = (options: ManagedPathEnvironment = {}): ManagedPaths
     config: paths.join(root, "config.json"),
     credentials,
     githubCredential: paths.join(credentials, "github.json"),
-    piAuthCredential: paths.join(credentials, "pi-auth.json"),
+    chatGptOAuthCredential: paths.join(credentials, "chatgpt-oauth.json"),
+    legacyPiAuthCredential: paths.join(credentials, "pi-auth.json"),
     applicationDatabase: paths.join(root, "application.sqlite"),
     flueDatabase: paths.join(root, "flue.sqlite"),
     whatsapp: paths.join(root, "whatsapp"),

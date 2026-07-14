@@ -1,13 +1,26 @@
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Command, CommanderError } from "@commander-js/extra-typings";
 import * as prompts from "@clack/prompts";
 
 import { inspectManagedData, installManagedData, type InstallationInspection } from "../managed/installation.js";
+import { createManagedChatGptAuthentication } from "../managed/chatgpt-authentication.js";
 import { managedPaths, type ManagedPaths } from "../managed/paths.js";
 import { loadManagedRuntimeEnvironment } from "../managed/runtime-environment.js";
+import { installManagedRuntimeDependencies } from "../managed/runtime-dependencies.js";
+import {
+  type ChatGptOAuthAdapter,
+  type ChatGptAuthentication,
+  type ChatGptAuthenticationStatus,
+  type DeviceCodeCallbacks,
+} from "../model/chatgpt-authentication.js";
+import {
+  AMBIENCE_MODEL_SPECIFIER,
+  ChatGptReadinessError,
+  runChatGptReadinessCheck,
+  type ChatGptReadinessReceipt,
+} from "../model/pi-subscription.js";
 
 export interface CliOutput {
   readonly stdout: (text: string) => void;
@@ -18,7 +31,6 @@ export interface SetupPrompts {
   readonly managedChat: () => Promise<string>;
   readonly repository: () => Promise<string>;
   readonly githubToken: () => Promise<string>;
-  readonly piAuthPath: () => Promise<string>;
 }
 
 export interface CliDependencies {
@@ -27,6 +39,12 @@ export interface CliDependencies {
   readonly interactive?: boolean;
   readonly startRuntime?: StartRuntime;
   readonly importRuntime?: ImportRuntime;
+  readonly chatGptOAuth?: ChatGptOAuthAdapter;
+  readonly signal?: AbortSignal;
+  readonly readinessCheck?: (
+    authentication: ChatGptAuthentication,
+    signal?: AbortSignal,
+  ) => Promise<ChatGptReadinessReceipt>;
 }
 
 export type StartRuntime = (paths: ManagedPaths) => Promise<void>;
@@ -41,8 +59,10 @@ const importRuntime: ImportRuntime = async (specifier) => await import(specifier
 
 const startGeneratedRuntime = async (
   paths: ManagedPaths,
+  authentication: ChatGptAuthentication,
   importServer: ImportRuntime = importRuntime,
 ): Promise<void> => {
+  installManagedRuntimeDependencies({ authentication });
   await loadManagedRuntimeEnvironment(paths);
   process.chdir(paths.root);
   const serverEntry = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "server.mjs"));
@@ -82,31 +102,34 @@ const defaultSetupPrompts: SetupPrompts = {
         mask: "*",
       }),
     ),
-  piAuthPath: () =>
-    requiredPrompt("Pi auth path", () =>
-      prompts.text({
-        message: "Path to an existing Pi auth.json with openai-codex OAuth",
-        placeholder: "~/.pi/agent/auth.json",
-      }),
-    ),
 };
 
-const renderInspection = (inspection: InstallationInspection, json: boolean): string => {
-  if (json) return `${JSON.stringify(inspection, null, 2)}\n`;
+const renderInspection = (
+  inspection: InstallationInspection,
+  authentication: ChatGptAuthenticationStatus,
+  liveCheck: ChatGptReadinessReceipt | undefined,
+  json: boolean,
+): string => {
+  if (json) return `${JSON.stringify({ ...inspection, modelAuthentication: authentication, liveCheck }, null, 2)}\n`;
   const lines = [`Ambient Agent: ${inspection.state}`, `Data directory: ${inspection.dataDirectory}`];
   for (const item of inspection.diagnostics) {
     lines.push(`[${item.code}] ${item.message}`, `  Path: ${item.path}`, `  Fix: ${item.remediation}`);
   }
-  return `${lines.join("\n")}\n`;
-};
-
-const readPiAuth = async (path: string): Promise<unknown> => {
-  const expandedPath = path === "~" ? homedir() : path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
-  try {
-    return JSON.parse(await readFile(expandedPath, "utf8"));
-  } catch {
-    throw new Error(`Could not read valid JSON from the Pi auth file at ${expandedPath}.`);
+  lines.push(`ChatGPT authentication: ${authentication.state}`);
+  if (authentication.state === "missing") lines.push("  Fix: Run ambient-agent init.");
+  if (authentication.state === "malformed")
+    lines.push(`  ${authentication.message}`, "  Fix: Repair the managed credential or run ambient-agent init.");
+  if (authentication.state === "expired-refreshable") {
+    lines.push("  Fix: Run ambient-agent doctor --refresh to rotate the managed credential.");
   }
+  if (authentication.state === "unusable")
+    lines.push(`  ${authentication.message}`, "  Fix: Run ambient-agent init to authenticate again.");
+  if (liveCheck !== undefined) {
+    lines.push(
+      `ChatGPT live readiness: ${liveCheck.request}${liveCheck.reason === undefined ? "" : ` (${liveCheck.reason})`}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
 };
 
 const readGitHubToken = async (path: string): Promise<string> => {
@@ -143,11 +166,31 @@ const bareDataDirectory = (args: readonly string[]): { readonly dataDirectory?: 
 export const runCli = async (argv: readonly string[], dependencies: CliDependencies = {}): Promise<number> => {
   const output = dependencies.output ?? defaultOutput;
   const setupPrompts = dependencies.setupPrompts ?? defaultSetupPrompts;
-  const startRuntime =
-    dependencies.startRuntime ?? ((paths: ManagedPaths) => startGeneratedRuntime(paths, dependencies.importRuntime));
   const interactive =
     dependencies.interactive ??
     (dependencies.setupPrompts !== undefined || (process.stdin.isTTY === true && process.stdout.isTTY === true));
+  const authenticationFor = (paths: ManagedPaths) =>
+    createManagedChatGptAuthentication(paths, dependencies.chatGptOAuth);
+  const startRuntime =
+    dependencies.startRuntime ??
+    ((paths: ManagedPaths) => startGeneratedRuntime(paths, authenticationFor(paths), dependencies.importRuntime));
+  const authenticationSignal = (): AbortSignal => {
+    const timeout = AbortSignal.timeout(20 * 60 * 1_000);
+    return dependencies.signal === undefined ? timeout : AbortSignal.any([dependencies.signal, timeout]);
+  };
+  const deviceCodeCallbacks: DeviceCodeCallbacks = {
+    onDeviceCode: (info) => {
+      output.stdout(`Open ${info.verificationUri} and enter code ${info.userCode}.\n`);
+      if (info.expiresInSeconds !== undefined) {
+        output.stdout(`The device code expires in ${info.expiresInSeconds} seconds.\n`);
+      }
+    },
+    onProgress: ({ phase }) => {
+      output.stdout(
+        phase === "waiting" ? "Waiting for ChatGPT authorization...\n" : "ChatGPT authorization complete.\n",
+      );
+    },
+  };
   let exitCode = 0;
   const program = new Command()
     .name("ambient-agent")
@@ -156,10 +199,50 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .option("--data-dir <path>", "override the managed data directory")
     .configureOutput({ writeOut: output.stdout, writeErr: output.stderr })
     .exitOverride();
-  const reportInspection = async (json: boolean): Promise<InstallationInspection> => {
-    const inspection = await inspectManagedData({ dataDirectory: program.opts().dataDir });
-    output.stdout(renderInspection(inspection, json));
-    return inspection;
+  const reportInspection = async (
+    json: boolean,
+    refresh: boolean = false,
+    live: boolean = false,
+  ): Promise<{
+    readonly installation: InstallationInspection;
+    readonly authentication: ChatGptAuthenticationStatus;
+    readonly liveCheck?: ChatGptReadinessReceipt;
+  }> => {
+    const paths = managedPaths({ dataDirectory: program.opts().dataDir });
+    const inspection = await inspectManagedData({ dataDirectory: paths.root });
+    const authentication = authenticationFor(paths);
+    let authenticationStatus = await authentication.inspect();
+    if (refresh && authenticationStatus.state === "expired-refreshable") {
+      try {
+        await authentication.authorization();
+      } catch {
+        // inspect() reports the sanitized unusable state from the same service instance.
+      }
+      authenticationStatus = await authentication.inspect();
+    }
+    let liveCheck: ChatGptReadinessReceipt | undefined;
+    if (live && authenticationStatus.state === "ready") {
+      try {
+        liveCheck = await (
+          dependencies.readinessCheck ?? ((service, signal) => runChatGptReadinessCheck(service, { signal }))
+        )(authentication, dependencies.signal);
+      } catch (cause) {
+        const failure =
+          cause instanceof ChatGptReadinessError
+            ? cause
+            : new ChatGptReadinessError(
+                "request-failed",
+                "The ChatGPT live readiness request failed; retry when the service is reachable.",
+                { cause },
+              );
+        liveCheck = { model: AMBIENCE_MODEL_SPECIFIER, request: "failed", reason: failure.code };
+        if (failure.code === "credential-rejected") {
+          authenticationStatus = { state: "unusable", message: failure.message };
+        }
+      }
+    }
+    output.stdout(renderInspection(inspection, authenticationStatus, liveCheck, json));
+    return { installation: inspection, authentication: authenticationStatus, liveCheck };
   };
 
   program
@@ -168,7 +251,6 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .option("--chat <jid>", "managed WhatsApp chat JID")
     .option("--repository <owner/name>", "default GitHub repository")
     .option("--github-token-file <path>", "read the GitHub token from a file")
-    .option("--pi-auth-file <path>", "copy credentials from a Pi auth.json file")
     .action(async (options) => {
       const global = program.opts();
       const current = await inspectManagedData({ dataDirectory: global.dataDir });
@@ -186,7 +268,6 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           options.chat === undefined ? "--chat" : undefined,
           options.repository === undefined ? "--repository" : undefined,
           options.githubTokenFile === undefined ? "--github-token-file" : undefined,
-          options.piAuthFile === undefined ? "--pi-auth-file" : undefined,
         ].filter((flag): flag is string => flag !== undefined);
         if (missing.length > 0) {
           throw new Error(`Non-interactive init requires ${missing.join(", ")}.`);
@@ -197,13 +278,13 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
       const githubToken = options.githubTokenFile
         ? await readGitHubToken(options.githubTokenFile)
         : await setupPrompts.githubToken();
-      const piAuthPath = options.piAuthFile ?? (await setupPrompts.piAuthPath());
       const result = await installManagedData({
         dataDirectory: global.dataDir,
         managedChats: [managedChat],
         defaultRepository: repository,
         githubToken,
-        piAuth: await readPiAuth(piAuthPath),
+        authenticateChatGpt: async (paths) =>
+          await authenticationFor(paths).authenticate(deviceCodeCallbacks, authenticationSignal()),
       });
       output.stdout(
         result.created
@@ -224,18 +305,30 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .description("report whether the managed installation is ready")
     .option("--json", "emit machine-readable JSON")
     .action(async (options) => {
-      const inspection = await reportInspection(options.json ?? false);
-      if (inspection.state === "unconfigured") exitCode = 2;
-      if (inspection.state === "damaged") exitCode = 3;
+      const report = await reportInspection(options.json ?? false);
+      if (report.installation.state === "unconfigured") exitCode = 2;
+      else if (report.installation.state === "damaged" || report.authentication.state !== "ready") exitCode = 3;
     });
 
   program
     .command("doctor")
     .description("diagnose managed configuration, permissions, and credential references")
     .option("--json", "emit machine-readable JSON")
+    .option("--refresh", "verify and safely rotate an expired ChatGPT credential")
+    .option("--live", "make one gated real model readiness request")
     .action(async (options) => {
-      const inspection = await reportInspection(options.json ?? false);
-      if (inspection.state !== "configured") exitCode = 1;
+      const report = await reportInspection(
+        options.json ?? false,
+        Boolean(options.refresh || options.live),
+        options.live ?? false,
+      );
+      if (
+        report.installation.state !== "configured" ||
+        report.authentication.state !== "ready" ||
+        report.liveCheck?.request === "failed"
+      ) {
+        exitCode = 1;
+      }
     });
 
   try {

@@ -7,12 +7,12 @@ import * as v from "valibot";
 import { managedPaths, type ManagedPathEnvironment, type ManagedPaths } from "./paths.js";
 import {
   createManagedConfig,
+  ChatGptOAuthCredentialSchema,
   GitHubCredentialSchema,
   ManagedConfigSchema,
   PiAuthSchema,
   type GitHubCredential,
   type ManagedConfig,
-  type PiAuth,
 } from "./schema.js";
 
 const DIRECTORY_MODE = 0o700;
@@ -36,7 +36,8 @@ const CONFIG_ISSUE_PATHS = new Set([
   "github.allowedRepositories.[]",
 ]);
 const GITHUB_CREDENTIAL_ISSUE_PATHS = new Set(["<root>", "schemaVersion", "kind", "token"]);
-const PI_AUTH_ISSUE_PATHS = new Set([
+const CHATGPT_OAUTH_ISSUE_PATHS = new Set(["<root>", "type", "access", "refresh", "expires"]);
+const LEGACY_PI_AUTH_ISSUE_PATHS = new Set([
   "<root>",
   "openai-codex",
   "openai-codex.type",
@@ -64,7 +65,7 @@ export interface InstallManagedDataInput extends ManagedPathEnvironment {
   readonly managedChats: readonly string[];
   readonly defaultRepository: string;
   readonly githubToken: string;
-  readonly piAuth: unknown;
+  readonly authenticateChatGpt: (paths: ManagedPaths) => Promise<void>;
 }
 
 export interface InstallManagedDataResult {
@@ -329,13 +330,13 @@ const inspectConfigReferences = (path: string, value: unknown): readonly Install
       ? (config.github as Record<string, unknown>)
       : undefined;
   const issues: InstallationDiagnostic[] = [];
-  if (model?.credential !== "pi-auth") {
+  if (model?.credential !== "chatgpt-oauth" && model?.credential !== "pi-auth") {
     issues.push(
       diagnostic(
         "credential.reference",
         path,
-        "The model credential reference must be pi-auth.",
-        "Set model.credential to pi-auth and run ambient-agent doctor.",
+        "The model credential reference must be chatgpt-oauth.",
+        "Set model.credential to chatgpt-oauth and run ambient-agent doctor.",
       ),
     );
   }
@@ -694,8 +695,15 @@ export const inspectManagedData = async (
 
   if (credentialDirectoryDiagnostics.length === 0) {
     const githubFileDiagnostics = await inspectFile(paths.githubCredential, "GitHub credential file", true);
-    const piFileDiagnostics = await inspectFile(paths.piAuthCredential, "Pi credential file", true);
-    diagnostics.push(...githubFileDiagnostics, ...piFileDiagnostics);
+    const useLegacyCredential =
+      !(await exists(paths.chatGptOAuthCredential)) && (await exists(paths.legacyPiAuthCredential));
+    const chatGptCredentialPath = useLegacyCredential ? paths.legacyPiAuthCredential : paths.chatGptOAuthCredential;
+    const chatGptFileDiagnostics = await inspectFile(
+      chatGptCredentialPath,
+      useLegacyCredential ? "Provisional managed ChatGPT credential file" : "ChatGPT OAuth credential file",
+      true,
+    );
+    diagnostics.push(...githubFileDiagnostics, ...chatGptFileDiagnostics);
     if (githubFileDiagnostics.length === 0) {
       diagnostics.push(
         ...(
@@ -708,10 +716,16 @@ export const inspectManagedData = async (
         ).diagnostics,
       );
     }
-    if (piFileDiagnostics.length === 0) {
+    if (chatGptFileDiagnostics.length === 0) {
       diagnostics.push(
-        ...(await inspectJson(paths.piAuthCredential, "Pi credential file", PiAuthSchema, PI_AUTH_ISSUE_PATHS))
-          .diagnostics,
+        ...(
+          await inspectJson(
+            chatGptCredentialPath,
+            useLegacyCredential ? "Provisional managed ChatGPT credential file" : "ChatGPT OAuth credential file",
+            useLegacyCredential ? PiAuthSchema : ChatGptOAuthCredentialSchema,
+            useLegacyCredential ? LEGACY_PI_AUTH_ISSUE_PATHS : CHATGPT_OAUTH_ISSUE_PATHS,
+          )
+        ).diagnostics,
       );
     }
   }
@@ -740,7 +754,6 @@ const createSkeleton = async (
   paths: ManagedPaths,
   config: ManagedConfig,
   github: GitHubCredential,
-  piAuth: PiAuth,
 ): Promise<void> => {
   await mkdir(paths.root, { mode: DIRECTORY_MODE });
   await chmod(paths.root, DIRECTORY_MODE);
@@ -754,7 +767,6 @@ const createSkeleton = async (
   ]);
   await writeSecureFile(paths.config, json(config));
   await writeSecureFile(paths.githubCredential, json(github));
-  await writeSecureFile(paths.piAuthCredential, json(piAuth));
   await writeSecureFile(paths.applicationDatabase, "");
   await writeSecureFile(paths.flueDatabase, "");
 };
@@ -785,9 +797,6 @@ export const installManagedData = async (input: InstallManagedDataInput): Promis
     token: input.githubToken,
   });
   if (!githubResult.success) throw new Error("The GitHub token must not be empty.");
-  const piResult = v.safeParse(PiAuthSchema, input.piAuth);
-  if (!piResult.success) throw new Error("The Pi auth file must contain an openai-codex OAuth credential.");
-
   await mkdir(dirname(targetPaths.root), { recursive: true, mode: DIRECTORY_MODE });
   const lock = await acquireSetupLock(targetPaths.root);
 
@@ -799,7 +808,8 @@ export const installManagedData = async (input: InstallManagedDataInput): Promis
       throw new Error(`Refusing to replace existing managed data at ${targetPaths.root}.`);
     }
     const stagingPaths = managedPaths({ dataDirectory: stagingRoot });
-    await createSkeleton(stagingPaths, configResult.output, githubResult.output, piResult.output);
+    await createSkeleton(stagingPaths, configResult.output, githubResult.output);
+    await input.authenticateChatGpt(stagingPaths);
     await rename(stagingRoot, targetPaths.root);
   } finally {
     await rm(stagingRoot, { recursive: true, force: true });

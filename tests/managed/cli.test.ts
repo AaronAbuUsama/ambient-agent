@@ -1,10 +1,13 @@
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { runCli, type CliOutput } from "../../src/cli/program.ts";
+import { takeManagedRuntimeDependencies } from "../../src/managed/runtime-dependencies.ts";
 import { managedPaths, type ManagedPaths } from "../../src/managed/paths.ts";
+import type { ChatGptOAuthAdapter } from "../../src/model/chatgpt-authentication.ts";
+import { ChatGptReadinessError } from "../../src/model/pi-subscription.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -22,28 +25,39 @@ const harness = () => {
       stderr += text;
     },
   };
-  return { output, stdout: () => stdout, stderr: () => stderr };
+  const chatGptOAuth: ChatGptOAuthAdapter = {
+    login: async (callbacks) => {
+      callbacks.onDeviceCode({
+        verificationUri: "https://auth.example/device",
+        userCode: "ABCD-EFGH",
+        expiresInSeconds: 900,
+        intervalSeconds: 5,
+      });
+      return {
+        type: "oauth",
+        access: "access-secret",
+        refresh: "refresh-secret",
+        expires: 2_000_000_000_000,
+        accountId: "provider-metadata",
+      };
+    },
+    refresh: async (credential) => ({
+      ...credential,
+      access: "rotated-access-secret",
+      refresh: "rotated-refresh-secret",
+      expires: 2_000_000_000_000,
+    }),
+    authorization: async (credential) => ({ apiKey: credential.access }),
+  };
+  return { output, stdout: () => stdout, stderr: () => stderr, chatGptOAuth };
 };
 
 const files = async () => {
   const parent = await mkdtemp(join(tmpdir(), "ambient-agent-cli-"));
   roots.push(parent);
   const token = join(parent, "token.txt");
-  const auth = join(parent, "auth.json");
   await writeFile(token, "github-secret-token\n", { mode: 0o600 });
-  await writeFile(
-    auth,
-    JSON.stringify({
-      "openai-codex": {
-        type: "oauth",
-        access: "access-secret",
-        refresh: "refresh-secret",
-        expires: 2_000_000_000_000,
-      },
-    }),
-    { mode: 0o600 },
-  );
-  return { parent, data: join(parent, "managed"), token, auth };
+  return { parent, data: join(parent, "managed"), token };
 };
 
 describe("managed CLI", () => {
@@ -79,8 +93,6 @@ describe("managed CLI", () => {
           "owner/repo",
           "--github-token-file",
           paths.token,
-          "--pi-auth-file",
-          paths.auth,
         ],
         init,
       ),
@@ -90,7 +102,6 @@ describe("managed CLI", () => {
     const managed = managedPaths({ dataDirectory: paths.data });
     const expectedDirectory = await realpath(paths.data);
     const keys = [
-      "AMBIENCE_PI_AUTH_PATH",
       "AMBIENCE_WHATSAPP",
       "GITHUB_ALLOWED_REPOS",
       "GITHUB_INGRESS_DB_PATH",
@@ -115,9 +126,9 @@ describe("managed CLI", () => {
         ...cli,
         importRuntime: async () => {
           imports += 1;
+          await expect(takeManagedRuntimeDependencies().authentication.inspect()).resolves.toEqual({ state: "ready" });
           expect(process.cwd()).toBe(expectedDirectory);
           expect(process.env).toMatchObject({
-            AMBIENCE_PI_AUTH_PATH: managed.piAuthCredential,
             AMBIENCE_WHATSAPP: "1",
             GITHUB_ALLOWED_REPOS: "owner/repo",
             GITHUB_INGRESS_DB_PATH: managed.applicationDatabase,
@@ -160,13 +171,13 @@ describe("managed CLI", () => {
           "owner/repo",
           "--github-token-file",
           paths.token,
-          "--pi-auth-file",
-          paths.auth,
         ],
         init,
       ),
     ).toBe(0);
     expect(init.stdout()).toContain("Created secure managed installation");
+    expect(init.stdout()).toContain("https://auth.example/device");
+    expect(init.stdout()).toContain("ABCD-EFGH");
     expect(init.stdout()).not.toContain("github-secret-token");
 
     const status = harness();
@@ -174,9 +185,209 @@ describe("managed CLI", () => {
     expect(JSON.parse(status.stdout())).toMatchObject({
       state: "configured",
       dataDirectory: paths.data,
+      modelAuthentication: { state: "ready" },
     });
     expect(status.stdout()).not.toContain("access-secret");
     expect(status.stderr()).toBe("");
+  });
+
+  it("distinguishes expired credentials and refreshes them only when requested", async () => {
+    const paths = await files();
+    const init = harness();
+    expect(
+      await runCli(
+        [
+          "--data-dir",
+          paths.data,
+          "init",
+          "--chat",
+          "120363000@g.us",
+          "--repository",
+          "owner/repo",
+          "--github-token-file",
+          paths.token,
+        ],
+        init,
+      ),
+    ).toBe(0);
+    const managed = managedPaths({ dataDirectory: paths.data });
+    const expired = JSON.parse(await readFile(managed.chatGptOAuthCredential, "utf8")) as Record<string, unknown>;
+    expired.expires = 1;
+    await writeFile(managed.chatGptOAuthCredential, JSON.stringify(expired), { mode: 0o600 });
+
+    const offline = harness();
+    expect(await runCli(["--data-dir", paths.data, "doctor", "--json"], offline)).toBe(1);
+    expect(JSON.parse(offline.stdout())).toMatchObject({
+      modelAuthentication: { state: "expired-refreshable" },
+    });
+
+    const refreshed = harness();
+    expect(await runCli(["--data-dir", paths.data, "doctor", "--refresh", "--json"], refreshed)).toBe(0);
+    expect(JSON.parse(refreshed.stdout())).toMatchObject({ modelAuthentication: { state: "ready" } });
+  });
+
+  it("gates a real readiness request behind doctor --live", async () => {
+    const paths = await files();
+    const init = harness();
+    await runCli(
+      [
+        "--data-dir",
+        paths.data,
+        "init",
+        "--chat",
+        "120363000@g.us",
+        "--repository",
+        "owner/repo",
+        "--github-token-file",
+        paths.token,
+      ],
+      init,
+    );
+    const live = harness();
+    const readinessCheck = vi.fn(async () => ({
+      model: "openai-codex/gpt-5.6-luna" as const,
+      request: "complete" as const,
+    }));
+
+    expect(
+      await runCli(["--data-dir", paths.data, "doctor", "--live", "--json"], {
+        ...live,
+        readinessCheck,
+      }),
+    ).toBe(0);
+    expect(readinessCheck).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(live.stdout())).toMatchObject({ liveCheck: { request: "complete" } });
+  });
+
+  it("classifies a revoked credential as unusable when the gated live check rejects it", async () => {
+    const paths = await files();
+    const init = harness();
+    await runCli(
+      [
+        "--data-dir",
+        paths.data,
+        "init",
+        "--chat",
+        "120363000@g.us",
+        "--repository",
+        "owner/repo",
+        "--github-token-file",
+        paths.token,
+      ],
+      init,
+    );
+    const live = harness();
+
+    expect(
+      await runCli(["--data-dir", paths.data, "doctor", "--live", "--json"], {
+        ...live,
+        readinessCheck: async () => {
+          throw new ChatGptReadinessError(
+            "credential-rejected",
+            "ChatGPT rejected the managed credential during the live readiness check.",
+          );
+        },
+      }),
+    ).toBe(1);
+    expect(JSON.parse(live.stdout())).toMatchObject({
+      modelAuthentication: { state: "unusable" },
+    });
+    expect(live.stdout()).not.toContain("must-not-be-printed");
+    expect(live.stderr()).toBe("");
+  });
+
+  it("reports a live transport failure without misclassifying the credential", async () => {
+    const paths = await files();
+    await runCli(
+      [
+        "--data-dir",
+        paths.data,
+        "init",
+        "--chat",
+        "120363000@g.us",
+        "--repository",
+        "owner/repo",
+        "--github-token-file",
+        paths.token,
+      ],
+      harness(),
+    );
+    const live = harness();
+
+    expect(
+      await runCli(["--data-dir", paths.data, "doctor", "--live", "--json"], {
+        ...live,
+        readinessCheck: async () => {
+          throw new Error("network failure containing must-not-be-printed");
+        },
+      }),
+    ).toBe(1);
+    expect(JSON.parse(live.stdout())).toMatchObject({
+      modelAuthentication: { state: "ready" },
+      liveCheck: { request: "failed", reason: "request-failed" },
+    });
+    expect(live.stdout()).not.toContain("must-not-be-printed");
+  });
+
+  it("reports malformed and unusable ChatGPT credentials without exposing their contents", async () => {
+    const malformedPaths = await files();
+    const malformedInit = harness();
+    await runCli(
+      [
+        "--data-dir",
+        malformedPaths.data,
+        "init",
+        "--chat",
+        "120363000@g.us",
+        "--repository",
+        "owner/repo",
+        "--github-token-file",
+        malformedPaths.token,
+      ],
+      malformedInit,
+    );
+    const malformedCredential = managedPaths({ dataDirectory: malformedPaths.data }).chatGptOAuthCredential;
+    await writeFile(malformedCredential, '{"access":"must-not-be-printed"', { mode: 0o600 });
+    const malformed = harness();
+    expect(await runCli(["--data-dir", malformedPaths.data, "doctor", "--json"], malformed)).toBe(1);
+    expect(JSON.parse(malformed.stdout())).toMatchObject({ modelAuthentication: { state: "malformed" } });
+    expect(malformed.stdout()).not.toContain("must-not-be-printed");
+
+    const unusablePaths = await files();
+    const unusableInit = harness();
+    await runCli(
+      [
+        "--data-dir",
+        unusablePaths.data,
+        "init",
+        "--chat",
+        "120363000@g.us",
+        "--repository",
+        "owner/repo",
+        "--github-token-file",
+        unusablePaths.token,
+      ],
+      unusableInit,
+    );
+    const unusableCredential = managedPaths({ dataDirectory: unusablePaths.data }).chatGptOAuthCredential;
+    const expired = JSON.parse(await readFile(unusableCredential, "utf8")) as Record<string, unknown>;
+    expired.expires = 1;
+    await writeFile(unusableCredential, JSON.stringify(expired), { mode: 0o600 });
+    const unusable = harness();
+    const rejectingOAuth: ChatGptOAuthAdapter = {
+      ...unusable.chatGptOAuth,
+      refresh: async () => {
+        throw new Error("provider rejected refresh with must-not-be-printed");
+      },
+    };
+    expect(
+      await runCli(["--data-dir", unusablePaths.data, "doctor", "--refresh", "--json"], {
+        ...unusable,
+        chatGptOAuth: rejectingOAuth,
+      }),
+    ).toBe(1);
+    expect(JSON.parse(unusable.stdout())).toMatchObject({ modelAuthentication: { state: "unusable" } });
+    expect(unusable.stdout()).not.toContain("must-not-be-printed");
   });
 
   it("uses injectable prompt answers and setup remains non-destructive", async () => {
@@ -186,7 +397,6 @@ describe("managed CLI", () => {
       managedChat: async () => "120363000@g.us",
       repository: async () => "owner/repo",
       githubToken: async () => "prompted-github-secret",
-      piAuthPath: async () => paths.auth,
     };
     expect(await runCli(["--data-dir", paths.data, "init"], { ...prompted, setupPrompts })).toBe(0);
 
@@ -201,12 +411,8 @@ describe("managed CLI", () => {
       githubToken: async (): Promise<string> => {
         throw new Error("GitHub prompt must not run");
       },
-      piAuthPath: async (): Promise<string> => {
-        throw new Error("Pi prompt must not run");
-      },
     };
     await rm(paths.token);
-    await rm(paths.auth);
     expect(await runCli(["--data-dir", paths.data, "init"], { ...second, setupPrompts: forbiddenPrompts })).toBe(0);
     expect(second.stdout()).toContain("no files changed");
     expect(
@@ -223,7 +429,6 @@ describe("managed CLI", () => {
       managedChat: async () => "120363000@g.us",
       repository: async () => "owner/repo",
       githubToken: async () => "prompted-github-secret",
-      piAuthPath: async () => paths.auth,
     };
     expect(await runCli(["--data-dir", paths.data], { ...prompted, setupPrompts })).toBe(0);
     expect(prompted.stdout()).toContain("Created secure managed installation");
@@ -251,10 +456,6 @@ describe("managed CLI", () => {
         promptsOpened += 1;
         return "secret";
       },
-      piAuthPath: async () => {
-        promptsOpened += 1;
-        return paths.auth;
-      },
     };
 
     expect(
@@ -265,7 +466,7 @@ describe("managed CLI", () => {
       }),
     ).toBe(1);
     expect(promptsOpened).toBe(0);
-    expect(cli.stderr()).toContain("Non-interactive init requires --repository, --github-token-file, --pi-auth-file");
+    expect(cli.stderr()).toContain("Non-interactive init requires --repository, --github-token-file");
   });
 
   it("returns stable nonzero codes for unconfigured and damaged installs", async () => {

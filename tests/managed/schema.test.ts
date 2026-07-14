@@ -2,9 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 import * as v from "valibot";
 
 import {
+  ChatGptOAuthCredentialSchema,
   GitHubCredentialSchema,
   ManagedConfigSchema,
-  PiAuthSchema,
   createManagedConfig,
 } from "../../src/managed/schema.ts";
 
@@ -43,12 +43,22 @@ describe("managed schemas", () => {
       v.safeParse(GitHubCredentialSchema, { schemaVersion: 1, kind: "personal-token", token: "   " }).success,
     ).toBe(false);
     expect(
-      v.safeParse(PiAuthSchema, {
-        "openai-codex": { type: "oauth", access: "   ", refresh: "refresh", expires: 1 },
+      v.safeParse(ChatGptOAuthCredentialSchema, {
+        type: "oauth",
+        access: "   ",
+        refresh: "refresh",
+        expires: 1,
       }).success,
     ).toBe(false);
     expect(v.parse(GitHubCredentialSchema, { schemaVersion: 1, kind: "personal-token", token: " token " }).token).toBe(
       "token",
     );
+  });
+
+  it("uses the application-owned ChatGPT credential reference", () => {
+    expect(createManagedConfig(["120363000@g.us"], "owner/repo").model).toEqual({
+      provider: "openai-codex",
+      credential: "chatgpt-oauth",
+    });
   });
 });

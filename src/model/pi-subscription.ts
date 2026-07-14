@@ -1,4 +1,3 @@
-import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import {
   openAICodexResponsesApi,
   type Api,
@@ -9,6 +8,8 @@ import {
   registerApiProvider as flueRegisterApiProvider,
   registerProvider as flueRegisterProvider,
 } from "@flue/runtime";
+import type { ChatGptAuthentication } from "./chatgpt-authentication.js";
+import type { ModelAuthorization } from "./chatgpt-authentication.js";
 
 export const AMBIENCE_MODEL_ID = "gpt-5.6-luna";
 export const AMBIENCE_MODEL_SPECIFIER = `openai-codex/${AMBIENCE_MODEL_ID}`;
@@ -20,22 +21,46 @@ const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 const LUNA_MINIMUM_CODEX_VERSION = "0.144.1";
 const RESPONSES_LITE_FETCH = Symbol.for("whatsappd.ambience.responses-lite-fetch");
 
-type AuthReader = Pick<AuthStorage, "get" | "getApiKey">;
 type ApiRegistration = Parameters<typeof flueRegisterApiProvider>[0];
 type ApiRegistrar = (provider: ApiRegistration) => void;
 type ProviderRegistrar = typeof flueRegisterProvider;
 
 export interface PiSubscriptionConnectorOptions {
-  authStorage?: AuthReader;
+  authentication: ChatGptAuthentication;
   codexApi?: ProviderStreams;
   registerApiProvider?: ApiRegistrar;
   registerProvider?: ProviderRegistrar;
 }
 
 export interface PiSubscriptionReceipt {
-  authentication: "pi-oauth";
+  authentication: "chatgpt-oauth";
   model: typeof AMBIENCE_MODEL_SPECIFIER;
   provider: typeof PROVIDER_ID;
+}
+
+export interface ChatGptReadinessReceipt {
+  readonly model: typeof AMBIENCE_MODEL_SPECIFIER;
+  readonly request: "complete" | "failed";
+  readonly reason?: "cancelled" | "timeout" | "credential-rejected" | "request-failed";
+}
+
+export interface ChatGptReadinessCheckOptions {
+  readonly signal?: AbortSignal;
+  readonly request?: (authorization: ModelAuthorization, signal?: AbortSignal) => Promise<void>;
+}
+
+export type ChatGptReadinessErrorCode = NonNullable<ChatGptReadinessReceipt["reason"]>;
+
+export class ChatGptReadinessError extends Error {
+  override readonly name = "ChatGptReadinessError";
+
+  constructor(
+    readonly code: ChatGptReadinessErrorCode,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+  }
 }
 
 function nonEmptyString(value: unknown): value is string {
@@ -142,24 +167,83 @@ function lunaApi(delegate: ProviderStreams): ApiRegistration {
   };
 }
 
-export async function connectPiChatGptSubscription(
-  options: PiSubscriptionConnectorOptions = {},
-): Promise<PiSubscriptionReceipt> {
-  const authStorage =
-    options.authStorage ?? AuthStorage.create(process.env.AMBIENCE_PI_AUTH_PATH?.trim() || undefined);
-  const credential = authStorage.get(PROVIDER_ID);
-  if (!credential || credential.type !== "oauth") {
-    throw new Error(
-      "Ambience requires a Pi OAuth credential for openai-codex; run `pi /login` and select ChatGPT.",
+const requestChatGptReadiness = async (authorization: ModelAuthorization, signal?: AbortSignal): Promise<void> => {
+  if (!nonEmptyString(authorization.apiKey)) throw new Error("ChatGPT model authorization is not ready.");
+  installLunaResponsesLiteFetch();
+  const stream = openAICodexResponsesApi().streamSimple(
+    lunaModel({
+      id: AMBIENCE_MODEL_ID,
+      name: AMBIENCE_MODEL_ID,
+      api: CODEX_API,
+      provider: PROVIDER_ID,
+      baseUrl: CODEX_BASE_URL,
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 272_000,
+      maxTokens: 128_000,
+    }),
+    {
+      messages: [{ role: "user", content: "Reply with READY.", timestamp: Date.now() }],
+    },
+    { apiKey: authorization.apiKey, maxTokens: 16, signal, transport: "sse" },
+  );
+  const result = await stream.result();
+  if (result.stopReason === "aborted") {
+    const timeout = signal?.reason instanceof Error && signal.reason.name === "TimeoutError";
+    throw new ChatGptReadinessError(
+      timeout ? "timeout" : "cancelled",
+      timeout ? "The ChatGPT readiness request timed out." : "The ChatGPT readiness request was cancelled.",
     );
   }
+  if (result.stopReason === "error") {
+    const rejected = /\b(401|403|unauthori[sz]ed|forbidden|invalid[_ -]?token|revoked)\b/iu.test(
+      result.errorMessage ?? "",
+    );
+    throw new ChatGptReadinessError(
+      rejected ? "credential-rejected" : "request-failed",
+      rejected
+        ? "ChatGPT rejected the managed credential during the live readiness check."
+        : "The ChatGPT live readiness request failed; retry when the service is reachable.",
+    );
+  }
+};
 
-  const apiKey = await authStorage.getApiKey(PROVIDER_ID, { includeFallback: false });
-  if (!apiKey) {
-    throw new Error(
-      "Pi could not load or refresh the openai-codex OAuth credential; run `pi /login` and try again.",
+const readinessFailure = (cause: unknown, signal?: AbortSignal): ChatGptReadinessError => {
+  if (cause instanceof ChatGptReadinessError) return cause;
+  if (signal?.aborted) {
+    const timeout = signal.reason instanceof Error && signal.reason.name === "TimeoutError";
+    return new ChatGptReadinessError(
+      timeout ? "timeout" : "cancelled",
+      timeout ? "The ChatGPT readiness request timed out." : "The ChatGPT readiness request was cancelled.",
+      { cause },
     );
   }
+  return new ChatGptReadinessError(
+    "request-failed",
+    "The ChatGPT live readiness request failed; retry when the service is reachable.",
+    { cause },
+  );
+};
+
+export const runChatGptReadinessCheck = async (
+  authentication: ChatGptAuthentication,
+  options: ChatGptReadinessCheckOptions = {},
+): Promise<ChatGptReadinessReceipt> => {
+  const authorization = await authentication.authorization();
+  try {
+    await (options.request ?? requestChatGptReadiness)(authorization, options.signal);
+  } catch (cause) {
+    throw readinessFailure(cause, options.signal);
+  }
+  return { model: AMBIENCE_MODEL_SPECIFIER, request: "complete" };
+};
+
+export async function connectPiChatGptSubscription(
+  options: PiSubscriptionConnectorOptions,
+): Promise<PiSubscriptionReceipt> {
+  const { apiKey } = await options.authentication.authorization();
+  if (!nonEmptyString(apiKey)) throw new Error("ChatGPT model authorization is not ready; run ambient-agent doctor.");
 
   if (!options.codexApi) installLunaResponsesLiteFetch();
   const codexApi = options.codexApi ?? openAICodexResponsesApi();
@@ -173,7 +257,7 @@ export async function connectPiChatGptSubscription(
   });
 
   return {
-    authentication: "pi-oauth",
+    authentication: "chatgpt-oauth",
     model: AMBIENCE_MODEL_SPECIFIER,
     provider: PROVIDER_ID,
   };
