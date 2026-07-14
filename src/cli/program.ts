@@ -119,6 +119,16 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .option("--pi-auth-file <path>", "copy credentials from a Pi auth.json file")
     .action(async (options) => {
       const global = program.opts();
+      const current = await inspectManagedData({ dataDirectory: global.dataDir });
+      if (current.state === "configured") {
+        output.stdout(`Managed installation already configured at ${current.dataDirectory}; no files changed.\n`);
+        return;
+      }
+      if (current.state === "damaged") {
+        throw new Error(
+          `Refusing to replace damaged managed data at ${current.dataDirectory}; run ambient-agent doctor.`,
+        );
+      }
       const managedChat = options.chat ?? (await setupPrompts.managedChat());
       const repository = options.repository ?? (await setupPrompts.repository());
       const githubToken = options.githubTokenFile

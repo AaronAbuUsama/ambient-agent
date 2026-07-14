@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, chmod, lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import * as v from "valibot";
@@ -17,6 +17,8 @@ import {
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
+const SETUP_LOCK_OWNER = "owner.json";
+const SETUP_LOCK_MAX_AGE_MILLIS = 10 * 60 * 1000;
 
 export type InstallationState = "unconfigured" | "configured" | "damaged";
 
@@ -52,12 +54,16 @@ const diagnostic = (code: string, path: string, message: string, remediation: st
   remediation,
 });
 
+const errorCode = (cause: unknown): string | undefined =>
+  typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code) : undefined;
+
 const exists = async (path: string): Promise<boolean> => {
   try {
-    await access(path, constants.F_OK);
+    await lstat(path);
     return true;
-  } catch {
-    return false;
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return false;
+    throw cause;
   }
 };
 
@@ -91,7 +97,17 @@ const inspectDirectory = async (
       ];
     }
     return [];
-  } catch {
+  } catch (cause) {
+    if (errorCode(cause) !== "ENOENT") {
+      return [
+        diagnostic(
+          "filesystem.unreadable",
+          path,
+          `${label} could not be inspected (${errorCode(cause) ?? "unknown error"}).`,
+          `Check ownership and filesystem health, then run ambient-agent doctor.`,
+        ),
+      ];
+    }
     return [
       diagnostic(
         "path.missing-directory",
@@ -126,7 +142,17 @@ const inspectFile = async (
       ];
     }
     return [];
-  } catch {
+  } catch (cause) {
+    if (errorCode(cause) !== "ENOENT") {
+      return [
+        diagnostic(
+          "filesystem.unreadable",
+          path,
+          `${label} could not be inspected (${errorCode(cause) ?? "unknown error"}).`,
+          `Check ownership and filesystem health, then run ambient-agent doctor.`,
+        ),
+      ];
+    }
     return [
       diagnostic(
         "path.missing-file",
@@ -138,44 +164,76 @@ const inspectFile = async (
   }
 };
 
+interface JsonInspection {
+  readonly diagnostics: readonly InstallationDiagnostic[];
+  readonly value?: unknown;
+}
+
+const issuePaths = (issues: readonly v.BaseIssue<unknown>[]): string => {
+  const paths = issues.map((issue) => issue.path?.map((item) => String(item.key)).join(".") || "<root>");
+  return [...new Set(paths)].join(", ");
+};
+
 const inspectJson = async <TSchema extends v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>>(
   path: string,
   label: string,
   schema: TSchema,
-): Promise<readonly InstallationDiagnostic[]> => {
+): Promise<JsonInspection> => {
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(await readFile(path, "utf8"));
-  } catch {
-    return [
-      diagnostic(
-        "json.invalid",
-        path,
-        `${label} is not valid JSON.`,
-        `Repair or replace ${JSON.stringify(path)}, then run ambient-agent doctor.`,
-      ),
-    ];
+    const before = await lstat(path);
+    if (!before.isFile()) return { diagnostics: [] };
+    const noFollow = "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
+    const nonBlocking = "O_NONBLOCK" in constants ? constants.O_NONBLOCK : 0;
+    handle = await open(path, constants.O_RDONLY | noFollow | nonBlocking);
+    if (!(await handle.stat()).isFile()) return { diagnostics: [] };
+    parsed = JSON.parse(await handle.readFile("utf8"));
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return { diagnostics: [] };
+    const code = errorCode(cause);
+    if (cause instanceof SyntaxError) {
+      return {
+        diagnostics: [
+          diagnostic(
+            "json.invalid",
+            path,
+            `${label} is not valid JSON.`,
+            `Repair or replace ${JSON.stringify(path)}, then run ambient-agent doctor.`,
+          ),
+        ],
+      };
+    }
+    return {
+      diagnostics: [
+        diagnostic(
+          "filesystem.unreadable",
+          path,
+          `${label} could not be read safely (${code ?? "unknown error"}).`,
+          `Replace it with a private regular file, then run ambient-agent doctor.`,
+        ),
+      ],
+    };
+  } finally {
+    await handle?.close();
   }
   const result = v.safeParse(schema, parsed);
   return result.success
-    ? []
-    : [
-        diagnostic(
-          "schema.invalid",
-          path,
-          `${label} does not match the supported schema.`,
-          `Repair or replace ${JSON.stringify(path)}, then run ambient-agent doctor.`,
-        ),
-      ];
+    ? { diagnostics: [], value: parsed }
+    : {
+        diagnostics: [
+          diagnostic(
+            "schema.invalid",
+            path,
+            `${label} has invalid fields: ${issuePaths(result.issues)}.`,
+            `Repair the named fields in ${JSON.stringify(path)}, then run ambient-agent doctor.`,
+          ),
+        ],
+        value: parsed,
+      };
 };
 
-const inspectConfigReferences = async (path: string): Promise<readonly InstallationDiagnostic[]> => {
-  let value: unknown;
-  try {
-    value = JSON.parse(await readFile(path, "utf8"));
-  } catch {
-    return [];
-  }
+const inspectConfigReferences = (path: string, value: unknown): readonly InstallationDiagnostic[] => {
   if (typeof value !== "object" || value === null) return [];
   const config = value as Record<string, unknown>;
   const model =
@@ -208,39 +266,242 @@ const inspectConfigReferences = async (path: string): Promise<readonly Installat
   return issues;
 };
 
+const setupLockPath = (root: string): string => join(dirname(root), `.${basename(root)}.setup.lock`);
+
+interface SetupLockOwner {
+  readonly pid: number;
+  readonly createdAt: string;
+  readonly token: string;
+}
+
+const readSetupLockOwner = async (lockPath: string): Promise<SetupLockOwner | undefined> => {
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    if (!(await lstat(lockPath)).isDirectory()) return undefined;
+    const ownerPath = join(lockPath, SETUP_LOCK_OWNER);
+    if (!(await lstat(ownerPath)).isFile()) return undefined;
+    const noFollow = "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
+    const nonBlocking = "O_NONBLOCK" in constants ? constants.O_NONBLOCK : 0;
+    handle = await open(ownerPath, constants.O_RDONLY | noFollow | nonBlocking);
+    if (!(await handle.stat()).isFile()) return undefined;
+    const value = JSON.parse(await handle.readFile("utf8")) as Record<string, unknown>;
+    return typeof value.pid === "number" && typeof value.createdAt === "string" && typeof value.token === "string"
+      ? { pid: value.pid, createdAt: value.createdAt, token: value.token }
+      : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    await handle?.close();
+  }
+};
+
+const processIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (cause) {
+    return errorCode(cause) !== "ESRCH";
+  }
+};
+
+const setupLockIsStale = (owner: SetupLockOwner): boolean => {
+  const createdAt = Date.parse(owner.createdAt);
+  const tooOld = Number.isFinite(createdAt) && Date.now() - createdAt > SETUP_LOCK_MAX_AGE_MILLIS;
+  return tooOld || !processIsAlive(owner.pid);
+};
+
+const inspectSetupLock = async (root: string): Promise<readonly InstallationDiagnostic[]> => {
+  const lockPath = setupLockPath(root);
+  try {
+    if (!(await exists(lockPath))) return [];
+  } catch (cause) {
+    return [
+      diagnostic(
+        "filesystem.unreadable",
+        lockPath,
+        `Setup lock could not be inspected (${errorCode(cause) ?? "unknown error"}).`,
+        "Check ownership and filesystem health, then run ambient-agent doctor.",
+      ),
+    ];
+  }
+  const owner = await readSetupLockOwner(lockPath);
+  if (owner && setupLockIsStale(owner)) {
+    return [
+      diagnostic(
+        "setup.stale-lock",
+        lockPath,
+        `Setup lock from process ${owner.pid} is stale.`,
+        `Remove ${JSON.stringify(lockPath)} and run ambient-agent init again.`,
+      ),
+    ];
+  }
+  return [
+    diagnostic(
+      "setup.locked",
+      lockPath,
+      owner ? `Setup is owned by running process ${owner.pid}.` : "Setup lock ownership is unreadable.",
+      owner
+        ? "Wait for setup to finish, then run ambient-agent doctor."
+        : `Inspect and remove ${JSON.stringify(lockPath)} if no setup is running.`,
+    ),
+  ];
+};
+
+interface AcquiredSetupLock {
+  readonly path: string;
+  readonly token: string;
+}
+
+const quarantineLock = async (lockPath: string, reason: string): Promise<string | undefined> => {
+  const quarantinePath = `${lockPath}.${reason}-${randomUUID()}`;
+  try {
+    await rename(lockPath, quarantinePath);
+    return quarantinePath;
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return undefined;
+    throw cause;
+  }
+};
+
+const acquireSetupLock = async (root: string): Promise<AcquiredSetupLock> => {
+  const lockPath = setupLockPath(root);
+  const token = randomUUID();
+  const create = async () => {
+    let created = false;
+    try {
+      await mkdir(lockPath, { mode: DIRECTORY_MODE });
+      created = true;
+      await chmod(lockPath, DIRECTORY_MODE);
+      await writeSecureFile(
+        join(lockPath, SETUP_LOCK_OWNER),
+        json({ pid: process.pid, createdAt: new Date().toISOString(), token }),
+      );
+    } catch (cause) {
+      if (created) await rm(lockPath, { recursive: true, force: true });
+      throw cause;
+    }
+  };
+  try {
+    await create();
+    return { path: lockPath, token };
+  } catch (cause) {
+    if (errorCode(cause) !== "EEXIST") throw cause;
+  }
+
+  const owner = await readSetupLockOwner(lockPath);
+  if (owner && setupLockIsStale(owner)) {
+    const quarantinePath = await quarantineLock(lockPath, "stale");
+    if (quarantinePath) {
+      const movedOwner = await readSetupLockOwner(quarantinePath);
+      if (movedOwner?.token !== owner.token) {
+        try {
+          await rename(quarantinePath, lockPath);
+        } catch {
+          // Preserve the quarantined lock when its ownership changed; never delete it.
+        }
+        throw new Error(`Setup lock ownership changed while recovering ${lockPath}; retry after inspection.`);
+      }
+      await rm(quarantinePath, { recursive: true, force: true });
+    }
+    try {
+      await create();
+      return { path: lockPath, token };
+    } catch (cause) {
+      if (errorCode(cause) !== "EEXIST") throw cause;
+    }
+  }
+  throw new Error(
+    owner
+      ? `Another setup is already running for ${root} (process ${owner.pid}).`
+      : `Setup lock ${lockPath} is unreadable; inspect it before retrying.`,
+  );
+};
+
+const releaseSetupLock = async (lock: AcquiredSetupLock): Promise<void> => {
+  const owner = await readSetupLockOwner(lock.path);
+  if (owner?.token !== lock.token) return;
+  const quarantinePath = await quarantineLock(lock.path, `release-${lock.token}`);
+  if (!quarantinePath) return;
+  const movedOwner = await readSetupLockOwner(quarantinePath);
+  if (movedOwner?.token === lock.token) {
+    await rm(quarantinePath, { recursive: true, force: true });
+    return;
+  }
+  try {
+    await rename(quarantinePath, lock.path);
+  } catch {
+    // Never delete a lock whose ownership changed during release.
+  }
+};
+
 export const inspectManagedData = async (options: ManagedPathEnvironment = {}): Promise<InstallationInspection> => {
   const paths = managedPaths(options);
-  if (!(await exists(paths.root))) {
+  const platform = options.platform ?? process.platform;
+  const lockDiagnostics = await inspectSetupLock(paths.root);
+  let rootExists: boolean;
+  try {
+    rootExists = await exists(paths.root);
+  } catch (cause) {
+    return {
+      state: "damaged",
+      dataDirectory: paths.root,
+      diagnostics: [
+        diagnostic(
+          "filesystem.unreadable",
+          paths.root,
+          `Managed data path could not be inspected (${errorCode(cause) ?? "unknown error"}).`,
+          "Check ownership and filesystem health, then run ambient-agent doctor.",
+        ),
+        ...lockDiagnostics,
+      ],
+    };
+  }
+  if (platform === "win32") {
+    return {
+      state: rootExists ? "damaged" : "unconfigured",
+      dataDirectory: paths.root,
+      diagnostics: [
+        diagnostic(
+          "platform.unsupported",
+          paths.root,
+          "Secure managed credential ACLs are not implemented on Windows.",
+          "Use Ambient Agent on macOS or Linux; Windows setup fails closed.",
+        ),
+        ...lockDiagnostics,
+      ],
+    };
+  }
+  if (!rootExists) {
     return {
       state: "unconfigured",
       dataDirectory: paths.root,
       diagnostics: [
         diagnostic("installation.missing", paths.root, "Ambient Agent is not configured.", "Run ambient-agent init."),
+        ...lockDiagnostics,
       ],
     };
   }
 
-  const enforcePermissions = (options.platform ?? process.platform) !== "win32";
   const diagnostics = [
-    ...(await inspectDirectory(paths.root, "Managed data directory", enforcePermissions)),
-    ...(await inspectDirectory(paths.credentials, "Credential directory", enforcePermissions)),
-    ...(await inspectDirectory(paths.whatsapp, "WhatsApp data directory", enforcePermissions)),
-    ...(await inspectDirectory(paths.logs, "Log directory", enforcePermissions)),
-    ...(await inspectFile(paths.config, "Configuration file", enforcePermissions)),
-    ...(await inspectFile(paths.githubCredential, "GitHub credential file", enforcePermissions)),
-    ...(await inspectFile(paths.piAuthCredential, "Pi credential file", enforcePermissions)),
-    ...(await inspectFile(paths.applicationDatabase, "Application database", enforcePermissions)),
-    ...(await inspectFile(paths.flueDatabase, "Flue database", enforcePermissions)),
+    ...lockDiagnostics,
+    ...(await inspectDirectory(paths.root, "Managed data directory", true)),
+    ...(await inspectDirectory(paths.credentials, "Credential directory", true)),
+    ...(await inspectDirectory(paths.whatsapp, "WhatsApp data directory", true)),
+    ...(await inspectDirectory(paths.logs, "Log directory", true)),
+    ...(await inspectFile(paths.config, "Configuration file", true)),
+    ...(await inspectFile(paths.githubCredential, "GitHub credential file", true)),
+    ...(await inspectFile(paths.piAuthCredential, "Pi credential file", true)),
+    ...(await inspectFile(paths.applicationDatabase, "Application database", true)),
+    ...(await inspectFile(paths.flueDatabase, "Flue database", true)),
   ];
 
-  if (await exists(paths.config)) {
-    diagnostics.push(...(await inspectJson(paths.config, "Configuration file", ManagedConfigSchema)));
-    diagnostics.push(...(await inspectConfigReferences(paths.config)));
-  }
-  if (await exists(paths.githubCredential))
-    diagnostics.push(...(await inspectJson(paths.githubCredential, "GitHub credential file", GitHubCredentialSchema)));
-  if (await exists(paths.piAuthCredential))
-    diagnostics.push(...(await inspectJson(paths.piAuthCredential, "Pi credential file", PiAuthSchema)));
+  const config = await inspectJson(paths.config, "Configuration file", ManagedConfigSchema);
+  diagnostics.push(...config.diagnostics);
+  if (config.value !== undefined) diagnostics.push(...inspectConfigReferences(paths.config, config.value));
+  diagnostics.push(
+    ...(await inspectJson(paths.githubCredential, "GitHub credential file", GitHubCredentialSchema)).diagnostics,
+  );
+  diagnostics.push(...(await inspectJson(paths.piAuthCredential, "Pi credential file", PiAuthSchema)).diagnostics);
 
   return {
     state: diagnostics.length === 0 ? "configured" : "damaged",
@@ -273,6 +534,11 @@ const createSkeleton = async (
   await mkdir(paths.credentials, { mode: DIRECTORY_MODE });
   await mkdir(paths.whatsapp, { mode: DIRECTORY_MODE });
   await mkdir(paths.logs, { mode: DIRECTORY_MODE });
+  await Promise.all([
+    chmod(paths.credentials, DIRECTORY_MODE),
+    chmod(paths.whatsapp, DIRECTORY_MODE),
+    chmod(paths.logs, DIRECTORY_MODE),
+  ]);
   await writeSecureFile(paths.config, json(config));
   await writeSecureFile(paths.githubCredential, json(github));
   await writeSecureFile(paths.piAuthCredential, json(piAuth));
@@ -282,6 +548,9 @@ const createSkeleton = async (
 
 export const installManagedData = async (input: InstallManagedDataInput): Promise<InstallManagedDataResult> => {
   const targetPaths = managedPaths(input);
+  if ((input.platform ?? process.platform) === "win32") {
+    throw new Error("Secure managed credential ACLs are not implemented on Windows; setup fails closed.");
+  }
   const before = await inspectManagedData(input);
   if (before.state === "configured") return { created: false, inspection: before };
   if (before.state === "damaged") {
@@ -303,12 +572,7 @@ export const installManagedData = async (input: InstallManagedDataInput): Promis
   if (!piResult.success) throw new Error("The Pi auth file must contain an openai-codex OAuth credential.");
 
   await mkdir(dirname(targetPaths.root), { recursive: true, mode: DIRECTORY_MODE });
-  const lockPath = join(dirname(targetPaths.root), `.${basename(targetPaths.root)}.setup.lock`);
-  try {
-    await mkdir(lockPath, { mode: DIRECTORY_MODE });
-  } catch {
-    throw new Error(`Another setup is already running for ${targetPaths.root}.`);
-  }
+  const lock = await acquireSetupLock(targetPaths.root);
 
   const stagingRoot = join(
     dirname(targetPaths.root),
@@ -325,7 +589,7 @@ export const installManagedData = async (input: InstallManagedDataInput): Promis
     await rename(stagingRoot, targetPaths.root);
   } finally {
     await rm(stagingRoot, { recursive: true, force: true });
-    await rm(lockPath, { recursive: true, force: true });
+    await releaseSetupLock(lock);
   }
 
   const inspection = await inspectManagedData(input);

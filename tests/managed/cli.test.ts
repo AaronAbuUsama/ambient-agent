@@ -93,7 +93,23 @@ describe("managed CLI", () => {
     expect(await runCli(["--data-dir", paths.data, "init"], { ...prompted, setupPrompts })).toBe(0);
 
     const second = harness();
-    expect(await runCli(["--data-dir", paths.data, "init"], { ...second, setupPrompts })).toBe(0);
+    const forbiddenPrompts = {
+      managedChat: async (): Promise<string> => {
+        throw new Error("managed chat prompt must not run");
+      },
+      repository: async (): Promise<string> => {
+        throw new Error("repository prompt must not run");
+      },
+      githubToken: async (): Promise<string> => {
+        throw new Error("GitHub prompt must not run");
+      },
+      piAuthPath: async (): Promise<string> => {
+        throw new Error("Pi prompt must not run");
+      },
+    };
+    await rm(paths.token);
+    await rm(paths.auth);
+    expect(await runCli(["--data-dir", paths.data, "init"], { ...second, setupPrompts: forbiddenPrompts })).toBe(0);
     expect(second.stdout()).toContain("no files changed");
     expect(
       await import("node:fs/promises").then(({ readFile }) =>

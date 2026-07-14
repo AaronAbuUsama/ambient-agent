@@ -38,8 +38,9 @@ state by operation identity and never blindly retries an uncertain write.
 
 ## Run it
 
-Requirements: Node 22.19 or newer, pnpm 9, a paired WhatsApp account, a scoped GitHub
-token, and a Pi ChatGPT OAuth login.
+Requirements: macOS or Linux, Node 22.19 or newer, pnpm 9, a paired WhatsApp account, a scoped GitHub token,
+and a Pi ChatGPT OAuth login. Windows setup currently fails closed until equivalent private ACL enforcement is
+implemented.
 
 Install or run the package and create its managed data skeleton:
 

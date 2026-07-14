@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
@@ -34,12 +34,16 @@ describe("managed installation", () => {
       managedChats: ["120363000@g.us"],
       defaultRepository: "owner/repo",
     };
-    const result = await installManagedData(input);
+    const previousUmask = process.umask(0o777);
+    const result = await installManagedData(input).finally(() => process.umask(previousUmask));
     const paths = managedPaths(input);
 
     expect(result.created).toBe(true);
     expect(result.inspection.state).toBe("configured");
     expect((await lstat(paths.root)).mode & 0o777).toBe(0o700);
+    for (const path of [paths.credentials, paths.whatsapp, paths.logs]) {
+      expect((await lstat(path)).mode & 0o777).toBe(0o700);
+    }
     for (const path of [
       paths.config,
       paths.githubCredential,
@@ -126,5 +130,102 @@ describe("managed installation", () => {
     const inspection = await inspectManagedData(base);
     expect(inspection.diagnostics.map((item) => item.code)).toContain("credential.reference");
     expect(JSON.stringify(inspection)).not.toContain(base.githubToken);
+  });
+
+  it("reports invalid schema field paths without reporting their values", async () => {
+    const base = await fixture();
+    await installManagedData({
+      ...base,
+      managedChats: ["120363000@g.us"],
+      defaultRepository: "owner/repo",
+    });
+    const paths = managedPaths(base);
+    const config = JSON.parse(await readFile(paths.config, "utf8")) as { managedChats: string[] };
+    config.managedChats = [];
+    await writeFile(paths.config, JSON.stringify(config), { mode: 0o600 });
+    await writeFile(
+      paths.githubCredential,
+      JSON.stringify({ schemaVersion: 1, kind: "personal-token", token: 123456789 }),
+      { mode: 0o600 },
+    );
+    await writeFile(
+      paths.piAuthCredential,
+      JSON.stringify({
+        "openai-codex": { type: "oauth", access: 987654321, refresh: "hidden-refresh", expires: 0 },
+      }),
+      { mode: 0o600 },
+    );
+
+    const output = JSON.stringify(await inspectManagedData(base));
+    expect(output).toContain("managedChats");
+    expect(output).toContain("token");
+    expect(output).toContain("openai-codex.access");
+    expect(output).not.toContain("123456789");
+    expect(output).not.toContain("987654321");
+    expect(output).not.toContain("hidden-refresh");
+  });
+
+  it("never follows a managed JSON symlink while diagnosing it", async () => {
+    const base = await fixture();
+    await installManagedData({
+      ...base,
+      managedChats: ["120363000@g.us"],
+      defaultRepository: "owner/repo",
+    });
+    const configPath = managedPaths(base).config;
+    const outside = join(base.parent, "outside-secret.json");
+    await writeFile(outside, JSON.stringify({ secret: "must-never-be-read" }), { mode: 0o600 });
+    await rm(configPath);
+    await symlink(outside, configPath);
+
+    const inspection = await inspectManagedData(base);
+    expect(inspection.state).toBe("damaged");
+    expect(inspection.diagnostics.map((item) => item.code)).toContain("path.not-file");
+    expect(JSON.stringify(inspection)).not.toContain("must-never-be-read");
+  });
+
+  it("classifies a dangling root symlink as damaged instead of unconfigured", async () => {
+    const base = await fixture();
+    await symlink(join(base.parent, "missing-target"), base.dataDirectory);
+    const inspection = await inspectManagedData(base);
+    expect(inspection.state).toBe("damaged");
+    expect(inspection.diagnostics.map((item) => item.code)).toContain("path.not-directory");
+  });
+
+  it("recovers an old setup lock even when its PID has been reused", async () => {
+    const base = await fixture();
+    const lock = join(base.parent, ".managed.setup.lock");
+    await mkdir(lock, { mode: 0o700 });
+    await writeFile(
+      join(lock, "owner.json"),
+      JSON.stringify({ pid: process.pid, createdAt: "2000-01-01T00:00:00.000Z", token: "stale-owner" }),
+      { mode: 0o600 },
+    );
+
+    const input = {
+      ...base,
+      managedChats: ["120363000@g.us"],
+      defaultRepository: "owner/repo",
+    };
+    const attempts = await Promise.allSettled([installManagedData(input), installManagedData(input)]);
+    expect(attempts.some((attempt) => attempt.status === "fulfilled")).toBe(true);
+    expect(await inspectManagedData(base)).toMatchObject({ state: "configured" });
+    await expect(lstat(lock)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("fails closed on Windows until private ACL enforcement exists", async () => {
+    const base = await fixture();
+    await expect(
+      installManagedData({
+        ...base,
+        platform: "win32",
+        managedChats: ["120363000@g.us"],
+        defaultRepository: "owner/repo",
+      }),
+    ).rejects.toThrow("fails closed");
+    await expect(inspectManagedData({ ...base, platform: "win32" })).resolves.toMatchObject({
+      state: "unconfigured",
+      diagnostics: [{ code: "platform.unsupported" }],
+    });
   });
 });
