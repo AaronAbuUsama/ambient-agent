@@ -2,6 +2,7 @@ import { registerHooks } from "node:module";
 
 const whatsappSource = String.raw`
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 const fileName = (key) => key.replace(/[^0-9A-Za-z._-]/g, "_") + ".json";
@@ -29,6 +30,7 @@ export const createSession = ({ store }) => {
   const updates = new Set();
   const sync = new Set();
   let online = false;
+  let identity;
   const subscribe = (set, fn) => { set.add(fn); return () => set.delete(fn); };
   return {
     onStatus: (fn) => subscribe(status, fn),
@@ -36,7 +38,13 @@ export const createSession = ({ store }) => {
     onUpdate: (fn) => subscribe(updates, fn),
     onConversationSync: (fn) => subscribe(sync, fn),
     start: async () => {
-      await store.write({ creds: JSON.stringify({ registered: true }) });
+      const saved = await store.read("creds");
+      const credential = saved === null ? undefined : JSON.parse(saved);
+      identity = credential?.identity ?? {
+        jid: "15550000000@s.whatsapp.net",
+        lid: "packed-" + randomUUID() + "@lid",
+      };
+      await store.write({ creds: JSON.stringify({ registered: true, identity }) });
       for (const fn of sync) await fn({
         chats: [{ id: "120363000@g.us", subject: "Packed Managed Chat", isGroup: true, lastMessageAt: 1 }],
         contacts: [],
@@ -44,9 +52,25 @@ export const createSession = ({ store }) => {
       });
       online = true;
       for (const fn of status) fn({ phase: "online" });
+      const input = process.env.PACKED_WHATSAPP_INPUT;
+      if (input) {
+        for (const fn of messages) await fn({
+          id: process.env.PACKED_WHATSAPP_MESSAGE_ID ?? "packed-runtime-input",
+          chatId: "120363000@g.us",
+          from: "15550000058@s.whatsapp.net",
+          pushName: "Packed backup proof",
+          fromMe: false,
+          timestamp: Date.now(),
+          live: true,
+          isGroup: true,
+          kind: "text",
+          text: input,
+          context: { mentions: [identity.jid] },
+        });
+      }
     },
     stop: async () => { online = false; },
-    identity: () => online ? { jid: "15550000000@s.whatsapp.net", lid: "packed-bot@lid" } : undefined,
+    identity: () => online ? identity : undefined,
     send: async () => ({ id: "packed-message" }),
     setTyping: async () => undefined,
   };
