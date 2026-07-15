@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { publishNpmRelease, type ReleaseCommand } from "../../scripts/publish-npm-release.ts";
 
 describe("npm release publishing", () => {
-  it("forces an OIDC-capable npm publish even though the project is managed by pnpm", () => {
+  it("invokes npm publish directly even though the project is managed by pnpm", () => {
     const commands: ReleaseCommand[] = [];
     const result = publishNpmRelease({ name: "ambient-agent", version: "0.2.0" }, (command) => {
       commands.push(command);
