@@ -1,6 +1,6 @@
 import type { Context } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
-import { getRun, registerProvider } from "@flue/runtime";
+import { registerProvider } from "@flue/runtime";
 import { flue } from "@flue/runtime/routing";
 import { Duration, Effect, Layer, Queue } from "effect";
 import { Hono } from "hono";
@@ -8,6 +8,11 @@ import { join } from "node:path";
 import type { IncomingMessage as WhatsAppMessage } from "whatsappd";
 
 import { makeAmbienceWindowDispatcher, dispatchAmbience } from "../../../../src/ambience/dispatch.js";
+import { createIssueOperationStore } from "../../../../src/capabilities/issue-management/operation-store.js";
+import {
+  configureIssueManagementRuntime,
+  createIssueManagementPolicy,
+} from "../../../../src/capabilities/issue-management/runtime.js";
 import { configureWhatsAppParticipationPort } from "../../../../src/capabilities/whatsapp-participation/whatsapp-port.js";
 import * as Coalescer from "../../../../src/coalescer/coalescer.js";
 import { configLayer } from "../../../../src/coalescer/config.js";
@@ -15,11 +20,7 @@ import type { IncomingMessage } from "../../../../src/coalescer/events.js";
 import { queueEventSource } from "../../../../src/coalescer/mocks.js";
 import { loadGitHubIngressSettings } from "../../../../src/github/ingress.js";
 import { installGitHubIngressRuntime } from "../../../../src/github/ingress-runtime.js";
-import { configureGitHubProofRuntime, createGitHubProofPolicy } from "../../../../src/github/proof-runtime.js";
-import {
-  createControllableGitHubProofGate,
-  createFakeGitHubProofHost,
-} from "../../../../src/host/fake-github-proof-host.js";
+import { createFakeIssueRepository } from "../../../../src/host/fake-issue-repository.js";
 import { createFakeWhatsAppHost } from "../../../../src/host/fake-whatsapp-host.js";
 import {
   createFlueAdmissionEvidenceSource,
@@ -31,7 +32,6 @@ import { createManagedChatInbox, managedChatWindowStore } from "../../../../src/
 import { createManagedChatGptAuthentication } from "../../../../src/managed/chatgpt-authentication.js";
 import { managedPaths } from "../../../../src/managed/paths.js";
 import { connectPiChatGptSubscription } from "../../../../src/model/pi-subscription.js";
-import { installGitHubProofResultDispatch } from "../../../../src/workflows/github-proof.js";
 
 const liveModel = process.env.AMBIENCE_FIXTURE_LIVE_MODEL === "true";
 const provider = liveModel ? undefined : registerFauxProvider({ provider: "ambience-fixture" });
@@ -57,34 +57,53 @@ const respond = async (context: Context) => {
     if (serialized.includes("whatsapp_search")) {
       return fauxAssistantMessage("Private bound-history result retained without speaking.");
     }
-    if (serialized.includes("start_github_proof")) {
-      const runId = serialized.match(/"runId"\s*:\s*"([^"]+)"/)?.[1] ?? "missing-run-id";
-      return fauxAssistantMessage(`Private workflow admission settled with runId ${runId}.`);
+    if (serialized.includes("github_create_issue")) {
+      return fauxAssistantMessage("Private Issue Management receipt retained without an extra mutation.");
     }
-    if (serialized.includes("run_disposable_github_issue_proof")) {
-      return fauxAssistantMessage("Private GitHub specialist retained the observed proof receipt.");
+    if (serialized.includes("github_search_issues") || serialized.includes("github_read_issue")) {
+      return fauxAssistantMessage("Private Issue Management read retained without speaking.");
     }
     return fauxAssistantMessage("Private speech outcome retained for the next Ambience turn.");
   }
-  if (serialized.includes("START_GITHUB_PROOF")) {
-    return fauxAssistantMessage(fauxToolCall("start_github_proof", { repository: "acme/widgets" }), {
-      stopReason: "toolUse",
-    });
+  if (serialized.includes("CREATE_COMPLETE_ISSUE")) {
+    return fauxAssistantMessage(
+      fauxToolCall("github_create_issue", {
+        kind: "bug",
+        title: "The scheduler loses a queued job",
+        body: "Expected the queued job to run. It disappears after restart.",
+      }),
+      {
+        stopReason: "toolUse",
+      },
+    );
   }
-  if (serialized.includes("Run the bounded disposable GitHub issue proof")) {
-    return fauxAssistantMessage(fauxToolCall("run_disposable_github_issue_proof", {}), { stopReason: "toolUse" });
+  if (serialized.includes("CREATE_COMPLETE_FEATURE")) {
+    return fauxAssistantMessage(
+      fauxToolCall("github_create_issue", {
+        kind: "feature",
+        title: "Show queue depth in status",
+        body: "Operators need queue depth in status to diagnose backpressure.",
+      }),
+      { stopReason: "toolUse" },
+    );
   }
-  if (serialized.includes("WHILE_WORKFLOW_HELD")) {
-    return fauxAssistantMessage("Private Ambience turn settled while the workflow remained active.");
+  if (serialized.includes("DUPLICATE_ISSUE")) {
+    return fauxAssistantMessage(
+      fauxToolCall("github_create_issue", {
+        kind: "bug",
+        title: "The scheduler loses a queued job",
+        body: "Expected the queued job to run.",
+      }),
+      { stopReason: "toolUse" },
+    );
   }
-  if (serialized.includes("workflow.completed")) {
-    return fauxAssistantMessage("Private GitHub workflow completion input processed by the same Ambience instance.");
-  }
-  if (serialized.includes("workflow.uncertain")) {
-    return fauxAssistantMessage("Private GitHub workflow uncertainty input processed by the same Ambience instance.");
-  }
-  if (serialized.includes("workflow.failed")) {
-    return fauxAssistantMessage("Private GitHub workflow failure input processed by the same Ambience instance.");
+  if (serialized.includes("INCOMPLETE_ISSUE")) {
+    return fauxAssistantMessage(
+      fauxToolCall("say", {
+        text: "What did you expect to happen, and what happened instead?",
+      }),
+      { stopReason: "toolUse" },
+    );
   }
   if (serialized.includes("github.issue.opened")) {
     return fauxAssistantMessage("Private verified GitHub delivery processed without speaking.");
@@ -136,23 +155,21 @@ if (provider === undefined) {
 }
 
 const fakeWhatsApp = createFakeWhatsAppHost();
+const applicationDatabase = process.env.APPLICATION_DB_PATH ?? join(process.cwd(), "application.sqlite");
+const archive = createConversationArchive(applicationDatabase);
+const issueOperations = createIssueOperationStore(applicationDatabase);
+const fakeIssues = createFakeIssueRepository();
+configureIssueManagementRuntime({
+  repository: fakeIssues,
+  operations: issueOperations,
+  policy: createIssueManagementPolicy("acme/widgets", ["acme/widgets"]),
+});
 const githubIngress = loadGitHubIngressSettings();
 const githubIngressStore = installGitHubIngressRuntime(
   githubIngress,
   async (chatId, input) => await dispatchAmbience({ id: chatId, input }),
 );
-const workflowGate = createControllableGitHubProofGate();
-const fakeGitHub = createFakeGitHubProofHost({ gate: workflowGate });
-configureGitHubProofRuntime({
-  host: fakeGitHub,
-  policy: createGitHubProofPolicy("acme/widgets", ["acme/widgets"]),
-});
-installGitHubProofResultDispatch(async (chatId, input) => {
-  await dispatchAmbience({ id: chatId, input });
-});
-
 const source = await Effect.runPromise(Queue.unbounded<IncomingMessage>());
-const archive = createConversationArchive(process.env.APPLICATION_DB_PATH ?? join(process.cwd(), "application.sqlite"));
 configureWhatsAppParticipationPort({
   say: fakeWhatsApp.say,
   readThread: (chatId, limit) => archive.readThread(chatId, limit),
@@ -234,30 +251,26 @@ app.post("/test/whatsapp/fail-next-send", (context) => {
   fakeWhatsApp.failNextSend(new Error("provider outcome unknown"));
   return context.body(null, 204);
 });
-app.get("/test/github/events", (context) => context.json(fakeGitHub.events()));
+app.get("/test/github/events", (context) => context.json(fakeIssues.events()));
+app.get("/test/github/operations", (context) => context.json(issueOperations.list()));
+app.post("/test/github/issues", async (context) => {
+  const input = await context.req.json<{ title: string; body: string }>();
+  return context.json(fakeIssues.seed({ repository: { owner: "acme", repo: "widgets" }, ...input }), 201);
+});
 app.get("/test/github/ingress", (context) => context.json(githubIngressStore.list()));
 app.delete("/test/github/events", (context) => {
-  fakeGitHub.reset();
+  fakeIssues.reset();
   return context.body(null, 204);
 });
 app.post("/test/github/fail-next-create", (context) => {
-  fakeGitHub.failNextCreate(new Error("GitHub rejected the mutation"));
+  fakeIssues.failNextCreate(new Error("GitHub rejected the mutation"));
   return context.body(null, 204);
 });
 app.post("/test/github/timeout-next-create", (context) => {
-  fakeGitHub.timeoutNextCreate({ afterMutation: context.req.query("afterMutation") === "true" });
+  fakeIssues.timeoutNextCreate({ afterMutation: context.req.query("afterMutation") === "true" });
   return context.body(null, 204);
 });
 app.get("/test/model/recovery-pending", (context) => context.json({ markers: [...heldRecoveryMarkers] }));
-app.get("/test/workflows/pending", async (context) => context.json({ operationIds: await workflowGate.pending() }));
-app.post("/test/workflows/:operationId/release", (context) => {
-  workflowGate.release(context.req.param("operationId"));
-  return context.body(null, 204);
-});
-app.get("/test/runs/:runId", async (context) => {
-  const run = await getRun(context.req.param("runId"));
-  return run ? context.json(run) : context.json({ error: "run not found" }, 404);
-});
 app.route("/", flue());
 
 export default app;

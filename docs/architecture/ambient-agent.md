@@ -10,14 +10,14 @@ The first complete production Capability is Issue Management. It handles bug rep
 
 Ambience is the proper name of the continuing Flue Agent. There is one Ambience instance per Managed Chat, addressed by WhatsApp `chatId`.
 
-## Present gap
+## Current stable-base progress
 
-| Current code | What it proves | Why it is not the stable base |
-| --- | --- | --- |
-| `src/agents/ambience.ts` constructs one flat `tools` array | One continuing Flue Agent can use WhatsApp tools and start a workflow | Skills and Capabilities are not represented; the Agent will become a catalogue of unrelated tools |
-| `src/app.ts`, `src/github/proof-runtime.ts`, and `src/host/whatsapp-runtime.ts` read global configuration | The complete hard-cut proof can run in one process | Startup is environment-driven, provider construction is mixed into the application entrypoint, and there is no guided installation |
-| `src/workflows/github-proof.ts` and `src/github/proof-operation.ts` perform a temporary issue round trip | Workflow result delivery and uncertain GitHub mutation handling were proven | It is a proof-shaped workflow rather than production Issue Management |
-| `package.json` exposes a publishable `ambient-agent` bin with managed `init`, `auth`, `status`, `doctor`, and foreground `start` paths | A packed tarball installs and runs the managed composition root on the supported POSIX floor | The package is not published yet, `config` remains rollout work, and production Issue Management is not complete |
+| Current code                                                                                                                            | What it proves                                                                                                  | Why it is not the stable base                                                                                                |
+| --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `src/agents/ambience.ts` registers versioned WhatsApp Participation and Issue Management Skills with cohesive Tool factories            | One continuing Flue Agent can privately process every Window, decide when to Say, and develop or file one issue | Issue editing, discussion, state transitions, webhook feedback, and operator uncertainty controls remain in later DAG issues |
+| `src/app.ts` and `src/host/whatsapp-runtime.ts` still consume a process-local environment bridge prepared from the managed installation | The validated managed setup owns credentials and configuration without user-authored environment files          | #11 still owns the final explicit composition root and complete packed command integration                                   |
+| `src/capabilities/issue-management/` owns direct search/read/create behavior and a durable Operation Identity ledger                    | Duplicate search, authorized creation, and positive-only reconciliation replace the disposable proof workflow   | #54 and #55 extend this same provider-neutral interface; #57 exposes operator resolution for Uncertain operations            |
+| `package.json` exposes a publishable `ambient-agent` bin with managed `init`, `auth`, `status`, `doctor`, and foreground `start` paths  | A packed tarball installs and runs the managed composition root on the supported POSIX floor                    | The package is not published yet, `config` remains rollout work, and production Issue Management is not complete             |
 
 The rollout replaces these paths. It does not layer a second production path beside them.
 
@@ -104,10 +104,7 @@ export default defineAgent(({ id }) => ({
   model: configuredModel,
   instructions: ambienceInstructions,
   skills: [whatsappParticipationSkill, issueManagementSkill],
-  tools: [
-    ...createWhatsAppTools({ chatId: id, whatsapp }),
-    ...createIssueManagementTools({ issues }),
-  ],
+  tools: [...createWhatsAppTools({ chatId: id, whatsapp }), ...createIssueManagementTools({ issues })],
   actions: [],
   durability: configuredDurability,
 }));
@@ -275,12 +272,12 @@ Live credentials and provider availability are not CI prerequisites. Their recei
 
 These are anticipated Capability seams, not designs committed by this rollout:
 
-| Future Capability | Direct abilities | Likely independent runs |
-| --- | --- | --- |
-| Planning | inspect repositories, manage milestones and structured issue sets | research or plan generation when it needs its own durable result |
-| Implementation | select an issue, inspect workspaces, report status | coding Agent run producing commits and a pull request |
-| Review | inspect diffs, checks, comments, and policy | code or pull-request review with an inspectable terminal result |
-| Delivery | merge approved changes and report deployment state | release preparation or deployment orchestration |
+| Future Capability | Direct abilities                                                  | Likely independent runs                                          |
+| ----------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Planning          | inspect repositories, manage milestones and structured issue sets | research or plan generation when it needs its own durable result |
+| Implementation    | select an issue, inspect workspaces, report status                | coding Agent run producing commits and a pull request            |
+| Review            | inspect diffs, checks, comments, and policy                       | code or pull-request review with an inspectable terminal result  |
+| Delivery          | merge approved changes and report deployment state                | release preparation or deployment orchestration                  |
 
 Future Workflows bind reusable Actions only when the same agent-backed operation genuinely needs an independent run. They do not replace Ambience's conversational judgment or turn ordinary provider calls into Workflows.
 

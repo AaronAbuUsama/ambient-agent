@@ -19,7 +19,9 @@ export interface FlueAgentEvalInput {
   message: string;
   fixture?: {
     resetWhatsApp?: boolean;
+    resetGitHub?: boolean;
     history?: FixtureHistorySeed[];
+    githubIssues?: Array<{ title: string; body: string }>;
   };
 }
 
@@ -27,6 +29,8 @@ export type FlueAgentEvalOutput = {
   text: string;
   instanceId: string;
   whatsappEvents: JsonValue[];
+  githubEvents: JsonValue[];
+  githubOperations: JsonValue[];
 };
 
 const jsonRecord = (value: unknown): Record<string, JsonValue> | undefined => {
@@ -86,6 +90,9 @@ const seedFixture = async (
   if (fixture.resetWhatsApp === true) {
     await checkedFetch(`${baseUrl}/test/whatsapp/events`, { method: "DELETE" });
   }
+  if (fixture.resetGitHub === true) {
+    await checkedFetch(`${baseUrl}/test/github/events`, { method: "DELETE" });
+  }
   for (const [index, seed] of (fixture.history ?? []).entries()) {
     const chatId = seed.scope === "current" ? instanceId : (seed.chatId ?? `eval-other-${crypto.randomUUID()}@g.us`);
     await checkedFetch(`${baseUrl}/test/archive`, {
@@ -105,6 +112,13 @@ const seedFixture = async (
       }),
     });
   }
+  for (const issue of fixture.githubIssues ?? []) {
+    await checkedFetch(`${baseUrl}/test/github/issues`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(issue),
+    });
+  }
 };
 
 export function createFlueAgentHarness(options: FlueAgentHarnessOptions) {
@@ -117,6 +131,16 @@ export function createFlueAgentHarness(options: FlueAgentHarnessOptions) {
       const startedAt = performance.now();
       const instanceId = `eval-${crypto.randomUUID()}@g.us`;
       if (input.fixture !== undefined) await seedFixture(baseUrl, instanceId, input.fixture);
+      const priorGitHubOperationIds =
+        input.fixture === undefined
+          ? new Set<string>()
+          : new Set(
+              (
+                (await (await checkedFetch(`${baseUrl}/test/github/operations`)).json()) as Array<{
+                  operationId?: string;
+                }>
+              ).flatMap((operation) => (operation.operationId === undefined ? [] : [operation.operationId])),
+            );
 
       const invocation = await client.agents.prompt(options.agentName, instanceId, {
         message: input.message,
@@ -128,12 +152,28 @@ export function createFlueAgentHarness(options: FlueAgentHarnessOptions) {
         input.fixture === undefined
           ? []
           : ((await checkedFetch(`${baseUrl}/test/whatsapp/events`)).json() as Promise<JsonValue[]>);
+      const githubEvents =
+        input.fixture === undefined
+          ? []
+          : ((await checkedFetch(`${baseUrl}/test/github/events`)).json() as Promise<JsonValue[]>);
+      const githubOperations =
+        input.fixture === undefined
+          ? []
+          : (
+              (await (await checkedFetch(`${baseUrl}/test/github/operations`)).json()) as Array<{
+                operationId?: string;
+              }>
+            ).filter(
+              (operation) => operation.operationId === undefined || !priorGitHubOperationIds.has(operation.operationId),
+            );
 
       return {
         output: {
           text: invocation.result.text,
           instanceId,
           whatsappEvents: await whatsappEvents,
+          githubEvents: await githubEvents,
+          githubOperations: toJsonValue(githubOperations) as JsonValue[],
         },
         events,
         usage: {
