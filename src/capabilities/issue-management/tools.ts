@@ -198,6 +198,7 @@ const createIssue = async (input: {
     operationId,
     kind: "create-issue",
     repository: repositoryName(input.repository),
+    target: { kind: input.kind, title: input.title, body: input.body },
     startedAt: input.now().toISOString(),
   });
   const settleCreated = (issue: Issue, status: "created" | "reconciled"): v.InferOutput<typeof createOutputSchema> => {
@@ -586,7 +587,8 @@ export const createIssueManagementTools = (
     }),
     defineTool({
       name: "github_read_issue_discussion",
-      description: "Read one issue and every current discussion comment before choosing a discussion or lifecycle mutation.",
+      description:
+        "Read one issue and every current discussion comment before choosing a discussion or lifecycle mutation.",
       input: v.object({ repository: repositoryInput, number: issueNumber }),
       output: discussionSchema,
       run: async ({ input, signal }) => {
@@ -786,7 +788,9 @@ export const createIssueManagementTools = (
       run: async ({ input, signal }) => {
         const repository = options.policy.authorize(input.repository);
         if ((input.state === "open") !== (input.reason === "reopened")) {
-          throw new Error("Open issues require reason reopened; closed issues require completed, not_planned, or duplicate.");
+          throw new Error(
+            "Open issues require reason reopened; closed issues require completed, not_planned, or duplicate.",
+          );
         }
         const discussion = await options.repository.discussion({ repository, number: input.number, signal });
         if (discussion.issue.state === input.state) {

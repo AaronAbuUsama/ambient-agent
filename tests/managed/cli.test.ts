@@ -8,6 +8,8 @@ import { takeManagedRuntimeDependencies } from "../../src/managed/runtime-depend
 import { managedPaths, type ManagedPaths } from "../../src/managed/paths.ts";
 import type { ChatGptOAuthAdapter } from "../../src/model/chatgpt-authentication.ts";
 import { ChatGptReadinessError } from "../../src/model/pi-subscription.ts";
+import { createIssueOperationStore } from "../../src/capabilities/issue-management/operation-store.ts";
+import type { UncertainWorkController } from "../../src/managed/uncertain-work.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -273,6 +275,134 @@ describe("managed CLI", () => {
     });
     expect(status.stdout()).not.toContain("access-secret");
     expect(status.stderr()).toBe("");
+  });
+
+  it("reports Uncertain work as degraded without exposing stored targets or provider errors", async () => {
+    const paths = await files();
+    await runCli(
+      [
+        "--data-dir",
+        paths.data,
+        "init",
+        "--chat",
+        "120363000@g.us",
+        "--repository",
+        "owner/repo",
+        "--github-token-file",
+        paths.token,
+      ],
+      harness(),
+    );
+    const operations = createIssueOperationStore(managedPaths({ dataDirectory: paths.data }).applicationDatabase);
+    operations.begin({
+      operationId: "private-operation-id",
+      kind: "update-issue",
+      repository: "owner/repo",
+      issueNumber: 42,
+      target: { body: "private issue body must not be printed" },
+      startedAt: "2026-07-15T01:00:00.000Z",
+    });
+    operations.uncertain(
+      "private-operation-id",
+      "provider error with private credential material",
+      "2026-07-15T01:01:00.000Z",
+    );
+    operations.close();
+
+    const status = harness();
+    expect(await runCli(["--data-dir", paths.data, "status", "--json"], status)).toBe(3);
+    expect(JSON.parse(status.stdout())).toMatchObject({
+      uncertainWork: {
+        health: "degraded",
+        admissions: 0,
+        externalMutations: 1,
+        total: 1,
+        mutationKinds: { "update-issue": 1 },
+      },
+    });
+    expect(status.stdout()).not.toContain("private issue body");
+    expect(status.stdout()).not.toContain("credential material");
+  });
+
+  it("routes explicit doctor decisions through the headless Uncertain-work controller", async () => {
+    const paths = await files();
+    await runCli(
+      [
+        "--data-dir",
+        paths.data,
+        "init",
+        "--chat",
+        "120363000@g.us",
+        "--repository",
+        "owner/repo",
+        "--github-token-file",
+        paths.token,
+      ],
+      harness(),
+    );
+    const retry = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ref: "mutation:operation-1" as const,
+        outcome: "retried" as const,
+        replacementRef: "mutation:operation-2" as const,
+      })
+      .mockResolvedValueOnce({
+        ref: "mutation:operation-3" as const,
+        outcome: "failed" as const,
+        replacementRef: "mutation:operation-4" as const,
+      });
+    const close = vi.fn();
+    const controller: UncertainWorkController = {
+      status: () => ({
+        health: "healthy",
+        admissions: 0,
+        externalMutations: 0,
+        total: 0,
+        mutationKinds: {},
+      }),
+      diagnose: async () => {
+        throw new Error("diagnose must not run for explicit retry");
+      },
+      retry,
+      abandon: () => {
+        throw new Error("abandon must not run");
+      },
+      acceptObserved: async () => {
+        throw new Error("acceptObserved must not run");
+      },
+      close,
+    };
+    const cli = harness();
+
+    expect(
+      await runCli(["--data-dir", paths.data, "doctor", "--retry", "mutation:operation-1", "--json"], {
+        ...cli,
+        uncertainWorkFor: async () => controller,
+      }),
+    ).toBe(0);
+    expect(retry).toHaveBeenCalledWith("mutation:operation-1");
+    expect(close).toHaveBeenCalledOnce();
+    expect(JSON.parse(cli.stdout())).toMatchObject({
+      uncertainAction: {
+        ref: "mutation:operation-1",
+        outcome: "retried",
+        replacementRef: "mutation:operation-2",
+      },
+      uncertainWork: { health: "healthy", total: 0 },
+    });
+
+    const failed = harness();
+    expect(
+      await runCli(["--data-dir", paths.data, "doctor", "--retry", "mutation:operation-3", "--json"], {
+        ...failed,
+        uncertainWorkFor: async () => controller,
+      }),
+    ).toBe(1);
+    expect(JSON.parse(failed.stdout())).toMatchObject({
+      uncertainAction: { ref: "mutation:operation-3", outcome: "failed" },
+      uncertainWork: { health: "healthy", total: 0 },
+    });
   });
 
   it("distinguishes expired credentials and refreshes them only when requested", async () => {
