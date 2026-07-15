@@ -9,6 +9,7 @@ import { inMemoryWindowStore, queueEventSource } from "../../src/coalescer/mocks
 import { makeAmbienceWindowDispatcher, type AmbienceDispatchRequest } from "../../src/ambience/dispatch.ts";
 import { createFakeWhatsAppHost } from "../../src/host/fake-whatsapp-host.ts";
 import type { WhatsAppHost } from "../../src/host/whatsapp-host.ts";
+import type { ManagedChatInbox, WindowAdmission } from "../../src/intake/managed-chat-inbox.ts";
 import { createSayTool } from "../../src/tools/whatsapp/say.ts";
 
 const BOT = "bot@s.whatsapp.net";
@@ -41,6 +42,21 @@ const awaitRef = <A>(ref: Ref.Ref<A>, predicate: (value: A) => boolean) =>
 
 describe("production Coalescer-to-Ambience dispatch", () => {
   it("dispatches one complete coalesced window to the continuing instance identified by chatId", async () => {
+    const admissions = new Map<string, WindowAdmission>();
+    let attemptSequence = 0;
+    const inbox = {
+      beginAdmission: (windowId: string) => {
+        const admission = { status: "dispatching" as const, windowId, attemptId: `attempt-${++attemptSequence}` };
+        admissions.set(windowId, admission);
+        return admission;
+      },
+      markAdmitted: (windowId: string, _attemptId: string, receipt: { dispatchId: string; acceptedAt: string }) => {
+        admissions.set(windowId, { status: "admitted", windowId, ...receipt });
+      },
+      markUncertain: (windowId: string, attemptId: string, reason: string) => {
+        admissions.set(windowId, { status: "uncertain", windowId, attemptId, reason });
+      },
+    } as ManagedChatInbox;
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
@@ -57,7 +73,7 @@ describe("production Coalescer-to-Ambience dispatch", () => {
                 Layer.mergeAll(
                   queueEventSource(source),
                   inMemoryWindowStore(),
-                  makeAmbienceWindowDispatcher(dispatch),
+                  makeAmbienceWindowDispatcher(inbox, dispatch),
                   configLayer({ botIds: [BOT], debounceWindow: Duration.millis(25) }),
                 ),
               ),
@@ -83,6 +99,12 @@ describe("production Coalescer-to-Ambience dispatch", () => {
               },
             },
           ]);
+          expect(admissions.get("window-1")).toEqual({
+            status: "admitted",
+            windowId: "window-1",
+            dispatchId: "dispatch-27",
+            acceptedAt: "2026-07-13T00:00:00.000Z",
+          });
         }),
       ),
     );

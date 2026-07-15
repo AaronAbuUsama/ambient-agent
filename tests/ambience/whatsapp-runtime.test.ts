@@ -17,6 +17,7 @@ import type { AmbienceDispatchRequest } from "../../src/ambience/dispatch.ts";
 import { makeChatGate } from "../../src/coalescer/chat-gate.ts";
 import { createWhatsAppHost, runWhatsAppSession } from "../../src/host/whatsapp-runtime.ts";
 import { createConversationArchive } from "../../src/intake/conversation-archive.ts";
+import { conversationArrival } from "../../src/intake/conversation-event.ts";
 import { createManagedChatInbox } from "../../src/intake/managed-chat-inbox.ts";
 import { createReadWhatsAppThreadTool, createSearchWhatsAppHistoryTool } from "../../src/tools/whatsapp/history.ts";
 import { createSayTool } from "../../src/tools/whatsapp/say.ts";
@@ -300,9 +301,13 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
             },
           ]);
           expect(reopenedInbox.unwindowed()).toEqual([]);
-          expect(reopenedInbox.pendingWindows()).toEqual([
-            expect.objectContaining({ id: "window-replayed-31", chatId: CHAT }),
-          ]);
+          expect(reopenedInbox.pendingWindows()).toEqual([]);
+          expect(reopenedInbox.admission("window-replayed-31")).toEqual({
+            status: "admitted",
+            windowId: "window-replayed-31",
+            dispatchId: "dispatch-replayed-31",
+            acceptedAt: "2026-07-15T00:00:00.000Z",
+          });
         }),
       ),
     );
@@ -311,7 +316,65 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
     reopenedArchive.close();
   });
 
-  it("keeps a non-text Window payload identical when the durable Window replays after restart", async () => {
+  it("replays a pending Window after restart only when no admission attempt began", async () => {
+    const { applicationDatabase, archive } = temporaryArchive();
+    const gate = makeChatGate({ groupIds: CHAT });
+    const inbox = createManagedChatInbox(archive, {
+      allowed: gate.allowed,
+      createId: () => "window-pending-31",
+    });
+    inbox.recorder.append(conversationArrival(inbound({ id: "pending-window-31" })));
+    const pending = inbox.createWindow({
+      chatId: CHAT,
+      messages: inbox.unwindowed(),
+      reason: "debounce",
+    });
+    expect(inbox.admission(pending.id)).toEqual({ status: "pending", windowId: pending.id });
+    archive.close();
+
+    const reopenedArchive = createConversationArchive(applicationDatabase);
+    const reopened = createManagedChatInbox(reopenedArchive, { allowed: gate.allowed });
+    const fake = fakeSession();
+    const dispatches: AmbienceDispatchRequest[] = [];
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* Effect.forkScoped(
+            runWhatsAppSession(fake.session, {
+              gate,
+              history: reopenedArchive,
+              inbox: reopened,
+              dispatch: async (request) => {
+                dispatches.push(request);
+                return { dispatchId: "dispatch-pending-31", acceptedAt: "2026-07-15T00:00:30.000Z" };
+              },
+            }),
+          );
+          yield* Effect.sleep(Duration.millis(10));
+        }),
+      ),
+    );
+
+    expect(dispatches).toEqual([
+      {
+        id: CHAT,
+        input: expect.objectContaining({
+          type: "whatsapp.window",
+          windowId: "window-pending-31",
+          chatId: CHAT,
+        }),
+      },
+    ]);
+    expect(reopened.admission(pending.id)).toEqual({
+      status: "admitted",
+      windowId: pending.id,
+      dispatchId: "dispatch-pending-31",
+      acceptedAt: "2026-07-15T00:00:30.000Z",
+    });
+    reopenedArchive.close();
+  });
+
+  it("keeps a non-text Window payload canonical and does not redispatch it after admission", async () => {
     const { applicationDatabase, archive, storeDirectory } = temporaryArchive();
     const gate = makeChatGate({ groupIds: CHAT });
     const inbox = createManagedChatInbox(archive, {
@@ -387,7 +450,13 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
       ),
     );
 
-    expect(replayDispatches).toEqual(firstDispatches);
+    expect(replayDispatches).toEqual([]);
+    expect(reopenedInbox.admission("window-location-31")).toEqual({
+      status: "admitted",
+      windowId: "window-location-31",
+      dispatchId: "dispatch-location-31",
+      acceptedAt: "2026-07-15T00:00:00.000Z",
+    });
     await restartedAccount.stop();
     reopenedArchive.close();
   });

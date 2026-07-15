@@ -102,7 +102,9 @@ GitHub is only the test capability; the **architecture is the deliverable**.
 
 - `f886a13` — feat(coalescer): the original in-memory Coalescer build, including
   count/age eviction artifacts that #50 later removed. Its resilience work made
-  dispatch catch failures and defects while preserving interruption.
+  dispatch catch failures and defects while preserving interruption; #51 later
+  removed that continue-after-failure behavior because ambiguous admission must
+  become Uncertain and fail-stop the affected chat.
 - `80ed4c6` — refactor(coalescer): the Tier-1 simplification (dead config removed,
   `Array.takeRight`, shared `delegateAndNarrate`, `startSelfGating` test helper).
 - `1f2a921` — docs(handoff): this file.

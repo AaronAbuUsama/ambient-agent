@@ -31,18 +31,13 @@ type WindowDispatcherService = {
   readonly dispatch: (window: ConversationWindow) => Effect.Effect<void, unknown>;
 };
 
-/**
- * Dispatch the buffered window to Ambience. A failed dispatch must not kill the
- * chat's actor loop — one bad input should never wedge the chat. We swallow-and-log
- * both typed failures (`catchAll`) *and* defects (`catchAllDefect`, e.g. an
- * dispatcher implementation throwing), but deliberately let interruption through
- * untouched so scope shutdown still tears the loop down cleanly. Empty windows
- * never fire — there is nothing to say.
- */
-const logDispatchError = (window: ConversationWindow) => (cause: unknown) =>
-  Effect.logError(`Ambience window dispatch failed for ${window.chatId}`).pipe(
-    Effect.annotateLogs({ cause: String(cause) }),
-  );
+const stopAfterDispatchError =
+  (window: ConversationWindow) =>
+  (cause: unknown): Effect.Effect<never> =>
+    Effect.logError(`Ambience admission failed for ${window.chatId}; the chat is fail-stopped`).pipe(
+      Effect.annotateLogs({ cause: String(cause), windowId: window.id }),
+      Effect.andThen(Effect.never),
+    );
 
 const stopAfterStoreError =
   (chatId: string) =>
@@ -63,7 +58,7 @@ const fire = (dispatcher: WindowDispatcherService, window: ConversationWindow): 
     ? Effect.void
     : dispatcher
         .dispatch(window)
-        .pipe(Effect.catch(logDispatchError(window)), Effect.catchDefect(logDispatchError(window)));
+        .pipe(Effect.catch(stopAfterDispatchError(window)), Effect.catchDefect(stopAfterDispatchError(window)));
 
 /**
  * Build the per-chat actor loop for a given config + window dispatcher. Returns a function
@@ -156,9 +151,11 @@ export const run: Effect.Effect<
   const store = yield* WindowStore;
   const chatLoop = makeChatLoop(config, dispatcher, store);
   const registry = yield* Ref.make(HashMap.empty<string, Queue.Queue<IncomingMessage>>());
+  const blockedChats = yield* Ref.make<ReadonlySet<string>>(new Set());
 
   const routeTo = (msg: IncomingMessage): Effect.Effect<void, never, Scope.Scope> =>
     Effect.gen(function* () {
+      if ((yield* Ref.get(blockedChats)).has(msg.chatId)) return;
       const existing = HashMap.get(yield* Ref.get(registry), msg.chatId);
       if (Option.isSome(existing)) {
         yield* Queue.offer(existing.value, msg);
@@ -170,11 +167,38 @@ export const run: Effect.Effect<
       yield* Queue.offer(queue, msg);
     });
 
-  yield* store.pendingWindows.pipe(
-    Effect.flatMap((windows) => Effect.forEach(windows, (window) => fire(dispatcher, window), { discard: true })),
+  const pending = yield* store.pendingWindows.pipe(
     Effect.catch(stopAfterReplayReadError),
     Effect.catchDefect(stopAfterReplayReadError),
   );
+  const windowsByChat = new Map<string, ConversationWindow[]>();
+  for (const window of pending) {
+    const windows = windowsByChat.get(window.chatId) ?? [];
+    windows.push(window);
+    windowsByChat.set(window.chatId, windows);
+  }
+
+  const blockReplay = (window: ConversationWindow, cause: unknown): Effect.Effect<void> =>
+    Effect.logError(`Ambience startup admission failed for ${window.chatId}; only that chat is fail-stopped`).pipe(
+      Effect.annotateLogs({ cause: String(cause), windowId: window.id }),
+      Effect.andThen(Ref.update(blockedChats, (current) => new Set(current).add(window.chatId))),
+    );
+
+  const replayChat = (windows: readonly ConversationWindow[], index = 0): Effect.Effect<void> => {
+    const window = windows[index];
+    if (window === undefined) return Effect.void;
+    const dispatch = window.messages.length === 0 ? Effect.void : dispatcher.dispatch(window);
+    return dispatch.pipe(
+      Effect.andThen(replayChat(windows, index + 1)),
+      Effect.catch((cause) => blockReplay(window, cause)),
+      Effect.catchDefect((cause) => blockReplay(window, cause)),
+    );
+  };
+
+  yield* Effect.forEach(windowsByChat.values(), (windows) => replayChat(windows), {
+    concurrency: "unbounded",
+    discard: true,
+  });
 
   yield* events.pipe(
     // fromMe = the bot's own messages; live=false = history backfill. Neither drives the loop.

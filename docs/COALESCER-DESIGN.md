@@ -16,25 +16,38 @@ the in-process whatsappd event stream and Flue Ambience admission.
   accepted arrival is evicted by count or age.
 - Each accepted Inbox arrival is assigned once, in observed order, to a stable
   Window ID. A Window is persisted before dispatch.
-- Unwindowed arrivals and pending Windows are replayed on runtime startup.
+- Unwindowed arrivals and pending Windows whose admission attempt never began
+  are replayed on runtime startup.
 - If the durable startup backlog cannot be read, intake fail-stops before newer
   arrivals can overtake it.
-- A failed Ambience dispatch is logged and does not wedge the chat actor. A local
-  Window-store failure fail-stops that chat so a later arrival cannot overtake
-  the durable pending batch; restart replay resumes in Inbox order.
+- The Admission Relay records `dispatching` before calling Flue and records the
+  returned `dispatchId` and `acceptedAt` afterward. A failure after dispatch
+  begins becomes Uncertain and fail-stops that chat; it is never automatically
+  repeated. A local Window-store failure likewise fail-stops that chat so a
+  later arrival cannot overtake durable work.
+- An Uncertain Window remains a durable ordering barrier for its chat across
+  restart. Later arrivals stay in the Inbox but are not offered to the
+  Coalescer. Other chats continue to replay and accept work independently.
 
 ## Production seam
 
 `src/host/whatsapp-runtime.ts` wires the managed account recorder, durable Inbox,
 full-fidelity whatsappd event source, Window store, and Ambience dispatcher. The
-dispatcher calls:
+dispatcher crosses the relay once:
 
 ```ts
-dispatch(ambience, {
+recordDispatching(window.id, attemptId);
+const receipt = await dispatch(ambience, {
   id: window.chatId,
   input: whatsappWindowInput(window),
 });
+recordAdmitted(window.id, receipt);
 ```
+
+Only positive canonical Flue evidence may reconcile an Uncertain Window to
+admitted. Absence is inconclusive and does not authorize another dispatch. The
+runtime must reopen after reconciliation before that chat resumes, ensuring its
+withheld Inbox arrivals replay before any newer live arrival can overtake them.
 
 Flue therefore owns the continuing canonical model context. The Coalescer does
 not parse assistant output, keep an agent session cursor, run a model tool loop,
