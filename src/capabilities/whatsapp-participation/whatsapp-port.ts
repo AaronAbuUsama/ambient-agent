@@ -1,3 +1,5 @@
+import type { ProjectedConversationMessage } from "../../intake/conversation-archive.ts";
+
 export type WhatsAppSayResult =
   | { readonly delivery: "sent"; readonly messageId: string; readonly typing: "cleared" }
   | {
@@ -29,20 +31,27 @@ export type WhatsAppSayResult =
       readonly typingError: string;
     };
 
-export interface WhatsAppHost {
+export interface WhatsAppSayPort {
   /** Own the full typing/send/finalization attempt and report observed state without retrying. */
   readonly say: (chatId: string, text: string) => Promise<WhatsAppSayResult>;
 }
 
-let configuredHost: WhatsAppHost | undefined;
+export interface WhatsAppHistoryPort {
+  readThread(chatId: string, limit?: number): readonly ProjectedConversationMessage[];
+  search(chatId: string, query: string, limit?: number): readonly ProjectedConversationMessage[];
+}
 
-export const configureWhatsAppHost = (host: WhatsAppHost): void => {
-  configuredHost = host;
+export interface WhatsAppParticipationPort extends WhatsAppSayPort, WhatsAppHistoryPort {}
+
+let configuredPort: WhatsAppParticipationPort | undefined;
+
+export const configureWhatsAppParticipationPort = (port: WhatsAppParticipationPort): void => {
+  configuredPort = port;
 };
 
-export const getWhatsAppHost = (): WhatsAppHost => {
-  if (configuredHost === undefined) {
-    throw new Error("The WhatsApp Host is not configured for Ambience.");
+export const getWhatsAppParticipationPort = (): WhatsAppParticipationPort => {
+  if (configuredPort === undefined) {
+    throw new Error("The WhatsApp Participation port is not configured for Ambience.");
   }
-  return configuredHost;
+  return configuredPort;
 };

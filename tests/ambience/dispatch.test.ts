@@ -7,10 +7,10 @@ import { configLayer } from "../../src/coalescer/config.ts";
 import type { IncomingMessage } from "../../src/coalescer/events.ts";
 import { inMemoryWindowStore, queueEventSource } from "../../src/coalescer/mocks.ts";
 import { makeAmbienceWindowDispatcher, type AmbienceDispatchRequest } from "../../src/ambience/dispatch.ts";
+import { createSayTool } from "../../src/capabilities/whatsapp-participation/tools.ts";
+import type { WhatsAppSayPort } from "../../src/capabilities/whatsapp-participation/whatsapp-port.ts";
 import { createFakeWhatsAppHost } from "../../src/host/fake-whatsapp-host.ts";
-import type { WhatsAppHost } from "../../src/host/whatsapp-host.ts";
 import type { ManagedChatInbox, WindowAdmission } from "../../src/intake/managed-chat-inbox.ts";
-import { createSayTool } from "../../src/tools/whatsapp/say.ts";
 
 const BOT = "bot@s.whatsapp.net";
 const CHAT = "team@g.us";
@@ -190,7 +190,7 @@ describe("say", () => {
   it("declares a runtime output schema that rejects a malformed host receipt", async () => {
     const malformedHost = {
       say: async () => ({ delivery: "sent", messageId: "", typing: "cleared" }),
-    } as unknown as WhatsAppHost;
+    } as unknown as WhatsAppSayPort;
     const say = createSayTool(CHAT, malformedHost);
     const result = await say.run({ input: { text: "validate the receipt" } });
 

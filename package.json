@@ -41,7 +41,9 @@
     "whatsapp:dry-run": "tsx scripts/whatsapp-dry-run.ts",
     "typecheck": "tsc --noEmit",
     "test": "vp test run",
-    "test:watch": "vp test"
+    "test:watch": "vp test",
+    "evals": "vitest run --config vitest.evals.config.ts",
+    "evals:json": "vitest run --config vitest.evals.config.ts --reporter=vitest-evals/reporter --reporter=json --outputFile.json=vitest-results.json"
   },
   "dependencies": {
     "@clack/prompts": "1.7.0",
@@ -61,13 +63,15 @@
   "devDependencies": {
     "@effect/vitest": "4.0.0-beta.98",
     "@flue/cli": "1.0.0-beta.9",
+    "@flue/sdk": "1.0.0-beta.9",
     "@types/json-schema": "7.0.15",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vite": "catalog:",
     "vite-plus": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "vitest-evals": "0.14.0"
   },
   "engines": {
     "node": ">=22.19.0"

@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { IncomingMessage as WhatsAppMessage } from "whatsappd";
 
 import { makeAmbienceWindowDispatcher, dispatchAmbience } from "../../../../src/ambience/dispatch.js";
+import { configureWhatsAppParticipationPort } from "../../../../src/capabilities/whatsapp-participation/whatsapp-port.js";
 import * as Coalescer from "../../../../src/coalescer/coalescer.js";
 import { configLayer } from "../../../../src/coalescer/config.js";
 import type { IncomingMessage } from "../../../../src/coalescer/events.js";
@@ -20,7 +21,6 @@ import {
   createFakeGitHubProofHost,
 } from "../../../../src/host/fake-github-proof-host.js";
 import { createFakeWhatsAppHost } from "../../../../src/host/fake-whatsapp-host.js";
-import { configureWhatsAppHost } from "../../../../src/host/whatsapp-host.js";
 import {
   createFlueAdmissionEvidenceSource,
   reconcileUncertainAdmission,
@@ -28,9 +28,13 @@ import {
 import { createConversationArchive } from "../../../../src/intake/conversation-archive.js";
 import { conversationArrival } from "../../../../src/intake/conversation-event.js";
 import { createManagedChatInbox, managedChatWindowStore } from "../../../../src/intake/managed-chat-inbox.js";
+import { createManagedChatGptAuthentication } from "../../../../src/managed/chatgpt-authentication.js";
+import { managedPaths } from "../../../../src/managed/paths.js";
+import { connectPiChatGptSubscription } from "../../../../src/model/pi-subscription.js";
 import { installGitHubProofResultDispatch } from "../../../../src/workflows/github-proof.js";
 
-const provider = registerFauxProvider({ provider: "ambience-fixture" });
+const liveModel = process.env.AMBIENCE_FIXTURE_LIVE_MODEL === "true";
+const provider = liveModel ? undefined : registerFauxProvider({ provider: "ambience-fixture" });
 const heldRecoveryMarkers = new Set<string>();
 const holdAgentRecovery = process.env.AMBIENCE_FIXTURE_HOLD_AGENT_RECOVERY === "true";
 const respond = async (context: Context) => {
@@ -50,6 +54,9 @@ const respond = async (context: Context) => {
     );
   }
   if (last?.role === "toolResult") {
+    if (serialized.includes("whatsapp_search")) {
+      return fauxAssistantMessage("Private bound-history result retained without speaking.");
+    }
     if (serialized.includes("start_github_proof")) {
       const runId = serialized.match(/"runId"\s*:\s*"([^"]+)"/)?.[1] ?? "missing-run-id";
       return fauxAssistantMessage(`Private workflow admission settled with runId ${runId}.`);
@@ -85,6 +92,16 @@ const respond = async (context: Context) => {
   if (serialized.includes("SPEAK_ONCE")) {
     return fauxAssistantMessage(fauxToolCall("say", { text: "one explicit outbound" }), { stopReason: "toolUse" });
   }
+  if (serialized.includes("please tell the group that the release call starts at 16:00 UTC")) {
+    return fauxAssistantMessage(fauxToolCall("say", { text: "The release call starts at 16:00 UTC." }), {
+      stopReason: "toolUse",
+    });
+  }
+  if (serialized.includes("Search WhatsApp history for release details")) {
+    return fauxAssistantMessage(fauxToolCall("whatsapp_search", { query: "release" }), {
+      stopReason: "toolUse",
+    });
+  }
   if (serialized.includes("FAIL_SEND")) {
     return fauxAssistantMessage(fauxToolCall("say", { text: "uncertain outbound" }), { stopReason: "toolUse" });
   }
@@ -102,16 +119,23 @@ const respond = async (context: Context) => {
   }
   return fauxAssistantMessage("Private ambient context retained without speaking.");
 };
-provider.setResponses(Array.from({ length: 100 }, () => respond));
-const model = provider.getModel();
-registerProvider("openai-codex", {
-  api: model.api,
-  apiKey: "fixture-only-token",
-  baseUrl: model.baseUrl,
-});
+if (provider === undefined) {
+  const dataDirectory = process.env.AMBIENCE_FIXTURE_DATA_DIR;
+  if (!dataDirectory) throw new Error("AMBIENCE_FIXTURE_DATA_DIR is required for a live-model fixture.");
+  await connectPiChatGptSubscription({
+    authentication: createManagedChatGptAuthentication(managedPaths({ dataDirectory })),
+  });
+} else {
+  provider.setResponses(Array.from({ length: 100 }, () => respond));
+  const model = provider.getModel();
+  registerProvider("openai-codex", {
+    api: model.api,
+    apiKey: "fixture-only-token",
+    baseUrl: model.baseUrl,
+  });
+}
 
 const fakeWhatsApp = createFakeWhatsAppHost();
-configureWhatsAppHost(fakeWhatsApp);
 const githubIngress = loadGitHubIngressSettings();
 const githubIngressStore = installGitHubIngressRuntime(
   githubIngress,
@@ -129,6 +153,11 @@ installGitHubProofResultDispatch(async (chatId, input) => {
 
 const source = await Effect.runPromise(Queue.unbounded<IncomingMessage>());
 const archive = createConversationArchive(process.env.APPLICATION_DB_PATH ?? join(process.cwd(), "application.sqlite"));
+configureWhatsAppParticipationPort({
+  say: fakeWhatsApp.say,
+  readThread: (chatId, limit) => archive.readThread(chatId, limit),
+  search: (chatId, query, limit) => archive.search(chatId, query, limit),
+});
 const inbox = createManagedChatInbox(archive, { allowed: () => true });
 let failAfterFlueAcceptance = false;
 Effect.runFork(
@@ -155,14 +184,21 @@ Effect.runFork(
 
 const app = new Hono();
 app.get("/health", (context) => context.json({ ok: true }));
-app.post("/test/coalescer", async (context) => {
-  const input = await context.req.json<IncomingMessage>();
+const archiveMessage = (input: IncomingMessage): void => {
   const archived = {
     ...input,
     kind: "text",
     reply: async () => ({ id: "unused", chatId: input.chatId, fromMe: true }),
   } as WhatsAppMessage;
   inbox.recorder.append(conversationArrival(archived));
+};
+app.post("/test/archive", async (context) => {
+  archiveMessage(await context.req.json<IncomingMessage>());
+  return context.body(null, 204);
+});
+app.post("/test/coalescer", async (context) => {
+  const input = await context.req.json<IncomingMessage>();
+  archiveMessage(input);
   const accepted = inbox.pendingArrival(input.chatId, input.id);
   if (accepted !== undefined) await Effect.runPromise(Queue.offer(source, accepted));
   return context.json({ accepted: true }, 202);

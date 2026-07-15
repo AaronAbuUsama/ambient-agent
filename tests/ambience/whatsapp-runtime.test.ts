@@ -19,8 +19,11 @@ import { createWhatsAppHost, runWhatsAppSession } from "../../src/host/whatsapp-
 import { createConversationArchive } from "../../src/intake/conversation-archive.ts";
 import { conversationArrival } from "../../src/intake/conversation-event.ts";
 import { createManagedChatInbox } from "../../src/intake/managed-chat-inbox.ts";
-import { createReadWhatsAppThreadTool, createSearchWhatsAppHistoryTool } from "../../src/tools/whatsapp/history.ts";
-import { createSayTool } from "../../src/tools/whatsapp/say.ts";
+import {
+  createReadWhatsAppThreadTool,
+  createSayTool,
+  createSearchWhatsAppHistoryTool,
+} from "../../src/capabilities/whatsapp-participation/tools.ts";
 import { createWhatsAppAccount } from "../../src/whatsapp/account.ts";
 
 const CHAT = "managed-31@g.us";
