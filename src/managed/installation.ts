@@ -2,8 +2,10 @@ import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import * as v from "valibot";
 
+import { APPLICATION_DATABASE_ID, APPLICATION_DATABASE_SCHEMA_VERSION } from "./database-versions.js";
 import { managedPaths, type ManagedPathEnvironment, type ManagedPaths } from "./paths.js";
 import {
   createManagedConfig,
@@ -570,6 +572,15 @@ const createPrivateStaging = async (paths: ManagedPaths): Promise<void> => {
   ]);
   await writeSecureFile(paths.applicationDatabase, "");
   await writeSecureFile(paths.flueDatabase, "");
+  const applicationDatabase = new DatabaseSync(paths.applicationDatabase);
+  try {
+    applicationDatabase.exec(`
+      PRAGMA application_id = ${APPLICATION_DATABASE_ID};
+      PRAGMA user_version = ${APPLICATION_DATABASE_SCHEMA_VERSION};
+    `);
+  } finally {
+    applicationDatabase.close();
+  }
 };
 
 const writePreparedConfiguration = async (

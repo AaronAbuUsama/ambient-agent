@@ -816,6 +816,12 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
             : `Refusing to start damaged managed data at ${paths.root}; run ambient-agent doctor.`,
         );
       }
+      const failedCheck = (await inspectManagedServices(paths)).find(({ state }) => state !== "ready");
+      if (failedCheck !== undefined) {
+        throw new Error(
+          `Refusing to start managed data at ${paths.root}: ${failedCheck.code}. Run ambient-agent doctor.`,
+        );
+      }
       await startRuntime(paths);
     });
 

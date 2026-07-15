@@ -164,14 +164,78 @@ validated managed setting.
 
 ## Backup, restore, and recovery
 
-Stop the foreground process cleanly before copying data. Back up the entire
-managed directory as one private unit: `config.json`, `credentials/`, both
-SQLite files, `whatsapp/`, and `logs/`. Preserve owner-only directory access
-and private credential-file modes. To restore, keep the process stopped, place
-the complete copy at the target managed-data path, run `ambient-agent status`
-and `ambient-agent doctor`, and only then run `ambient-agent start`. Never mix
-databases or credentials from different snapshots. Issue #58 adds the
-independent temporary-home replacement proof for this documented boundary.
+The supported backup boundary is one stopped local runtime. Stop the foreground
+process cleanly (or stop its process-manager unit), then confirm that the
+configured installation reports `runtimeState: "stopped"` before copying it:
+
+```bash
+export DATA_DIR=/absolute/path/to/the/managed-directory
+export BACKUP_ROOT=/absolute/path/to/a/private-backup-location
+export SNAPSHOT="$BACKUP_ROOT/ambient-agent-managed"
+
+if ! ambient-agent --data-dir "$DATA_DIR" status --json |
+  node -e 'const s=JSON.parse(require("node:fs").readFileSync(0,"utf8"));process.exit(s.runtimeState==="stopped"?0:1)'
+then
+  echo "Ambient Agent is not confirmed stopped; refusing to copy." >&2
+  exit 1
+fi
+
+umask 077
+mkdir -p "$BACKUP_ROOT" &&
+chmod 700 "$BACKUP_ROOT" &&
+test ! -e "$SNAPSHOT" &&
+cp -a "$DATA_DIR" "$SNAPSHOT"
+```
+
+`SNAPSHOT` is the complete managed directory and nothing else: `config.json`,
+`credentials/`, `application.sqlite`, `flue.sqlite`, `whatsapp/`, and `logs/`
+when present. Keep it private and preserve its ownership and modes. Do not copy
+the rest of the user's home directory, copy a running installation, select
+individual files, or combine databases and credentials from different
+snapshots.
+
+Restore while Ambient Agent is still stopped. The target below must not already
+exist; copying the complete directory avoids nesting a snapshot inside an old
+installation:
+
+```bash
+export RESTORE_DIR=/absolute/path/to/a/fresh/managed-directory
+
+umask 077
+mkdir -p "$(dirname "$RESTORE_DIR")" &&
+test ! -e "$RESTORE_DIR" &&
+cp -a "$SNAPSHOT" "$RESTORE_DIR" &&
+ambient-agent --data-dir "$RESTORE_DIR" status --json &&
+ambient-agent --data-dir "$RESTORE_DIR" doctor --json &&
+ambient-agent --data-dir "$RESTORE_DIR" start
+```
+
+The `&&` chain fail-stops before `start` if either validation command exits
+non-zero, and `start` repeats the local database and WhatsApp checks before it
+opens the runtime. Do not start if either command reports damaged permissions,
+invalid JSON, an incompatible declared database schema, failed SQLite
+integrity, or an invalid WhatsApp registration. Correct the copy or choose a
+different known-good snapshot and run both checks again.
+
+The application database check accepts the current `AMBT` application marker
+and schema version or the shipped unversioned predecessor (`0/0`), and in both
+cases requires either no user tables or positive table-shape evidence: the core
+tables must be present once populated, and every additional app-owned table
+must have the invariant columns shared by its supported predecessor and current
+forms. The Flue check accepts a file with no user tables or requires the exact
+schema version declared by the installed Flue runtime. Foreign, partial,
+missing-on-populated, and newer declared versions fail closed; this is not a
+promise to migrate arbitrary database formats.
+
+The packaged-runtime test replaces a stopped installation in a fresh temporary
+home and mechanically verifies the whole-directory copy, private modes,
+pre-start validation, Conversation Archive, pending and terminal intake,
+Operation Identities, the persisted WhatsApp identity, and canonical Ambience
+history continuing in the same Managed Chat. This proves the controlled local
+adapter and packaged filesystem boundary. It does not prove live provider
+credential portability, hot backups, cross-host restore, OS ACL portability,
+or external process-manager behavior; those require the stable-base live
+journey or deployment-specific human validation.
 
 Recovery is deliberately local and explicit:
 
