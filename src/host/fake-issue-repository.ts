@@ -8,18 +8,13 @@ import {
   type RepositoryRef,
 } from "../capabilities/issue-management/issue-repository.ts";
 import { repositoryName } from "../capabilities/issue-management/runtime.ts";
+import {
+  issueOperationMarker,
+  issueProviderBody,
+  parseIssueProviderBody,
+} from "./issue-operation-footer.ts";
 
-const operationMarker = (operationId: string): string => `<!-- ambience-operation:${operationId} -->`;
-const operationMarkerPattern = /<!-- ambience-operation:[^\r\n]+ -->/g;
-const providerBody = (body: string, markers: readonly string[]): string => {
-  const serialized = markers.length === 0 ? body : `${body}\n\n${[...new Set(markers)].join("\n\n")}`;
-  if (serialized.length > 65_536)
-    throw new Error("GitHub issue body exceeds 65536 characters after Operation Identity.");
-  return serialized;
-};
-const publicBody = (body: string): string =>
-  body.replaceAll(/\n\n<!-- ambience-operation:[^\r\n]+ -->/g, "").replaceAll(operationMarkerPattern, "");
-const publicRecord = (issue: Issue): Issue => ({ ...issue, body: publicBody(issue.body) });
+const publicRecord = (issue: Issue): Issue => ({ ...issue, body: parseIssueProviderBody(issue.body).publicBody });
 
 export type FakeIssueRepositoryEvent =
   | { kind: "search"; repository: string; query: string; matches: number[] }
@@ -133,7 +128,7 @@ export const createFakeIssueRepository = (): FakeIssueRepository => {
       }
       if (current.kind === "timeout") {
         if (current.afterMutation) {
-          seed({ repository, title, body: providerBody(body, [operationMarker(operation.id)]) });
+          seed({ repository, title, body: issueProviderBody(body, [issueOperationMarker(operation)]) });
         }
         events.push({
           kind: "create",
@@ -143,7 +138,7 @@ export const createFakeIssueRepository = (): FakeIssueRepository => {
         });
         throw new IssueMutationOutcomeUncertainError("GitHub create request timed out");
       }
-      const issue = seed({ repository, title, body: providerBody(body, [operationMarker(operation.id)]) });
+      const issue = seed({ repository, title, body: issueProviderBody(body, [issueOperationMarker(operation)]) });
       events.push({
         kind: "create",
         repository: repositoryName(repository),
@@ -170,7 +165,7 @@ export const createFakeIssueRepository = (): FakeIssueRepository => {
         throw current.error;
       }
       const apply = (): Issue => {
-        const existingMarkers = existing.body.match(operationMarkerPattern) ?? [];
+        const existingMarkers = parseIssueProviderBody(existing.body).markers;
         const milestone =
           changes.milestone === undefined
             ? existing.milestone
@@ -183,9 +178,9 @@ export const createFakeIssueRepository = (): FakeIssueRepository => {
           ...(changes.body === undefined
             ? {}
             : {
-                body: providerBody(changes.body, [
+                body: issueProviderBody(changes.body, [
                   ...(existingMarkers.length === 0 ? [] : [existingMarkers[0]!]),
-                  operationMarker(operation.id),
+                  issueOperationMarker(operation),
                 ]),
               }),
           ...(changes.labels === undefined ? {} : { labels: [...changes.labels] }),
@@ -217,8 +212,10 @@ export const createFakeIssueRepository = (): FakeIssueRepository => {
       return updated;
     },
     findCreated: async ({ repository, operation }) => {
-      const marker = `<!-- ambience-operation:${operation.id} -->`;
-      const matches = [...records(repository).values()].filter((issue) => issue.body.includes(marker));
+      const marker = issueOperationMarker(operation);
+      const matches = [...records(repository).values()].filter((issue) =>
+        parseIssueProviderBody(issue.body).markers.includes(marker),
+      );
       events.push({
         kind: "find-operation",
         repository: repositoryName(repository),

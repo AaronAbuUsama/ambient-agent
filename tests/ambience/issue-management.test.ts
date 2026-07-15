@@ -105,22 +105,55 @@ describe("production Issue Management tools", () => {
   });
 
   it("keeps provider Operation Identity markers out of the public issue body", () => {
+    const providerBody = githubIssueProviderBody("Visible body", [
+      "<!-- ambience-operation:create-id -->",
+      "<!-- ambience-operation:update-id -->",
+    ]);
     expect(
       githubIssueRecord(REPOSITORY, {
         number: 7,
         html_url: "https://github.com/acme/widgets/issues/7",
         title: "Visible title",
-        body: "Visible body\n\n<!-- ambience-operation:create-id -->\n\n<!-- ambience-operation:update-id -->",
+        body: providerBody,
         state: "open",
       }),
     ).toMatchObject({ body: "Visible body" });
   });
 
+  it("preserves marker-like user text and rejects reserved syntax in a new public body", () => {
+    const literal = "Document this literal: <!-- ambience-operation:example -->";
+    expect(
+      githubIssueRecord(REPOSITORY, {
+        number: 8,
+        html_url: "https://github.com/acme/widgets/issues/8",
+        title: "Literal marker documentation",
+        body: literal,
+        state: "open",
+      }),
+    ).toMatchObject({ body: literal });
+    expect(() => githubIssueProviderBody(literal, ["<!-- ambience-operation:create-id -->"])).toThrow(
+      "reserved Ambient Agent Operation Identity syntax",
+    );
+  });
+
+  it("reads the narrow legacy trailing UUID marker without treating arbitrary text as owned metadata", () => {
+    const legacyMarker = "<!-- ambience-operation:3f6f0d68-8890-4e1e-9ad8-066c473ad905 -->";
+    expect(
+      githubIssueRecord(REPOSITORY, {
+        number: 9,
+        html_url: "https://github.com/acme/widgets/issues/9",
+        title: "Legacy operation",
+        body: `Visible legacy body\n\n${legacyMarker}`,
+        state: "open",
+      }),
+    ).toMatchObject({ body: "Visible legacy body" });
+  });
+
   it("reserves provider body capacity for the stable create and latest update identities", () => {
     const body = "x".repeat(MAX_PUBLIC_ISSUE_BODY_LENGTH);
     const markers = [
-      `<!-- ambience-operation:${"c".repeat(200)} -->`,
-      `<!-- ambience-operation:${"u".repeat(200)} -->`,
+      "<!-- ambience-operation:3f6f0d68-8890-4e1e-9ad8-066c473ad905 -->",
+      "<!-- ambience-operation:91edb2df-77e4-4af8-9370-a8fc72972ed1 -->",
     ];
     expect(githubIssueProviderBody(body, markers).length).toBeLessThanOrEqual(GITHUB_ISSUE_BODY_LIMIT);
     expect(() => githubIssueProviderBody("x".repeat(GITHUB_ISSUE_BODY_LIMIT), markers)).toThrow(

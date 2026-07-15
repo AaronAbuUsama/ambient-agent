@@ -7,19 +7,15 @@ import type {
   OperationIdentity,
   RepositoryRef,
 } from "../capabilities/issue-management/issue-repository.ts";
+import {
+  issueOperationMarker,
+  issueProviderBody,
+  parseIssueProviderBody,
+} from "./issue-operation-footer.ts";
 
-const operationMarker = ({ id }: OperationIdentity): string => `<!-- ambience-operation:${id} -->`;
-const operationMarkerPattern = /<!-- ambience-operation:[^\r\n]+ -->/g;
 export const GITHUB_ISSUE_BODY_LIMIT = 65_536;
-export const githubIssueProviderBody = (body: string, markers: readonly string[]): string => {
-  const serialized = markers.length === 0 ? body : `${body}\n\n${[...new Set(markers)].join("\n\n")}`;
-  if (serialized.length > GITHUB_ISSUE_BODY_LIMIT) {
-    throw new Error(`GitHub issue body exceeds ${GITHUB_ISSUE_BODY_LIMIT} characters after Operation Identity.`);
-  }
-  return serialized;
-};
-const publicBody = (body: string): string =>
-  body.replaceAll(/\n\n<!-- ambience-operation:[^\r\n]+ -->/g, "").replaceAll(operationMarkerPattern, "");
+export const githubIssueProviderBody = (body: string, markers: readonly string[]): string =>
+  issueProviderBody(body, markers, GITHUB_ISSUE_BODY_LIMIT);
 const GITHUB_SEARCH_QUERY_LIMIT = 256;
 export const githubIssueSearchQuery = (repository: RepositoryRef, query: string): string => {
   const qualifiers = ` in:title,body repo:${repository.owner}/${repository.repo} is:issue`;
@@ -57,7 +53,7 @@ export const githubIssueRecord = (
     number: data.number,
     url: data.html_url,
     title: data.title,
-    body: publicBody(data.body ?? ""),
+    body: parseIssueProviderBody(data.body ?? "").publicBody,
     state: data.state === "closed" ? "closed" : "open",
     labels: (data.labels ?? []).flatMap((label) => {
       const name = typeof label === "string" ? label : label.name;
@@ -135,7 +131,7 @@ export const createOctokitIssueRepository = (token: string): IssueRepository => 
         owner: repository.owner,
         repo: repository.repo,
         title,
-        body: githubIssueProviderBody(body, [operationMarker(operation)]),
+        body: githubIssueProviderBody(body, [issueOperationMarker(operation)]),
         request: { signal },
       });
       return githubIssueRecord(repository, response.data);
@@ -148,8 +144,11 @@ export const createOctokitIssueRepository = (token: string): IssueRepository => 
         request: { signal },
       });
       githubIssueRecord(repository, current.data);
-      const existingMarkers = (current.data.body ?? "").match(operationMarkerPattern) ?? [];
-      const markers = [...(existingMarkers.length === 0 ? [] : [existingMarkers[0]!]), operationMarker(operation)];
+      const existingMarkers = parseIssueProviderBody(current.data.body ?? "").markers;
+      const markers = [
+        ...(existingMarkers.length === 0 ? [] : [existingMarkers[0]!]),
+        issueOperationMarker(operation),
+      ];
       const response = await octokit.rest.issues.update({
         owner: repository.owner,
         repo: repository.repo,
@@ -164,7 +163,7 @@ export const createOctokitIssueRepository = (token: string): IssueRepository => 
       return githubIssueRecord(repository, response.data);
     },
     findCreated: async ({ repository, operation, signal }) => {
-      const marker = operationMarker(operation);
+      const marker = issueOperationMarker(operation);
       for (const waitMillis of [0, 100, 250, 500, 1_000, 2_000]) {
         if (waitMillis > 0) await delay(waitMillis, undefined, { signal });
         const response = await octokit.rest.issues.listForRepo({
@@ -177,7 +176,10 @@ export const createOctokitIssueRepository = (token: string): IssueRepository => 
           request: { signal },
         });
         const matches = response.data
-          .filter((item) => item.pull_request === undefined && (item.body ?? "").includes(marker))
+          .filter(
+            (item) =>
+              item.pull_request === undefined && parseIssueProviderBody(item.body ?? "").markers.includes(marker),
+          )
           .map((item) => githubIssueRecord(repository, item));
         if (matches.length > 0) return matches;
       }
