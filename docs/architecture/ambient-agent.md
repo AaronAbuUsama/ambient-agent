@@ -1,6 +1,6 @@
 # Ambient Agent production architecture
 
-This is the ratified target for the next production rollout. It is an implementation map, not a claim about the currently shipped `whatsappd-github-agent` code: the existing proof workflow, environment-driven startup, and best-effort Coalescer admission remain the baseline being replaced.
+This is the ratified target and implementation map for the stable-base rollout. The integration branch now includes durable Managed Chat Windows and Admission Relay receipts; the remaining gaps below are not claims that those merged slices are still best-effort.
 
 ## Product
 
@@ -15,8 +15,6 @@ Ambience is the proper name of the continuing Flue Agent. There is one Ambience 
 | Current code | What it proves | Why it is not the stable base |
 | --- | --- | --- |
 | `src/agents/ambience.ts` constructs one flat `tools` array | One continuing Flue Agent can use WhatsApp tools and start a workflow | Skills and Capabilities are not represented; the Agent will become a catalogue of unrelated tools |
-| `src/coalescer/coalescer.ts` catches dispatch errors and then resets | Busy messages can be grouped into Windows | A failed or ambiguous handoff can lose a Window, and Windows have no stable identity |
-| `src/ambience/dispatch.ts` converts `DispatchReceipt` to `void` | Flue `dispatch()` accepts input for the correct `chatId` | The application cannot record or reconcile the Admission Receipt |
 | `src/app.ts`, `src/github/proof-runtime.ts`, and `src/host/whatsapp-runtime.ts` read global configuration | The complete hard-cut proof can run in one process | Startup is environment-driven, provider construction is mixed into the application entrypoint, and there is no guided installation |
 | `src/workflows/github-proof.ts` and `src/github/proof-operation.ts` perform a temporary issue round trip | Workflow result delivery and uncertain GitHub mutation handling were proven | It is a proof-shaped workflow rather than production Issue Management |
 | `package.json` exposes a publishable `ambient-agent` bin with managed `init`, `auth`, `status`, `doctor`, and foreground `start` paths | A packed tarball installs and runs the managed composition root on the supported POSIX floor | The package is not published yet, `config` remains rollout work, and production Issue Management is not complete |
@@ -187,6 +185,8 @@ type WindowDelivery =
 5. Replay only work proven never to have crossed the seam.
 6. Convert crash-interrupted or otherwise ambiguous attempts to `uncertain`; never automatically dispatch them again.
 7. Let `doctor` search canonical Agent history for positive evidence. Failure to find the Window does not prove it was never accepted, so an unresolved case requires an explicit operator resolution.
+
+An Uncertain Window is also a durable per-chat ordering barrier. Later Inbox arrivals remain withheld while unrelated chats continue. After positive reconciliation, the runtime reopens that chat from its durable backlog before accepting newer work.
 
 After Flue returns its receipt, its file-backed persistence adapter owns queue ordering, canonical conversation state, processing recovery, and conservative handling of interrupted tool work. Exactly one live Node process owns a given Ambience instance.
 

@@ -96,7 +96,7 @@ export const runWhatsAppSession = (
           replay: () => options.inbox.unwindowed(),
           accepted: (message) => options.inbox.pendingArrival(message.chatId, message.id),
         }),
-        makeAmbienceWindowDispatcher(options.dispatch),
+        makeAmbienceWindowDispatcher(options.inbox, options.dispatch),
         managedChatWindowStore(options.inbox),
         configLayer({ ...options.coalescer, botIds }),
       ),

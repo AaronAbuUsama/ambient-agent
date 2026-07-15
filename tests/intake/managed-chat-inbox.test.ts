@@ -148,6 +148,7 @@ describe("Managed Chat Inbox", () => {
     const windowedIds = inbox.pendingWindows().flatMap(({ messages }) => messages.map(({ id }) => id));
     expect(windowedIds).toEqual(["m1", "m2", "m3"]);
     expect(new Set(windowedIds).size).toBe(3);
+    expect(inbox.admission(window.id)).toEqual({ status: "pending", windowId: "window-stable-1" });
     archive.close();
 
     const reopenedArchive = createConversationArchive(path);
@@ -155,5 +156,75 @@ describe("Managed Chat Inbox", () => {
     expect(reopened.pendingWindows()).toEqual([window, secondWindow]);
     expect(reopened.unwindowed()).toEqual([]);
     reopenedArchive.close();
+  });
+
+  it("classifies pre-ledger Windows as Uncertain instead of blindly replaying them", () => {
+    const path = fixture();
+    const archive = createConversationArchive(path);
+    const inbox = createManagedChatInbox(archive, {
+      allowed: () => true,
+      createId: () => "legacy-window",
+    });
+    inbox.recorder.append(conversationArrival(message("m1")));
+    const window = inbox.createWindow({
+      chatId: "managed@g.us",
+      messages: inbox.unwindowed(),
+      reason: "debounce",
+    });
+    archive.transaction(({ database }) => database.exec("DROP TABLE managed_chat_admissions"));
+    archive.close();
+
+    const reopenedArchive = createConversationArchive(path);
+    const reopened = createManagedChatInbox(reopenedArchive, { allowed: () => true });
+    expect(reopened.pendingWindows()).toEqual([]);
+    expect(reopened.admission(window.id)).toEqual({
+      status: "uncertain",
+      windowId: "legacy-window",
+      attemptId: "legacy:legacy-window",
+      reason: "Window predates the admission ledger; prior delivery is unknown",
+    });
+    reopenedArchive.close();
+  });
+
+  it("keeps later same-chat arrivals behind an Uncertain Window across restart", () => {
+    const path = fixture();
+    const archive = createConversationArchive(path);
+    const inbox = createManagedChatInbox(archive, {
+      allowed: () => true,
+      createId: () => "uncertain-window",
+      createAttemptId: () => "uncertain-attempt",
+    });
+    inbox.recorder.append(conversationArrival(message("m1")));
+    const window = inbox.createWindow({
+      chatId: "managed@g.us",
+      messages: inbox.unwindowed(),
+      reason: "debounce",
+    });
+    const attempt = inbox.beginAdmission(window.id);
+    inbox.markUncertain(window.id, attempt.attemptId, "provider outcome unknown");
+    inbox.recorder.append(conversationArrival(message("m2")));
+    expect(inbox.unwindowed()).toEqual([]);
+    expect(inbox.pendingArrival("managed@g.us", "m2")).toBeUndefined();
+    archive.close();
+
+    const reopenedArchive = createConversationArchive(path);
+    const reopened = createManagedChatInbox(reopenedArchive, { allowed: () => true });
+    expect(reopened.unwindowed()).toEqual([]);
+    expect(reopened.pendingArrival("managed@g.us", "m2")).toBeUndefined();
+    expect(reopened.pendingWindows()).toEqual([]);
+
+    reopened.reconcileAdmission(window.id, {
+      dispatchId: "dispatch-observed",
+      acceptedAt: "2026-07-15T01:10:00.000Z",
+    });
+    expect(reopened.unwindowed()).toEqual([]);
+    expect(reopened.pendingArrival("managed@g.us", "m2")).toBeUndefined();
+    reopenedArchive.close();
+
+    const resumedArchive = createConversationArchive(path);
+    const resumed = createManagedChatInbox(resumedArchive, { allowed: () => true });
+    expect(resumed.unwindowed().map(({ id }) => id)).toEqual(["m2"]);
+    expect(resumed.pendingArrival("managed@g.us", "m2")?.id).toBe("m2");
+    resumedArchive.close();
   });
 });

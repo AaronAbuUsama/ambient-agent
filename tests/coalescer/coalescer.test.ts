@@ -18,7 +18,7 @@ import * as Coalescer from "../../src/coalescer/coalescer.ts";
 import { type CoalescerConfigValues, configLayer } from "../../src/coalescer/config.ts";
 import type { ConversationWindow, IncomingMessage } from "../../src/coalescer/events.ts";
 import { inMemoryWindowStore, queueEventSource, recordingWindowDispatcher } from "../../src/coalescer/mocks.ts";
-import { WindowDispatcher, WindowStore, WindowStoreError } from "../../src/coalescer/ports.ts";
+import { WindowDispatcher, WindowDispatchError, WindowStore, WindowStoreError } from "../../src/coalescer/ports.ts";
 
 const BOT = "bot@s.whatsapp.net";
 const CHAT = "team@g.us";
@@ -288,6 +288,60 @@ describe("Coalescer", () => {
     }),
   );
 
+  it.effect("isolates a failed startup admission to its chat while another chat replays and stays live", () =>
+    Effect.gen(function* () {
+      const source = yield* Queue.unbounded<IncomingMessage>();
+      const turns = yield* Ref.make<readonly ConversationWindow[]>([]);
+      const chatA = "blocked-a@g.us";
+      const chatB = "live-b@g.us";
+      const pendingA: ConversationWindow = {
+        id: "window-a-pending",
+        chatId: chatA,
+        messages: [mkMsg("A pending", { chatId: chatA })],
+        reason: "debounce",
+      };
+      const pendingB: ConversationWindow = {
+        id: "window-b-pending",
+        chatId: chatB,
+        messages: [mkMsg("B pending", { chatId: chatB })],
+        reason: "debounce",
+      };
+      let created = 0;
+      const store = Layer.succeed(WindowStore, {
+        pendingWindows: Effect.succeed([pendingA, pendingB]),
+        create: (draft) => Effect.succeed({ id: `window-live-${++created}`, ...draft }),
+      });
+      const dispatcher = Layer.succeed(WindowDispatcher, {
+        dispatch: (window) =>
+          window.chatId === chatA
+            ? Effect.fail(new WindowDispatchError({ cause: new Error("A outcome unknown") }))
+            : Ref.update(turns, (current) => [...current, window]),
+      });
+
+      yield* Effect.forkScoped(
+        Coalescer.run.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              queueEventSource(source),
+              dispatcher,
+              store,
+              configLayer({ botIds: [BOT], debounceWindow: WINDOW }),
+            ),
+          ),
+        ),
+      );
+      yield* TestClock.adjust(Duration.zero);
+      expect(yield* Ref.get(turns)).toEqual([pendingB]);
+
+      yield* Queue.offer(source, mkMsg("A later", { chatId: chatA, mentions: [BOT] }));
+      yield* Queue.offer(source, mkMsg("B later", { chatId: chatB, mentions: [BOT] }));
+      yield* TestClock.adjust(Duration.zero);
+
+      expect((yield* Ref.get(turns)).map(({ id }) => id)).toEqual(["window-b-pending", "window-live-1"]);
+      expect((yield* Ref.get(turns)).flatMap(texts)).toEqual(["B pending", "B later"]);
+    }),
+  );
+
   it.effect("does not consume new arrivals when the durable startup backlog cannot be read", () =>
     Effect.gen(function* () {
       const source = yield* Queue.unbounded<IncomingMessage>();
@@ -368,13 +422,12 @@ describe("Coalescer", () => {
     }),
   );
 
-  it.effect("resilience: a turn that dies (defect) does not wedge the chat — the next burst still fires", () =>
+  it.effect("fail-stops a chat after admission dies so a later Window cannot overtake it", () =>
     Effect.gen(function* () {
       const source = yield* Queue.unbounded<IncomingMessage>();
       const turns = yield* Ref.make<readonly ConversationWindow[]>([]);
       const calls = yield* Ref.make(0);
 
-      // A window dispatcher that throws (defect, not a typed error) on its first dispatch.
       const flakyDispatcher = Layer.succeed(WindowDispatcher, {
         dispatch: (window: ConversationWindow) =>
           Effect.gen(function* () {
@@ -397,18 +450,15 @@ describe("Coalescer", () => {
         ),
       );
 
-      // First burst fires → dispatch dies. The chat's actor must survive it.
       yield* Queue.offer(source, mkMsg("first"));
       yield* TestClock.adjust(WINDOW);
       expect(yield* Ref.get(calls)).toBe(1);
       expect(yield* Ref.get(turns)).toHaveLength(0);
 
-      // Second burst on the SAME chat proves the loop is still alive and debouncing.
       yield* Queue.offer(source, mkMsg("second"));
-      yield* TestClock.adjust(WINDOW);
-      const t = yield* Ref.get(turns);
-      expect(t).toHaveLength(1);
-      expect(texts(t[0]!)).toEqual(["second"]);
+      yield* TestClock.adjust(Duration.minutes(1));
+      expect(yield* Ref.get(calls)).toBe(1);
+      expect(yield* Ref.get(turns)).toEqual([]);
     }),
   );
 });
