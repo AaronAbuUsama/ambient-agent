@@ -94,14 +94,20 @@ const dispatchReceiptFrom = (record: ConversationRecord, window: ConversationWin
 export const findFlueAdmissionReceipt = async (
   store: ConversationStreamStore,
   window: ConversationWindow,
+  maxRecords = 100_000,
 ): Promise<DispatchReceipt | undefined> => {
   const path = `agents/ambience/${window.chatId}`;
   let offset = "-1";
   const receipts = new Map<string, DispatchReceipt>();
+  let recordsRead = 0;
   while (true) {
     const page = await store.read(path, { offset, limit: 1_000 });
     for (const batch of page.batches) {
       for (const record of batch.records) {
+        recordsRead += 1;
+        if (recordsRead > maxRecords) {
+          throw new Error(`Flue admission reconciliation exceeded its ${maxRecords}-record read bound.`);
+        }
         const receipt = dispatchReceiptFrom(record, window);
         if (receipt !== undefined) receipts.set(`${receipt.dispatchId}\0${receipt.acceptedAt}`, receipt);
       }

@@ -186,6 +186,62 @@ describe("Managed Chat Inbox", () => {
     reopenedArchive.close();
   });
 
+  it("migrates the pre-operator admission schema without changing existing state", () => {
+    const path = fixture();
+    const archive = createConversationArchive(path);
+    const inbox = createManagedChatInbox(archive, {
+      allowed: () => true,
+      createId: () => "pre-operator-window",
+    });
+    inbox.recorder.append(conversationArrival(message("m1")));
+    inbox.createWindow({ chatId: "managed@g.us", messages: inbox.unwindowed(), reason: "debounce" });
+    archive.transaction(({ database }) =>
+      database.exec(`
+        DROP TABLE managed_chat_admission_resolutions;
+        DROP INDEX managed_chat_admissions_status_idx;
+        ALTER TABLE managed_chat_admissions RENAME TO managed_chat_admissions_new;
+        CREATE TABLE managed_chat_admissions (
+          window_id TEXT PRIMARY KEY,
+          status TEXT NOT NULL CHECK (status IN ('pending', 'dispatching', 'admitted', 'uncertain')),
+          attempt_id TEXT,
+          dispatch_id TEXT,
+          accepted_at TEXT,
+          reason TEXT,
+          updated_at_ms INTEGER NOT NULL,
+          FOREIGN KEY (window_id) REFERENCES managed_chat_windows(window_id),
+          CHECK (
+            (status = 'pending' AND attempt_id IS NULL AND dispatch_id IS NULL AND accepted_at IS NULL AND reason IS NULL)
+            OR (status = 'dispatching' AND attempt_id IS NOT NULL AND dispatch_id IS NULL AND accepted_at IS NULL AND reason IS NULL)
+            OR (status = 'admitted' AND attempt_id IS NOT NULL AND dispatch_id IS NOT NULL AND accepted_at IS NOT NULL AND reason IS NULL)
+            OR (status = 'uncertain' AND attempt_id IS NOT NULL AND dispatch_id IS NULL AND accepted_at IS NULL AND reason IS NOT NULL)
+          )
+        );
+        INSERT INTO managed_chat_admissions SELECT * FROM managed_chat_admissions_new;
+        DROP TABLE managed_chat_admissions_new;
+      `),
+    );
+    archive.close();
+
+    const reopenedArchive = createConversationArchive(path);
+    const reopened = createManagedChatInbox(reopenedArchive, { allowed: () => true });
+    expect(reopened.admission("pre-operator-window")).toEqual({
+      status: "pending",
+      windowId: "pre-operator-window",
+    });
+    reopenedArchive.transaction(({ database }) => {
+      const sql = database
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'managed_chat_admissions'")
+        .get() as { readonly sql: string };
+      expect(sql.sql).toContain("'abandoned'");
+      expect(
+        database
+          .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'managed_chat_admission_resolutions'")
+          .get(),
+      ).toBeDefined();
+    });
+    reopenedArchive.close();
+  });
+
   it("keeps later same-chat arrivals behind an Uncertain Window across restart", () => {
     const path = fixture();
     const archive = createConversationArchive(path);

@@ -66,6 +66,13 @@ ambient-agent auth              # replace missing, malformed, or rejected ChatGP
 ambient-agent doctor
 ambient-agent doctor --refresh  # safely rotate an expired credential
 ambient-agent doctor --live     # opt-in real model readiness request
+
+# If status or doctor prints an Uncertain reference, inspect first, then choose explicitly:
+ambient-agent doctor --retry admission:<windowId>
+ambient-agent doctor --retry mutation:<operationId>
+ambient-agent doctor --accept-observed mutation:<operationId>
+ambient-agent doctor --abandon admission:<windowId>
+ambient-agent doctor --abandon mutation:<operationId>
 ```
 
 After the package is published, `npx ambient-agent` will be the equivalent
@@ -79,6 +86,28 @@ installation and does not replace credentials. Use `ambient-agent auth` for an
 explicit ChatGPT reauthentication without changing the rest of the installation.
 Managed JSON diagnostics read at most 1 MiB per file and fail closed if a file
 exceeds that limit or changes during inspection.
+
+`status` is read-only and reports Uncertain counts and mutation kinds; on the
+supported stopped-runtime boundary it also counts durable `dispatching` and
+`attempting` rows as degraded instead of claiming interrupted work is healthy.
+It does not print chat content, issue/comment bodies, credentials, or stored
+provider errors. `doctor` examines at most 25 Uncertain items per run, rotates
+unresolved items fairly across later runs while reserving capacity for
+admissions and mutations, and makes one bounded read-only observation at each
+owning boundary; canonical Flue
+inspection also stops after 100,000 records rather than scanning without
+limit. A canonical Flue receipt or provider Operation Identity is
+enough to reconcile automatically. A desired state without attributable
+Operation Identity is reported as `observed` and requires
+`--accept-observed`. Absence is not proof of non-delivery and never triggers an
+automatic retry. `--retry` and `--abandon` are explicit operator decisions;
+both preserve the prior attempt record, and a GitHub retry uses a fresh
+Operation Identity.
+
+These commands assume the supported local runtime: the foreground process is
+stopped and one machine owns `application.sqlite` and `flue.sqlite`. They do
+not implement PID probing, stale-lock recovery, active-active ownership, or
+cross-host reconciliation.
 
 For current source development, build and use the same managed CLI path:
 

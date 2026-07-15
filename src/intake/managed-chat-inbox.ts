@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 
 import type { ConversationWindow, ConversationWindowDraft, FireReason, IncomingMessage } from "../coalescer/events.js";
 import { Effect, Layer } from "effect";
@@ -31,7 +33,7 @@ interface AssignmentRow {
 
 interface AdmissionRow {
   window_id: string;
-  status: "pending" | "dispatching" | "admitted" | "uncertain";
+  status: "pending" | "dispatching" | "admitted" | "uncertain" | "abandoned";
   attempt_id: string | null;
   dispatch_id: string | null;
   accepted_at: string | null;
@@ -52,7 +54,39 @@ export type WindowAdmission =
       readonly windowId: string;
       readonly attemptId: string;
       readonly reason: string;
+    }
+  | {
+      readonly status: "abandoned";
+      readonly windowId: string;
+      readonly attemptId: string;
+      readonly reason: string;
     };
+
+export interface UncertainAdmissionRecord {
+  readonly windowId: string;
+  readonly chatId: string;
+  readonly windowReason: FireReason;
+  readonly attemptId: string;
+  readonly reason: string;
+}
+
+export interface AdmissionResolutionRecord {
+  readonly windowId: string;
+  readonly attemptId: string;
+  readonly resolution: "reconciled" | "retried" | "abandoned";
+  readonly operatorReason: string;
+  readonly resolvedAt: string;
+}
+
+export interface ManagedChatAdmissionOperator {
+  uncertain(): readonly UncertainAdmissionRecord[];
+  markExamined(windowId: string, attemptId: string, examinedAt: string): void;
+  reconcile(windowId: string, receipt: WindowAdmissionReceipt, resolvedAt: string): WindowAdmission;
+  retry(windowId: string, operatorReason: string, resolvedAt: string): WindowAdmission;
+  abandon(windowId: string, operatorReason: string, resolvedAt: string): WindowAdmission;
+  resolutions(windowId?: string): readonly AdmissionResolutionRecord[];
+  close(): void;
+}
 
 export interface WindowAdmissionReceipt {
   readonly dispatchId: string;
@@ -113,6 +147,78 @@ const acceptedArrival = (
   event.payload.live &&
   allowed(event.chatId, event.payload.isGroup);
 
+const admissionTable = `
+  CREATE TABLE managed_chat_admissions (
+    window_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'dispatching', 'admitted', 'uncertain', 'abandoned')),
+    attempt_id TEXT,
+    dispatch_id TEXT,
+    accepted_at TEXT,
+    reason TEXT,
+    updated_at_ms INTEGER NOT NULL,
+    FOREIGN KEY (window_id) REFERENCES managed_chat_windows(window_id),
+    CHECK (
+      (status = 'pending' AND attempt_id IS NULL AND dispatch_id IS NULL AND accepted_at IS NULL AND reason IS NULL)
+      OR (status = 'dispatching' AND attempt_id IS NOT NULL AND dispatch_id IS NULL AND accepted_at IS NULL AND reason IS NULL)
+      OR (status = 'admitted' AND attempt_id IS NOT NULL AND dispatch_id IS NOT NULL AND accepted_at IS NOT NULL AND reason IS NULL)
+      OR (status IN ('uncertain', 'abandoned') AND attempt_id IS NOT NULL AND dispatch_id IS NULL AND accepted_at IS NULL AND reason IS NOT NULL)
+    )
+  ) STRICT
+`;
+
+const ensureAdmissionOperatorSchema = (database: DatabaseSync, withinTransaction = false): void => {
+  const existing = database
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'managed_chat_admissions'")
+    .get() as { readonly sql: string } | undefined;
+  if (existing !== undefined && !existing.sql.includes("'abandoned'")) {
+    const migrate = `
+      DROP INDEX IF EXISTS managed_chat_admissions_status_idx;
+      ALTER TABLE managed_chat_admissions RENAME TO managed_chat_admissions_legacy;
+      ${admissionTable};
+      INSERT INTO managed_chat_admissions
+        (window_id, status, attempt_id, dispatch_id, accepted_at, reason, updated_at_ms)
+      SELECT window_id, status, attempt_id, dispatch_id, accepted_at, reason, updated_at_ms
+        FROM managed_chat_admissions_legacy;
+      DROP TABLE managed_chat_admissions_legacy;
+    `;
+    if (withinTransaction) database.exec(migrate);
+    else {
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        database.exec(migrate);
+        database.exec("COMMIT");
+      } catch (cause) {
+        try {
+          database.exec("ROLLBACK");
+        } catch {
+          // Preserve the migration failure that triggered rollback.
+        }
+        throw cause;
+      }
+    }
+  }
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS managed_chat_admissions_status_idx
+      ON managed_chat_admissions(status, updated_at_ms, window_id);
+    CREATE TABLE IF NOT EXISTS managed_chat_admission_resolutions (
+      window_id TEXT NOT NULL,
+      attempt_id TEXT NOT NULL,
+      resolution TEXT NOT NULL CHECK (resolution IN ('reconciled', 'retried', 'abandoned')),
+      operator_reason TEXT NOT NULL,
+      resolved_at TEXT NOT NULL,
+      PRIMARY KEY (window_id, attempt_id),
+      FOREIGN KEY (window_id) REFERENCES managed_chat_windows(window_id)
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS managed_chat_admission_examinations (
+      window_id TEXT NOT NULL,
+      attempt_id TEXT NOT NULL,
+      examined_at TEXT NOT NULL,
+      PRIMARY KEY (window_id, attempt_id),
+      FOREIGN KEY (window_id) REFERENCES managed_chat_windows(window_id)
+    ) STRICT;
+  `);
+};
+
 export const createManagedChatInbox = (
   archive: ConversationArchive,
   options: CreateManagedChatInboxOptions,
@@ -145,7 +251,7 @@ export const createManagedChatInbox = (
         ON managed_chat_inbox(chat_id, inbox_sequence);
       CREATE TABLE IF NOT EXISTS managed_chat_admissions (
         window_id TEXT PRIMARY KEY,
-        status TEXT NOT NULL CHECK (status IN ('pending', 'dispatching', 'admitted', 'uncertain')),
+        status TEXT NOT NULL CHECK (status IN ('pending', 'dispatching', 'admitted', 'uncertain', 'abandoned')),
         attempt_id TEXT,
         dispatch_id TEXT,
         accepted_at TEXT,
@@ -156,12 +262,13 @@ export const createManagedChatInbox = (
           (status = 'pending' AND attempt_id IS NULL AND dispatch_id IS NULL AND accepted_at IS NULL AND reason IS NULL)
           OR (status = 'dispatching' AND attempt_id IS NOT NULL AND dispatch_id IS NULL AND accepted_at IS NULL AND reason IS NULL)
           OR (status = 'admitted' AND attempt_id IS NOT NULL AND dispatch_id IS NOT NULL AND accepted_at IS NOT NULL AND reason IS NULL)
-          OR (status = 'uncertain' AND attempt_id IS NOT NULL AND dispatch_id IS NULL AND accepted_at IS NULL AND reason IS NOT NULL)
+          OR (status IN ('uncertain', 'abandoned') AND attempt_id IS NOT NULL AND dispatch_id IS NULL AND accepted_at IS NULL AND reason IS NOT NULL)
         )
       );
       CREATE INDEX IF NOT EXISTS managed_chat_admissions_status_idx
         ON managed_chat_admissions(status, updated_at_ms, window_id);
     `);
+    ensureAdmissionOperatorSchema(database, true);
 
     database
       .prepare(`
@@ -237,6 +344,13 @@ export const createManagedChatInbox = (
       case "uncertain":
         return {
           status: "uncertain",
+          windowId: row.window_id,
+          attemptId: row.attempt_id!,
+          reason: row.reason!,
+        };
+      case "abandoned":
+        return {
+          status: "abandoned",
           windowId: row.window_id,
           attemptId: row.attempt_id!,
           reason: row.reason!,
@@ -487,6 +601,192 @@ export const createManagedChatInbox = (
         return readAdmission(database, windowId)!;
       });
     },
+  };
+};
+
+const operatorTimestamp = (value: string): number => {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) throw new Error("An admission resolution requires a valid resolvedAt timestamp.");
+  return timestamp;
+};
+
+const operatorReason = (value: string): string => {
+  const normalized = value.trim();
+  if (!normalized) throw new Error("An admission resolution requires an operator reason.");
+  return normalized;
+};
+
+export const createManagedChatAdmissionOperator = (databasePath: string): ManagedChatAdmissionOperator => {
+  mkdirSync(dirname(databasePath), { recursive: true });
+  const database = new DatabaseSync(databasePath);
+  database.exec("PRAGMA busy_timeout = 5000");
+  ensureAdmissionOperatorSchema(database);
+  const read = (windowId: string): WindowAdmission | undefined => {
+    const row = database
+      .prepare(`
+        SELECT window_id, status, attempt_id, dispatch_id, accepted_at, reason
+          FROM managed_chat_admissions
+         WHERE window_id = ?
+      `)
+      .get(windowId) as unknown as AdmissionRow | undefined;
+    if (row === undefined) return undefined;
+    switch (row.status) {
+      case "pending":
+        return { status: "pending", windowId };
+      case "dispatching":
+        return { status: "dispatching", windowId, attemptId: row.attempt_id! };
+      case "admitted":
+        return { status: "admitted", windowId, dispatchId: row.dispatch_id!, acceptedAt: row.accepted_at! };
+      case "uncertain":
+        return { status: "uncertain", windowId, attemptId: row.attempt_id!, reason: row.reason! };
+      case "abandoned":
+        return { status: "abandoned", windowId, attemptId: row.attempt_id!, reason: row.reason! };
+    }
+  };
+  const uncertain = (windowId: string): Extract<WindowAdmission, { readonly status: "uncertain" }> => {
+    const admission = read(windowId);
+    if (admission?.status !== "uncertain") throw new Error(`Managed Chat Window ${windowId} is not Uncertain.`);
+    return admission;
+  };
+  const transaction = <T>(work: () => T): T => {
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = work();
+      database.exec("COMMIT");
+      return result;
+    } catch (cause) {
+      try {
+        database.exec("ROLLBACK");
+      } catch {
+        // Preserve the transition failure that triggered rollback.
+      }
+      throw cause;
+    }
+  };
+  const recordResolution = (
+    admission: Extract<WindowAdmission, { readonly status: "uncertain" }>,
+    resolution: AdmissionResolutionRecord["resolution"],
+    reason: string,
+    resolvedAt: string,
+  ): void => {
+    database
+      .prepare(`
+        INSERT INTO managed_chat_admission_resolutions
+          (window_id, attempt_id, resolution, operator_reason, resolved_at)
+        VALUES (?, ?, ?, ?, ?)
+      `)
+      .run(admission.windowId, admission.attemptId, resolution, operatorReason(reason), resolvedAt);
+  };
+  return {
+    uncertain: () =>
+      (
+        database
+          .prepare(`
+            SELECT a.window_id, w.chat_id, w.reason AS window_reason, a.attempt_id, a.reason
+              FROM managed_chat_admissions a
+              JOIN managed_chat_windows w ON w.window_id = a.window_id
+              LEFT JOIN managed_chat_admission_examinations e
+                ON e.window_id = a.window_id AND e.attempt_id = a.attempt_id
+             WHERE a.status = 'uncertain'
+             ORDER BY e.examined_at IS NOT NULL, e.examined_at, a.updated_at_ms, a.window_id
+          `)
+          .all() as unknown as Array<{
+          readonly window_id: string;
+          readonly chat_id: string;
+          readonly window_reason: FireReason;
+          readonly attempt_id: string;
+          readonly reason: string;
+        }>
+      ).map((row) => ({
+        windowId: row.window_id,
+        chatId: row.chat_id,
+        windowReason: row.window_reason,
+        attemptId: row.attempt_id,
+        reason: row.reason,
+      })),
+    markExamined: (windowId, attemptId, examinedAt) => {
+      const admission = uncertain(windowId);
+      if (admission.attemptId !== attemptId) {
+        throw new Error(`Managed Chat Window ${windowId} no longer has attempt ${attemptId}.`);
+      }
+      database
+        .prepare(`
+          INSERT INTO managed_chat_admission_examinations (window_id, attempt_id, examined_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(window_id, attempt_id) DO UPDATE SET examined_at = excluded.examined_at
+        `)
+        .run(windowId, attemptId, examinedAt);
+    },
+    reconcile: (windowId, receipt, resolvedAt) => {
+      if (!receipt.dispatchId.trim() || !Number.isFinite(Date.parse(receipt.acceptedAt))) {
+        throw new Error("A valid Flue admission receipt is required for reconciliation.");
+      }
+      return transaction(() => {
+        const admission = uncertain(windowId);
+        recordResolution(admission, "reconciled", "Canonical Flue admission receipt observed", resolvedAt);
+        const result = database
+          .prepare(`
+            UPDATE managed_chat_admissions
+               SET status = 'admitted', dispatch_id = ?, accepted_at = ?, reason = NULL, updated_at_ms = ?
+             WHERE window_id = ? AND status = 'uncertain' AND attempt_id = ?
+          `)
+          .run(receipt.dispatchId, receipt.acceptedAt, operatorTimestamp(resolvedAt), windowId, admission.attemptId);
+        if (result.changes !== 1) throw new Error(`Managed Chat Window ${windowId} could not be reconciled.`);
+        return read(windowId)!;
+      });
+    },
+    retry: (windowId, reason, resolvedAt) =>
+      transaction(() => {
+        const admission = uncertain(windowId);
+        recordResolution(admission, "retried", reason, resolvedAt);
+        const result = database
+          .prepare(`
+            UPDATE managed_chat_admissions
+               SET status = 'pending', attempt_id = NULL, reason = NULL, updated_at_ms = ?
+             WHERE window_id = ? AND status = 'uncertain' AND attempt_id = ?
+          `)
+          .run(operatorTimestamp(resolvedAt), windowId, admission.attemptId);
+        if (result.changes !== 1) throw new Error(`Managed Chat Window ${windowId} could not be authorized for retry.`);
+        return read(windowId)!;
+      }),
+    abandon: (windowId, reason, resolvedAt) =>
+      transaction(() => {
+        const admission = uncertain(windowId);
+        recordResolution(admission, "abandoned", reason, resolvedAt);
+        const result = database
+          .prepare(`
+            UPDATE managed_chat_admissions
+               SET status = 'abandoned', updated_at_ms = ?
+             WHERE window_id = ? AND status = 'uncertain' AND attempt_id = ?
+          `)
+          .run(operatorTimestamp(resolvedAt), windowId, admission.attemptId);
+        if (result.changes !== 1) throw new Error(`Managed Chat Window ${windowId} could not be abandoned.`);
+        return read(windowId)!;
+      }),
+    resolutions: (windowId) =>
+      (
+        database
+          .prepare(`
+            SELECT window_id, attempt_id, resolution, operator_reason, resolved_at
+              FROM managed_chat_admission_resolutions
+             WHERE (? IS NULL OR window_id = ?)
+             ORDER BY resolved_at, window_id, attempt_id
+          `)
+          .all(windowId ?? null, windowId ?? null) as unknown as Array<{
+          readonly window_id: string;
+          readonly attempt_id: string;
+          readonly resolution: AdmissionResolutionRecord["resolution"];
+          readonly operator_reason: string;
+          readonly resolved_at: string;
+        }>
+      ).map((row) => ({
+        windowId: row.window_id,
+        attemptId: row.attempt_id,
+        resolution: row.resolution,
+        operatorReason: row.operator_reason,
+        resolvedAt: row.resolved_at,
+      })),
+    close: () => database.close(),
   };
 };
 

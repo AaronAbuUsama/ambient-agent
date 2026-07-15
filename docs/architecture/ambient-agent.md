@@ -12,13 +12,13 @@ Ambience is the proper name of the continuing Flue Agent. There is one Ambience 
 
 ## Current stable-base progress
 
-| Current code                                                                                                                            | What it proves                                                                                                            | Why it is not the stable base                                                                                                     |
-| --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `src/agents/ambience.ts` registers versioned WhatsApp Participation and Issue Management Skills with cohesive Tool factories            | One continuing Flue Agent can privately process every Window and manage the supported issue journey                       | Operator uncertainty controls and the final packed runtime composition remain in later DAG issues                                 |
-| `src/app.ts` and `src/host/whatsapp-runtime.ts` still consume a process-local environment bridge prepared from the managed installation | The validated managed setup owns credentials and configuration without user-authored environment files                    | #11 still owns the final explicit composition root and complete packed command integration                                        |
-| `src/capabilities/issue-management/` owns the supported issue journey and a durable Operation Identity ledger                           | Authorized creation, correction, discussion, and lifecycle mutations preserve explicit proof boundaries                  | #57 exposes operator resolution for Uncertain operations                                                                          |
-| `src/github/` verifies, routes, deduplicates, and admits provider deliveries through `application.sqlite`                               | A mapped delivery reaches one continuing Ambience with a retained Flue receipt across duplicate and restart cases         | #57 exposes operator resolution for any Uncertain admission                                                                       |
-| `package.json` exposes a publishable `ambient-agent` bin with managed `init`, `auth`, `status`, `doctor`, and foreground `start` paths  | A packed tarball installs and runs the managed composition root on the supported POSIX floor                              | The package is not published yet and #11 still owns final composition and `config` rollout                                        |
+| Current code                                                                                                                            | What it proves                                                                                                    | Why it is not the stable base                                                                     |
+| --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `src/agents/ambience.ts` registers versioned WhatsApp Participation and Issue Management Skills with cohesive Tool factories            | One continuing Flue Agent can privately process every Window and manage the supported issue journey               | Operator uncertainty controls and the final packed runtime composition remain in later DAG issues |
+| `src/app.ts` and `src/host/whatsapp-runtime.ts` still consume a process-local environment bridge prepared from the managed installation | The validated managed setup owns credentials and configuration without user-authored environment files            | #11 still owns the final explicit composition root and complete packed command integration        |
+| `src/capabilities/issue-management/` owns the supported issue journey and a durable Operation Identity ledger                           | Authorized creation, correction, discussion, and lifecycle mutations preserve explicit proof boundaries           | #57 exposes operator resolution for Uncertain operations                                          |
+| `src/github/` verifies, routes, deduplicates, and admits provider deliveries through `application.sqlite`                               | A mapped delivery reaches one continuing Ambience with a retained Flue receipt across duplicate and restart cases | #57 exposes operator resolution for any Uncertain admission                                       |
+| `package.json` exposes a publishable `ambient-agent` bin with managed `init`, `auth`, `status`, `doctor`, and foreground `start` paths  | A packed tarball installs and runs the managed composition root on the supported POSIX floor                      | The package is not published yet and #11 still owns final composition and `config` rollout        |
 
 The rollout replaces these paths. It does not layer a second production path beside them.
 
@@ -230,6 +230,10 @@ npx ambient-agent status       # read-only state and health
 npx ambient-agent doctor       # offline configuration, credential and DB diagnostics
 npx ambient-agent doctor --refresh # opt-in credential refresh verification
 npx ambient-agent doctor --live    # opt-in real model request through production auth
+npx ambient-agent doctor --retry admission:<windowId> # explicit requeue after observation
+npx ambient-agent doctor --retry mutation:<operationId> # explicit new Operation Identity
+npx ambient-agent doctor --accept-observed mutation:<operationId>
+npx ambient-agent doctor --abandon admission:<windowId>|mutation:<operationId>
 ```
 
 Commander 15 with `@commander-js/extra-typings` owns command parsing; Clack owns interactive prompts. The package requires Node `>=22.19.0`, the effective current Flue floor. A system process manager owns background supervision.
@@ -246,6 +250,12 @@ Evaluation uses the production Flue HTTP interface through `@flue/sdk` and `vite
 - Ordering is stable per chat and independent across chats.
 - `pending`, `dispatching`, `admitted`, and `uncertain` transitions obey their invariants across restart injection points.
 - No Uncertain admission or GitHub mutation is automatically repeated.
+- `status` reads Uncertain counts without opening a writable database handle or exposing stored content and errors.
+- On the documented stopped-runtime boundary, `status` counts durable `dispatching` admissions and `attempting` mutations as degraded; `doctor` conservatively promotes them to Uncertain before provider reads and never repeats them automatically.
+- `doctor` examines at most 25 items per invocation, rotates examination order so unresolved work cannot starve later records, reserves capacity for both admissions and mutations, caps each GitHub read at ten seconds, and caps canonical Flue inspection at 100,000 records. Canonical receipts and provider Operation Identity reconcile automatically; desired state alone requires explicit acceptance.
+- A provider-success/local-ledger-failure split remains Uncertain. It is never converted into a terminal provider failure merely because completion persistence failed.
+- Explicit admission retry archives the Uncertain attempt and returns the Window to `pending`; explicit GitHub retry archives the prior operation and performs the same stored mutation under a fresh Operation Identity. Explicit abandonment is terminal and retained in the audit.
+- These transitions prove local, single-owner process replacement only. They add no PID liveness checks, stale-lock protocol, cross-process coordinator, or cross-host recovery.
 - Issue and comment Tools enforce repository scope and return structured provider state.
 - Configuration rejects embedded secrets, unsafe permissions, and missing references.
 

@@ -11,6 +11,15 @@ import { managedPaths, type ManagedPaths } from "../managed/paths.js";
 import { loadManagedRuntimeEnvironment } from "../managed/runtime-environment.js";
 import { installManagedRuntimeDependencies } from "../managed/runtime-dependencies.js";
 import {
+  createUncertainWorkController,
+  inspectUncertainWorkStatus,
+  type UncertainActionResult,
+  type UncertainDoctorReport,
+  type UncertainWorkController,
+  type UncertainWorkRef,
+  type UncertainWorkStatus,
+} from "../managed/uncertain-work.js";
+import {
   type ChatGptOAuthAdapter,
   type ChatGptAuthentication,
   type ChatGptAuthenticationStatus,
@@ -25,6 +34,11 @@ import {
 import { discoverGitHubCredential, discoverOriginRepository, verifyGitHubRepositoryAccess } from "../setup/github.js";
 import { runFirstRunSetup, type FirstRunPrompts, type FirstRunServices, type SetupReview } from "../setup/first-run.js";
 import { createWhatsAppAccount } from "../whatsapp/account.js";
+import { createConversationArchive } from "../intake/conversation-archive.js";
+import { createManagedChatAdmissionOperator, createManagedChatInbox } from "../intake/managed-chat-inbox.js";
+import { createFlueAdmissionEvidenceSource } from "../intake/admission-relay.js";
+import { createIssueOperationStore } from "../capabilities/issue-management/operation-store.js";
+import { createOctokitIssueRepository } from "../host/github-issue-repository.js";
 
 export interface CliOutput {
   readonly stdout: (text: string) => void;
@@ -47,6 +61,8 @@ export interface CliDependencies {
     authentication: ChatGptAuthentication,
     signal?: AbortSignal,
   ) => Promise<ChatGptReadinessReceipt>;
+  readonly uncertainWorkFor?: (paths: ManagedPaths) => Promise<UncertainWorkController>;
+  readonly inspectUncertainWork?: (databasePath: string) => UncertainWorkStatus;
 }
 
 export type StartRuntime = (paths: ManagedPaths) => Promise<void>;
@@ -159,9 +175,24 @@ const renderInspection = (
   inspection: InstallationInspection,
   authentication: ChatGptAuthenticationStatus,
   liveCheck: ChatGptReadinessReceipt | undefined,
+  uncertainWork: UncertainWorkStatus | undefined,
+  uncertainDoctor: UncertainDoctorReport | undefined,
+  uncertainAction: UncertainActionResult | undefined,
   json: boolean,
 ): string => {
-  if (json) return `${JSON.stringify({ ...inspection, modelAuthentication: authentication, liveCheck }, null, 2)}\n`;
+  if (json)
+    return `${JSON.stringify(
+      {
+        ...inspection,
+        modelAuthentication: authentication,
+        liveCheck,
+        uncertainWork,
+        uncertainDoctor,
+        uncertainAction,
+      },
+      null,
+      2,
+    )}\n`;
   const lines = [`Ambient Agent: ${inspection.state}`, `Data directory: ${inspection.dataDirectory}`];
   for (const item of inspection.diagnostics) {
     lines.push(`[${item.code}] ${item.message}`, `  Path: ${item.path}`, `  Fix: ${item.remediation}`);
@@ -189,6 +220,29 @@ const renderInspection = (
   if (liveCheck !== undefined) {
     lines.push(
       `ChatGPT live readiness: ${liveCheck.request}${liveCheck.reason === undefined ? "" : ` (${liveCheck.reason})`}`,
+    );
+  }
+  if (uncertainWork !== undefined) {
+    lines.push(
+      `Uncertain work: ${uncertainWork.health} (${uncertainWork.admissions} admissions, ${uncertainWork.externalMutations} external mutations)`,
+    );
+    if (uncertainWork.total > 0) {
+      lines.push("  Fix: Run ambient-agent doctor, then choose --retry, --accept-observed, or --abandon explicitly.");
+    }
+  }
+  if (uncertainDoctor !== undefined) {
+    for (const item of uncertainDoctor.diagnoses) {
+      lines.push(`  [${item.outcome}] ${item.ref}: ${item.evidence}`);
+    }
+    if (uncertainDoctor.deferred > 0) {
+      lines.push(`  ${uncertainDoctor.deferred} additional Uncertain items were deferred to the next doctor run.`);
+    }
+  }
+  if (uncertainAction !== undefined) {
+    lines.push(
+      `Uncertain action: ${uncertainAction.ref} -> ${uncertainAction.outcome}${
+        uncertainAction.replacementRef === undefined ? "" : ` (${uncertainAction.replacementRef})`
+      }`,
     );
   }
   return `${lines.join("\n")}\n`;
@@ -252,6 +306,28 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
   const startRuntime =
     dependencies.startRuntime ??
     ((paths: ManagedPaths) => startGeneratedRuntime(paths, authenticationFor(paths), dependencies.importRuntime));
+  const uncertainWorkFor =
+    dependencies.uncertainWorkFor ??
+    (async (paths: ManagedPaths): Promise<UncertainWorkController> => {
+      const environment: Record<string, string | undefined> = {};
+      await loadManagedRuntimeEnvironment(paths, environment);
+      const token = environment.GITHUB_TOKEN;
+      if (token === undefined)
+        throw new Error("The managed GitHub credential is unavailable for uncertainty diagnosis.");
+      const archive = createConversationArchive(paths.applicationDatabase);
+      try {
+        createManagedChatInbox(archive, { allowed: () => false });
+      } finally {
+        archive.close();
+      }
+      return createUncertainWorkController({
+        admissions: createManagedChatAdmissionOperator(paths.applicationDatabase),
+        operations: createIssueOperationStore(paths.applicationDatabase),
+        admissionEvidence: createFlueAdmissionEvidenceSource(paths.flueDatabase),
+        repository: createOctokitIssueRepository(token),
+      });
+    });
+  const inspectUncertainWork = dependencies.inspectUncertainWork ?? inspectUncertainWorkStatus;
   const operationSignal = (timeoutMillis: number): AbortSignal => {
     const timeout = AbortSignal.timeout(timeoutMillis);
     return dependencies.signal === undefined ? timeout : AbortSignal.any([dependencies.signal, timeout]);
@@ -308,10 +384,21 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     json: boolean,
     refresh: boolean = false,
     live: boolean = false,
+    uncertainty?:
+      | { readonly mode: "status" }
+      | {
+          readonly mode: "doctor";
+          readonly retry?: UncertainWorkRef;
+          readonly abandon?: UncertainWorkRef;
+          readonly acceptObserved?: UncertainWorkRef;
+        },
   ): Promise<{
     readonly installation: InstallationInspection;
     readonly authentication: ChatGptAuthenticationStatus;
     readonly liveCheck?: ChatGptReadinessReceipt;
+    readonly uncertainWork?: UncertainWorkStatus;
+    readonly uncertainDoctor?: UncertainDoctorReport;
+    readonly uncertainAction?: UncertainActionResult;
   }> => {
     const paths = managedPaths({ dataDirectory: program.opts().dataDir });
     const inspection = await inspectManagedData({ dataDirectory: paths.root });
@@ -355,8 +442,45 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
         }
       }
     }
-    output.stdout(renderInspection(inspection, authenticationStatus, liveCheck, json));
-    return { installation: inspection, authentication: authenticationStatus, liveCheck };
+    let uncertainWork: UncertainWorkStatus | undefined;
+    let uncertainDoctor: UncertainDoctorReport | undefined;
+    let uncertainAction: UncertainActionResult | undefined;
+    if (inspection.state === "configured" && uncertainty !== undefined) {
+      if (uncertainty.mode === "status") {
+        uncertainWork = inspectUncertainWork(paths.applicationDatabase);
+      } else {
+        const controller = await uncertainWorkFor(paths);
+        try {
+          if (uncertainty.retry !== undefined) uncertainAction = await controller.retry(uncertainty.retry);
+          else if (uncertainty.abandon !== undefined) uncertainAction = controller.abandon(uncertainty.abandon);
+          else if (uncertainty.acceptObserved !== undefined) {
+            uncertainAction = await controller.acceptObserved(uncertainty.acceptObserved);
+          } else uncertainDoctor = await controller.diagnose();
+          uncertainWork = controller.status();
+        } finally {
+          controller.close();
+        }
+      }
+    }
+    output.stdout(
+      renderInspection(
+        inspection,
+        authenticationStatus,
+        liveCheck,
+        uncertainWork,
+        uncertainDoctor,
+        uncertainAction,
+        json,
+      ),
+    );
+    return {
+      installation: inspection,
+      authentication: authenticationStatus,
+      liveCheck,
+      uncertainWork,
+      uncertainDoctor,
+      uncertainAction,
+    };
   };
 
   program
@@ -446,9 +570,14 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .description("report whether the managed installation is ready")
     .option("--json", "emit machine-readable JSON")
     .action(async (options) => {
-      const report = await reportInspection(options.json ?? false);
+      const report = await reportInspection(options.json ?? false, false, false, { mode: "status" });
       if (report.installation.state === "unconfigured") exitCode = 2;
-      else if (report.installation.state === "damaged" || report.authentication.state !== "ready") exitCode = 3;
+      else if (
+        report.installation.state === "damaged" ||
+        report.authentication.state !== "ready" ||
+        report.uncertainWork?.health === "degraded"
+      )
+        exitCode = 3;
     });
 
   program
@@ -457,16 +586,33 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .option("--json", "emit machine-readable JSON")
     .option("--refresh", "verify and safely rotate an expired ChatGPT credential")
     .option("--live", "make one gated real model readiness request")
+    .option("--retry <ref>", "explicitly retry admission:<windowId> or mutation:<operationId>")
+    .option("--abandon <ref>", "explicitly abandon unresolved work while preserving its audit")
+    .option("--accept-observed <ref>", "accept observed desired state for an external mutation")
     .action(async (options) => {
+      const actions = [options.retry, options.abandon, options.acceptObserved].filter(
+        (value): value is string => value !== undefined,
+      );
+      if (actions.length > 1) throw new Error("Choose only one of --retry, --abandon, or --accept-observed.");
       const report = await reportInspection(
         options.json ?? false,
         Boolean(options.refresh || options.live),
         options.live ?? false,
+        {
+          mode: "doctor",
+          ...(options.retry === undefined ? {} : { retry: options.retry as UncertainWorkRef }),
+          ...(options.abandon === undefined ? {} : { abandon: options.abandon as UncertainWorkRef }),
+          ...(options.acceptObserved === undefined
+            ? {}
+            : { acceptObserved: options.acceptObserved as UncertainWorkRef }),
+        },
       );
       if (
         report.installation.state !== "configured" ||
         report.authentication.state !== "ready" ||
-        report.liveCheck?.request === "failed"
+        report.liveCheck?.request === "failed" ||
+        report.uncertainWork?.health === "degraded" ||
+        report.uncertainAction?.outcome === "failed"
       ) {
         exitCode = 1;
       }
