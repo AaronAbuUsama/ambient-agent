@@ -38,12 +38,16 @@ export const loadManagedRuntimeEnvironment = async (
   const github = v.parse(GitHubCredentialSchema, await readJson(paths.githubCredential));
   const primaryChat = config.managedChats[0]!;
 
-  applyDefaults(environment, {
-    AMBIENCE_WHATSAPP: "1",
+  Object.assign(environment, {
     GITHUB_ALLOWED_REPOS: config.github.allowedRepositories.join(","),
     GITHUB_INGRESS_DB_PATH: paths.applicationDatabase,
+    GITHUB_ISSUE_OPERATIONS_DB_PATH: paths.applicationDatabase,
     GITHUB_REPO: config.github.defaultRepository,
     GITHUB_TOKEN: github.token,
+  });
+
+  applyDefaults(environment, {
+    AMBIENCE_WHATSAPP: "1",
     WHATSAPP_GROUP_ID: primaryChat,
     WHATSAPP_GROUP_IDS: config.managedChats.join(","),
     WHATSAPP_HISTORY_DB: paths.applicationDatabase,

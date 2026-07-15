@@ -21,7 +21,7 @@ paired whatsappd session
   -> continuing Ambience context
        |-> read/search bound WhatsApp history
        |-> say -> whatsappd session.send
-       `-> start bounded GitHub workflow -> later result event -> same Ambience
+       `-> search/read/create an authorized GitHub issue directly
 
 verified GitHub webhook -> application routing/deduplication -> same Ambience
 ```
@@ -31,11 +31,11 @@ prose remains private canonical Flue context: the application neither parses nor
 copies that prose. Only the explicit `say` tool can call the WhatsApp send
 boundary.
 
-GitHub mutations are available only inside bounded specialist workflows. Root
-Ambience receives no direct GitHub mutation tool. Admission returns a `runId`
-without blocking the chat; completion or failure is dispatched later as new
-input to the same Ambience instance. Mutation recovery verifies observed GitHub
-state by operation identity and never blindly retries an uncertain write.
+Ambience receives the versioned Issue Management Skill and provider-neutral
+search, read, and create Tools bound to the one authorized repository. The
+application assigns an Operation Identity before creation. If a provider
+response is lost, it performs bounded read-only observation and never blindly
+repeats the mutation.
 
 ## Run it
 

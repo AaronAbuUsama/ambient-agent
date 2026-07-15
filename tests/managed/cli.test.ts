@@ -185,6 +185,7 @@ describe("managed CLI", () => {
       "AMBIENCE_WHATSAPP",
       "GITHUB_ALLOWED_REPOS",
       "GITHUB_INGRESS_DB_PATH",
+      "GITHUB_ISSUE_OPERATIONS_DB_PATH",
       "GITHUB_REPO",
       "GITHUB_TOKEN",
       "GITHUB_WEBHOOK_SECRET",
@@ -198,6 +199,9 @@ describe("managed CLI", () => {
     const previousEnvironment = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
     for (const key of keys) delete process.env[key];
     process.env.PORT = "8888";
+    process.env.GITHUB_REPO = "external/override-must-not-win";
+    process.env.GITHUB_ALLOWED_REPOS = "external/override-must-not-win";
+    process.env.GITHUB_TOKEN = "external-secret-must-not-win";
 
     try {
       const cli = harness();
@@ -212,6 +216,7 @@ describe("managed CLI", () => {
             AMBIENCE_WHATSAPP: "1",
             GITHUB_ALLOWED_REPOS: "owner/repo",
             GITHUB_INGRESS_DB_PATH: managed.applicationDatabase,
+            GITHUB_ISSUE_OPERATIONS_DB_PATH: managed.applicationDatabase,
             GITHUB_REPO: "owner/repo",
             GITHUB_TOKEN: "github-secret-token",
             GITHUB_WEBHOOK_SECRET: "dotenv-webhook-secret",

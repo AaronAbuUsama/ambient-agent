@@ -1,9 +1,4 @@
 import type { ConversationWindow } from "../coalescer/events.ts";
-import {
-  gitHubProofCompletedSchema,
-  gitHubProofUncertainSchema,
-  repositoryRefSchema,
-} from "../github/proof-contract.ts";
 import * as v from "valibot";
 
 const nonEmptyString = v.pipe(v.string(), v.minLength(1));
@@ -38,34 +33,6 @@ const whatsappWindowInputSchema = v.object({
 
 export type WhatsAppWindowInput = v.InferOutput<typeof whatsappWindowInputSchema>;
 
-export const workflowCompletedInputSchema = v.object({
-  type: v.literal("workflow.completed"),
-  chatId: nonEmptyString,
-  workflow: nonEmptyString,
-  runId: nonEmptyString,
-  operationId: nonEmptyString,
-  output: gitHubProofCompletedSchema,
-});
-
-export const workflowUncertainInputSchema = v.object({
-  type: v.literal("workflow.uncertain"),
-  chatId: nonEmptyString,
-  workflow: nonEmptyString,
-  runId: nonEmptyString,
-  operationId: nonEmptyString,
-  output: gitHubProofUncertainSchema,
-});
-
-export const workflowFailedInputSchema = v.object({
-  type: v.literal("workflow.failed"),
-  chatId: nonEmptyString,
-  workflow: nonEmptyString,
-  runId: nonEmptyString,
-  operationId: nonEmptyString,
-  repository: repositoryRefSchema,
-  error: v.object({ message: nonEmptyString }),
-});
-
 export const githubIssueOpenedInputSchema = v.object({
   type: v.literal("github.issue.opened"),
   chatId: nonEmptyString,
@@ -90,16 +57,8 @@ export const githubIssueOpenedInputSchema = v.object({
   }),
 });
 
-export type WorkflowCompletedInput = v.InferOutput<typeof workflowCompletedInputSchema>;
-export type WorkflowUncertainInput = v.InferOutput<typeof workflowUncertainInputSchema>;
-export type WorkflowFailedInput = v.InferOutput<typeof workflowFailedInputSchema>;
 export type GitHubIssueOpenedInput = v.InferOutput<typeof githubIssueOpenedInputSchema>;
-export type AmbienceInput =
-  | WhatsAppWindowInput
-  | WorkflowCompletedInput
-  | WorkflowUncertainInput
-  | WorkflowFailedInput
-  | GitHubIssueOpenedInput;
+export type AmbienceInput = WhatsAppWindowInput | GitHubIssueOpenedInput;
 
 export const whatsappWindowInput = (window: ConversationWindow): WhatsAppWindowInput =>
   v.parse(whatsappWindowInputSchema, {

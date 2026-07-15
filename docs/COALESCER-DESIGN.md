@@ -53,15 +53,15 @@ Flue therefore owns the continuing canonical model context. The Coalescer does
 not parse assistant output, keep an agent session cursor, run a model tool loop,
 poll workflow state, or copy results. It only performs admission.
 
-## Outbound and workflows
+## Outbound and issue management
 
 The Coalescer has no outbound transport. Ambience's bound `say` tool is the sole
 path to `WhatsAppSession.send`.
 
-Root Ambience can admit a bounded GitHub workflow and immediately receives its
-`runId`. The workflow's terminal result is later dispatched as new input to the
-same `chatId` Ambience. GitHub mutation tools remain inside that specialist
-workflow and are not available to root Ambience.
+Root Ambience can search and read issues in its authorized repository and create
+one issue through the versioned Issue Management Skill. The application assigns
+the Operation Identity before the provider mutation, observes ambiguous outcomes
+without a blind retry, and keeps provider authorization outside model control.
 
 ## Tunable timing
 

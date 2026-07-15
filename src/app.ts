@@ -3,32 +3,27 @@ import { Hono } from "hono";
 
 import { dispatchAmbience } from "./ambience/dispatch.js";
 import {
-  createGitHubProofPolicy,
-  configureGitHubProofRuntime,
-  loadGitHubProofSettings,
-} from "./github/proof-runtime.js";
+  configureIssueManagementRuntime,
+  createIssueManagementPolicy,
+  loadIssueManagementSettings,
+} from "./capabilities/issue-management/runtime.js";
+import { createIssueOperationStore } from "./capabilities/issue-management/operation-store.js";
 import { loadGitHubIngressSettings } from "./github/ingress.js";
 import { installGitHubIngressRuntime } from "./github/ingress-runtime.js";
-import { createOctokitGitHubProofHost } from "./host/github-proof-host.js";
+import { createOctokitIssueRepository } from "./host/github-issue-repository.js";
 import { getWhatsAppRuntimeStatus, startWhatsAppRuntime } from "./host/whatsapp-runtime.js";
-import {
-  takeManagedRuntimeDependencies,
-  type ManagedRuntimeDependencies,
-} from "./managed/runtime-dependencies.js";
+import { takeManagedRuntimeDependencies, type ManagedRuntimeDependencies } from "./managed/runtime-dependencies.js";
 import { connectPiChatGptSubscription } from "./model/pi-subscription.js";
-import { installGitHubProofResultDispatch } from "./workflows/github-proof.js";
 
 export const createAmbientAgentApp = async ({ authentication }: ManagedRuntimeDependencies): Promise<Hono> => {
   const subscription = await connectPiChatGptSubscription({ authentication });
   const githubIngress = loadGitHubIngressSettings();
   installGitHubIngressRuntime(githubIngress, async (chatId, input) => await dispatchAmbience({ id: chatId, input }));
-  const github = loadGitHubProofSettings();
-  configureGitHubProofRuntime({
-    host: createOctokitGitHubProofHost(github.token),
-    policy: createGitHubProofPolicy(github.defaultRepository, github.allowedRepositories),
-  });
-  installGitHubProofResultDispatch(async (chatId, input) => {
-    await dispatchAmbience({ id: chatId, input });
+  const issueManagement = loadIssueManagementSettings();
+  configureIssueManagementRuntime({
+    repository: createOctokitIssueRepository(issueManagement.token),
+    operations: createIssueOperationStore(issueManagement.operationDatabasePath),
+    policy: createIssueManagementPolicy(issueManagement.defaultRepository, issueManagement.allowedRepositories),
   });
 
   const app = new Hono();
