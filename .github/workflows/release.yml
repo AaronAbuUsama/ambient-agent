@@ -50,6 +50,7 @@ jobs:
           publish: pnpm run release
           title: "Release packages"
           commit: "chore: release packages"
+          commitMode: github-api
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_WEBHOOK_SECRET: ci-build-only-secret

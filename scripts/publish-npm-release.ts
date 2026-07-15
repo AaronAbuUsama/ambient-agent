@@ -26,7 +26,7 @@ const distTag = (version: string): string => version.split("-", 2)[1]?.split("."
 export const publishNpmRelease = (
   release: PackageRelease,
   run: RunReleaseCommand,
-): { readonly published: boolean; readonly tag: string } => {
+): { readonly published: boolean; readonly tag: string; readonly marker?: string } => {
   const tag = distTag(release.version);
   const existing = run({
     executable: "npm",
@@ -47,7 +47,7 @@ export const publishNpmRelease = (
   if (published.status !== 0) {
     throw new Error(`npm failed to publish ${release.name}@${release.version}.`);
   }
-  return { published: true, tag };
+  return { published: true, tag, marker: `New tag: ${release.name}@${release.version}` };
 };
 
 const runCli = (): void => {
@@ -64,7 +64,7 @@ const runCli = (): void => {
       stderr: command.stderr ?? command.error?.message ?? "",
     };
   });
-  if (result.published) console.log(`New tag: ${release.name}@${release.version}`);
+  if (result.published) console.log(result.marker);
   else console.log(`${release.name}@${release.version} is already published.`);
 };
 
