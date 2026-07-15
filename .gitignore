@@ -32,3 +32,4 @@ npm-debug.log*
 
 # coverage
 coverage/
+vitest-results.json

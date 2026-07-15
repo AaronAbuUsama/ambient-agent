@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { inspectManagedData, installManagedData } from "../../src/managed/installation.ts";
+import { inspectManagedData, installManagedData, installPreparedManagedData } from "../../src/managed/installation.ts";
 import { managedPaths, type ManagedPaths } from "../../src/managed/paths.ts";
 import { createManagedChatGptCredentialStore } from "../../src/model/chatgpt-authentication.ts";
 
@@ -98,6 +98,33 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
 
     await expect(lstat(base.dataDirectory)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(inspectManagedData(base)).resolves.toMatchObject({ state: "unconfigured" });
+  });
+
+  it("discovers setup values inside the private stage before atomically promoting them", async () => {
+    const base = await fixture();
+    let stagedRoot = "";
+    const result = await installPreparedManagedData({
+      dataDirectory: base.dataDirectory,
+      prepare: async (paths) => {
+        stagedRoot = paths.root;
+        expect(paths.root).not.toBe(base.dataDirectory);
+        expect((await lstat(paths.root)).mode & 0o777).toBe(0o700);
+        expect((await lstat(paths.credentials)).mode & 0o777).toBe(0o700);
+        expect((await lstat(paths.whatsapp)).mode & 0o777).toBe(0o700);
+        expect((await lstat(paths.applicationDatabase)).mode & 0o777).toBe(0o600);
+        await base.authenticateChatGpt(paths);
+        return {
+          managedChats: ["120363000@g.us"],
+          defaultRepository: "owner/repo",
+          githubToken: base.githubToken,
+        };
+      },
+    });
+
+    expect(result).toMatchObject({ created: true, inspection: { state: "configured" } });
+    expect(stagedRoot).not.toBe(base.dataDirectory);
+    await expect(lstat(stagedRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(managedPaths(base).config, "utf8")).toContain("120363000@g.us");
   });
 
   it("validates the complete staging tree before committing it", async () => {
@@ -322,145 +349,6 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
     const inspection = await inspectManagedData(base);
     expect(inspection.state).toBe("damaged");
     expect(inspection.diagnostics.map((item) => item.code)).toContain("path.not-directory");
-  });
-
-  it.skip("recovers an old setup lock even when its PID has been reused", async () => {
-    const base = await fixture();
-    const lock = join(base.parent, ".managed.setup.lock");
-    await mkdir(lock, { mode: 0o700 });
-    await writeFile(
-      join(lock, "owner.json"),
-      JSON.stringify({ pid: process.pid, createdAt: "2000-01-01T00:00:00.000Z", token: "stale-owner" }),
-      { mode: 0o600 },
-    );
-
-    const input = {
-      ...base,
-      managedChats: ["120363000@g.us"],
-      defaultRepository: "owner/repo",
-    };
-    const attempts = await Promise.allSettled([installManagedData(input), installManagedData(input)]);
-    expect(attempts.some((attempt) => attempt.status === "fulfilled")).toBe(true);
-    expect(await inspectManagedData(base)).toMatchObject({ state: "configured" });
-    await expect(lstat(lock)).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  it.skip("removes only the staging directory recorded by a stale setup lock", async () => {
-    const base = await fixture();
-    const token = "88c97341-9588-4747-88f8-14d84f46f522";
-    const lock = join(base.parent, ".managed.setup.lock");
-    const stagingRoot = join(base.parent, `.managed.setup-${token}`);
-    const unrelated = join(base.parent, ".managed.setup-unrelated");
-    await mkdir(lock, { mode: 0o700 });
-    await mkdir(stagingRoot, { mode: 0o700 });
-    await mkdir(unrelated, { mode: 0o700 });
-    await writeFile(join(stagingRoot, "credential-copy"), base.githubToken, { mode: 0o600 });
-    await writeFile(
-      join(lock, "owner.json"),
-      JSON.stringify({
-        pid: process.pid,
-        createdAt: "2000-01-01T00:00:00.000Z",
-        token,
-        stagingRoot,
-      }),
-      { mode: 0o600 },
-    );
-
-    await installManagedData({
-      ...base,
-      managedChats: ["120363000@g.us"],
-      defaultRepository: "owner/repo",
-    });
-
-    await expect(lstat(stagingRoot)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(lstat(unrelated)).resolves.toMatchObject({ mode: expect.any(Number) });
-    expect((await inspectManagedData(base)).state).toBe("configured");
-  });
-
-  it.skip("preserves staging when a quarantined setup lock has a fresh heartbeat", async () => {
-    const base = await fixture();
-    const token = "9ef0bcc6-2286-4f2d-a897-2f5f4bccd167";
-    const lock = join(base.parent, ".managed.setup.lock");
-    const stagingRoot = join(base.parent, `.managed.setup-${token}`);
-    const ownerPath = join(lock, "owner.json");
-    await mkdir(lock, { mode: 0o700 });
-    await mkdir(stagingRoot, { mode: 0o700 });
-    await writeFile(join(stagingRoot, "credential-copy"), base.githubToken, { mode: 0o600 });
-    await writeFile(
-      ownerPath,
-      JSON.stringify({
-        pid: process.pid,
-        createdAt: "2000-01-01T00:00:00.000Z",
-        heartbeatAt: "2000-01-01T00:00:00.000Z",
-        token,
-        stagingRoot,
-      }),
-      { mode: 0o600 },
-    );
-
-    await expect(
-      installManagedData({
-        ...base,
-        managedChats: ["120363000@g.us"],
-        defaultRepository: "owner/repo",
-      }),
-    ).rejects.toThrow("ownership changed");
-
-    await expect(lstat(stagingRoot)).resolves.toBeDefined();
-    expect(JSON.parse(await readFile(ownerPath, "utf8"))).toMatchObject({ token });
-  });
-
-  it.skip("resumes credential staging cleanup interrupted during stale-lock recovery", async () => {
-    const base = await fixture();
-    const token = "d237d9a3-b780-4e8e-9f35-4f106a2d14d7";
-    const lock = join(base.parent, ".managed.setup.lock");
-    const stagingRoot = join(base.parent, `.managed.setup-${token}`);
-    const recoveryRoot = `${stagingRoot}.recovering`;
-    await mkdir(lock, { mode: 0o700 });
-    await mkdir(recoveryRoot, { mode: 0o700 });
-    await writeFile(join(recoveryRoot, "credential-copy"), base.githubToken, { mode: 0o600 });
-    await writeFile(
-      join(lock, "owner.json"),
-      JSON.stringify({
-        pid: process.pid,
-        createdAt: "2000-01-01T00:00:00.000Z",
-        token,
-        stagingRoot,
-      }),
-      { mode: 0o600 },
-    );
-
-    await installManagedData({
-      ...base,
-      managedChats: ["120363000@g.us"],
-      defaultRepository: "owner/repo",
-    });
-
-    await expect(lstat(recoveryRoot)).rejects.toMatchObject({ code: "ENOENT" });
-    expect((await inspectManagedData(base)).state).toBe("configured");
-  });
-
-  it.skip("recovers a stale lock beside a complete installation and remains idempotent", async () => {
-    const base = await fixture();
-    const input = {
-      ...base,
-      managedChats: ["120363000@g.us"],
-      defaultRepository: "owner/repo",
-    };
-    await installManagedData(input);
-    const lock = join(base.parent, ".managed.setup.lock");
-    await mkdir(lock, { mode: 0o700 });
-    await writeFile(
-      join(lock, "owner.json"),
-      JSON.stringify({ pid: process.pid, createdAt: "2000-01-01T00:00:00.000Z", token: "stale-complete" }),
-      { mode: 0o600 },
-    );
-
-    await expect(installManagedData(input)).resolves.toMatchObject({
-      created: false,
-      inspection: { state: "configured" },
-    });
-    await expect(lstat(lock)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 

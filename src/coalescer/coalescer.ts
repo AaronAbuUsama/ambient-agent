@@ -16,26 +16,41 @@
  * the whole thing runs in virtual time with zero real sleeps.
  */
 import { Clock, Duration, Effect, HashMap, Option, Queue, Ref, type Scope, Stream } from "effect";
-import { appendBounded, type BufferBounds } from "./buffer.ts";
-import { addressesBot, type ConversationWindow, type FireReason, type IncomingMessage, reasonOf } from "./events.ts";
+import {
+  addressesBot,
+  type ConversationWindow,
+  type ConversationWindowDraft,
+  type FireReason,
+  type IncomingMessage,
+  reasonOf,
+} from "./events.ts";
 import { CoalescerConfig, type CoalescerConfigValues } from "./config.ts";
-import { EventSource, WindowDispatcher } from "./ports.ts";
+import { EventSource, WindowDispatcher, WindowStore, type WindowStoreService } from "./ports.ts";
 
 type WindowDispatcherService = {
   readonly dispatch: (window: ConversationWindow) => Effect.Effect<void, unknown>;
 };
 
-/**
- * Dispatch the buffered window to Ambience. A failed dispatch must not kill the
- * chat's actor loop — one bad input should never wedge the chat. We swallow-and-log
- * both typed failures (`catchAll`) *and* defects (`catchAllDefect`, e.g. an
- * dispatcher implementation throwing), but deliberately let interruption through
- * untouched so scope shutdown still tears the loop down cleanly. Empty windows
- * never fire (a config edge, e.g. `maxBufferMessages: 0`) — there is nothing to say.
- */
-const logDispatchError = (window: ConversationWindow) => (cause: unknown) =>
-  Effect.logError(`Ambience window dispatch failed for ${window.chatId}`).pipe(
+const stopAfterDispatchError =
+  (window: ConversationWindow) =>
+  (cause: unknown): Effect.Effect<never> =>
+    Effect.logError(`Ambience admission failed for ${window.chatId}; the chat is fail-stopped`).pipe(
+      Effect.annotateLogs({ cause: String(cause), windowId: window.id }),
+      Effect.andThen(Effect.never),
+    );
+
+const stopAfterStoreError =
+  (chatId: string) =>
+  (cause: unknown): Effect.Effect<never> =>
+    Effect.logError(`Managed Chat Window persistence failed for ${chatId}; the chat is fail-stopped`).pipe(
+      Effect.annotateLogs({ cause: String(cause) }),
+      Effect.andThen(Effect.never),
+    );
+
+const stopAfterReplayReadError = (cause: unknown): Effect.Effect<never> =>
+  Effect.logError("Managed Chat Window replay read failed; intake is fail-stopped").pipe(
     Effect.annotateLogs({ cause: String(cause) }),
+    Effect.andThen(Effect.never),
   );
 
 const fire = (dispatcher: WindowDispatcherService, window: ConversationWindow): Effect.Effect<void> =>
@@ -43,23 +58,32 @@ const fire = (dispatcher: WindowDispatcherService, window: ConversationWindow): 
     ? Effect.void
     : dispatcher
         .dispatch(window)
-        .pipe(Effect.catch(logDispatchError(window)), Effect.catchDefect(logDispatchError(window)));
+        .pipe(Effect.catch(stopAfterDispatchError(window)), Effect.catchDefect(stopAfterDispatchError(window)));
 
 /**
  * Build the per-chat actor loop for a given config + window dispatcher. Returns a function
  * that, given a chat's queue, runs its debounce loop forever.
  */
-const makeChatLoop = (config: CoalescerConfigValues, dispatcher: WindowDispatcherService) => {
-  const bounds: BufferBounds = {
-    maxBufferMessages: config.maxBufferMessages,
-    maxBufferAgeMillis: config.maxBufferAgeMillis,
-  };
+const makeChatLoop = (
+  config: CoalescerConfigValues,
+  dispatcher: WindowDispatcherService,
+  store: WindowStoreService,
+) => {
   const maxWaitMillis = Duration.toMillis(config.maxWait);
+  const debounceMillis = Duration.toMillis(config.debounceWindow);
+  const capacity = Math.max(1, config.maxWindowMessages);
 
   return (chatId: string, queue: Queue.Dequeue<IncomingMessage>): Effect.Effect<never> => {
     // Dispatch the buffered window to Ambience, then go cold for the next burst.
-    const fireAndReset = (messages: readonly IncomingMessage[], reason: FireReason): Effect.Effect<never> =>
-      fire(dispatcher, { chatId, messages, reason }).pipe(Effect.andThen(cold));
+    const fireAndReset = (messages: readonly IncomingMessage[], reason: FireReason): Effect.Effect<never> => {
+      const draft: ConversationWindowDraft = { chatId, messages, reason };
+      return store.create(draft).pipe(
+        Effect.catch(stopAfterStoreError(chatId)),
+        Effect.catchDefect(stopAfterStoreError(chatId)),
+        Effect.flatMap((window) => fire(dispatcher, window)),
+        Effect.andThen(cold),
+      );
+    };
 
     // A message landed: buffer it, and either flush now (bot addressed) or keep
     // waiting. `burstStart` is the clock time of the burst's first message — the
@@ -69,10 +93,12 @@ const makeChatLoop = (config: CoalescerConfigValues, dispatcher: WindowDispatche
       burstStart: number,
       msg: IncomingMessage,
     ): Effect.Effect<never> => {
-      const next = appendBounded(buffer, msg, bounds);
+      const next = [...buffer, msg];
       return addressesBot(msg, config.botIds)
         ? fireAndReset(next, reasonOf(msg, config.botIds))
-        : warm(next, burstStart);
+        : next.length >= capacity
+          ? fireAndReset(next, "capacity")
+          : warm(next, burstStart);
     };
 
     // Cold: no buffered messages. Block indefinitely for the burst's first message,
@@ -93,7 +119,7 @@ const makeChatLoop = (config: CoalescerConfigValues, dispatcher: WindowDispatche
             Effect.timeoutOption(wait),
             Effect.flatMap(
               Option.match({
-                onNone: () => fireAndReset(buffer, "debounce"),
+                onNone: () => fireAndReset(buffer, capLeft <= debounceMillis ? "maximum-wait" : "debounce"),
                 onSome: (msg) => onMessage(buffer, burstStart, msg),
               }),
             ),
@@ -114,30 +140,69 @@ const makeChatLoop = (config: CoalescerConfigValues, dispatcher: WindowDispatche
  * `forkScoped` — they live until the enclosing `Scope` closes, giving clean
  * shutdown. The router drains sequentially, so lazy queue creation never races.
  */
-export const run: Effect.Effect<void, never, EventSource | WindowDispatcher | CoalescerConfig | Scope.Scope> =
-  Effect.gen(function* () {
-    const { events } = yield* EventSource;
-    const config = yield* CoalescerConfig;
-    const dispatcher = yield* WindowDispatcher;
-    const chatLoop = makeChatLoop(config, dispatcher);
-    const registry = yield* Ref.make(HashMap.empty<string, Queue.Queue<IncomingMessage>>());
+export const run: Effect.Effect<
+  void,
+  never,
+  EventSource | WindowDispatcher | WindowStore | CoalescerConfig | Scope.Scope
+> = Effect.gen(function* () {
+  const { events } = yield* EventSource;
+  const config = yield* CoalescerConfig;
+  const dispatcher = yield* WindowDispatcher;
+  const store = yield* WindowStore;
+  const chatLoop = makeChatLoop(config, dispatcher, store);
+  const registry = yield* Ref.make(HashMap.empty<string, Queue.Queue<IncomingMessage>>());
+  const blockedChats = yield* Ref.make<ReadonlySet<string>>(new Set());
 
-    const routeTo = (msg: IncomingMessage): Effect.Effect<void, never, Scope.Scope> =>
-      Effect.gen(function* () {
-        const existing = HashMap.get(yield* Ref.get(registry), msg.chatId);
-        if (Option.isSome(existing)) {
-          yield* Queue.offer(existing.value, msg);
-          return;
-        }
-        const queue = yield* Queue.unbounded<IncomingMessage>();
-        yield* Ref.update(registry, HashMap.set(msg.chatId, queue));
-        yield* Effect.forkScoped(chatLoop(msg.chatId, queue));
-        yield* Queue.offer(queue, msg);
-      });
+  const routeTo = (msg: IncomingMessage): Effect.Effect<void, never, Scope.Scope> =>
+    Effect.gen(function* () {
+      if ((yield* Ref.get(blockedChats)).has(msg.chatId)) return;
+      const existing = HashMap.get(yield* Ref.get(registry), msg.chatId);
+      if (Option.isSome(existing)) {
+        yield* Queue.offer(existing.value, msg);
+        return;
+      }
+      const queue = yield* Queue.unbounded<IncomingMessage>();
+      yield* Ref.update(registry, HashMap.set(msg.chatId, queue));
+      yield* Effect.forkScoped(chatLoop(msg.chatId, queue));
+      yield* Queue.offer(queue, msg);
+    });
 
-    yield* events.pipe(
-      // fromMe = the bot's own messages; live=false = history backfill. Neither drives the loop.
-      Stream.filter((m) => m.live && !m.fromMe),
-      Stream.runForEach(routeTo),
+  const pending = yield* store.pendingWindows.pipe(
+    Effect.catch(stopAfterReplayReadError),
+    Effect.catchDefect(stopAfterReplayReadError),
+  );
+  const windowsByChat = new Map<string, ConversationWindow[]>();
+  for (const window of pending) {
+    const windows = windowsByChat.get(window.chatId) ?? [];
+    windows.push(window);
+    windowsByChat.set(window.chatId, windows);
+  }
+
+  const blockReplay = (window: ConversationWindow, cause: unknown): Effect.Effect<void> =>
+    Effect.logError(`Ambience startup admission failed for ${window.chatId}; only that chat is fail-stopped`).pipe(
+      Effect.annotateLogs({ cause: String(cause), windowId: window.id }),
+      Effect.andThen(Ref.update(blockedChats, (current) => new Set(current).add(window.chatId))),
     );
+
+  const replayChat = (windows: readonly ConversationWindow[], index = 0): Effect.Effect<void> => {
+    const window = windows[index];
+    if (window === undefined) return Effect.void;
+    const dispatch = window.messages.length === 0 ? Effect.void : dispatcher.dispatch(window);
+    return dispatch.pipe(
+      Effect.andThen(replayChat(windows, index + 1)),
+      Effect.catch((cause) => blockReplay(window, cause)),
+      Effect.catchDefect((cause) => blockReplay(window, cause)),
+    );
+  };
+
+  yield* Effect.forEach(windowsByChat.values(), (windows) => replayChat(windows), {
+    concurrency: "unbounded",
+    discard: true,
   });
+
+  yield* events.pipe(
+    // fromMe = the bot's own messages; live=false = history backfill. Neither drives the loop.
+    Stream.filter((m) => m.live && !m.fromMe),
+    Stream.runForEach(routeTo),
+  );
+});

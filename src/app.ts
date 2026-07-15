@@ -3,39 +3,58 @@ import { Hono } from "hono";
 
 import { dispatchAmbience } from "./ambience/dispatch.js";
 import {
-  createGitHubProofPolicy,
-  configureGitHubProofRuntime,
-  loadGitHubProofSettings,
-} from "./github/proof-runtime.js";
-import { loadGitHubIngressSettings } from "./github/ingress.js";
+  configureIssueManagementRuntime,
+  createIssueManagementPolicy,
+} from "./capabilities/issue-management/runtime.js";
+import { createIssueOperationStore } from "./capabilities/issue-management/operation-store.js";
 import { installGitHubIngressRuntime } from "./github/ingress-runtime.js";
-import { createOctokitGitHubProofHost } from "./host/github-proof-host.js";
+import { createOctokitIssueRepository } from "./host/github-issue-repository.js";
 import { getWhatsAppRuntimeStatus, startWhatsAppRuntime } from "./host/whatsapp-runtime.js";
-import {
-  takeManagedRuntimeDependencies,
-  type ManagedRuntimeDependencies,
-} from "./managed/runtime-dependencies.js";
+import { getManagedRuntimeDependencies, type ManagedRuntimeDependencies } from "./managed/runtime-dependencies.js";
+import { ambientRuntimeHealth, runtimeInstallationId } from "./managed/runtime-health.js";
 import { connectPiChatGptSubscription } from "./model/pi-subscription.js";
-import { installGitHubProofResultDispatch } from "./workflows/github-proof.js";
 
-export const createAmbientAgentApp = async ({ authentication }: ManagedRuntimeDependencies): Promise<Hono> => {
+export const createAmbientAgentApp = async ({
+  authentication,
+  configuration,
+  githubCredential,
+  paths,
+}: ManagedRuntimeDependencies): Promise<Hono> => {
   const subscription = await connectPiChatGptSubscription({ authentication });
-  const githubIngress = loadGitHubIngressSettings();
-  installGitHubIngressRuntime(githubIngress, async (chatId, input) => await dispatchAmbience({ id: chatId, input }));
-  const github = loadGitHubProofSettings();
-  configureGitHubProofRuntime({
-    host: createOctokitGitHubProofHost(github.token),
-    policy: createGitHubProofPolicy(github.defaultRepository, github.allowedRepositories),
-  });
-  installGitHubProofResultDispatch(async (chatId, input) => {
-    await dispatchAmbience({ id: chatId, input });
+  installGitHubIngressRuntime(
+    {
+      webhookSecret: githubCredential.webhookSecret,
+      databasePath: paths.applicationDatabase,
+      routes: new Map([[configuration.github.defaultRepository.toLowerCase(), configuration.managedChats[0]!]]),
+    },
+    async (chatId, input) => await dispatchAmbience({ id: chatId, input }),
+  );
+  configureIssueManagementRuntime({
+    repository: createOctokitIssueRepository(githubCredential.token),
+    operations: createIssueOperationStore(paths.applicationDatabase),
+    policy: createIssueManagementPolicy(
+      configuration.github.defaultRepository,
+      configuration.github.allowedRepositories,
+    ),
   });
 
   const app = new Hono();
-  app.get("/health", (context) => context.json({ ok: true, ...subscription, whatsapp: getWhatsAppRuntimeStatus() }));
+  app.get("/health", (context) => {
+    const runtime = ambientRuntimeHealth(getWhatsAppRuntimeStatus());
+    return context.json({
+      ok: runtime.state === "healthy",
+      installationId: runtimeInstallationId(githubCredential.webhookSecret),
+      ...subscription,
+      runtime: { state: runtime.state, whatsapp: { phase: runtime.whatsapp.phase } },
+    });
+  });
   app.route("/", flue());
 
-  const whatsapp = startWhatsAppRuntime();
+  const whatsapp = startWhatsAppRuntime({
+    storeDirectory: paths.whatsapp,
+    applicationDatabase: paths.applicationDatabase,
+    managedChats: configuration.managedChats,
+  });
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     const shutdown = () => {
       void whatsapp.stop().finally(() => {
@@ -49,4 +68,4 @@ export const createAmbientAgentApp = async ({ authentication }: ManagedRuntimeDe
   return app;
 };
 
-export default await createAmbientAgentApp(takeManagedRuntimeDependencies());
+export default await createAmbientAgentApp(getManagedRuntimeDependencies());

@@ -1,19 +1,22 @@
+import { createRequire } from "node:module";
+
 import { Effect, Exit, Fiber, Layer, type Scope } from "effect";
 import type { WhatsAppSession } from "whatsappd";
 
 import { makeAmbienceWindowDispatcher, type DispatchAmbience } from "../ambience/dispatch.js";
-import { makeChatGate, type ChatGate } from "../coalescer/chat-gate.js";
+import {
+  configureWhatsAppParticipationPort,
+  type WhatsAppHistoryPort,
+  type WhatsAppSayPort,
+  type WhatsAppSayResult,
+} from "../capabilities/whatsapp-participation/whatsapp-port.js";
+import { makeManagedChatGate, type ChatGate } from "../coalescer/chat-gate.js";
 import * as Coalescer from "../coalescer/coalescer.js";
 import { configLayer, type CoalescerConfigValues } from "../coalescer/config.js";
-import { botIdsOf, openSession, whatsappEventSource } from "../coalescer/whatsapp.js";
-import {
-  configureWhatsAppHistory,
-  createWhatsAppHistory,
-  persistWhatsAppMessages,
-  whatsappHistoryDatabasePath,
-  type WhatsAppHistory,
-} from "./whatsapp-history.js";
-import { configureWhatsAppHost, type WhatsAppHost, type WhatsAppSayResult } from "./whatsapp-host.js";
+import { botIdsOf, whatsappEventSource } from "../coalescer/whatsapp.js";
+import { createConversationArchive } from "../intake/conversation-archive.js";
+import { createManagedChatInbox, managedChatWindowStore, type ManagedChatInbox } from "../intake/managed-chat-inbox.js";
+import { createWhatsAppAccount } from "../whatsapp/account.js";
 
 const errorMessage = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
 const isKnownPreSendFailure = (message: string): boolean => /^not online \(phase: [^)]+\)$/.test(message);
@@ -34,7 +37,7 @@ const combineReceipt = (delivery: DeliveryReceipt, typingError?: string): WhatsA
 };
 
 /** The sole real implementation behind Ambience's `say` tool. It never retries an uncertain provider outcome. */
-export const createWhatsAppHost = (session: WhatsAppSession): WhatsAppHost => ({
+export const createWhatsAppHost = (session: WhatsAppSession): WhatsAppSayPort => ({
   say: async (chatId, text) => {
     try {
       await session.setTyping(chatId, true);
@@ -74,7 +77,8 @@ export const createWhatsAppHost = (session: WhatsAppSession): WhatsAppHost => ({
 
 export interface WhatsAppSessionRuntimeOptions {
   readonly gate: ChatGate;
-  readonly history: WhatsAppHistory;
+  readonly history: WhatsAppHistoryPort;
+  readonly inbox: ManagedChatInbox;
   readonly dispatch?: DispatchAmbience;
   readonly coalescer?: Partial<CoalescerConfigValues>;
   readonly botLid?: string;
@@ -85,14 +89,22 @@ export const runWhatsAppSession = (
   session: WhatsAppSession,
   options: WhatsAppSessionRuntimeOptions,
 ): Effect.Effect<void, never, Scope.Scope> => {
-  configureWhatsAppHistory(options.history);
-  configureWhatsAppHost(createWhatsAppHost(session));
+  const sayPort = createWhatsAppHost(session);
+  configureWhatsAppParticipationPort({
+    say: sayPort.say,
+    readThread: (chatId, limit) => options.history.readThread(chatId, limit),
+    search: (chatId, query, limit) => options.history.search(chatId, query, limit),
+  });
   const botIds = botIdsOf(session, options.botLid);
   return Coalescer.run.pipe(
     Effect.provide(
       Layer.mergeAll(
-        whatsappEventSource(session, options.gate.allowed),
-        makeAmbienceWindowDispatcher(options.dispatch),
+        whatsappEventSource(session, options.gate.allowed, {
+          replay: () => options.inbox.unwindowed(),
+          accepted: (message) => options.inbox.pendingArrival(message.chatId, message.id),
+        }),
+        makeAmbienceWindowDispatcher(options.inbox, options.dispatch),
+        managedChatWindowStore(options.inbox),
         configLayer({ ...options.coalescer, botIds }),
       ),
     ),
@@ -114,37 +126,47 @@ export interface WhatsAppRuntimeControl {
   readonly stop: () => Promise<void>;
 }
 
-export const startWhatsAppRuntime = (
-  env: Readonly<Record<string, string | undefined>> = process.env,
-): WhatsAppRuntimeControl => {
-  if (env.AMBIENCE_WHATSAPP !== "1") {
-    status = { phase: "disabled" };
-    return { stop: async () => undefined };
-  }
+export interface WhatsAppRuntimeOptions {
+  readonly storeDirectory: string;
+  readonly applicationDatabase: string;
+  readonly managedChats: readonly string[];
+  readonly botLid?: string;
+}
 
-  const storeDir = env.WHATSAPP_STORE_DIR?.trim() || "./.wa-auth";
-  const gate = makeChatGate({
-    groupIds: env.WHATSAPP_GROUP_IDS ?? env.WHATSAPP_GROUP_ID,
-    allowAnyGroup: env.WHATSAPP_ALLOW_ANY_GROUP,
-    allowDm: env.WHATSAPP_ALLOW_DM,
-  });
-  const history = createWhatsAppHistory(whatsappHistoryDatabasePath(env));
+export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppRuntimeControl => {
+  const storeDir = options.storeDirectory;
+  const gate = makeManagedChatGate(options.managedChats);
+  const archive = createConversationArchive(options.applicationDatabase);
+  const inbox = createManagedChatInbox(archive, { allowed: gate.allowed });
+  const account = createWhatsAppAccount({ storeDirectory: storeDir, archive: inbox.recorder });
   status = { phase: "starting", chatTarget: gate.describe() };
   let stopping = false;
 
   const program = Effect.gen(function* () {
-    yield* Effect.addFinalizer(() => Effect.sync(() => history.close()));
+    yield* Effect.addFinalizer(() => Effect.sync(() => archive.close()));
+    yield* Effect.addFinalizer(() => Effect.promise(() => account.stop()));
     if (!gate.hasTarget) {
       yield* Effect.logWarning("No managed WhatsApp chat is configured; ingress remains fail-closed.");
     }
-    const session = yield* openSession(storeDir, (rawSession) => {
-      const persisted = persistWhatsAppMessages(rawSession, history);
-      return { session: persisted.session, finalize: persisted.unsubscribe };
-    });
-    const botIds = botIdsOf(session, env.WHATSAPP_BOT_LID);
+    yield* Effect.promise(() =>
+      account.authenticate({
+        onPairing: (pairing) => {
+          if (pairing.qr !== undefined) {
+            const qr = createRequire(import.meta.url)("qrcode-terminal") as {
+              generate(value: string, options: { readonly small: boolean }): void;
+            };
+            qr.generate(pairing.qr, { small: true });
+          } else if (pairing.code !== undefined) {
+            console.info(`[ambience] WhatsApp pairing code: ${pairing.code}`);
+          }
+        },
+      }),
+    );
+    const session = account.session();
+    const botIds = botIdsOf(session, options.botLid);
     status = { phase: "online", chatTarget: gate.describe(), botIds };
     yield* Effect.logInfo(`Ambience WhatsApp online as ${botIds.join(" / ")} — watching ${gate.describe()}`);
-    yield* runWhatsAppSession(session, { gate, history, botLid: env.WHATSAPP_BOT_LID });
+    yield* runWhatsAppSession(session, { gate, history: archive, inbox, botLid: options.botLid });
   });
 
   const fiber = Effect.runFork(Effect.scoped(program));

@@ -1,6 +1,6 @@
 # Ambience live replacement receipt
 
-> Historical prerequisite proof captured before the #34 hard cut. It proves the replacement path that authorized deletion; the #34 issue and PR contain the post-deletion rerun.
+> Historical prerequisite proof captured before the #34 hard cut. It proves the replacement path that authorized deletion; the #34 issue and PR contain the post-deletion rerun. The disposable workflow named below was removed by #53 when production Issue Management replaced it; this receipt is historical evidence, not current runtime documentation.
 
 Date: 2026-07-13
 
@@ -37,21 +37,21 @@ admission; it did not contain a GitHub mutation tool.
 
 ## Qualifying end-to-end slice
 
-| Evidence | Identifier |
-| --- | --- |
-| Managed WhatsApp chat | `120363428464069244@g.us` |
-| Canonical Ambience conversation | `conv_01KXEQ0XBG2RBGC19TF7FKFNPN` |
-| Addressed inbound WhatsApp message | `3B5BB50A7210EA406719` |
-| Initiating Ambience dispatch | `56974a26-fcda-44de-a043-a6b553c79e03` |
-| Native workflow run | `run_01KXEQ934Y9Q55WC0EQ7XTSTYE` |
-| Application operation | `85e53b61-7b7c-4fa4-865c-9af14c5e0acf` |
-| Parallel inbound WhatsApp message | `3B836E0F7906A6A01200` |
-| Parallel Ambience dispatch | `f71e66f4-c30d-4d25-8a1e-75ff16849cc6` |
-| Completion Ambience dispatch | `67bbd33d-919a-443c-a7fa-edf1fd47bf1e` |
-| Observed GitHub resource | [TheCallApp/ios-design-system#74](https://github.com/TheCallApp/ios-design-system/issues/74) |
-| Explicit `say` delivery | `3EB05098F403993EFE458A` |
-| Signed GitHub delivery | `ambience-33-issues-74-20260713` |
-| GitHub ingress Ambience dispatch | `586bd4f9-8f52-4d97-b466-6b5e27c070b9` |
+| Evidence                           | Identifier                                                                                   |
+| ---------------------------------- | -------------------------------------------------------------------------------------------- |
+| Managed WhatsApp chat              | `120363428464069244@g.us`                                                                    |
+| Canonical Ambience conversation    | `conv_01KXEQ0XBG2RBGC19TF7FKFNPN`                                                            |
+| Addressed inbound WhatsApp message | `3B5BB50A7210EA406719`                                                                       |
+| Initiating Ambience dispatch       | `56974a26-fcda-44de-a043-a6b553c79e03`                                                       |
+| Native workflow run                | `run_01KXEQ934Y9Q55WC0EQ7XTSTYE`                                                             |
+| Application operation              | `85e53b61-7b7c-4fa4-865c-9af14c5e0acf`                                                       |
+| Parallel inbound WhatsApp message  | `3B836E0F7906A6A01200`                                                                       |
+| Parallel Ambience dispatch         | `f71e66f4-c30d-4d25-8a1e-75ff16849cc6`                                                       |
+| Completion Ambience dispatch       | `67bbd33d-919a-443c-a7fa-edf1fd47bf1e`                                                       |
+| Observed GitHub resource           | [TheCallApp/ios-design-system#74](https://github.com/TheCallApp/ios-design-system/issues/74) |
+| Explicit `say` delivery            | `3EB05098F403993EFE458A`                                                                     |
+| Signed GitHub delivery             | `ambience-33-issues-74-20260713`                                                             |
+| GitHub ingress Ambience dispatch   | `586bd4f9-8f52-4d97-b466-6b5e27c070b9`                                                       |
 
 ### Timeline
 

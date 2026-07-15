@@ -1,6 +1,9 @@
 # Ambient Agent production architecture
 
-This is the ratified target for the next production rollout. It is an implementation map, not a claim about the currently shipped `whatsappd-github-agent` code: the existing proof workflow, environment-driven startup, and best-effort Coalescer admission remain the baseline being replaced.
+This is the ratified architecture and implementation map for the stable base.
+The complete packed, managed-OAuth, WhatsApp, GitHub, and process-replacement
+receipt is recorded in
+[`docs/proof/ambient-agent-stable-base-live.md`](../proof/ambient-agent-stable-base-live.md).
 
 ## Product
 
@@ -10,16 +13,15 @@ The first complete production Capability is Issue Management. It handles bug rep
 
 Ambience is the proper name of the continuing Flue Agent. There is one Ambience instance per Managed Chat, addressed by WhatsApp `chatId`.
 
-## Present gap
+## Stable-base evidence
 
-| Current code | What it proves | Why it is not the stable base |
-| --- | --- | --- |
-| `src/agents/ambience.ts` constructs one flat `tools` array | One continuing Flue Agent can use WhatsApp tools and start a workflow | Skills and Capabilities are not represented; the Agent will become a catalogue of unrelated tools |
-| `src/coalescer/coalescer.ts` catches dispatch errors and then resets | Busy messages can be grouped into Windows | A failed or ambiguous handoff can lose a Window, and Windows have no stable identity |
-| `src/ambience/dispatch.ts` converts `DispatchReceipt` to `void` | Flue `dispatch()` accepts input for the correct `chatId` | The application cannot record or reconcile the Admission Receipt |
-| `src/app.ts`, `src/github/proof-runtime.ts`, and `src/host/whatsapp-runtime.ts` read global configuration | The complete hard-cut proof can run in one process | Startup is environment-driven, provider construction is mixed into the application entrypoint, and there is no guided installation |
-| `src/workflows/github-proof.ts` and `src/github/proof-operation.ts` perform a temporary issue round trip | Workflow result delivery and uncertain GitHub mutation handling were proven | It is a proof-shaped workflow rather than production Issue Management |
-| `package.json` exposes a publishable `ambient-agent` bin with managed `init`, `auth`, `status`, `doctor`, and foreground `start` paths | A packed tarball installs and runs the managed composition root on the supported POSIX floor | The package is not published yet, `config` remains rollout work, and production Issue Management is not complete |
+| Current code                                                                                                                                 | Mechanically verified boundary                                                                                                              | Boundary outside the receipt                                                                               |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `src/agents/ambience.ts` registers versioned WhatsApp Participation and Issue Management Skills with cohesive Tool factories                 | Two real post-setup Windows reached one continuing canonical Ambience stream and selected the supported Tools                               | Model behavior beyond the recorded journey remains evaluation- or scenario-specific                        |
+| `src/app.ts` and `src/host/whatsapp-runtime.ts` consume typed configuration, credential, and path dependencies from the CLI composition root | An installed local tarball used one private managed directory, managed ChatGPT OAuth, and a real adopted WhatsApp session                   | Fresh QR pairing and provider credential portability to another host were not exercised                    |
+| `src/capabilities/issue-management/` owns the supported issue journey and a durable Operation Identity ledger                                | A real report created exactly one authorized issue; a later instruction added one comment and closed it under separate completed identities | Ambiguous live-provider reconciliation was proven deterministically, not induced during the qualifying run |
+| `src/github/` verifies, routes, deduplicates, and admits provider deliveries through `application.sqlite`                                    | Deterministic signed-ingress and restart suites cover the application-owned webhook path                                                    | GitHub's public webhook transport was not part of the WhatsApp-initiated #59 journey                       |
+| `package.json` exposes the `ambient-agent` bin with managed `init`, `auth`, `config`, `status`, `doctor`, and foreground `start` paths       | `ambient-agent@0.1.0` exists on npm; the newer stable-base source was packed, installed, started, replaced, and diagnosed through that bin  | The newer source changes require a subsequent registry release before a bare public install contains them  |
 
 The rollout replaces these paths. It does not layer a second production path beside them.
 
@@ -40,11 +42,14 @@ flowchart TD
     AMB --> ISSUE["Issue Management"]
     WACAP --> WA
     ISSUE --> GH["GitHub Issues"]
+    GHW["Verified GitHub webhook"] --> GHI["GitHub ingress admission"]
+    GHI --> FLUE
 
     APPDB[("application.sqlite")] --- ARC
     APPDB --- INBOX
     APPDB --- COAL
     APPDB --- RELAY
+    APPDB --- GHI
     FLUEDB[("flue.sqlite")] --- FLUE
     CREDS[("Managed credentials")] --- WA
     CREDS --- GH
@@ -106,10 +111,7 @@ export default defineAgent(({ id }) => ({
   model: configuredModel,
   instructions: ambienceInstructions,
   skills: [whatsappParticipationSkill, issueManagementSkill],
-  tools: [
-    ...createWhatsAppTools({ chatId: id, whatsapp }),
-    ...createIssueManagementTools({ issues }),
-  ],
+  tools: [...createWhatsAppTools({ chatId: id, whatsapp }), ...createIssueManagementTools({ issues })],
   actions: [],
   durability: configuredDurability,
 }));
@@ -188,6 +190,8 @@ type WindowDelivery =
 6. Convert crash-interrupted or otherwise ambiguous attempts to `uncertain`; never automatically dispatch them again.
 7. Let `doctor` search canonical Agent history for positive evidence. Failure to find the Window does not prove it was never accepted, so an unresolved case requires an explicit operator resolution.
 
+An Uncertain Window is also a durable per-chat ordering barrier. Later Inbox arrivals remain withheld while unrelated chats continue. After positive reconciliation, the runtime reopens that chat from its durable backlog before accepting newer work.
+
 After Flue returns its receipt, its file-backed persistence adapter owns queue ordering, canonical conversation state, processing recovery, and conservative handling of interrupted tool work. Exactly one live Node process owns a given Ambience instance.
 
 ## State and installation ownership
@@ -207,6 +211,10 @@ The published package and executable are both named `ambient-agent`. A normal in
 ```
 
 The directory is created with mode `0700`; credential files use mode `0600`.
+`github.json` also holds an app-generated webhook signing secret so production
+startup does not depend on an operator-authored `.env` file. A one-time atomic
+migration adds it to older valid managed credentials without adopting any
+machine-global state.
 Ambient Agent starts the headless `openai-codex` device-code flow itself and
 stores the complete provider record with lock-protected atomic replacement.
 Expired credentials are refreshed once under the same lock and the rotated
@@ -228,7 +236,11 @@ npx ambient-agent start        # non-interactive foreground runtime
 npx ambient-agent status       # read-only state and health
 npx ambient-agent doctor       # offline configuration, credential and DB diagnostics
 npx ambient-agent doctor --refresh # opt-in credential refresh verification
-npx ambient-agent doctor --live    # opt-in real model request through production auth
+npx ambient-agent doctor --live    # opt-in real GitHub and model checks through production auth
+npx ambient-agent doctor --retry admission:<windowId> # explicit requeue after observation
+npx ambient-agent doctor --retry mutation:<operationId> # explicit new Operation Identity
+npx ambient-agent doctor --accept-observed mutation:<operationId>
+npx ambient-agent doctor --abandon admission:<windowId>|mutation:<operationId>
 ```
 
 Commander 15 with `@commander-js/extra-typings` owns command parsing; Clack owns interactive prompts. The package requires Node `>=22.19.0`, the effective current Flue floor. A system process manager owns background supervision.
@@ -245,6 +257,12 @@ Evaluation uses the production Flue HTTP interface through `@flue/sdk` and `vite
 - Ordering is stable per chat and independent across chats.
 - `pending`, `dispatching`, `admitted`, and `uncertain` transitions obey their invariants across restart injection points.
 - No Uncertain admission or GitHub mutation is automatically repeated.
+- `status` reads Uncertain counts without opening a writable database handle or exposing stored content and errors.
+- On the documented stopped-runtime boundary, `status` counts durable `dispatching` admissions and `attempting` mutations as degraded; `doctor` conservatively promotes them to Uncertain before provider reads and never repeats them automatically.
+- `doctor` examines at most 25 items per invocation, rotates examination order so unresolved work cannot starve later records, reserves capacity for both admissions and mutations, caps each GitHub read at ten seconds, and caps canonical Flue inspection at 100,000 records. Canonical receipts and provider Operation Identity reconcile automatically; desired state alone requires explicit acceptance.
+- A provider-success/local-ledger-failure split remains Uncertain. It is never converted into a terminal provider failure merely because completion persistence failed.
+- Explicit admission retry archives the Uncertain attempt and returns the Window to `pending`; explicit GitHub retry archives the prior operation and performs the same stored mutation under a fresh Operation Identity. Explicit abandonment is terminal and retained in the audit.
+- These transitions prove local, single-owner process replacement only. They add no PID liveness checks, stale-lock protocol, cross-process coordinator, or cross-host recovery.
 - Issue and comment Tools enforce repository scope and return structured provider state.
 - Configuration rejects embedded secrets, unsafe permissions, and missing references.
 
@@ -275,12 +293,12 @@ Live credentials and provider availability are not CI prerequisites. Their recei
 
 These are anticipated Capability seams, not designs committed by this rollout:
 
-| Future Capability | Direct abilities | Likely independent runs |
-| --- | --- | --- |
-| Planning | inspect repositories, manage milestones and structured issue sets | research or plan generation when it needs its own durable result |
-| Implementation | select an issue, inspect workspaces, report status | coding Agent run producing commits and a pull request |
-| Review | inspect diffs, checks, comments, and policy | code or pull-request review with an inspectable terminal result |
-| Delivery | merge approved changes and report deployment state | release preparation or deployment orchestration |
+| Future Capability | Direct abilities                                                  | Likely independent runs                                          |
+| ----------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Planning          | inspect repositories, manage milestones and structured issue sets | research or plan generation when it needs its own durable result |
+| Implementation    | select an issue, inspect workspaces, report status                | coding Agent run producing commits and a pull request            |
+| Review            | inspect diffs, checks, comments, and policy                       | code or pull-request review with an inspectable terminal result  |
+| Delivery          | merge approved changes and report deployment state                | release preparation or deployment orchestration                  |
 
 Future Workflows bind reusable Actions only when the same agent-backed operation genuinely needs an independent run. They do not replace Ambience's conversational judgment or turn ordinary provider calls into Workflows.
 
