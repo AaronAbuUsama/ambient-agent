@@ -1,7 +1,13 @@
-import type { WhatsAppHost, WhatsAppSayResult } from "./whatsapp-host.ts";
+import type { WhatsAppSayPort, WhatsAppSayResult } from "../capabilities/whatsapp-participation/whatsapp-port.ts";
 
 export type FakeWhatsAppEvent =
-  | { readonly kind: "typing"; readonly chatId: string; readonly on: boolean; readonly outcome?: "unknown"; readonly error?: string }
+  | {
+      readonly kind: "typing";
+      readonly chatId: string;
+      readonly on: boolean;
+      readonly outcome?: "unknown";
+      readonly error?: string;
+    }
   | {
       readonly kind: "send";
       readonly chatId: string;
@@ -17,7 +23,7 @@ export type FakeWhatsAppEvent =
       readonly error: string;
     };
 
-export interface FakeWhatsAppHost extends WhatsAppHost {
+export interface FakeWhatsAppHost extends WhatsAppSayPort {
   readonly events: () => readonly FakeWhatsAppEvent[];
   readonly failNextSend: (error: Error, delivery?: "failed" | "unknown") => void;
   readonly failNextTypingFinalization: (error: Error) => void;
@@ -37,11 +43,21 @@ const withTyping = (delivery: DeliveryResult, typingError?: Error): WhatsAppSayR
   if (delivery.delivery === "failed") {
     return typingError === undefined
       ? { delivery: "failed", deliveryError: delivery.deliveryError, typing: "cleared" }
-      : { delivery: "failed", deliveryError: delivery.deliveryError, typing: "unknown", typingError: typingError.message };
+      : {
+          delivery: "failed",
+          deliveryError: delivery.deliveryError,
+          typing: "unknown",
+          typingError: typingError.message,
+        };
   }
   return typingError === undefined
     ? { delivery: "unknown", deliveryError: delivery.deliveryError, typing: "cleared" }
-    : { delivery: "unknown", deliveryError: delivery.deliveryError, typing: "unknown", typingError: typingError.message };
+    : {
+        delivery: "unknown",
+        deliveryError: delivery.deliveryError,
+        typing: "unknown",
+        typingError: typingError.message,
+      };
 };
 
 export const createFakeWhatsAppHost = (): FakeWhatsAppHost => {

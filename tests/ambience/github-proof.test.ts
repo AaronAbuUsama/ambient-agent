@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import * as v from "valibot";
 
 import ambience from "../../src/agents/ambience.ts";
+import { configureWhatsAppParticipationPort } from "../../src/capabilities/whatsapp-participation/whatsapp-port.ts";
 import { createGitHubProofOperation, executeGitHubProof } from "../../src/github/proof-operation.ts";
 import {
   configureGitHubProofRuntime,
@@ -11,7 +12,6 @@ import {
 import { createFakeGitHubProofHost } from "../../src/host/fake-github-proof-host.ts";
 import { isUncertainGitHubMutationError } from "../../src/host/github-proof-host.ts";
 import { createFakeWhatsAppHost } from "../../src/host/fake-whatsapp-host.ts";
-import { configureWhatsAppHost } from "../../src/host/whatsapp-host.ts";
 import { createStartGitHubProofTool } from "../../src/tools/workflows/start-github-proof.ts";
 import {
   GITHUB_PROOF_WORKFLOW_NAME,
@@ -246,7 +246,11 @@ describe("bounded GitHub proof operation", () => {
 
 describe("root Ambience capability boundary", () => {
   it("has only communication, bound history reads, and workflow admission, never a GitHub mutation tool", async () => {
-    configureWhatsAppHost(createFakeWhatsAppHost());
+    configureWhatsAppParticipationPort({
+      ...createFakeWhatsAppHost(),
+      readThread: () => [],
+      search: () => [],
+    });
     configureGitHubProofRuntime({
       host: createFakeGitHubProofHost(),
       policy: createGitHubProofPolicy("acme/widgets", ["acme/widgets"]),

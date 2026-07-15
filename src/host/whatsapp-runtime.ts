@@ -5,6 +5,12 @@ import { Effect, Exit, Fiber, Layer, type Scope } from "effect";
 import type { WhatsAppSession } from "whatsappd";
 
 import { makeAmbienceWindowDispatcher, type DispatchAmbience } from "../ambience/dispatch.js";
+import {
+  configureWhatsAppParticipationPort,
+  type WhatsAppHistoryPort,
+  type WhatsAppSayPort,
+  type WhatsAppSayResult,
+} from "../capabilities/whatsapp-participation/whatsapp-port.js";
 import { makeChatGate, type ChatGate } from "../coalescer/chat-gate.js";
 import * as Coalescer from "../coalescer/coalescer.js";
 import { configLayer, type CoalescerConfigValues } from "../coalescer/config.js";
@@ -12,8 +18,6 @@ import { botIdsOf, whatsappEventSource } from "../coalescer/whatsapp.js";
 import { createConversationArchive } from "../intake/conversation-archive.js";
 import { createManagedChatInbox, managedChatWindowStore, type ManagedChatInbox } from "../intake/managed-chat-inbox.js";
 import { createWhatsAppAccount } from "../whatsapp/account.js";
-import { configureWhatsAppHistory, type WhatsAppHistory } from "./whatsapp-history.js";
-import { configureWhatsAppHost, type WhatsAppHost, type WhatsAppSayResult } from "./whatsapp-host.js";
 
 const errorMessage = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
 const isKnownPreSendFailure = (message: string): boolean => /^not online \(phase: [^)]+\)$/.test(message);
@@ -34,7 +38,7 @@ const combineReceipt = (delivery: DeliveryReceipt, typingError?: string): WhatsA
 };
 
 /** The sole real implementation behind Ambience's `say` tool. It never retries an uncertain provider outcome. */
-export const createWhatsAppHost = (session: WhatsAppSession): WhatsAppHost => ({
+export const createWhatsAppHost = (session: WhatsAppSession): WhatsAppSayPort => ({
   say: async (chatId, text) => {
     try {
       await session.setTyping(chatId, true);
@@ -74,7 +78,7 @@ export const createWhatsAppHost = (session: WhatsAppSession): WhatsAppHost => ({
 
 export interface WhatsAppSessionRuntimeOptions {
   readonly gate: ChatGate;
-  readonly history: WhatsAppHistory;
+  readonly history: WhatsAppHistoryPort;
   readonly inbox: ManagedChatInbox;
   readonly dispatch?: DispatchAmbience;
   readonly coalescer?: Partial<CoalescerConfigValues>;
@@ -86,8 +90,12 @@ export const runWhatsAppSession = (
   session: WhatsAppSession,
   options: WhatsAppSessionRuntimeOptions,
 ): Effect.Effect<void, never, Scope.Scope> => {
-  configureWhatsAppHistory(options.history);
-  configureWhatsAppHost(createWhatsAppHost(session));
+  const sayPort = createWhatsAppHost(session);
+  configureWhatsAppParticipationPort({
+    say: sayPort.say,
+    readThread: (chatId, limit) => options.history.readThread(chatId, limit),
+    search: (chatId, query, limit) => options.history.search(chatId, query, limit),
+  });
   const botIds = botIdsOf(session, options.botLid);
   return Coalescer.run.pipe(
     Effect.provide(
