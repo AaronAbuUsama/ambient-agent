@@ -14,6 +14,7 @@ import {
 } from "../../src/capabilities/issue-management/runtime.ts";
 import {
   isUncertainIssueMutationError,
+  MAX_PUBLIC_COMMENT_BODY_LENGTH,
   MAX_PUBLIC_ISSUE_BODY_LENGTH,
 } from "../../src/capabilities/issue-management/issue-repository.ts";
 import { createIssueManagementTools } from "../../src/capabilities/issue-management/tools.ts";
@@ -21,10 +22,12 @@ import { createIssueOperationStore } from "../../src/capabilities/issue-manageme
 import { createFakeIssueRepository } from "../../src/host/fake-issue-repository.ts";
 import {
   GITHUB_ISSUE_BODY_LIMIT,
+  createSuccessfulPromiseCache,
   githubIssueProviderBody,
   githubIssueRecord,
   githubIssueSearchQuery,
 } from "../../src/host/github-issue-repository.ts";
+import { commentProviderBody, issueOperationMarker } from "../../src/host/issue-operation-footer.ts";
 
 const CHAT = "issue-management@g.us";
 const REPOSITORY = { owner: "acme", repo: "widgets" } as const;
@@ -85,6 +88,20 @@ describe("Issue Management configuration", () => {
 });
 
 describe("production Issue Management tools", () => {
+  it("retries provider-author discovery after a transient failure and caches only success", async () => {
+    let attempts = 0;
+    const providerAuthor = createSuccessfulPromiseCache(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("transient GitHub failure");
+      return "ambient-agent";
+    });
+
+    await expect(providerAuthor()).rejects.toThrow("transient GitHub failure");
+    await expect(providerAuthor()).resolves.toBe("ambient-agent");
+    await expect(providerAuthor()).resolves.toBe("ambient-agent");
+    expect(attempts).toBe(2);
+  });
+
   it("quotes model search text so GitHub qualifiers cannot escape the authorized repository", () => {
     expect(githubIssueSearchQuery(REPOSITORY, 'scheduler repo:other/private "secret"')).toBe(
       '"scheduler repo:other/private \\"secret\\"" in:title,body repo:acme/widgets is:issue',
@@ -147,6 +164,34 @@ describe("production Issue Management tools", () => {
         state: "open",
       }),
     ).toMatchObject({ body: "Visible legacy body" });
+  });
+
+  it("preserves an external author's footer-shaped comment and never trusts it for reconciliation", async () => {
+    const { repository, operations, policy } = configured();
+    const issue = repository.seed({ repository: REPOSITORY, title: "External discussion", body: "Body" });
+    const operation = { id: "spoofed-comment-operation" };
+    const externalBody = commentProviderBody("Visible external text", [issueOperationMarker(operation)]);
+    const comment = repository.seedComment({
+      repository: REPOSITORY,
+      number: issue.number,
+      body: externalBody,
+      author: "octocat",
+    });
+    repository.resetEvents();
+    const readDiscussion = createIssueManagementTools({ repository, operations, policy }).find(
+      (tool) => tool.name === "github_read_issue_discussion",
+    )!;
+
+    await expect(readDiscussion.run({ input: { number: issue.number } })).resolves.toMatchObject({
+      comments: [{ id: comment.id, author: "octocat", body: externalBody }],
+    });
+    await expect(
+      repository.findCommentByOperation({
+        repository: REPOSITORY,
+        number: issue.number,
+        operation,
+      }),
+    ).resolves.toEqual([]);
   });
 
   it("reserves provider body capacity for the stable create and latest update identities", () => {
@@ -661,13 +706,232 @@ describe("production Issue Management tools", () => {
     });
   });
 
+  it("reads the complete discussion before creating, editing, deleting, closing, and reopening", async () => {
+    const { repository, operations, policy } = configured();
+    const issue = repository.seed({ repository: REPOSITORY, title: "Resolve me", body: "Current report" });
+    const original = repository.seedComment({
+      repository: REPOSITORY,
+      number: issue.number,
+      body: "Existing discussion",
+      author: "octocat",
+    });
+    repository.resetEvents();
+    const operationIds = ["comment-create", "comment-update", "comment-delete", "issue-close", "issue-reopen"];
+    const tools = createIssueManagementTools({
+      repository,
+      operations,
+      policy,
+      createOperationId: () => operationIds.shift()!,
+      now: () => new Date("2026-07-15T03:00:00.000Z"),
+    });
+    const tool = (name: string) => tools.find((candidate) => candidate.name === name)!;
+
+    await expect(
+      tool("github_read_issue_discussion").run({ input: { number: issue.number } }),
+    ).resolves.toMatchObject({
+      issue: { number: issue.number, state: "open", stateReason: null },
+      comments: [{ id: original.id, body: "Existing discussion", author: "octocat" }],
+    });
+    const created = await tool("github_create_issue_comment").run({
+      input: { number: issue.number, body: "The fix is deployed." },
+    });
+    expect(created).toMatchObject({
+      status: "created",
+      operationId: "comment-create",
+      comment: { body: "The fix is deployed." },
+    });
+    if (!("comment" in created)) throw new Error("Expected a created comment receipt");
+    const commentId = (created.comment as { id: number }).id;
+
+    await expect(
+      tool("github_update_issue_comment").run({
+        input: { number: issue.number, commentId, body: "The fix is deployed and verified." },
+      }),
+    ).resolves.toMatchObject({
+      status: "updated",
+      operationId: "comment-update",
+      comment: { id: commentId, body: "The fix is deployed and verified." },
+    });
+    await expect(
+      tool("github_delete_issue_comment").run({ input: { number: issue.number, commentId } }),
+    ).resolves.toEqual({ status: "deleted", operationId: "comment-delete", commentId });
+    await expect(
+      tool("github_set_issue_state").run({
+        input: { number: issue.number, state: "closed", reason: "completed" },
+      }),
+    ).resolves.toMatchObject({
+      status: "changed",
+      operationId: "issue-close",
+      issue: { state: "closed", stateReason: "completed" },
+    });
+    await expect(
+      tool("github_set_issue_state").run({
+        input: { number: issue.number, state: "open", reason: "reopened" },
+      }),
+    ).resolves.toMatchObject({
+      status: "changed",
+      operationId: "issue-reopen",
+      issue: { state: "open", stateReason: "reopened" },
+    });
+
+    const eventKinds = repository.events().map((event) => event.kind);
+    expect(eventKinds).toEqual([
+      "discussion",
+      "discussion",
+      "create-comment",
+      "discussion",
+      "update-comment",
+      "discussion",
+      "delete-comment",
+      "discussion",
+      "set-issue-state",
+      "discussion",
+      "set-issue-state",
+    ]);
+    expect(Object.fromEntries(operations.list().map((operation) => [operation.operationId, operation]))).toMatchObject({
+      "comment-create": { kind: "create-comment", status: "completed", target: { body: "The fix is deployed." } },
+      "comment-update": {
+        kind: "update-comment",
+        status: "completed",
+        target: { commentId, body: "The fix is deployed and verified." },
+      },
+      "comment-delete": { kind: "delete-comment", status: "completed", target: { commentId } },
+      "issue-close": {
+        kind: "set-issue-state",
+        status: "completed",
+        target: { state: "closed", reason: "completed" },
+      },
+      "issue-reopen": {
+        kind: "set-issue-state",
+        status: "completed",
+        target: { state: "open", reason: "reopened" },
+      },
+    });
+  });
+
+  it("never records a successful lifecycle mutation as failed when completion persistence fails", async () => {
+    const repository = createFakeIssueRepository();
+    const issue = repository.seed({ repository: REPOSITORY, title: "Ledger failure", body: "Body" });
+    repository.resetEvents();
+    const persisted = createIssueOperationStore(":memory:");
+    const operations = {
+      ...persisted,
+      complete: () => {
+        throw new Error("injected lifecycle completion failure");
+      },
+    };
+    const createComment = createIssueManagementTools({
+      repository,
+      operations,
+      policy: createIssueManagementPolicy("acme/widgets", ["acme/widgets"]),
+      createOperationId: () => "lifecycle-ledger-failure",
+    }).find((tool) => tool.name === "github_create_issue_comment")!;
+
+    await expect(
+      createComment.run({ input: { number: issue.number, body: "Provider accepted this comment." } }),
+    ).resolves.toMatchObject({
+      status: "uncertain",
+      operationId: "lifecycle-ledger-failure",
+      comment: { body: "Provider accepted this comment." },
+    });
+    expect(repository.events().filter((event) => event.kind === "create-comment")).toHaveLength(1);
+    expect(persisted.get("lifecycle-ledger-failure")).toMatchObject({
+      kind: "create-comment",
+      status: "uncertain",
+    });
+  });
+
+  it("observes every ambiguous lifecycle mutation once and settles only attributable outcomes", async () => {
+    const { repository, operations, policy } = configured();
+    const issue = repository.seed({ repository: REPOSITORY, title: "Ambiguous journey", body: "Body" });
+    const seeded = repository.seedComment({
+      repository: REPOSITORY,
+      number: issue.number,
+      body: "Original comment",
+      author: "ambient-agent",
+    });
+    repository.resetEvents();
+    const operationIds = ["ambiguous-create", "ambiguous-update", "ambiguous-delete", "ambiguous-state"];
+    const tools = createIssueManagementTools({
+      repository,
+      operations,
+      policy,
+      createOperationId: () => operationIds.shift()!,
+    });
+    const tool = (name: string) => tools.find((candidate) => candidate.name === name)!;
+
+    repository.timeoutNextLifecycleMutation("create-comment", { afterMutation: true });
+    await expect(
+      tool("github_create_issue_comment").run({ input: { number: issue.number, body: "Created despite timeout" } }),
+    ).resolves.toMatchObject({ status: "reconciled", operationId: "ambiguous-create" });
+
+    repository.timeoutNextLifecycleMutation("update-comment", { afterMutation: true });
+    await expect(
+      tool("github_update_issue_comment").run({
+        input: { number: issue.number, commentId: seeded.id, body: "Updated despite timeout" },
+      }),
+    ).resolves.toMatchObject({ status: "reconciled", operationId: "ambiguous-update" });
+
+    repository.timeoutNextLifecycleMutation("delete-comment", { afterMutation: true });
+    await expect(
+      tool("github_delete_issue_comment").run({ input: { number: issue.number, commentId: seeded.id } }),
+    ).resolves.toMatchObject({ status: "uncertain", operationId: "ambiguous-delete" });
+
+    repository.timeoutNextLifecycleMutation("set-issue-state", { afterMutation: true });
+    await expect(
+      tool("github_set_issue_state").run({
+        input: { number: issue.number, state: "closed", reason: "not_planned" },
+      }),
+    ).resolves.toMatchObject({ status: "uncertain", operationId: "ambiguous-state" });
+
+    for (const kind of ["create-comment", "update-comment", "delete-comment", "set-issue-state"] as const) {
+      expect(repository.events().filter((event) => event.kind === kind)).toHaveLength(1);
+    }
+    expect(repository.events().filter((event) => event.kind === "find-comment-operation")).toHaveLength(2);
+    expect(operations.list().map((operation) => [operation.operationId, operation.status]).sort()).toEqual([
+      ["ambiguous-create", "completed"],
+      ["ambiguous-delete", "uncertain"],
+      ["ambiguous-state", "uncertain"],
+      ["ambiguous-update", "completed"],
+    ]);
+  });
+
+  it("keeps an unobserved ambiguous comment write uncertain and rejects invalid state reasons before mutation", async () => {
+    const { repository, operations, policy } = configured();
+    const issue = repository.seed({ repository: REPOSITORY, title: "No retry", body: "Body" });
+    repository.resetEvents();
+    repository.timeoutNextLifecycleMutation("create-comment", { afterMutation: false });
+    const tools = createIssueManagementTools({
+      repository,
+      operations,
+      policy,
+      createOperationId: () => "comment-not-observed",
+    });
+    const createComment = tools.find((tool) => tool.name === "github_create_issue_comment")!;
+    const setState = tools.find((tool) => tool.name === "github_set_issue_state")!;
+
+    await expect(
+      createComment.run({ input: { number: issue.number, body: "Unknown outcome" } }),
+    ).resolves.toMatchObject({ status: "uncertain", operationId: "comment-not-observed" });
+    expect(repository.events().filter((event) => event.kind === "create-comment")).toHaveLength(1);
+    expect(operations.get("comment-not-observed")).toMatchObject({ status: "uncertain" });
+
+    await expect(
+      setState.run({ input: { number: issue.number, state: "open", reason: "completed" } }),
+    ).rejects.toThrow("Open issues require reason reopened");
+    await expect(
+      setState.run({ input: { number: issue.number, state: "open", reason: "reopened" } }),
+    ).rejects.toThrow("already has state open");
+    expect(repository.events().filter((event) => event.kind === "set-issue-state")).toEqual([]);
+  });
+
   it("registers only bounded direct issue tools without model-controlled Operation Identity or administration", async () => {
     configured();
     const config = await ambience.initialize({ id: CHAT, env: {} });
     expect(config.skills?.map((skill) => skill.name)).toEqual(["whatsapp-participation", "issue-management"]);
     await expect(
       readFile(join(process.cwd(), "src/capabilities/issue-management/SKILL.md"), "utf8"),
-    ).resolves.toContain('version: "1.1.0"');
+    ).resolves.toContain('version: "1.2.0"');
     expect(config.tools?.map((tool) => tool.name)).toEqual([
       "say",
       "whatsapp_read_thread",
@@ -677,7 +941,13 @@ describe("production Issue Management tools", () => {
       "github_list_issue_options",
       "github_create_issue",
       "github_update_issue",
+      "github_read_issue_discussion",
+      "github_create_issue_comment",
+      "github_update_issue_comment",
+      "github_delete_issue_comment",
+      "github_set_issue_state",
     ]);
+    expect(config.tools?.some((tool) => tool.name === "github_delete_issue")).toBe(false);
     const create = config.tools?.find((tool) => tool.name === "github_create_issue");
     expect(create).toBeDefined();
     if (create === undefined) throw new Error("Expected the Issue Management create Tool");
@@ -704,6 +974,15 @@ describe("production Issue Management tools", () => {
       v.parse(update.input as v.GenericSchema, {
         number: 1,
         body: "x".repeat(MAX_PUBLIC_ISSUE_BODY_LENGTH + 1),
+      }),
+    ).toThrow();
+    const createComment = config.tools?.find((tool) => tool.name === "github_create_issue_comment");
+    expect(createComment).toBeDefined();
+    if (createComment === undefined) throw new Error("Expected the Issue Management create-comment Tool");
+    expect(() =>
+      v.parse(createComment.input as v.GenericSchema, {
+        number: 1,
+        body: "x".repeat(MAX_PUBLIC_COMMENT_BODY_LENGTH + 1),
       }),
     ).toThrow();
   });
@@ -771,6 +1050,55 @@ describe("Issue Management operation schema", () => {
         target: { title: "Correct title" },
         status: "attempting",
       });
+      operations.close();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves update targets while migrating the ledger to discussion and lifecycle identities", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ambient-agent-issue-lifecycle-operations-"));
+    const path = join(root, "application.sqlite");
+    try {
+      const legacy = new DatabaseSync(path);
+      legacy.exec(`
+        CREATE TABLE github_issue_operations (
+          operation_id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL CHECK (kind IN ('create-issue', 'update-issue')),
+          repository TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('attempting', 'completed', 'uncertain', 'failed')),
+          issue_number INTEGER,
+          target_json TEXT,
+          error TEXT,
+          started_at TEXT NOT NULL,
+          settled_at TEXT
+        ) STRICT;
+        INSERT INTO github_issue_operations
+          (operation_id, kind, repository, status, issue_number, target_json, started_at, settled_at)
+        VALUES ('legacy-update', 'update-issue', 'acme/widgets', 'completed', 7,
+                '{"title":"Preserved title"}', '2026-07-15T00:00:00.000Z', '2026-07-15T00:00:01.000Z');
+      `);
+      legacy.close();
+
+      const operations = createIssueOperationStore(path);
+      expect(operations.get("legacy-update")).toMatchObject({
+        kind: "update-issue",
+        issueNumber: 7,
+        target: { title: "Preserved title" },
+        status: "completed",
+      });
+      for (const kind of ["create-comment", "update-comment", "delete-comment", "set-issue-state"] as const) {
+        expect(
+          operations.begin({
+            operationId: `new-${kind}`,
+            kind,
+            repository: "acme/widgets",
+            issueNumber: 7,
+            target: { proof: kind },
+            startedAt: `2026-07-15T01:00:0${operations.list().length}.000Z`,
+          }),
+        ).toMatchObject({ kind, target: { proof: kind }, status: "attempting" });
+      }
       operations.close();
     } finally {
       await rm(root, { recursive: true, force: true });

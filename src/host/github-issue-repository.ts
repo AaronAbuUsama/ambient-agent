@@ -3,13 +3,17 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import type {
   Issue,
+  IssueComment,
   IssueRepository,
+  IssueStateReason,
   OperationIdentity,
   RepositoryRef,
 } from "../capabilities/issue-management/issue-repository.ts";
 import {
+  commentProviderBody,
   issueOperationMarker,
   issueProviderBody,
+  parseCommentProviderBody,
   parseIssueProviderBody,
 } from "./issue-operation-footer.ts";
 
@@ -17,6 +21,8 @@ export const GITHUB_ISSUE_BODY_LIMIT = 65_536;
 export const githubIssueProviderBody = (body: string, markers: readonly string[]): string =>
   issueProviderBody(body, markers, GITHUB_ISSUE_BODY_LIMIT);
 const GITHUB_SEARCH_QUERY_LIMIT = 256;
+const issueStateReason = (value: unknown): IssueStateReason =>
+  value === "completed" || value === "not_planned" || value === "duplicate" || value === "reopened" ? value : null;
 export const githubIssueSearchQuery = (repository: RepositoryRef, query: string): string => {
   const qualifiers = ` in:title,body repo:${repository.owner}/${repository.repo} is:issue`;
   const phraseBudget = GITHUB_SEARCH_QUERY_LIMIT - qualifiers.length - 2;
@@ -39,6 +45,7 @@ export const githubIssueRecord = (
     title: string;
     body?: string | null;
     state: string;
+    state_reason?: string | null;
     labels?: Array<string | { name?: string }>;
     assignees?: Array<{ login: string }> | null;
     milestone?: { number: number; title: string; state: string } | null;
@@ -54,6 +61,7 @@ export const githubIssueRecord = (
     url: data.html_url,
     title: data.title,
     body: parseIssueProviderBody(data.body ?? "").publicBody,
+    stateReason: issueStateReason(data.state_reason),
     state: data.state === "closed" ? "closed" : "open",
     labels: (data.labels ?? []).flatMap((label) => {
       const name = typeof label === "string" ? label : label.name;
@@ -71,8 +79,76 @@ export const githubIssueRecord = (
   };
 };
 
+const githubIssueCommentRecord = (
+  repository: RepositoryRef,
+  number: number,
+  providerAuthor: string,
+  data: {
+    id: number;
+    html_url: string;
+    body?: string | null;
+    user?: { login: string } | null;
+    created_at: string;
+    updated_at: string;
+  },
+): IssueComment => {
+  const author = data.user?.login ?? null;
+  return {
+    repository,
+    number,
+    id: data.id,
+    url: data.html_url,
+    body: author === providerAuthor ? parseCommentProviderBody(data.body ?? "").publicBody : (data.body ?? ""),
+    author,
+    createdAt: data.created_at,
+    updatedAt: data.updated_at,
+  };
+};
+
+export const createSuccessfulPromiseCache = <T>(load: () => Promise<T>): (() => Promise<T>) => {
+  let pending: Promise<T> | undefined;
+  return () => {
+    if (pending !== undefined) return pending;
+    const request = load().catch((cause: unknown) => {
+      if (pending === request) pending = undefined;
+      throw cause;
+    });
+    pending = request;
+    return request;
+  };
+};
+
 export const createOctokitIssueRepository = (token: string): IssueRepository => {
   const octokit = new Octokit({ auth: token, userAgent: "ambient-agent-issue-management" });
+  const providerAuthor = createSuccessfulPromiseCache(async () =>
+    octokit.rest.users.getAuthenticated().then((response) => response.data.login),
+  );
+  const readIssue = async (repository: RepositoryRef, number: number, signal?: AbortSignal): Promise<Issue> => {
+    const response = await octokit.rest.issues.get({
+      owner: repository.owner,
+      repo: repository.repo,
+      issue_number: number,
+      request: { signal },
+    });
+    return githubIssueRecord(repository, response.data);
+  };
+  const readComments = async (
+    repository: RepositoryRef,
+    number: number,
+    signal?: AbortSignal,
+  ): Promise<IssueComment[]> => {
+    const [comments, author] = await Promise.all([
+      octokit.paginate(octokit.rest.issues.listComments, {
+        owner: repository.owner,
+        repo: repository.repo,
+        issue_number: number,
+        per_page: 100,
+        request: { signal },
+      }),
+      providerAuthor(),
+    ]);
+    return comments.map((comment) => githubIssueCommentRecord(repository, number, author, comment));
+  };
   return {
     search: async ({ repository, query, signal }) => {
       const repositoryUrl = `https://api.github.com/repos/${repository.owner}/${repository.repo}`.toLowerCase();
@@ -86,13 +162,7 @@ export const createOctokitIssueRepository = (token: string): IssueRepository => 
         .map((item) => githubIssueRecord(repository, item));
     },
     get: async ({ repository, number, signal }) => {
-      const response = await octokit.rest.issues.get({
-        owner: repository.owner,
-        repo: repository.repo,
-        issue_number: number,
-        request: { signal },
-      });
-      return githubIssueRecord(repository, response.data);
+      return await readIssue(repository, number, signal);
     },
     options: async ({ repository, signal }) => {
       const [labels, assignees, milestones] = await Promise.all([
@@ -161,6 +231,109 @@ export const createOctokitIssueRepository = (token: string): IssueRepository => 
         request: { signal },
       });
       return githubIssueRecord(repository, response.data);
+    },
+    discussion: async ({ repository, number, signal }) => {
+      const [issue, comments] = await Promise.all([
+        readIssue(repository, number, signal),
+        readComments(repository, number, signal),
+      ]);
+      return { issue, comments };
+    },
+    createComment: async ({ repository, number, body, operation, signal }) => {
+      await readIssue(repository, number, signal);
+      const response = await octokit.rest.issues.createComment({
+        owner: repository.owner,
+        repo: repository.repo,
+        issue_number: number,
+        body: commentProviderBody(body, [issueOperationMarker(operation)]),
+        request: { signal },
+      });
+      return githubIssueCommentRecord(repository, number, await providerAuthor(), response.data);
+    },
+    updateComment: async ({ repository, number, commentId, body, operation, signal }) => {
+      const discussion = await Promise.all([
+        readIssue(repository, number, signal),
+        readComments(repository, number, signal),
+      ]).then(([, comments]) => comments);
+      const existing = discussion.find((comment) => comment.id === commentId);
+      if (existing === undefined) {
+        throw new Error(`GitHub issue ${repository.owner}/${repository.repo}#${number} has no comment ${commentId}.`);
+      }
+      const current = await octokit.rest.issues.getComment({
+        owner: repository.owner,
+        repo: repository.repo,
+        comment_id: commentId,
+        request: { signal },
+      });
+      const author = await providerAuthor();
+      if (current.data.user?.login !== author) {
+        throw new Error(`GitHub comment ${commentId} is not owned by the configured provider account.`);
+      }
+      const existingMarkers = parseCommentProviderBody(current.data.body ?? "").markers;
+      const markers = [
+        ...(existingMarkers.length === 0 ? [] : [existingMarkers[0]!]),
+        issueOperationMarker(operation),
+      ];
+      const response = await octokit.rest.issues.updateComment({
+        owner: repository.owner,
+        repo: repository.repo,
+        comment_id: commentId,
+        body: commentProviderBody(body, markers),
+        request: { signal },
+      });
+      return githubIssueCommentRecord(repository, number, author, response.data);
+    },
+    deleteComment: async ({ repository, number, commentId, signal }) => {
+      const discussion = await Promise.all([
+        readIssue(repository, number, signal),
+        readComments(repository, number, signal),
+      ]).then(([, comments]) => comments);
+      if (!discussion.some((comment) => comment.id === commentId)) {
+        throw new Error(`GitHub issue ${repository.owner}/${repository.repo}#${number} has no comment ${commentId}.`);
+      }
+      await octokit.rest.issues.deleteComment({
+        owner: repository.owner,
+        repo: repository.repo,
+        comment_id: commentId,
+        request: { signal },
+      });
+    },
+    setState: async ({ repository, number, state, reason, signal }) => {
+      await readIssue(repository, number, signal);
+      if ((state === "open") !== (reason === "reopened")) {
+        throw new Error("Opening an issue requires reason reopened; closing requires a closed-state reason.");
+      }
+      const response = await octokit.rest.issues.update({
+        owner: repository.owner,
+        repo: repository.repo,
+        issue_number: number,
+        state,
+        state_reason: reason,
+        request: { signal },
+      });
+      return githubIssueRecord(repository, response.data);
+    },
+    findCommentByOperation: async ({ repository, number, operation, signal }) => {
+      const marker = issueOperationMarker(operation);
+      const author = await providerAuthor();
+      for (const waitMillis of [0, 100, 250, 500, 1_000, 2_000]) {
+        if (waitMillis > 0) await delay(waitMillis, undefined, { signal });
+        const rawComments = await octokit.paginate(octokit.rest.issues.listComments, {
+          owner: repository.owner,
+          repo: repository.repo,
+          issue_number: number,
+          per_page: 100,
+          request: { signal },
+        });
+        const observed = rawComments
+          .filter(
+            (comment) =>
+              comment.user?.login === author && parseCommentProviderBody(comment.body ?? "").markers.includes(marker),
+          )
+          .map((comment) => githubIssueCommentRecord(repository, number, author, comment));
+        if (observed.length > 0) return observed;
+      }
+      return [];
     },
     findCreated: async ({ repository, operation, signal }) => {
       const marker = issueOperationMarker(operation);

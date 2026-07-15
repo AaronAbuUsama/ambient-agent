@@ -4,6 +4,10 @@ export interface RepositoryRef {
 }
 
 export const MAX_PUBLIC_ISSUE_BODY_LENGTH = 65_000;
+export const MAX_PUBLIC_COMMENT_BODY_LENGTH = 65_000;
+
+export type IssueStateReason = "completed" | "not_planned" | "duplicate" | "reopened" | null;
+export type IssueStateChangeReason = Exclude<IssueStateReason, null>;
 
 export interface IssueRef {
   readonly repository: RepositoryRef;
@@ -18,9 +22,24 @@ export interface IssueSummary extends IssueRef {
 
 export interface Issue extends IssueSummary {
   readonly body: string;
+  readonly stateReason: IssueStateReason;
   readonly labels: string[];
   readonly assignees: string[];
   readonly milestone: IssueMilestone | null;
+}
+
+export interface IssueComment extends IssueRef {
+  readonly id: number;
+  readonly url: string;
+  readonly body: string;
+  readonly author: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface IssueDiscussion {
+  readonly issue: Issue;
+  readonly comments: IssueComment[];
 }
 
 export interface IssueMilestone {
@@ -73,6 +92,43 @@ export interface IssueRepository {
       readonly signal?: AbortSignal;
     },
   ): Promise<Issue>;
+  discussion(input: IssueRef & { readonly signal?: AbortSignal }): Promise<IssueDiscussion>;
+  createComment(
+    input: IssueRef & {
+      readonly body: string;
+      readonly operation: OperationIdentity;
+      readonly signal?: AbortSignal;
+    },
+  ): Promise<IssueComment>;
+  updateComment(
+    input: IssueRef & {
+      readonly commentId: number;
+      readonly body: string;
+      readonly operation: OperationIdentity;
+      readonly signal?: AbortSignal;
+    },
+  ): Promise<IssueComment>;
+  deleteComment(
+    input: IssueRef & {
+      readonly commentId: number;
+      readonly operation: OperationIdentity;
+      readonly signal?: AbortSignal;
+    },
+  ): Promise<void>;
+  setState(
+    input: IssueRef & {
+      readonly state: "open" | "closed";
+      readonly reason: IssueStateChangeReason;
+      readonly operation: OperationIdentity;
+      readonly signal?: AbortSignal;
+    },
+  ): Promise<Issue>;
+  findCommentByOperation(input: {
+    readonly repository: RepositoryRef;
+    readonly number: number;
+    readonly operation: OperationIdentity;
+    readonly signal?: AbortSignal;
+  }): Promise<readonly IssueComment[]>;
   findCreated(input: {
     readonly repository: RepositoryRef;
     readonly operation: OperationIdentity;
