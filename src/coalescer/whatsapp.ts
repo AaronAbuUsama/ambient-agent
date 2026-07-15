@@ -172,6 +172,7 @@ export const botIdsOf = (session: WhatsAppSession, rawLid?: string): readonly st
 export const whatsappEventSource = (
   session: WhatsAppSession,
   allow: (chatId: string, isGroup: boolean) => boolean,
+  replay: () => readonly IncomingMessage[] = () => [],
 ): Layer.Layer<EventSource, never> =>
   Layer.effect(
     EventSource,
@@ -185,6 +186,15 @@ export const whatsappEventSource = (
         Queue.offerUnsafe(queue, toIncoming(msg));
       });
       yield* Effect.addFinalizer(() => Effect.sync(() => unsub()));
-      return { events: Stream.fromQueue(queue) };
+      const seen = new Set<string>();
+      const unique = (message: IncomingMessage): boolean => {
+        const key = `${message.chatId}\u0000${message.id}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      };
+      return {
+        events: Stream.concat(Stream.fromIterable(replay()), Stream.fromQueue(queue)).pipe(Stream.filter(unique)),
+      };
     }),
   );

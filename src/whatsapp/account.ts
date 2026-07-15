@@ -62,7 +62,7 @@ export interface ManagedWhatsAppAccount extends WhatsAppAccountSetup {
 
 export interface CreateWhatsAppAccountOptions {
   readonly storeDirectory: string;
-  readonly archive: ConversationArchive;
+  readonly archive: Pick<ConversationArchive, "append">;
   readonly sessionFactory?: () => WhatsAppSession;
   readonly now?: () => number;
   readonly syncTimeoutMillis?: number;

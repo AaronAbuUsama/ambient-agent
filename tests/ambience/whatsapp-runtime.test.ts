@@ -17,13 +17,13 @@ import type { AmbienceDispatchRequest } from "../../src/ambience/dispatch.ts";
 import { makeChatGate } from "../../src/coalescer/chat-gate.ts";
 import { createWhatsAppHost, runWhatsAppSession } from "../../src/host/whatsapp-runtime.ts";
 import { createConversationArchive } from "../../src/intake/conversation-archive.ts";
+import { createManagedChatInbox } from "../../src/intake/managed-chat-inbox.ts";
 import { createReadWhatsAppThreadTool, createSearchWhatsAppHistoryTool } from "../../src/tools/whatsapp/history.ts";
 import { createSayTool } from "../../src/tools/whatsapp/say.ts";
 import { createWhatsAppAccount } from "../../src/whatsapp/account.ts";
 
 const CHAT = "managed-31@g.us";
 const OTHER_CHAT = "unmanaged-31@g.us";
-const BOT = "15550000000@s.whatsapp.net";
 const dirs: string[] = [];
 
 afterEach(() => {
@@ -116,9 +116,14 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
   it("uses one managed session for gated ingress, history, Ambience dispatch, and explicit say", async () => {
     const { archive, storeDirectory } = temporaryArchive();
     const fake = fakeSession();
+    const gate = makeChatGate({ groupIds: CHAT });
+    const inbox = createManagedChatInbox(archive, {
+      allowed: gate.allowed,
+      createId: () => "window-runtime-31",
+    });
     const account = createWhatsAppAccount({
       storeDirectory,
-      archive,
+      archive: inbox.recorder,
       sessionFactory: () => fake.session,
     });
     await account.authenticate({});
@@ -129,8 +134,9 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
         Effect.gen(function* () {
           yield* Effect.forkScoped(
             runWhatsAppSession(account.session(), {
-              gate: makeChatGate({ groupIds: CHAT }),
+              gate,
               history: archive,
+              inbox,
               coalescer: { debounceWindow: Duration.millis(10), maxWait: Duration.millis(20) },
               dispatch: async (request) => {
                 dispatches.push(request);
@@ -168,6 +174,7 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
               id: CHAT,
               input: expect.objectContaining({
                 type: "whatsapp.window",
+                windowId: "window-runtime-31",
                 chatId: CHAT,
                 reason: "debounce",
                 messages: [
@@ -209,6 +216,66 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
             messages: [expect.objectContaining({ id: "real-host-message-1", chatId: CHAT })],
           });
           expect(JSON.stringify(read.run({ input: { limit: 10 } }))).not.toContain("must remain isolated");
+        }),
+      ),
+    );
+
+    await account.stop();
+    archive.close();
+  });
+
+  it("replays an accepted arrival that landed before the Coalescer started", async () => {
+    const { archive, storeDirectory } = temporaryArchive();
+    const fake = fakeSession();
+    const gate = makeChatGate({ groupIds: CHAT });
+    const inbox = createManagedChatInbox(archive, {
+      allowed: gate.allowed,
+      createId: () => "window-replayed-31",
+    });
+    const account = createWhatsAppAccount({
+      storeDirectory,
+      archive: inbox.recorder,
+      sessionFactory: () => fake.session,
+    });
+    await account.authenticate({});
+
+    for (const listener of fake.messageListeners) {
+      await listener(inbound({ id: "before-coalescer-31", text: "survives the startup gap" }));
+    }
+    expect(inbox.unwindowed().map(({ id }) => id)).toEqual(["before-coalescer-31"]);
+
+    const dispatches: AmbienceDispatchRequest[] = [];
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* Effect.forkScoped(
+            runWhatsAppSession(account.session(), {
+              gate,
+              history: archive,
+              inbox,
+              coalescer: { debounceWindow: Duration.millis(10), maxWait: Duration.millis(20) },
+              dispatch: async (request) => {
+                dispatches.push(request);
+                return { dispatchId: "dispatch-replayed-31", acceptedAt: "2026-07-15T00:00:00.000Z" };
+              },
+            }),
+          );
+          yield* Effect.sleep(Duration.millis(40));
+
+          expect(dispatches).toEqual([
+            {
+              id: CHAT,
+              input: expect.objectContaining({
+                type: "whatsapp.window",
+                windowId: "window-replayed-31",
+                chatId: CHAT,
+                reason: "debounce",
+                messages: [expect.objectContaining({ id: "before-coalescer-31" })],
+              }),
+            },
+          ]);
+          expect(inbox.unwindowed()).toEqual([]);
+          expect(inbox.pendingWindows()).toEqual([expect.objectContaining({ id: "window-replayed-31", chatId: CHAT })]);
         }),
       ),
     );
