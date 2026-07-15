@@ -3,7 +3,13 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 export type IssueOperationStatus = "attempting" | "completed" | "uncertain" | "failed";
-export type IssueOperationKind = "create-issue" | "update-issue";
+export type IssueOperationKind =
+  | "create-issue"
+  | "update-issue"
+  | "create-comment"
+  | "update-comment"
+  | "delete-comment"
+  | "set-issue-state";
 
 export interface IssueOperationRecord {
   readonly operationId: string;
@@ -65,7 +71,9 @@ export const createIssueOperationStore = (databasePath: string): IssueOperationS
   const createTable = `
     CREATE TABLE github_issue_operations (
       operation_id TEXT PRIMARY KEY,
-      kind TEXT NOT NULL CHECK (kind IN ('create-issue', 'update-issue')),
+      kind TEXT NOT NULL CHECK (kind IN (
+        'create-issue', 'update-issue', 'create-comment', 'update-comment', 'delete-comment', 'set-issue-state'
+      )),
       repository TEXT NOT NULL,
       status TEXT NOT NULL CHECK (status IN ('attempting', 'completed', 'uncertain', 'failed')),
       issue_number INTEGER,
@@ -80,17 +88,22 @@ export const createIssueOperationStore = (databasePath: string): IssueOperationS
     .get() as { sql: string } | undefined;
   if (existing === undefined) {
     database.exec(createTable);
-  } else if (!existing.sql.includes("'update-issue'")) {
+  } else if (
+    ["update-issue", "create-comment", "update-comment", "delete-comment", "set-issue-state"].some(
+      (kind) => !existing.sql.includes(`'${kind}'`),
+    )
+  ) {
+    const legacyTarget = existing.sql.includes("target_json") ? "target_json" : "NULL";
     try {
       database.exec(`
         BEGIN IMMEDIATE;
-        ALTER TABLE github_issue_operations RENAME TO github_issue_operations_create_only;
+        ALTER TABLE github_issue_operations RENAME TO github_issue_operations_legacy;
         ${createTable};
         INSERT INTO github_issue_operations
           (operation_id, kind, repository, status, issue_number, target_json, error, started_at, settled_at)
-        SELECT operation_id, kind, repository, status, issue_number, NULL, error, started_at, settled_at
-          FROM github_issue_operations_create_only;
-        DROP TABLE github_issue_operations_create_only;
+        SELECT operation_id, kind, repository, status, issue_number, ${legacyTarget}, error, started_at, settled_at
+          FROM github_issue_operations_legacy;
+        DROP TABLE github_issue_operations_legacy;
         COMMIT;
       `);
     } catch (cause) {

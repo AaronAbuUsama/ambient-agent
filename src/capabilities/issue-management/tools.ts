@@ -5,10 +5,14 @@ import * as v from "valibot";
 
 import {
   isUncertainIssueMutationError,
+  MAX_PUBLIC_COMMENT_BODY_LENGTH,
   MAX_PUBLIC_ISSUE_BODY_LENGTH,
   type Issue,
+  type IssueComment,
+  type IssueDiscussion,
   type IssueRepository,
   type IssueRepositoryOptions,
+  type IssueStateChangeReason,
   type IssueSummary,
   type IssueUpdate,
 } from "./issue-repository.ts";
@@ -40,6 +44,9 @@ const issueSchema = v.intersect([
   summarySchema,
   v.object({
     body: v.string(),
+    stateReason: v.nullable(
+      v.union([v.literal("completed"), v.literal("not_planned"), v.literal("duplicate"), v.literal("reopened")]),
+    ),
     labels: v.array(nonEmptyString),
     assignees: v.array(nonEmptyString),
     milestone: v.nullable(milestoneSchema),
@@ -50,6 +57,17 @@ const optionsSchema = v.object({
   assignees: v.array(nonEmptyString),
   milestones: v.array(milestoneSchema),
 });
+const commentSchema = v.object({
+  repository: v.object({ owner: nonEmptyString, repo: nonEmptyString }),
+  number: issueNumber,
+  id: issueNumber,
+  url: v.pipe(v.string(), v.url()),
+  body: v.string(),
+  author: v.nullable(v.string()),
+  createdAt: nonEmptyString,
+  updatedAt: nonEmptyString,
+});
+const discussionSchema = v.object({ issue: issueSchema, comments: v.array(commentSchema) });
 const createOutputSchema = v.union([
   v.object({ status: v.literal("duplicate"), issues: v.array(summarySchema) }),
   v.object({
@@ -77,6 +95,45 @@ const updateOutputSchema = v.union([
     issue: v.optional(issueSchema),
   }),
 ]);
+const commentMutationOutputSchema = v.union([
+  v.object({
+    status: v.union([v.literal("created"), v.literal("updated"), v.literal("reconciled")]),
+    operationId: nonEmptyString,
+    comment: commentSchema,
+  }),
+  v.object({
+    status: v.literal("uncertain"),
+    operationId: nonEmptyString,
+    reason: nonEmptyString,
+    comment: v.optional(commentSchema),
+  }),
+]);
+const deleteCommentOutputSchema = v.union([
+  v.object({
+    status: v.union([v.literal("deleted"), v.literal("reconciled")]),
+    operationId: nonEmptyString,
+    commentId: issueNumber,
+  }),
+  v.object({
+    status: v.literal("uncertain"),
+    operationId: nonEmptyString,
+    reason: nonEmptyString,
+    commentId: issueNumber,
+  }),
+]);
+const stateMutationOutputSchema = v.union([
+  v.object({
+    status: v.union([v.literal("changed"), v.literal("reconciled")]),
+    operationId: nonEmptyString,
+    issue: issueSchema,
+  }),
+  v.object({
+    status: v.literal("uncertain"),
+    operationId: nonEmptyString,
+    reason: nonEmptyString,
+    issue: v.optional(issueSchema),
+  }),
+]);
 
 const publicSummary = (issue: IssueSummary): IssueSummary => ({
   repository: issue.repository,
@@ -89,9 +146,15 @@ const publicSummary = (issue: IssueSummary): IssueSummary => ({
 const publicIssue = (issue: Issue): Issue => ({
   ...publicSummary(issue),
   body: issue.body,
+  stateReason: issue.stateReason,
   labels: [...issue.labels],
   assignees: [...issue.assignees],
   milestone: issue.milestone,
+});
+const publicComment = (comment: IssueComment): IssueComment => ({ ...comment });
+const publicDiscussion = (discussion: IssueDiscussion): IssueDiscussion => ({
+  issue: publicIssue(discussion.issue),
+  comments: discussion.comments.map(publicComment),
 });
 const errorMessage = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
 const normalizedTitle = (title: string): string => title.trim().replaceAll(/\s+/g, " ").toLowerCase();
@@ -343,6 +406,86 @@ const updateIssue = async (input: {
   return settleUpdated(issue, "updated");
 };
 
+type LifecycleResult<T> =
+  | { readonly status: "applied" | "reconciled"; readonly operationId: string; readonly value: T }
+  | { readonly status: "uncertain"; readonly operationId: string; readonly reason: string; readonly value?: T };
+
+const lifecycleMutation = async <T>(input: {
+  readonly repository: ReturnType<IssueManagementPolicy["authorize"]>;
+  readonly number: number;
+  readonly kind: "create-comment" | "update-comment" | "delete-comment" | "set-issue-state";
+  readonly target: Readonly<Record<string, unknown>>;
+  readonly provider: IssueRepository;
+  readonly operations: IssueOperationStore;
+  readonly createOperationId: () => string;
+  readonly now: () => Date;
+  readonly signal?: AbortSignal;
+  readonly mutate: (operationId: string) => Promise<T>;
+  readonly reconcile: (operationId: string) => Promise<T | undefined>;
+}): Promise<LifecycleResult<T>> => {
+  const operationId = input.createOperationId();
+  input.operations.begin({
+    operationId,
+    kind: input.kind,
+    repository: repositoryName(input.repository),
+    issueNumber: input.number,
+    target: input.target,
+    startedAt: input.now().toISOString(),
+  });
+
+  const settle = (value: T, status: "applied" | "reconciled"): LifecycleResult<T> => {
+    try {
+      input.operations.complete(operationId, input.number, input.now().toISOString());
+      return { status, operationId, value };
+    } catch (cause) {
+      try {
+        const current = input.operations.get(operationId);
+        if (current?.status === "completed") return { status, operationId, value };
+        const reason = `GitHub reflects the ${input.kind} mutation, but its Operation Identity completion could not be persisted: ${errorMessage(cause)}`;
+        if (current?.status === "attempting") {
+          input.operations.uncertain(operationId, reason, input.now().toISOString());
+          return { status: "uncertain", operationId, reason, value };
+        }
+      } catch (ledgerCause) {
+        throw new Error(
+          `GitHub may reflect the ${input.kind} mutation, but its Operation Identity state could not be recorded. Do not repeat it.`,
+          { cause: ledgerCause },
+        );
+      }
+      throw new Error(`GitHub may reflect the ${input.kind} mutation. Do not repeat it.`, { cause });
+    }
+  };
+
+  let applied: T;
+  try {
+    applied = await input.mutate(operationId);
+  } catch (cause) {
+    if (!isUncertainIssueMutationError(cause)) {
+      input.operations.fail(operationId, errorMessage(cause), input.now().toISOString());
+      throw cause;
+    }
+    let observed: T | undefined;
+    try {
+      observed = await input.reconcile(operationId);
+    } catch {
+      // A bounded observation failure cannot turn an unknown write into a safe retry.
+    }
+    if (observed !== undefined) return settle(observed, "reconciled");
+    const reason = `GitHub ${input.kind} outcome remained uncertain after one bounded observation`;
+    input.operations.uncertain(operationId, reason, input.now().toISOString());
+    return { status: "uncertain", operationId, reason };
+  }
+  return settle(applied, "applied");
+};
+
+const requiredComment = (discussion: IssueDiscussion, commentId: number): IssueComment => {
+  const comment = discussion.comments.find((candidate) => candidate.id === commentId);
+  if (comment === undefined) {
+    throw new Error(`GitHub issue #${discussion.issue.number} has no comment ${commentId}.`);
+  }
+  return comment;
+};
+
 export const createIssueManagementTools = (
   options: IssueManagementToolOptions = getIssueManagementRuntime(),
 ): ToolDefinition[] => {
@@ -440,6 +583,260 @@ export const createIssueManagementTools = (
           now,
           signal,
         }),
+    }),
+    defineTool({
+      name: "github_read_issue_discussion",
+      description: "Read one issue and every current discussion comment before choosing a discussion or lifecycle mutation.",
+      input: v.object({ repository: repositoryInput, number: issueNumber }),
+      output: discussionSchema,
+      run: async ({ input, signal }) => {
+        const repository = options.policy.authorize(input.repository);
+        return publicDiscussion(await options.repository.discussion({ repository, number: input.number, signal }));
+      },
+    }),
+    defineTool({
+      name: "github_create_issue_comment",
+      description: "Read the complete issue discussion, then create one comment with durable Operation Identity.",
+      input: v.object({
+        repository: repositoryInput,
+        number: issueNumber,
+        body: v.pipe(nonEmptyString, v.maxLength(MAX_PUBLIC_COMMENT_BODY_LENGTH)),
+      }),
+      output: commentMutationOutputSchema,
+      run: async ({ input, signal }) => {
+        const repository = options.policy.authorize(input.repository);
+        await options.repository.discussion({ repository, number: input.number, signal });
+        const result = await lifecycleMutation({
+          repository,
+          number: input.number,
+          kind: "create-comment",
+          target: { body: input.body },
+          provider: options.repository,
+          operations: options.operations,
+          createOperationId,
+          now,
+          signal,
+          mutate: async (operationId) =>
+            await options.repository.createComment({
+              repository,
+              number: input.number,
+              body: input.body,
+              operation: { id: operationId },
+              signal,
+            }),
+          reconcile: async (operationId) => {
+            const matches = await options.repository.findCommentByOperation({
+              repository,
+              number: input.number,
+              operation: { id: operationId },
+              signal: reconciliationSignal(signal),
+            });
+            return matches.length === 1 ? matches[0] : undefined;
+          },
+        });
+        if (result.status === "uncertain") {
+          return {
+            status: "uncertain" as const,
+            operationId: result.operationId,
+            reason: result.reason,
+            ...(result.value === undefined ? {} : { comment: publicComment(result.value) }),
+          };
+        }
+        return {
+          status: result.status === "applied" ? ("created" as const) : ("reconciled" as const),
+          operationId: result.operationId,
+          comment: publicComment(result.value),
+        };
+      },
+    }),
+    defineTool({
+      name: "github_update_issue_comment",
+      description: "Read the complete issue discussion, then update one exact comment with durable Operation Identity.",
+      input: v.object({
+        repository: repositoryInput,
+        number: issueNumber,
+        commentId: issueNumber,
+        body: v.pipe(nonEmptyString, v.maxLength(MAX_PUBLIC_COMMENT_BODY_LENGTH)),
+      }),
+      output: commentMutationOutputSchema,
+      run: async ({ input, signal }) => {
+        const repository = options.policy.authorize(input.repository);
+        requiredComment(
+          await options.repository.discussion({ repository, number: input.number, signal }),
+          input.commentId,
+        );
+        const result = await lifecycleMutation({
+          repository,
+          number: input.number,
+          kind: "update-comment",
+          target: { commentId: input.commentId, body: input.body },
+          provider: options.repository,
+          operations: options.operations,
+          createOperationId,
+          now,
+          signal,
+          mutate: async (operationId) =>
+            await options.repository.updateComment({
+              repository,
+              number: input.number,
+              commentId: input.commentId,
+              body: input.body,
+              operation: { id: operationId },
+              signal,
+            }),
+          reconcile: async (operationId) => {
+            const matches = await options.repository.findCommentByOperation({
+              repository,
+              number: input.number,
+              operation: { id: operationId },
+              signal: reconciliationSignal(signal),
+            });
+            return matches.length === 1 && matches[0]?.id === input.commentId && matches[0].body === input.body
+              ? matches[0]
+              : undefined;
+          },
+        });
+        if (result.status === "uncertain") {
+          return {
+            status: "uncertain" as const,
+            operationId: result.operationId,
+            reason: result.reason,
+            ...(result.value === undefined ? {} : { comment: publicComment(result.value) }),
+          };
+        }
+        return {
+          status: result.status === "applied" ? ("updated" as const) : ("reconciled" as const),
+          operationId: result.operationId,
+          comment: publicComment(result.value),
+        };
+      },
+    }),
+    defineTool({
+      name: "github_delete_issue_comment",
+      description: "Read the complete issue discussion, then delete one exact comment. This never deletes the issue.",
+      input: v.object({ repository: repositoryInput, number: issueNumber, commentId: issueNumber }),
+      output: deleteCommentOutputSchema,
+      run: async ({ input, signal }) => {
+        const repository = options.policy.authorize(input.repository);
+        requiredComment(
+          await options.repository.discussion({ repository, number: input.number, signal }),
+          input.commentId,
+        );
+        const result = await lifecycleMutation({
+          repository,
+          number: input.number,
+          kind: "delete-comment",
+          target: { commentId: input.commentId },
+          provider: options.repository,
+          operations: options.operations,
+          createOperationId,
+          now,
+          signal,
+          mutate: async (operationId) => {
+            await options.repository.deleteComment({
+              repository,
+              number: input.number,
+              commentId: input.commentId,
+              operation: { id: operationId },
+              signal,
+            });
+            return input.commentId;
+          },
+          reconcile: async () => {
+            await options.repository.discussion({
+              repository,
+              number: input.number,
+              signal: reconciliationSignal(signal),
+            });
+            // GitHub deletes the provider record that could carry an operation marker. Even when
+            // absence is observed, causation cannot be attributed mechanically, so remain Uncertain.
+            return undefined;
+          },
+        });
+        if (result.status === "uncertain") {
+          return {
+            status: "uncertain" as const,
+            operationId: result.operationId,
+            reason: result.reason,
+            commentId: input.commentId,
+          };
+        }
+        return {
+          status: result.status === "applied" ? ("deleted" as const) : ("reconciled" as const),
+          operationId: result.operationId,
+          commentId: result.value,
+        };
+      },
+    }),
+    defineTool({
+      name: "github_set_issue_state",
+      description: "Read the complete discussion, then close with a meaningful reason or reopen the issue.",
+      input: v.object({
+        repository: repositoryInput,
+        number: issueNumber,
+        state: stateSchema,
+        reason: v.union([
+          v.literal("completed"),
+          v.literal("not_planned"),
+          v.literal("duplicate"),
+          v.literal("reopened"),
+        ]),
+      }),
+      output: stateMutationOutputSchema,
+      run: async ({ input, signal }) => {
+        const repository = options.policy.authorize(input.repository);
+        if ((input.state === "open") !== (input.reason === "reopened")) {
+          throw new Error("Open issues require reason reopened; closed issues require completed, not_planned, or duplicate.");
+        }
+        const discussion = await options.repository.discussion({ repository, number: input.number, signal });
+        if (discussion.issue.state === input.state) {
+          throw new Error(`GitHub issue #${input.number} already has state ${input.state}.`);
+        }
+        const reason: IssueStateChangeReason = input.reason;
+        const result = await lifecycleMutation({
+          repository,
+          number: input.number,
+          kind: "set-issue-state",
+          target: { state: input.state, reason },
+          provider: options.repository,
+          operations: options.operations,
+          createOperationId,
+          now,
+          signal,
+          mutate: async (operationId) =>
+            await options.repository.setState({
+              repository,
+              number: input.number,
+              state: input.state,
+              reason,
+              operation: { id: operationId },
+              signal,
+            }),
+          reconcile: async () => {
+            await options.repository.discussion({
+              repository,
+              number: input.number,
+              signal: reconciliationSignal(signal),
+            });
+            // GitHub state changes have no atomic provider identity channel. Exact state may be
+            // observed, but causation cannot be attributed mechanically, so remain Uncertain.
+            return undefined;
+          },
+        });
+        if (result.status === "uncertain") {
+          return {
+            status: "uncertain" as const,
+            operationId: result.operationId,
+            reason: result.reason,
+            ...(result.value === undefined ? {} : { issue: publicIssue(result.value) }),
+          };
+        }
+        return {
+          status: result.status === "applied" ? ("changed" as const) : ("reconciled" as const),
+          operationId: result.operationId,
+          issue: publicIssue(result.value),
+        };
+      },
     }),
   ];
 };

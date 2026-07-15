@@ -43,9 +43,14 @@ export const parseIssueProviderBody = (body: string): IssueProviderBodyParts => 
   return { publicBody: body, markers: [] };
 };
 
-export const issueProviderBody = (body: string, markers: readonly string[], limit = 65_536): string => {
+const operationProviderBody = (
+  resource: "issue" | "comment",
+  body: string,
+  markers: readonly string[],
+  limit: number,
+): string => {
   if (reservedSyntaxPattern.test(body)) {
-    throw new Error("The public GitHub issue body contains reserved Ambient Agent Operation Identity syntax.");
+    throw new Error(`The public GitHub ${resource} body contains reserved Ambient Agent Operation Identity syntax.`);
   }
   if (markers.some((marker) => !exactMarkerPattern.test(marker))) {
     throw new Error("An Ambient Agent Operation Identity marker is malformed.");
@@ -56,7 +61,15 @@ export const issueProviderBody = (body: string, markers: readonly string[], limi
       ? body
       : `${body}\n\n${FOOTER_START}\n${uniqueMarkers.join("\n")}\n${FOOTER_END}`;
   if (serialized.length > limit) {
-    throw new Error(`GitHub issue body exceeds ${limit} characters after Operation Identity.`);
+    throw new Error(`GitHub ${resource} body exceeds ${limit} characters after Operation Identity.`);
   }
   return serialized;
 };
+
+export const issueProviderBody = (body: string, markers: readonly string[], limit = 65_536): string =>
+  operationProviderBody("issue", body, markers, limit);
+
+export const commentProviderBody = (body: string, markers: readonly string[], limit = 65_536): string =>
+  operationProviderBody("comment", body, markers, limit);
+
+export const parseCommentProviderBody = parseIssueProviderBody;
