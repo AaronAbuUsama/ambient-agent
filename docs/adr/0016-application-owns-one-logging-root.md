@@ -1,0 +1,5 @@
+# The application owns one logging root
+
+Ambient Agent creates a single Pino root logger and every runtime voice flows through it: `whatsappd` receives a child logger through its public `SessionConfig.logger` seam instead of creating its own, Effect's logger is bridged into another child, and direct console calls in application code are replaced. The root applies credential redaction before any transport sees a line, so tokens, OAuth records, and webhook secrets cannot leak through a component that logs its own configuration.
+
+On a TTY the root renders concise human-readable lines with a `--debug` flag for verbosity; in every mode it also writes structured JSON to size-capped rotating files under `~/.ambient-agent/logs/`, which answers "what happened last night on the VPS" without depending on a service manager's journal discipline. Message text is logged at debug level only. Remote crash telemetry such as Sentry is explicitly out of scope: local logs are the diagnostic story, and any future telemetry would be a separate opt-in decision, never a substitute for this module.
