@@ -27,21 +27,23 @@ export const createAmbientAgentApp = async ({
 }: ManagedRuntimeDependencies): Promise<Hono> => {
   installAgentActivityReporter();
   const subscription = await connectPiChatGptSubscription({ authentication });
+  const issueOperations = createIssueOperationStore(paths.applicationDatabase);
+  configureIssueManagementRuntime({
+    repository: createOctokitIssueRepository(githubCredential.token),
+    operations: issueOperations,
+    policy: createIssueManagementPolicy(
+      configuration.github.defaultRepository,
+      configuration.github.allowedRepositories,
+    ),
+  });
   installGitHubIngressRuntime(
     {
       databasePath: paths.applicationDatabase,
       routes: new Map([[configuration.github.defaultRepository.toLowerCase(), configuration.managedChats[0]!]]),
     },
     async (chatId, input) => await dispatchAmbience({ id: chatId, input }),
+    issueOperations,
   );
-  configureIssueManagementRuntime({
-    repository: createOctokitIssueRepository(githubCredential.token),
-    operations: createIssueOperationStore(paths.applicationDatabase),
-    policy: createIssueManagementPolicy(
-      configuration.github.defaultRepository,
-      configuration.github.allowedRepositories,
-    ),
-  });
 
   const app = new Hono();
   app.get("/health", (context) => {

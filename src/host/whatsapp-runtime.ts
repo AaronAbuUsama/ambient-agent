@@ -27,7 +27,7 @@ const TYPING_LEAD_MS = 750;
 
 /** The sole real implementation behind Ambience's `say` tool. It never retries an uncertain provider outcome. */
 export const createWhatsAppHost = (session: WhatsAppSession): WhatsAppSayPort => ({
-  say: async (chatId, text) => {
+  say: async (chatId, text, replyTo) => {
     const log = getLogger("whatsapp");
     let typingStarted = false;
     try {
@@ -43,7 +43,20 @@ export const createWhatsAppHost = (session: WhatsAppSession): WhatsAppSayPort =>
     let typingError: string | undefined;
     try {
       try {
-        const message = await session.send(chatId, { text });
+        const message = await session.send(
+          chatId,
+          { text },
+          replyTo === undefined
+            ? undefined
+            : {
+                quote: {
+                  id: replyTo.messageId,
+                  chatId,
+                  fromMe: replyTo.fromMe,
+                  ...(replyTo.participant === undefined ? {} : { participant: replyTo.participant }),
+                },
+              },
+        );
         delivery = { delivery: "sent", messageId: message.id };
         if (!reportAgentSpoke(chatId, text, message.id)) {
           log.info(

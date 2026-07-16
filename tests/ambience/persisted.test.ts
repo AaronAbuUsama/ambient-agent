@@ -171,6 +171,28 @@ function githubIssueOpenedPayload(repository = "widgets"): string {
   });
 }
 
+function githubPullRequestOpenedPayload(issueNumbers: readonly number[], pullRequestNumber = 42): string {
+  return JSON.stringify({
+    action: "opened",
+    installation: { id: 77 },
+    repository: {
+      id: 101,
+      name: "widgets",
+      html_url: "https://github.com/acme/widgets",
+      owner: { login: "acme" },
+    },
+    pull_request: {
+      number: pullRequestNumber,
+      html_url: `https://github.com/acme/widgets/pull/${pullRequestNumber}`,
+      title: "Fix the captured issue",
+      body: issueNumbers.map((issueNumber) => `Closes: #${issueNumber}`).join("\n"),
+      state: "open",
+      draft: false,
+    },
+    sender: { login: "octocat", id: 1, type: "User" },
+  });
+}
+
 async function githubDelivery(options: {
   readonly deliveryId: string;
   readonly body: string;
@@ -363,6 +385,43 @@ describe("persisted Ambience admission", () => {
     expect(serverOutput).toContain(`"ambience":"ambience"`);
     expect(serverOutput).toContain(`"dispatchId":"${firstReceipt.dispatchId}"`);
     expect(serverOutput).toContain(`"runId":null`);
+  });
+
+  it("posts one PR-link message per captured issue when a verified PR closes multiple concerns", async () => {
+    const chatId = "github-ingress-29@g.us";
+    await resetWhatsApp();
+    await prompt(chatId, "CREATE_COMPLETE_ISSUE");
+    await prompt(chatId, "CREATE_COMPLETE_FEATURE");
+    const completedCreates = [...(await githubOperations())]
+      .reverse()
+      .filter((operation) => operation.kind === "create-issue" && operation.status === "completed")
+      .slice(0, 2);
+    expect(completedCreates).toHaveLength(2);
+    expect(completedCreates).toEqual([
+      expect.objectContaining({ repository: "acme/widgets", issueNumber: expect.any(Number) }),
+      expect.objectContaining({ repository: "acme/widgets", issueNumber: expect.any(Number) }),
+    ]);
+    const issueNumbers = completedCreates.map((operation) => operation.issueNumber as number);
+
+    const deliveryId = "42-captured-pr";
+    const body = githubPullRequestOpenedPayload(issueNumbers);
+    const response = await githubDelivery({ deliveryId, body, event: "pull_request" });
+    expect(response.status, await response.text()).toBe(200);
+    await waitFor(
+      async () =>
+        (await whatsappEvents()).filter(
+          (event) => event.kind === "send" && event.text === "https://github.com/acme/widgets/pull/42",
+        ).length === 2,
+      "captured issues pull-request link delivery",
+    );
+    expect(await githubIngressRecords()).toContainEqual(
+      expect.objectContaining({
+        deliveryId,
+        repository: "acme/widgets",
+        chatId,
+        status: "done",
+      }),
+    );
   });
 
   it("rejects an invalid GitHub signature before application processing", async () => {

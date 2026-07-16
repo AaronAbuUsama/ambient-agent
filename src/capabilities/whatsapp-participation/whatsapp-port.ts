@@ -15,9 +15,16 @@ export const withTypingResult = (delivery: WhatsAppDeliveryResult, typingError?:
     ? { ...delivery, typing: "cleared" }
     : { ...delivery, typing: "unknown", typingError };
 
+export interface WhatsAppReplyTarget {
+  readonly messageId: string;
+  readonly fromMe: boolean;
+  /** The sender JID for a group message. */
+  readonly participant?: string;
+}
+
 export interface WhatsAppSayPort {
   /** Own the full typing/send/finalization attempt and report observed state without retrying. */
-  readonly say: (chatId: string, text: string) => Promise<WhatsAppSayResult>;
+  readonly say: (chatId: string, text: string, replyTo?: WhatsAppReplyTarget) => Promise<WhatsAppSayResult>;
 }
 
 export interface WhatsAppHistoryPort {

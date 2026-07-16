@@ -1,5 +1,6 @@
 import {
   type WhatsAppDeliveryResult,
+  type WhatsAppReplyTarget,
   type WhatsAppSayPort,
   type WhatsAppSayResult,
   withTypingResult,
@@ -17,6 +18,7 @@ export type FakeWhatsAppEvent =
       readonly kind: "send";
       readonly chatId: string;
       readonly text: string;
+      readonly replyTo?: WhatsAppReplyTarget;
       readonly outcome: "sent";
       readonly messageId: string;
     }
@@ -24,6 +26,7 @@ export type FakeWhatsAppEvent =
       readonly kind: "send";
       readonly chatId: string;
       readonly text: string;
+      readonly replyTo?: WhatsAppReplyTarget;
       readonly outcome: "failed" | "unknown";
       readonly error: string;
     };
@@ -54,17 +57,31 @@ export const createFakeWhatsAppHost = (): FakeWhatsAppHost => {
       nextSendError = undefined;
       nextTypingError = undefined;
     },
-    say: async (chatId, text): Promise<WhatsAppSayResult> => {
+    say: async (chatId, text, replyTo): Promise<WhatsAppSayResult> => {
       recorded.push({ kind: "typing", chatId, on: true });
       const sendError = nextSendError;
       nextSendError = undefined;
       let delivery: WhatsAppDeliveryResult;
       if (sendError !== undefined) {
-        recorded.push({ kind: "send", chatId, text, outcome: sendError.delivery, error: sendError.error.message });
+        recorded.push({
+          kind: "send",
+          chatId,
+          text,
+          ...(replyTo === undefined ? {} : { replyTo }),
+          outcome: sendError.delivery,
+          error: sendError.error.message,
+        });
         delivery = { delivery: sendError.delivery, deliveryError: sendError.error.message };
       } else {
         const messageId = `fake-message-${++nextMessage}`;
-        recorded.push({ kind: "send", chatId, text, outcome: "sent", messageId });
+        recorded.push({
+          kind: "send",
+          chatId,
+          text,
+          ...(replyTo === undefined ? {} : { replyTo }),
+          outcome: "sent",
+          messageId,
+        });
         delivery = { delivery: "sent", messageId };
       }
 

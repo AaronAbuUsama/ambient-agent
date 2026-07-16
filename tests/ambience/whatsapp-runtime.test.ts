@@ -7,6 +7,7 @@ import type {
   IncomingMessage as WhatsAppMessage,
   MessageRef,
   Outbound,
+  SendOptions,
   Status,
   Update,
   WhatsAppSession,
@@ -55,7 +56,7 @@ const fakeSession = (options: { readonly sendError?: Error; readonly typingOffEr
   const syncListeners = new Set<(batch: ConversationSyncBatch) => void | Promise<void>>();
   const updateListeners = new Set<(update: Update) => void | Promise<void>>();
   const statusListeners = new Set<(status: Status) => void | Promise<void>>();
-  const sent: Array<{ chatId: string; content: Outbound }> = [];
+  const sent: Array<{ chatId: string; content: Outbound; options?: SendOptions }> = [];
   const typing: Array<{ chatId: string; on: boolean }> = [];
   let nextMessage = 0;
   let status: Status = { phase: "disconnected" };
@@ -79,8 +80,8 @@ const fakeSession = (options: { readonly sendError?: Error; readonly typingOffEr
       syncListeners.add(listener);
       return () => syncListeners.delete(listener);
     },
-    async send(chatId: string, content: Outbound): Promise<MessageRef> {
-      sent.push({ chatId, content });
+    async send(chatId: string, content: Outbound, sendOptions?: SendOptions): Promise<MessageRef> {
+      sent.push({ chatId, content, ...(sendOptions === undefined ? {} : { options: sendOptions }) });
       if (options.sendError) throw options.sendError;
       return { id: `real-host-message-${++nextMessage}`, chatId, fromMe: true };
     },
@@ -525,6 +526,32 @@ describe("real WhatsApp Host outcome boundary", () => {
     expect(fake.typing).toEqual([{ chatId: CHAT, on: true }]);
     expect(fake.sent).toEqual([]);
     await expect(result).resolves.toMatchObject({ delivery: "sent" });
+  });
+
+  it("quotes the requested triggering message without exposing chat selection to the model", async () => {
+    const fake = fakeSession();
+    const host = createWhatsAppHost(fake.session);
+
+    await host.say(CHAT, "threaded reply", {
+      messageId: "incoming-31",
+      fromMe: false,
+      participant: "15551112222@s.whatsapp.net",
+    });
+
+    expect(fake.sent).toEqual([
+      {
+        chatId: CHAT,
+        content: { text: "threaded reply" },
+        options: {
+          quote: {
+            id: "incoming-31",
+            chatId: CHAT,
+            fromMe: false,
+            participant: "15551112222@s.whatsapp.net",
+          },
+        },
+      },
+    ]);
   });
 
   it("does not retry a rejected send and clears typing after the unknown outcome", async () => {

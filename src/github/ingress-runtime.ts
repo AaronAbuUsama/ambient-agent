@@ -1,9 +1,10 @@
 import type { GitHubWebhookDelivery } from "@flue/github";
 import type { DispatchReceipt } from "@flue/runtime";
 
+import type { GitHubIngressInput } from "../ambience/events.js";
+import type { IssueOperationStore } from "../capabilities/issue-management/operation-store.js";
 import { createGitHubIngress, type GitHubIngressResult, type GitHubIngressSettings } from "./ingress.js";
 import { createGitHubIngressStore, type GitHubIngressStore } from "./ingress-store.js";
-import type { GitHubIssueOpenedInput } from "../ambience/events.js";
 
 type GitHubIngressHandler = (delivery: GitHubWebhookDelivery) => Promise<GitHubIngressResult>;
 
@@ -16,7 +17,8 @@ const configureGitHubIngressRuntime = (handler: GitHubIngressHandler): void => {
 
 export const installGitHubIngressRuntime = (
   settings: GitHubIngressSettings,
-  dispatch: (chatId: string, input: GitHubIssueOpenedInput) => Promise<DispatchReceipt>,
+  dispatch: (chatId: string, input: GitHubIngressInput) => Promise<DispatchReceipt>,
+  operations: IssueOperationStore,
 ): GitHubIngressStore => {
   const store = createGitHubIngressStore(settings.databasePath);
   configureGitHubIngressRuntime(
@@ -24,6 +26,7 @@ export const installGitHubIngressRuntime = (
       store,
       routes: settings.routes,
       dispatch,
+      operations,
     }),
   );
   return store;

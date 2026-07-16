@@ -44,10 +44,11 @@ describe("WhatsApp Participation capability", () => {
     expect(agent).not.toContain("when older chat context is needed");
 
     expect(skill).toMatch(/^---\nname: whatsapp-participation\n/m);
-    expect(skill).toContain('version: "1.0.0"');
-    expect(skill).toContain("Ordinary assistant prose is private");
-    expect(skill).toContain("exactly one `say`");
-    expect(skill).toContain("current managed chat");
+    expect(skill).toContain('version: "2.0.0"');
+    expect(skill).toContain("Ambience is a teammate, not a bot");
+    expect(skill).toContain("Always engage an explicit address");
+    expect(skill).toContain("every message prefixed with `SMOKE `");
+    expect(skill).toContain("Send one message per concern, threaded by reply-to to the source message");
   });
 
   it("assembles Say, thread-read, and history-search as one chat-bound capability", async () => {
