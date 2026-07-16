@@ -11,19 +11,24 @@ export interface SmokeCanaryReceipt {
 
 export type SmokeCanary = (paths: ManagedPaths, nonce: string, timeoutMillis: number) => Promise<SmokeCanaryReceipt>;
 
-const isSmokeCanaryReceipt = (value: unknown, nonce: string): value is SmokeCanaryReceipt =>
-  typeof value === "object" &&
-  value !== null &&
-  "chatId" in value &&
-  typeof value.chatId === "string" &&
-  "text" in value &&
-  value.text === `SMOKE ${nonce} — ignore` &&
-  "stages" in value &&
-  Array.isArray(value.stages) &&
-  value.stages.length === 3 &&
-  value.stages[0] === "admission" &&
-  value.stages[1] === "dispatch" &&
-  value.stages[2] === "settled-silent";
+function assertCanaryReceipt(nonce: string, value: unknown): asserts value is SmokeCanaryReceipt {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("chatId" in value) ||
+    typeof value.chatId !== "string" ||
+    !("text" in value) ||
+    value.text !== `SMOKE ${nonce} — ignore` ||
+    !("stages" in value) ||
+    !Array.isArray(value.stages) ||
+    value.stages.length !== 3 ||
+    value.stages[0] !== "admission" ||
+    value.stages[1] !== "dispatch" ||
+    value.stages[2] !== "settled-silent"
+  ) {
+    throw new Error("The live canary response was malformed or did not prove the required lifecycle.");
+  }
+}
 
 export const requestRuntimeSmokeCanary: SmokeCanary = async (paths, nonce, timeoutMillis) => {
   const configuration = await readManagedConfig(paths.config);
@@ -53,7 +58,8 @@ export const requestRuntimeSmokeCanary: SmokeCanary = async (paths, nonce, timeo
       typeof body === "object" && body !== null && "error" in body ? String(body.error) : `HTTP ${response.status}`;
     throw new Error(`The live canary failed: ${detail}`);
   }
-  if (!isSmokeCanaryReceipt(body, nonce) || body.chatId !== configuration.smoke.canaryChat) {
+  assertCanaryReceipt(nonce, body);
+  if (body.chatId !== configuration.smoke.canaryChat) {
     throw new Error("The live canary response was malformed or did not prove the required lifecycle.");
   }
   return body;
@@ -126,9 +132,10 @@ export const smokeStations = async (
   ];
   try {
     const receipt = await canary(paths, nonce, timeoutMillis);
+    assertCanaryReceipt(nonce, receipt);
     stations.push({
       name: "canary",
-      passed: isSmokeCanaryReceipt(receipt, nonce),
+      passed: true,
       detail: `SMOKE ${nonce} settled silent (admission → dispatch → settled-silent)`,
     });
   } catch (cause) {
