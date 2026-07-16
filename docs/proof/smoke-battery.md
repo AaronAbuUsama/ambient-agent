@@ -11,7 +11,7 @@ This records the packed CLI running the complete smoke battery against the real 
 - Host: `code-factory` (user `abuusama`)
 - Persistent runtime: tmux session `validate-88`, pane `1.1`
 - Tarball: `$HOME/validate-88/ambient-agent-0.2.2-issue116.tgz`
-- Packed artifact SHA-256: `5d879dd753964a370187dfb13b125c971cec754098cc5499be2d681b50a19ad6`
+- Packed artifact SHA-256: `9e1ae6ce18ce3d73f5d1b3e9f5e0f21a32a80eb746172573449b2c6bdc092fd4`
 - Runtime health endpoint: `http://127.0.0.1:42069/health`
 - Canary group: the paired account's dedicated managed TST group
 
@@ -32,23 +32,23 @@ npx --yes --package=file:$HOME/validate-88/ambient-agent-0.2.2-issue116.tgz ambi
 Real output:
 
 ```text
-(node:3215420) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(node:3268511) ExperimentalWarning: SQLite is an experimental feature and might change at any time
 (Use `node --trace-warnings ...` to show where the warning was created)
 PASS installation: managed installation ready
 PASS chatgpt: authentication ready; live readiness complete
 PASS runtime: healthy; WhatsApp online
 PASS backlog: 0 pending, 0 failed, no Uncertain work
 PASS github: access to AaronAbuUsama/ambient-agent
-PASS canary: SMOKE 8a3d75feba40 settled silent (admission → dispatch → settled-silent)
+PASS canary: SMOKE 9035cd8e1125 settled silent (admission → dispatch → settled-silent)
 ```
 
 The persistent runtime independently rendered the canary lifecycle:
 
 ```text
-6:34:23 PM  ← [Ambient Agent] SMOKE 8a3d75feba40 — ignore
-6:34:26 PM  ▶ [AGENT] Processing: 1 message
-6:34:28 PM  ✓ [AGENT] Completed: 1.5s
-6:34:28 PM  — settled silent
+7:53:08 PM  ← [Ambient Agent] SMOKE 9035cd8e1125 — ignore
+7:53:11 PM  ▶ [AGENT] Processing: 1 message
+7:53:13 PM  ✓ [AGENT] Completed: 1.8s
+7:53:13 PM  — settled silent
 ```
 
 ## Checklist
@@ -79,7 +79,7 @@ pnpm evals
 git diff --check
 ```
 
-Build and TypeScript checks passed. Lint had no errors and retained two pre-existing warnings outside the changed files. The full suite passed with 349 tests and 3 intentional skips. Deterministic evals passed 8 tests; 8 live-provider cases remained intentionally gated.
+Build and TypeScript checks passed. Lint had no errors and retained two pre-existing warnings outside the changed files. The full suite passed with 360 tests and 3 intentional skips. Deterministic evals passed 8 tests; 8 live-provider cases remained intentionally gated.
 
 ## Proof boundary
 

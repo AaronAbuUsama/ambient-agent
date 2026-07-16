@@ -212,6 +212,26 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
     archive.close();
   });
 
+  it("fails loudly if a provider self-echo archives the SMOKE acknowledgement before local admission", async () => {
+    const { archive, storeDirectory } = temporaryArchive();
+    const fake = fakeSession({ echoSent: true });
+    const account = createWhatsAppAccount({
+      storeDirectory,
+      archive,
+      sessionFactory: () => fake.session,
+    });
+    await account.authenticate({});
+
+    await expect(account.sendSmokeCanary!(CHAT, "SMOKE abc123 — ignore")).rejects.toThrow(
+      "provider-acknowledged smoke message real-host-message-1 was already archived",
+    );
+    expect(archive.readThread(CHAT, 10)).toEqual([
+      expect.objectContaining({ id: "real-host-message-1", direction: "outbound" }),
+    ]);
+    await account.stop();
+    archive.close();
+  });
+
   it("uses one managed session for gated ingress, history, Ambience dispatch, and explicit say", async () => {
     const { archive, storeDirectory } = temporaryArchive();
     const fake = fakeSession();
@@ -610,6 +630,23 @@ describe("foreground runtime terminal logged_out", () => {
     });
     expect(canaryDispatches).toBe(1);
     expect(fake.sent).toEqual([{ chatId: CHAT, content: { text: "SMOKE abc123 — ignore" } }]);
+    await runtime.stop();
+  });
+
+  it("handles the observer lifecycle rejection when the provider send fails first", async () => {
+    const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
+    archive.close();
+    const runtime = startWhatsAppRuntime({
+      storeDirectory,
+      applicationDatabase,
+      managedChats: [CHAT],
+      canaryChat: CHAT,
+      sessionFactory: () => fakeSession({ sendError: new Error("provider send rejected") }).session,
+    });
+    await vi.waitFor(() => expect(getWhatsAppRuntimeStatus().phase).toBe("online"));
+
+    await expect(runtime.smokeCanary("abc123", 10)).rejects.toThrow("provider send rejected");
+    await new Promise((resolve) => setTimeout(resolve, 20));
     await runtime.stop();
   });
 

@@ -365,10 +365,12 @@ export const createWhatsAppAccount = (options: CreateWhatsAppAccountOptions): Ma
         isGroup: chatId.endsWith("@g.us"),
         kind: "text",
         text,
-      } as IncomingMessage;
+        reply: async (content, sendOptions) =>
+          await session.send(chatId, typeof content === "string" ? { text: content } : content, sendOptions),
+      } satisfies IncomingMessage;
       const inserted = options.archive.append(smokeCanaryArrival(acknowledged));
       if (!inserted) throw new Error(`The provider-acknowledged smoke message ${message.id} was already archived.`);
-      const admitted = { ...acknowledged, fromMe: false, live: true } as IncomingMessage;
+      const admitted = { ...acknowledged, fromMe: false, live: true } satisfies IncomingMessage;
       for (const subscriber of messageSubscribers) await subscriber(admitted);
       return { messageId: message.id };
     },

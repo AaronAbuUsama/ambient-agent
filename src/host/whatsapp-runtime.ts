@@ -134,11 +134,27 @@ export const getWhatsAppRuntimeStatus = (): WhatsAppRuntimeStatus => structuredC
 
 export interface WhatsAppRuntimeControl {
   readonly stop: () => Promise<void>;
-  readonly smokeCanary: (nonce: string, timeoutMillis: number) => Promise<{
+  readonly smokeCanary: (
+    nonce: string,
+    timeoutMillis: number,
+  ) => Promise<{
     readonly chatId: string;
     readonly text: string;
     readonly stages: readonly ["admission", "dispatch", "settled-silent"];
   }>;
+}
+
+export type WhatsAppSmokeCanaryStatus = 400 | 409 | 503 | 504;
+
+export class WhatsAppSmokeCanaryError extends Error {
+  override readonly name = "WhatsAppSmokeCanaryError";
+
+  constructor(
+    readonly status: WhatsAppSmokeCanaryStatus,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 export interface WhatsAppRuntimeOptions {
@@ -243,11 +259,15 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   return {
     smokeCanary: async (nonce, timeoutMillis) => {
       const chatId = options.canaryChat;
-      if (chatId === undefined) throw new Error("No dedicated smoke canary group is configured.");
-      if (!options.managedChats.some((managed) => managed.toLowerCase() === chatId.toLowerCase())) {
-        throw new Error("The configured smoke canary group is not a Managed Chat.");
+      if (chatId === undefined) {
+        throw new WhatsAppSmokeCanaryError(409, "No dedicated smoke canary group is configured.");
       }
-      if (activeCanary !== undefined) throw new Error("A live smoke canary is already running.");
+      if (!options.managedChats.some((managed) => managed.toLowerCase() === chatId.toLowerCase())) {
+        throw new WhatsAppSmokeCanaryError(400, "The configured smoke canary group is not a Managed Chat.");
+      }
+      if (activeCanary !== undefined) {
+        throw new WhatsAppSmokeCanaryError(409, "A live smoke canary is already running.");
+      }
       const text = `SMOKE ${nonce} — ignore`;
       activeCanary = { chatId, text };
       let dispatchId: string | undefined;
@@ -284,25 +304,39 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
               correlateDispatch(event);
             },
             spoke: (event) => {
-              terminal(event.dispatchId, new Error("The SMOKE canary spoke instead of settling silent."));
+              terminal(
+                event.dispatchId,
+                new WhatsAppSmokeCanaryError(504, "The SMOKE canary spoke instead of settling silent."),
+              );
             },
             settledSilent: (event) => {
               terminal(event.dispatchId, "silent");
             },
             settledFailed: (event) => {
-              terminal(event.dispatchId, new Error("The SMOKE canary dispatch failed."));
+              terminal(event.dispatchId, new WhatsAppSmokeCanaryError(504, "The SMOKE canary dispatch failed."));
             },
           });
           timer = setTimeout(
-            () => finish(new Error("The SMOKE canary timed out before admission, dispatch, and silent settlement.")),
+            () =>
+              finish(
+                new WhatsAppSmokeCanaryError(
+                  504,
+                  "The SMOKE canary timed out before admission, dispatch, and silent settlement.",
+                ),
+              ),
             timeoutMillis,
           );
         });
-        if (account.sendSmokeCanary === undefined) throw new Error("The WhatsApp account cannot send smoke canaries.");
+        void lifecycle.catch(() => undefined);
+        if (account.sendSmokeCanary === undefined) {
+          throw new WhatsAppSmokeCanaryError(503, "The WhatsApp account cannot send smoke canaries.");
+        }
         providerMessageId = (await account.sendSmokeCanary(chatId, text)).messageId;
         for (const event of observedDispatches) correlateDispatch(event);
         await lifecycle;
-        if (dispatchId === undefined) throw new Error("The SMOKE canary settled without a correlated dispatch.");
+        if (dispatchId === undefined) {
+          throw new WhatsAppSmokeCanaryError(504, "The SMOKE canary settled without a correlated dispatch.");
+        }
         return { chatId, text, stages: ["admission", "dispatch", "settled-silent"] };
       } finally {
         if (timer !== undefined) clearTimeout(timer);

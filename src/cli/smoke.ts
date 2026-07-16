@@ -11,10 +11,26 @@ export interface SmokeCanaryReceipt {
 
 export type SmokeCanary = (paths: ManagedPaths, nonce: string, timeoutMillis: number) => Promise<SmokeCanaryReceipt>;
 
+const isSmokeCanaryReceipt = (value: unknown, nonce: string): value is SmokeCanaryReceipt =>
+  typeof value === "object" &&
+  value !== null &&
+  "chatId" in value &&
+  typeof value.chatId === "string" &&
+  "text" in value &&
+  value.text === `SMOKE ${nonce} — ignore` &&
+  "stages" in value &&
+  Array.isArray(value.stages) &&
+  value.stages.length === 3 &&
+  value.stages[0] === "admission" &&
+  value.stages[1] === "dispatch" &&
+  value.stages[2] === "settled-silent";
+
 export const requestRuntimeSmokeCanary: SmokeCanary = async (paths, nonce, timeoutMillis) => {
   const configuration = await readManagedConfig(paths.config);
   if (configuration.smoke === undefined) {
-    throw new Error("No dedicated smoke canary group is configured; run ambient-agent config --canary-chat <group-jid>.");
+    throw new Error(
+      "No dedicated smoke canary group is configured; run ambient-agent config --canary-chat <group-jid>.",
+    );
   }
   const credential = await readManagedGitHubCredential(paths.githubCredential);
   if (credential.webhookSecret === undefined) throw new Error("The runtime installation identity is unavailable.");
@@ -28,23 +44,19 @@ export const requestRuntimeSmokeCanary: SmokeCanary = async (paths, nonce, timeo
     body: JSON.stringify({ nonce, timeoutMillis }),
     signal,
   });
-  const body = (await response.json().catch(() => undefined)) as SmokeCanaryReceipt | { readonly error?: unknown } | undefined;
+  const body = (await response.json().catch(() => undefined)) as
+    | SmokeCanaryReceipt
+    | { readonly error?: unknown }
+    | undefined;
   if (!response.ok) {
-    const detail = typeof body === "object" && body !== null && "error" in body ? String(body.error) : `HTTP ${response.status}`;
+    const detail =
+      typeof body === "object" && body !== null && "error" in body ? String(body.error) : `HTTP ${response.status}`;
     throw new Error(`The live canary failed: ${detail}`);
   }
-  if (
-    body === undefined ||
-    !("chatId" in body) ||
-    !("text" in body) ||
-    !("stages" in body) ||
-    body.chatId !== configuration.smoke.canaryChat ||
-    body.text !== `SMOKE ${nonce} — ignore` ||
-    JSON.stringify(body.stages) !== JSON.stringify(["admission", "dispatch", "settled-silent"])
-  ) {
+  if (!isSmokeCanaryReceipt(body, nonce) || body.chatId !== configuration.smoke.canaryChat) {
     throw new Error("The live canary response was malformed or did not prove the required lifecycle.");
   }
-  return body as SmokeCanaryReceipt;
+  return body;
 };
 
 interface SmokeStation {
@@ -60,7 +72,8 @@ export const smokeStations = async (
   timeoutMillis: number,
   canary: SmokeCanary,
 ): Promise<readonly SmokeStation[]> => {
-  const config = report.installation.state === "ready" ? await readManagedConfig(paths.config).catch(() => undefined) : undefined;
+  const config =
+    report.installation.state === "ready" ? await readManagedConfig(paths.config).catch(() => undefined) : undefined;
   const deliveries = report.windowDeliveries;
   const githubAccess = report.checks.find(({ name }) => name === "github-access");
   const stations: SmokeStation[] = [
@@ -104,18 +117,18 @@ export const smokeStations = async (
       name: "github",
       passed: githubAccess?.state === "ready",
       detail:
-        githubAccess?.state === "ready" && config !== undefined
-          ? `access to ${config.github.defaultRepository}`
-          : "GitHub reachability failed",
+        githubAccess?.state !== "ready"
+          ? "GitHub reachability failed"
+          : config === undefined
+            ? "GitHub access verified"
+            : `access to ${config.github.defaultRepository}`,
     },
   ];
   try {
     const receipt = await canary(paths, nonce, timeoutMillis);
     stations.push({
       name: "canary",
-      passed:
-        receipt.text === `SMOKE ${nonce} — ignore` &&
-        JSON.stringify(receipt.stages) === JSON.stringify(["admission", "dispatch", "settled-silent"]),
+      passed: isSmokeCanaryReceipt(receipt, nonce),
       detail: `SMOKE ${nonce} settled silent (admission → dispatch → settled-silent)`,
     });
   } catch (cause) {

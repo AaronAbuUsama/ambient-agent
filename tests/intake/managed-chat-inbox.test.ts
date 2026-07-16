@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { createConversationArchive } from "../../src/intake/conversation-archive.ts";
-import { conversationArrival } from "../../src/intake/conversation-event.ts";
+import { conversationArrival, smokeCanaryArrival } from "../../src/intake/conversation-event.ts";
 import { inspectWindowDeliveryCounts } from "../../src/intake/managed-chat-inbox.ts";
 import { createTestManagedChatInbox as createManagedChatInbox } from "../support/managed-chat-inbox.ts";
 import type { IncomingMessage } from "whatsappd";
@@ -203,6 +203,44 @@ describe("Managed Chat Inbox", () => {
     expect(reopened.admissions("failed")).toEqual([
       { status: "failed", windowId: "window-2", reason: "Flue unreachable after bounded retries" },
     ]);
+    reopenedArchive.close();
+  });
+
+  it("does not re-admit a settled smoke canary when the Inbox reopens", () => {
+    const path = fixture();
+    const archive = createConversationArchive(path);
+    const inbox = createManagedChatInbox(archive, {
+      allowed: (chatId) => chatId === "managed@g.us",
+      createId: () => "window-smoke-settled",
+    });
+    const canary = message("smoke-settled", {
+      fromMe: true,
+      live: false,
+      text: "SMOKE abc123 — ignore",
+    });
+    expect(inbox.recorder.append(smokeCanaryArrival(canary))).toBe(true);
+    const window = inbox.createWindow({
+      chatId: "managed@g.us",
+      messages: inbox.unwindowed(),
+      reason: "debounce",
+    });
+    inbox.markDone(window.id, { dispatchId: "dispatch-smoke", acceptedAt: "2026-07-16T18:00:00.000Z" });
+    archive.close();
+
+    const reopenedArchive = createConversationArchive(path);
+    const reopened = createManagedChatInbox(reopenedArchive, {
+      allowed: (chatId) => chatId === "managed@g.us",
+    });
+    expect(reopened.unwindowed()).toEqual([]);
+    expect(reopened.pendingWindows()).toEqual([]);
+    expect(reopened.admission(window.id)).toEqual({
+      status: "done",
+      windowId: "window-smoke-settled",
+      dispatchId: "dispatch-smoke",
+      acceptedAt: "2026-07-16T18:00:00.000Z",
+    });
+    expect(reopened.recorder.append(smokeCanaryArrival(canary))).toBe(false);
+    expect(reopened.pendingWindows()).toEqual([]);
     reopenedArchive.close();
   });
 
