@@ -96,7 +96,12 @@ but not ours to ship on this pass's clock; blocked on upstream.
 | Parallelizable | after nothing; before B1's silent-line upgrade | same | — |
 | Fit | endorsed by both passes; frontend-ready | contradicts frontend seed | — |
 
-**Recommendation: O1.** Sub-decisions for Aaron: (a) does `settledSilent` render on the
-default console (chat-visible) or info-log only? (b) typing indicator: on for the whole
-deliberation even when it settles silent (humans see "typing…" then nothing — honest or
-weird?), or only until the agent decides not to speak?
+**Recommendation: O1.**
+
+## Resolution (Aaron, 2026-07-16)
+
+**O1 ratified**: named `AmbienceObserver` seam (windowDispatched / spoke /
+settledSilent / settledFailed) as a thin adapter over `@flue/runtime` `observe()`,
+correlated by dispatchId. Sub-decisions (a) settledSilent console visibility and
+(b) typing-indicator span remain OPEN — asked in the follow-up round; ticket stays
+open until both are answered.

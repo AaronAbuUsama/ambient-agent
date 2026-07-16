@@ -115,6 +115,12 @@ journal events table or the projection; journal-only still suffices.
 
 **Recommendation: O1** — extend-only semantics (updates never fire immediately, never
 count toward capacity), updates may open a cold window (a reaction IS a
-conversation event the agent should get to deliberate on), receipts excluded. Decision
-points for Aaron inside O1: (a) may a bare reaction open a cold window, or O2's
-enrich-only? (b) which update kinds ride along — reaction+edit+revocation, receipts out?
+conversation event the agent should get to deliberate on), receipts excluded.
+
+## Resolution (Aaron, 2026-07-16)
+
+**O1 ratified**: coalescer event widens to a union; reaction/edit/revocation feed it,
+receipts excluded; updates extend-only (never immediate-fire, never count toward
+capacity) and MAY open a cold window that settles by debounce. Projection consequence:
+`conversation_reactions` deletes along with the ratified `conversation_receipts`
+delete — journal-only per ADR 0008. CLOSED.

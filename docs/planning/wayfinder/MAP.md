@@ -37,20 +37,26 @@ someone goes and does the thing.
 ## Open tickets (the frontier, in suggested order)
 
 - [T1 — Participation rubric ratification](tickets/T1-participation-rubric.md) — HITL grilling; the evals critical path
-- [T4 — Windows carry everything](tickets/T4-windows-carry-everything.md) — extend-vs-fire semantics for reactions/updates
-- [T3 — AmbienceObserver seam](tickets/T3-ambience-observer.md) — deliberation/silence visibility + dispatch-spanning typing (Flue-hook gate already resolved: `observe()` exists)
+- [T3 — AmbienceObserver seam](tickets/T3-ambience-observer.md) — O1 ratified; two sub-decisions open (silent-settle console visibility, typing span)
 - [T5 — React tool surface](tickets/T5-react-tool.md) — input schema + port shape
-- [T6 — composeAmbience core surface](tickets/T6-compose-ambience.md) — the one signature packages/core exports
 - [T7 — Smoke canary](tickets/T7-smoke-canary.md) — which chat, what text
 - [T2 — Harness window input + faux/live boundary](tickets/T2-harness-window-input.md) — blocked by T1
 - [T8 — Ratify the implementation DAG](tickets/T8-dag-ratification.md) — blocked by T1–T7; gates /to-spec → /to-tickets
 
 ## Decisions so far
 
+- [T4 — Windows carry everything](tickets/T4-windows-carry-everything.md) — O1: coalescer
+  event widens to a union; reaction/edit/revocation extend-only, may open a cold window,
+  receipts excluded; `conversation_reactions` deletes (journal-only).
+- [T6 — composeAmbience core surface](tickets/T6-compose-ambience.md) — O1: adapters-in →
+  Hono-out, subsystems only; coalescer stack joins at the C5 cut.
 - Flue dispatch-settlement investigation (was the B2 gate) — resolved during charting:
   `dispatch()` settles at admission only, but `@flue/runtime` `observe()` emits
   `agent_end`/`submission_settled` correlated by `dispatchId`; evidence quoted in
   [T3](tickets/T3-ambience-observer.md).
+- Paperwork routing — main is PR-protected since the repo moved to
+  `AaronAbuUsama/ambient-agent`; the map lives on branch `docs/wayfinder-map` via PR
+  (never merged by the agent).
 
 ## Not yet specified
 

@@ -85,3 +85,10 @@ mission.
 
 **Recommendation: O1** now, with O2 explicitly deferred to the C5 cut (fog: "C5 cut
 mechanics"). It's reversible layering: O2 is additive on top of O1.
+
+## Resolution (Aaron, 2026-07-16)
+
+**O1 ratified** (after an in-chat zoom-out of both composition roots + callers):
+`composeAmbience(adapters)` covers subsystems + Hono app only; the coalescer stack
+stays in `runWhatsAppSession` (production) and the fixture's fork (tests); O2 layers
+on at the C5 cut. CLOSED.
