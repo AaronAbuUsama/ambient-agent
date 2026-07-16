@@ -6,6 +6,7 @@ import { Command, CommanderError } from "@commander-js/extra-typings";
 import * as prompts from "@clack/prompts";
 import packageManifest from "../../package.json" with { type: "json" };
 
+import { configureLogging, upstreamWhatsAppLogger, type LogFormat } from "../logging/logging.js";
 import { inspectManagedData, type InstallationInspection } from "../managed/installation.js";
 import { createManagedChatGptAuthentication } from "../managed/chatgpt-authentication.js";
 import {
@@ -84,7 +85,11 @@ export interface CliDependencies {
   readonly runtimeHealthFor?: (paths: ManagedPaths) => Promise<AmbientRuntimeHealth>;
 }
 
-export type StartRuntime = (paths: ManagedPaths) => Promise<void>;
+export interface RuntimeLoggingOptions {
+  readonly debug: boolean;
+  readonly format?: LogFormat;
+}
+export type StartRuntime = (paths: ManagedPaths, logging: RuntimeLoggingOptions) => Promise<void>;
 export type ImportRuntime = (specifier: string) => Promise<unknown>;
 export interface WindowDeliveryCounts {
   readonly pending: number;
@@ -108,9 +113,15 @@ const parseRuntimePort = (value: string): number => {
 
 const startGeneratedRuntime = async (
   paths: ManagedPaths,
+  logging: RuntimeLoggingOptions,
   authentication: ChatGptAuthentication,
   importServer: ImportRuntime = importRuntime,
 ): Promise<void> => {
+  await configureLogging({
+    logsDirectory: paths.logs,
+    level: logging.debug ? "debug" : "info",
+    ...(logging.format === undefined ? {} : { format: logging.format }),
+  });
   await ensureManagedGitHubWebhookSecret(paths.githubCredential);
   const configuration = await readManagedConfig(paths.config);
   const githubCredential = await readManagedGitHubCredential(paths.githubCredential);
@@ -377,6 +388,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
         createWhatsAppAccount({
           storeDirectory: paths.whatsapp,
           archive,
+          logger: upstreamWhatsAppLogger(),
         })),
     discoverRepository: serviceOverrides.discoverRepository ?? (() => discoverOriginRepository()),
     discoverCredential: serviceOverrides.discoverCredential ?? (() => discoverGitHubCredential()),
@@ -386,7 +398,8 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
   };
   const startRuntime =
     dependencies.startRuntime ??
-    ((paths: ManagedPaths) => startGeneratedRuntime(paths, authenticationFor(paths), dependencies.importRuntime));
+    ((paths: ManagedPaths, logging: RuntimeLoggingOptions) =>
+      startGeneratedRuntime(paths, logging, authenticationFor(paths), dependencies.importRuntime));
   const uncertainWorkFor =
     dependencies.uncertainWorkFor ??
     (async (paths: ManagedPaths): Promise<UncertainWorkController> => {
@@ -821,7 +834,13 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
   program
     .command("start")
     .description("start the generated Flue server in the foreground")
-    .action(async () => {
+    .option("--debug", "verbose diagnostic logging, including raw upstream WhatsApp records")
+    .option("--log-format <format>", "log output format: pretty or json (default: pretty on a TTY, json otherwise)")
+    .action(async (options) => {
+      const format = options.logFormat;
+      if (format !== undefined && format !== "pretty" && format !== "json") {
+        throw new Error("The --log-format option must be pretty or json.");
+      }
       const paths = managedPaths({ dataDirectory: program.opts().dataDir });
       const inspection = await inspectManagedData({ dataDirectory: paths.root });
       if (inspection.state !== "configured") {
@@ -837,7 +856,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           `Refusing to start managed data at ${paths.root}: ${failedCheck.code}. Run ambient-agent doctor.`,
         );
       }
-      await startRuntime(paths);
+      await startRuntime(paths, { debug: options.debug ?? false, ...(format === undefined ? {} : { format }) });
     });
 
   program

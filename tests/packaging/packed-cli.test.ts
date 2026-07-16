@@ -254,7 +254,8 @@ describe("packed ambient-agent executable", () => {
         runtimeState: "healthy",
         observedRuntime: { state: "healthy", whatsapp: { phase: "online" } },
       });
-      expect(runtime.stdout()).toContain("Ambience WhatsApp online");
+      // Runtime diagnostics live on stderr (ADR 0016); stdout stays free for command responses.
+      expect(runtime.stderr()).toContain("Ambience WhatsApp online");
       expect(runtime.stderr()).not.toContain("packed-github-secret");
     } finally {
       await runtime.stop();
@@ -304,7 +305,7 @@ describe("packed ambient-agent executable", () => {
       PACKED_WHATSAPP_MESSAGE_ID: "before-backup-58",
     });
     try {
-      expect(sourceRuntime.stdout()).toContain(sourceIdentity.jid);
+      expect(sourceRuntime.stderr()).toContain(sourceIdentity.jid);
       await waitForCanonicalAgentText(sourcePaths.flueDatabase, chatId, "BEFORE_BACKUP_58");
     } finally {
       await sourceRuntime.stop();
@@ -460,7 +461,7 @@ describe("packed ambient-agent executable", () => {
       restoredHome,
     );
     try {
-      expect(restoredRuntime.stdout()).toContain(sourceIdentity.jid);
+      expect(restoredRuntime.stderr()).toContain(sourceIdentity.jid);
       const restoredHistory = await waitForCanonicalAgentText(restoredPaths.flueDatabase, chatId, "AFTER_RESTORE_58");
       expect(restoredHistory).toContain("BEFORE_BACKUP_58");
       expect(restoredHistory).toContain("AFTER_RESTORE_58");
