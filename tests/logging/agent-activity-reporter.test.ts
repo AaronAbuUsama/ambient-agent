@@ -65,6 +65,31 @@ const settled = (
   }) as FlueObservation;
 
 describe("agent activity reporter", () => {
+  it("exposes the observer lifecycle to a bounded live-canary subscriber", () => {
+    const { logger } = captureLogger();
+    const reporter = createAgentActivityReporter(logger);
+    const stages: string[] = [];
+    const unsubscribe = reporter.subscribe({
+      windowDispatched: () => stages.push("dispatch"),
+      spoke: () => stages.push("spoke"),
+      settledSilent: () => stages.push("settled-silent"),
+      settledFailed: () => stages.push("failed"),
+    });
+
+    reporter.accepted(
+      { dispatchId: "dispatch-1" },
+      { type: "whatsapp.window", windowId: "window-1", chatId: "chat@g.us", messages: [{ id: "message-1" }] },
+    );
+    reporter.observed(operation({}));
+    unsubscribe();
+    reporter.accepted(
+      { dispatchId: "dispatch-2" },
+      { type: "whatsapp.window", windowId: "window-2", chatId: "chat@g.us", messages: [{ id: "message-2" }] },
+    );
+
+    expect(stages).toEqual(["dispatch", "settled-silent"]);
+  });
+
   it("reports a dispatched WhatsApp window and its silent settlement", () => {
     const { entries, logger } = captureLogger();
     const reporter = createAgentActivityReporter(logger);

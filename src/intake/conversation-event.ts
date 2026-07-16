@@ -7,6 +7,8 @@ export interface ConversationArrivalPayload {
   readonly isGroup: boolean;
   readonly messageKind: string;
   readonly text: string;
+  /** Explicit application admission for the provider-acknowledged smoke stimulus; the conversation fact remains outbound. */
+  readonly applicationAdmission?: "smoke-canary";
   readonly context?: InboundMessage["context"];
   readonly addressing?: InboundMessage["addressing"];
   readonly flags?: InboundMessage["flags"];
@@ -242,6 +244,14 @@ export const conversationArrival = (message: InboundMessage): ConversationArriva
       ...(message.flags === undefined ? {} : { flags: message.flags }),
       ...(media === undefined ? {} : { media }),
     },
+  };
+};
+
+export const smokeCanaryArrival = (message: InboundMessage): ConversationArrival => {
+  const arrival = conversationArrival(message);
+  return {
+    ...arrival,
+    payload: { ...arrival.payload, applicationAdmission: "smoke-canary" },
   };
 };
 

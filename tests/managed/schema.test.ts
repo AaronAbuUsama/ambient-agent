@@ -69,4 +69,17 @@ describe("managed schemas", () => {
     expect(v.safeParse(ManagedConfigSchema, { ...older, runtime: { port: 65_535 } }).success).toBe(true);
     expect(v.safeParse(ManagedConfigSchema, { ...older, runtime: { port: 65_536 } }).success).toBe(false);
   });
+
+  it("accepts only a managed group as the dedicated smoke canary", () => {
+    const config = createManagedConfig(["120363000@g.us", "15550000000@s.whatsapp.net"], "owner/repo");
+    expect(
+      v.safeParse(ManagedConfigSchema, { ...config, smoke: { canaryChat: "120363000@g.us" } }).success,
+    ).toBe(true);
+    expect(
+      v.safeParse(ManagedConfigSchema, { ...config, smoke: { canaryChat: "15550000000@s.whatsapp.net" } }).success,
+    ).toBe(false);
+    expect(
+      v.safeParse(ManagedConfigSchema, { ...config, smoke: { canaryChat: "120363999@g.us" } }).success,
+    ).toBe(false);
+  });
 });

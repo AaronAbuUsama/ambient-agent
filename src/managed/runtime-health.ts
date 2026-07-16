@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 export type AmbientRuntimeState = "stopped" | "starting" | "healthy" | "failed";
 export type WhatsAppRuntimePhase = "disabled" | "starting" | "online" | "failed" | "stopped";
@@ -17,6 +17,22 @@ export interface AmbientRuntimeHealth {
 /** Stable, non-secret correlation token derived from the app-owned random webhook secret. */
 export const runtimeInstallationId = (webhookSecret: string): string =>
   createHash("sha256").update(`ambient-agent\0${webhookSecret}`).digest("base64url").slice(0, 22);
+
+/** Request-scoped proof of the private runtime credential; unlike installationId, this value is never published. */
+export const runtimeSmokeAuthorization = (webhookSecret: string, nonce: string, timeoutMillis: number): string =>
+  createHmac("sha256", webhookSecret).update(`ambient-agent-smoke\0${nonce}\0${timeoutMillis}`).digest("base64url");
+
+export const runtimeSmokeAuthorizationMatches = (
+  candidate: string | undefined,
+  webhookSecret: string,
+  nonce: string,
+  timeoutMillis: number,
+): boolean => {
+  if (candidate === undefined) return false;
+  const expected = Buffer.from(runtimeSmokeAuthorization(webhookSecret, nonce, timeoutMillis));
+  const actual = Buffer.from(candidate);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+};
 
 export const ambientRuntimeHealth = (whatsapp: WhatsAppRuntimeStatus): AmbientRuntimeHealth => ({
   state:

@@ -16,6 +16,7 @@ const ManagedChat = v.pipe(
   v.regex(/^[^@\s]+@(g\.us|s\.whatsapp\.net)$/, "Expected a WhatsApp group or direct-chat JID"),
 );
 const RuntimePort = v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(65_535));
+const CanaryGroup = v.pipe(ManagedChat, v.regex(/@g\.us$/, "Expected a WhatsApp group JID"));
 
 export const ManagedConfigSchema = v.pipe(
   v.strictObject({
@@ -29,6 +30,7 @@ export const ManagedConfigSchema = v.pipe(
       ]),
     }),
     runtime: v.optional(v.strictObject({ port: RuntimePort }), { port: 3000 }),
+    smoke: v.optional(v.strictObject({ canaryChat: CanaryGroup })),
     github: v.strictObject({
       kind: v.literal("personal-token"),
       credential: v.literal(GITHUB_CREDENTIAL_REFERENCE),
@@ -42,6 +44,12 @@ export const ManagedConfigSchema = v.pipe(
         (repository) => repository.toLowerCase() === config.github.defaultRepository.toLowerCase(),
       ),
     "The default GitHub repository must be included in allowedRepositories",
+  ),
+  v.check(
+    (config) =>
+      config.smoke === undefined ||
+      config.managedChats.some((chat) => chat.toLowerCase() === config.smoke!.canaryChat.toLowerCase()),
+    "The smoke canary group must be included in managedChats",
   ),
 );
 

@@ -69,6 +69,7 @@ const harness = () => {
       },
       synchronizedChats: async () => [
         { jid: "120363000@g.us", name: "Managed Test Chat", kind: "group" as const, lastActivityAt: 1_000 },
+        { jid: "120363999@g.us", name: "Smoke Canary", kind: "group" as const, lastActivityAt: 900 },
       ],
       session: () => {
         throw new Error("not used during setup");
@@ -737,6 +738,41 @@ describe("managed CLI", () => {
     expect(config.stdout()).not.toContain("github-secret-token");
   });
 
+  it("configures a dedicated canary group as a managed chat", async () => {
+    const paths = await files();
+    await runCli(
+      [
+        "--data-dir",
+        paths.data,
+        "init",
+        "--chat",
+        "120363000@g.us",
+        "--repository",
+        "owner/repo",
+        "--github-token-file",
+        paths.token,
+      ],
+      harness(),
+    );
+    const cli = harness();
+
+    expect(
+      await runCli(["--data-dir", paths.data, "config", "--canary-chat", "120363999@g.us"], {
+        ...cli,
+        interactive: false,
+      }),
+    ).toBe(0);
+    await expect(readFile(managedPaths({ dataDirectory: paths.data }).config, "utf8")).resolves.toSatisfy(
+      (source: string) => {
+        const config = JSON.parse(source) as { readonly managedChats: string[]; readonly smoke?: unknown };
+        return (
+          JSON.stringify(config.managedChats) === JSON.stringify(["120363000@g.us", "120363999@g.us"]) &&
+          JSON.stringify(config.smoke) === JSON.stringify({ canaryChat: "120363999@g.us" })
+        );
+      },
+    );
+  });
+
   it("reports Uncertain work as degraded without exposing stored targets or provider errors", async () => {
     const paths = await files();
     await runCli(
@@ -1028,6 +1064,62 @@ describe("managed CLI", () => {
       ]),
       liveCheck: { request: "complete" },
     });
+  });
+
+  it("runs every smoke station and reports the live canary lifecycle", async () => {
+    const paths = await files();
+    await runCli(
+      [
+        "--data-dir",
+        paths.data,
+        "init",
+        "--chat",
+        "120363000@g.us",
+        "--repository",
+        "owner/repo",
+        "--github-token-file",
+        paths.token,
+      ],
+      harness(),
+    );
+    const managed = managedPaths({ dataDirectory: paths.data });
+    const config = JSON.parse(await readFile(managed.config, "utf8")) as Record<string, unknown>;
+    await writeFile(
+      managed.config,
+      `${JSON.stringify({ ...config, smoke: { canaryChat: "120363000@g.us" } }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+    const cli = harness();
+
+    expect(
+      await runCli(["--data-dir", paths.data, "smoke"], {
+        ...cli,
+        readinessCheck: async () => ({ model: "openai-codex/gpt-5.6-luna", request: "complete" }),
+        firstRunServices: {
+          ...cli.firstRunServices,
+          verifyGitHub: async (_token: string, repository: string) => repository,
+        },
+        runtimeHealthFor: async () => ({ state: "healthy", whatsapp: { phase: "online" } }),
+        smokeCanaryFor: async (_paths: ManagedPaths, nonce: string) => ({
+          chatId: "120363000@g.us",
+          text: `SMOKE ${nonce} — ignore`,
+          stages: ["admission", "dispatch", "settled-silent"] as const,
+        }),
+        createNonce: () => "abc123",
+      }),
+    ).toBe(0);
+    expect(cli.stdout()).toBe(
+      [
+        "PASS installation: managed installation ready",
+        "PASS chatgpt: authentication ready; live readiness complete",
+        "PASS runtime: healthy; WhatsApp online",
+        "PASS backlog: 0 pending, 0 failed, no Uncertain work",
+        "PASS github: access to owner/repo",
+        "PASS canary: SMOKE abc123 settled silent (admission → dispatch → settled-silent)",
+        "",
+      ].join("\n"),
+    );
+    expect(cli.stderr()).toBe("");
   });
 
   it("bounds the live readiness request with a dedicated timeout", async () => {
