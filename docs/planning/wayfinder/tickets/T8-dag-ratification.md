@@ -60,3 +60,45 @@ coalescer wiring it centralizes changes shape).
 (a) the wave-0 bundle boundaries (esp. D3+D4 merged); (b) the evals-green milestone as
 C5's hard gate; (c) W-compose ordered after W-windows-everything; (d) anything Aaron
 wants pulled forward/dropped.
+
+## Final DAG (updated with all T1–T7 resolutions, presented for ratification)
+
+**Wave 0 — parallel, mechanical, no blockers:**
+- `W-console` — B1 chat-visible console + B4 chat-style renderer + ADR 0016 amendment
+- `W-symbolfor` — C1 Symbol.for normalization (4 lets)
+- `W-mech` — D6–D13 batch (~250 lines)
+- `W-attach-env` — D4 + D3 merged (they interlock via `legacyDatabasePath`)
+- `W-d2` — tools.ts lifecycle collapse
+- `W-c4` — dependency-direction flip
+- `W-c3` — program.ts split into 5 files
+- `W-braintrust` — `pnpm exec flue add tooling braintrust`
+- `W-skill-tree` — restructure skills: main ambience skill (rubric axes 1/2/4/5) +
+  issue-management bundle (elicit-until-fillable, reply-with-issue-link, PR-link
+  behavior text); markdown only, per the skill-layering decision
+
+**Evals thrust (critical path to the split):**
+- `W-window-input` (T2-O1 harness variant) → `W-scorers` (deterministic mechanics
+  suites + live LLM-judge suites grading against the skill text; needs W-braintrust +
+  W-skill-tree) → **evals-green milestone**
+
+**Observability:**
+- `W-observer` — review/align `codex/semantic-terminal-reporter` (f88e075) with the
+  T3-O1 seam; includes the re-scoped B3 (perceptible send-typing inside `say`, NOT
+  dispatch-spanning) and the settledSilent console line (upgrades W-console)
+- `W-smoke` — B5 smoke command + canary group (needs W-c3, W-observer, the T7
+  carve-out already in the rubric)
+
+**Features:**
+- `W-react-reply` — T5-O1: `say` gains `replyTo`, `react` sibling tool, fake-host events
+- `W-windows-everything` — T4-O1: coalescer event union, updates extend-only/may-open,
+  receipts excluded; `conversation_reactions` + `conversation_receipts` tables delete
+- `W-pr-ingress` — NEW (T1 axis 3): GitHub ingress routes PR events for captured
+  issues back to the originating chat, so the agent can post the PR link
+
+**Split (last):**
+- `W-compose` — T6-O1 composeAmbience (after W-windows-everything)
+- `W-cut` — C5 four-package cut ← evals-green + W-symbolfor + W-compose + W-c3 + W-c4
+
+## Resolution
+
+Pending Aaron's ratification (+ explicit go-ahead before anything is filed on GitHub).

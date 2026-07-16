@@ -98,3 +98,11 @@ LLM-judge scorers per T1 rubric. Braintrust (A4) attaches to both as reporter/lo
 
 **Recommendation: O1.** Additive, small, exercises the ratified real path, and the
 fixture was built for exactly this.
+
+## Resolution (Aaron, 2026-07-16)
+
+**O1 ratified**: additive `window` input variant on the existing harness → POST
+`/test/coalescer` per text, poll `/test/admission`; existing `message:` evals
+untouched. Faux/live boundary as drafted (A3): deterministic = mechanics on the faux
+responder; live = judgment, LLM-judge grading against the skill-bundle text (per the
+skill-layering decision). CLOSED.
