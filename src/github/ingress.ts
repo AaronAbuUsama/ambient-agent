@@ -3,7 +3,12 @@ import type { DispatchReceipt } from "@flue/runtime";
 import { resolve } from "node:path";
 import * as v from "valibot";
 
-import { githubIssueOpenedInputSchema, type GitHubIssueOpenedInput } from "../ambience/events.js";
+import {
+  githubIssueOpenedInputSchema,
+  githubPullRequestOpenedInputSchema,
+  type GitHubIngressInput,
+} from "../ambience/events.js";
+import type { IssueOperationStore } from "../capabilities/issue-management/operation-store.js";
 import { getLogger } from "../logging/logging.js";
 import type { GitHubIngressRecord, GitHubIngressStore } from "./ingress-store.js";
 
@@ -30,6 +35,29 @@ const issueOpenedPayloadSchema = v.object({
     type: nonEmptyString,
   }),
 });
+const pullRequestOpenedPayloadSchema = v.object({
+  action: v.literal("opened"),
+  installation: v.optional(v.nullable(v.object({ id: positiveInteger }))),
+  repository: v.object({
+    id: positiveInteger,
+    name: nonEmptyString,
+    html_url: nonEmptyString,
+    owner: v.object({ login: nonEmptyString }),
+  }),
+  pull_request: v.object({
+    number: positiveInteger,
+    html_url: nonEmptyString,
+    title: nonEmptyString,
+    body: v.nullable(v.string()),
+    state: v.literal("open"),
+    draft: v.boolean(),
+  }),
+  sender: v.object({
+    login: nonEmptyString,
+    id: positiveInteger,
+    type: nonEmptyString,
+  }),
+});
 
 export interface GitHubIngressSettings {
   readonly webhookSecret: string;
@@ -39,6 +67,19 @@ export interface GitHubIngressSettings {
 }
 
 const repositoryKey = (owner: string, repo: string): string => `${owner.trim()}/${repo.trim()}`.toLowerCase();
+
+const linkedIssueNumbers = (body: string, repository: string): readonly number[] => {
+  const numbers = new Set<number>();
+  const shorthand = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+))?#([1-9]\d*)\b/gi;
+  for (const match of body.matchAll(shorthand)) {
+    if (match[1] === undefined || match[1].toLowerCase() === repository) numbers.add(Number(match[2]));
+  }
+  const fullUrl = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/issues\/([1-9]\d*)\b/gi;
+  for (const match of body.matchAll(fullUrl)) {
+    if (match[1]!.toLowerCase() === repository) numbers.add(Number(match[2]));
+  }
+  return [...numbers];
+};
 
 const parseRepository = (value: string): string => {
   const parts = value.trim().split("/");
@@ -135,7 +176,8 @@ const sleep = (millis: number): Promise<void> =>
 export const createGitHubIngress = (options: {
   readonly store: GitHubIngressStore;
   readonly routes: ReadonlyMap<string, string>;
-  readonly dispatch: (chatId: string, input: GitHubIssueOpenedInput) => Promise<DispatchReceipt>;
+  readonly dispatch: (chatId: string, input: GitHubIngressInput) => Promise<DispatchReceipt>;
+  readonly operations?: IssueOperationStore;
   readonly logger?: GitHubIngressLogger;
   readonly now?: () => Date;
   readonly retry?: GitHubIngressRetryPolicy;
@@ -175,7 +217,9 @@ export const createGitHubIngress = (options: {
       }
     }
 
-    if (delivery.name !== "issues" || delivery.payload.action !== "opened") {
+    const isIssueOpened = delivery.name === "issues" && delivery.payload.action === "opened";
+    const isPullRequestOpened = delivery.name === "pull_request" && delivery.payload.action === "opened";
+    if (!isIssueOpened && !isPullRequestOpened) {
       options.store.settle(delivery.deliveryId, {
         status: "unsupported",
         settledAt: now().toISOString(),
@@ -188,9 +232,12 @@ export const createGitHubIngress = (options: {
       return { status: "unsupported", deliveryId: delivery.deliveryId };
     }
 
-    const parsed = v.safeParse(issueOpenedPayloadSchema, delivery.payload);
+    const parsed = isIssueOpened
+      ? v.safeParse(issueOpenedPayloadSchema, delivery.payload)
+      : v.safeParse(pullRequestOpenedPayloadSchema, delivery.payload);
     if (!parsed.success) {
-      const error = "Verified issues.opened delivery did not match the supported application contract";
+      const event = isIssueOpened ? "issues.opened" : "pull_request.opened";
+      const error = `Verified ${event} delivery did not match the supported application contract`;
       options.store.settle(delivery.deliveryId, {
         status: "unsupported",
         error,
@@ -225,25 +272,83 @@ export const createGitHubIngress = (options: {
       return { status: "uncorrelated", deliveryId: delivery.deliveryId, repository };
     }
 
-    const input = v.parse(githubIssueOpenedInputSchema, {
-      type: "github.issue.opened",
-      chatId,
-      deliveryId: delivery.deliveryId,
-      ...(payload.installation ? { installationId: payload.installation.id } : {}),
-      repository: {
-        owner: payload.repository.owner.login,
-        repo: payload.repository.name,
-        id: payload.repository.id,
-        url: payload.repository.html_url,
-      },
-      issue: {
-        number: payload.issue.number,
-        url: payload.issue.html_url,
-        title: payload.issue.title,
-        state: payload.issue.state,
-      },
-      sender: payload.sender,
-    });
+    let input: GitHubIngressInput;
+    if (isIssueOpened && "issue" in payload) {
+      input = v.parse(githubIssueOpenedInputSchema, {
+        type: "github.issue.opened",
+        chatId,
+        deliveryId: delivery.deliveryId,
+        ...(payload.installation ? { installationId: payload.installation.id } : {}),
+        repository: {
+          owner: payload.repository.owner.login,
+          repo: payload.repository.name,
+          id: payload.repository.id,
+          url: payload.repository.html_url,
+        },
+        issue: {
+          number: payload.issue.number,
+          url: payload.issue.html_url,
+          title: payload.issue.title,
+          state: payload.issue.state,
+        },
+        sender: payload.sender,
+      });
+    } else if ("pull_request" in payload) {
+      const captured = new Set(
+        (options.operations?.list() ?? [])
+          .filter(
+            (operation) =>
+              operation.kind === "create-issue" &&
+              operation.status === "completed" &&
+              operation.repository.toLowerCase() === repository &&
+              operation.issueNumber !== undefined,
+          )
+          .map((operation) => operation.issueNumber!),
+      );
+      const issueNumber = linkedIssueNumbers(payload.pull_request.body ?? "", repository).find((number) =>
+        captured.has(number),
+      );
+      if (issueNumber === undefined) {
+        options.store.settle(delivery.deliveryId, {
+          status: "uncorrelated",
+          repository,
+          settledAt: now().toISOString(),
+        });
+        logger.warn({
+          event: "github.ingress.uncorrelated",
+          deliveryId: delivery.deliveryId,
+          repository,
+          chatId,
+          ambience: null,
+          dispatchId: null,
+          reason: "pull request does not close an issue captured by Ambience",
+        });
+        return { status: "uncorrelated", deliveryId: delivery.deliveryId, repository };
+      }
+      input = v.parse(githubPullRequestOpenedInputSchema, {
+        type: "github.pull-request.opened",
+        chatId,
+        deliveryId: delivery.deliveryId,
+        ...(payload.installation ? { installationId: payload.installation.id } : {}),
+        repository: {
+          owner: payload.repository.owner.login,
+          repo: payload.repository.name,
+          id: payload.repository.id,
+          url: payload.repository.html_url,
+        },
+        issue: { number: issueNumber },
+        pullRequest: {
+          number: payload.pull_request.number,
+          url: payload.pull_request.html_url,
+          title: payload.pull_request.title,
+          state: payload.pull_request.state,
+          draft: payload.pull_request.draft,
+        },
+        sender: payload.sender,
+      });
+    } else {
+      throw new Error(`Supported GitHub delivery ${delivery.deliveryId} lost its normalized payload variant`);
+    }
 
     let receipt: DispatchReceipt;
     for (let attempt = 1; ; attempt += 1) {

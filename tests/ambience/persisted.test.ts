@@ -171,6 +171,28 @@ function githubIssueOpenedPayload(repository = "widgets"): string {
   });
 }
 
+function githubPullRequestOpenedPayload(issueNumber: number, pullRequestNumber = 42): string {
+  return JSON.stringify({
+    action: "opened",
+    installation: { id: 77 },
+    repository: {
+      id: 101,
+      name: "widgets",
+      html_url: "https://github.com/acme/widgets",
+      owner: { login: "acme" },
+    },
+    pull_request: {
+      number: pullRequestNumber,
+      html_url: `https://github.com/acme/widgets/pull/${pullRequestNumber}`,
+      title: "Fix the captured issue",
+      body: `Closes #${issueNumber}`,
+      state: "open",
+      draft: false,
+    },
+    sender: { login: "octocat", id: 1, type: "User" },
+  });
+}
+
 async function githubDelivery(options: {
   readonly deliveryId: string;
   readonly body: string;
@@ -363,6 +385,41 @@ describe("persisted Ambience admission", () => {
     expect(serverOutput).toContain(`"ambience":"ambience"`);
     expect(serverOutput).toContain(`"dispatchId":"${firstReceipt.dispatchId}"`);
     expect(serverOutput).toContain(`"runId":null`);
+  });
+
+  it("posts the PR link when a verified PR closes an issue captured by Ambience", async () => {
+    const chatId = "github-ingress-29@g.us";
+    await resetWhatsApp();
+    await prompt(chatId, "CREATE_COMPLETE_ISSUE");
+    const completedCreate = [...(await githubOperations())]
+      .reverse()
+      .find((operation) => operation.kind === "create-issue" && operation.status === "completed");
+    expect(completedCreate).toMatchObject({ repository: "acme/widgets" });
+    const issueNumber = completedCreate?.issueNumber;
+    expect(typeof issueNumber).toBe("number");
+
+    const deliveryId = "42-captured-pr";
+    const body = githubPullRequestOpenedPayload(issueNumber as number);
+    const response = await githubDelivery({ deliveryId, body, event: "pull_request" });
+    expect(response.status, await response.text()).toBe(200);
+    await waitFor(
+      async () =>
+        (await whatsappEvents()).some(
+          (event) =>
+            event.kind === "send" &&
+            event.outcome === "sent" &&
+            event.text === "https://github.com/acme/widgets/pull/42",
+        ),
+      "captured issue pull-request link delivery",
+    );
+    expect(await githubIngressRecords()).toContainEqual(
+      expect.objectContaining({
+        deliveryId,
+        repository: "acme/widgets",
+        chatId,
+        status: "done",
+      }),
+    );
   });
 
   it("rejects an invalid GitHub signature before application processing", async () => {

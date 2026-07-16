@@ -55,10 +55,20 @@ const format = (messages: readonly ProjectedConversationMessage[]): string =>
 export const createSayTool = (chatId: string, port?: WhatsAppSayPort) =>
   defineTool({
     name: "say",
-    description: "Send one message to the WhatsApp chat bound to this Ambience instance.",
-    input: v.object({ text: v.pipe(v.string(), v.minLength(1), v.maxLength(4_096)) }),
+    description:
+      "Send one message to the WhatsApp chat bound to this Ambience instance, optionally replying to a triggering message.",
+    input: v.object({
+      text: v.pipe(v.string(), v.minLength(1), v.maxLength(4_096)),
+      replyTo: v.optional(
+        v.object({
+          messageId: nonEmptyString,
+          fromMe: v.boolean(),
+          participant: v.optional(nonEmptyString),
+        }),
+      ),
+    }),
     output: sayOutputSchema,
-    run: ({ input }) => (port ?? getWhatsAppParticipationPort()).say(chatId, input.text),
+    run: ({ input }) => (port ?? getWhatsAppParticipationPort()).say(chatId, input.text, input.replyTo),
   });
 
 export const createReadWhatsAppThreadTool = (chatId: string) =>

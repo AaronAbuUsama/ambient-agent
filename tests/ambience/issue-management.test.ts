@@ -978,7 +978,7 @@ describe("production Issue Management tools", () => {
     expect(config.skills?.map((skill) => skill.name)).toEqual(["whatsapp-participation", "issue-management"]);
     await expect(
       readFile(join(process.cwd(), "src/capabilities/issue-management/SKILL.md"), "utf8"),
-    ).resolves.toContain('version: "1.2.0"');
+    ).resolves.toContain('version: "2.0.0"');
     expect(config.tools?.map((tool) => tool.name)).toEqual([
       "say",
       "whatsapp_read_thread",

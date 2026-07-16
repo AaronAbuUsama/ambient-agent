@@ -128,6 +128,36 @@ describe("say", () => {
     ]);
   });
 
+  it("forwards an explicit reply target to the chat-bound host", async () => {
+    const host = createFakeWhatsAppHost();
+    const say = createSayTool(CHAT, host);
+
+    await expect(
+      say.run({
+        input: {
+          text: "reply in context",
+          replyTo: {
+            messageId: "incoming-27",
+            fromMe: false,
+            participant: "15551112222@s.whatsapp.net",
+          },
+        },
+      }),
+    ).resolves.toMatchObject({ delivery: "sent" });
+    expect(host.events()).toContainEqual({
+      kind: "send",
+      chatId: CHAT,
+      text: "reply in context",
+      replyTo: {
+        messageId: "incoming-27",
+        fromMe: false,
+        participant: "15551112222@s.whatsapp.net",
+      },
+      outcome: "sent",
+      messageId: "fake-message-1",
+    });
+  });
+
   it("does not retry an uncertain send and still finalizes typing after failure", async () => {
     const host = createFakeWhatsAppHost();
     host.failNextSend(new Error("provider outcome unknown"));

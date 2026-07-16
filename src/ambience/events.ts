@@ -58,7 +58,38 @@ export const githubIssueOpenedInputSchema = v.object({
 });
 
 export type GitHubIssueOpenedInput = v.InferOutput<typeof githubIssueOpenedInputSchema>;
-export type AmbienceInput = WhatsAppWindowInput | GitHubIssueOpenedInput;
+
+export const githubPullRequestOpenedInputSchema = v.object({
+  type: v.literal("github.pull-request.opened"),
+  chatId: nonEmptyString,
+  deliveryId: nonEmptyString,
+  installationId: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
+  repository: v.object({
+    owner: nonEmptyString,
+    repo: nonEmptyString,
+    id: v.pipe(v.number(), v.integer(), v.minValue(1)),
+    url: nonEmptyString,
+  }),
+  issue: v.object({
+    number: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  }),
+  pullRequest: v.object({
+    number: v.pipe(v.number(), v.integer(), v.minValue(1)),
+    url: nonEmptyString,
+    title: nonEmptyString,
+    state: v.literal("open"),
+    draft: v.boolean(),
+  }),
+  sender: v.object({
+    login: nonEmptyString,
+    id: v.pipe(v.number(), v.integer(), v.minValue(1)),
+    type: nonEmptyString,
+  }),
+});
+
+export type GitHubPullRequestOpenedInput = v.InferOutput<typeof githubPullRequestOpenedInputSchema>;
+export type GitHubIngressInput = GitHubIssueOpenedInput | GitHubPullRequestOpenedInput;
+export type AmbienceInput = WhatsAppWindowInput | GitHubIngressInput;
 
 export const whatsappWindowInput = (window: ConversationWindow): WhatsAppWindowInput =>
   v.parse(whatsappWindowInputSchema, {

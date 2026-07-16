@@ -40,7 +40,7 @@ const combineReceipt = (delivery: DeliveryReceipt, typingError?: string): WhatsA
 
 /** The sole real implementation behind Ambience's `say` tool. It never retries an uncertain provider outcome. */
 export const createWhatsAppHost = (session: WhatsAppSession): WhatsAppSayPort => ({
-  say: async (chatId, text) => {
+  say: async (chatId, text, replyTo) => {
     const log = getLogger("whatsapp");
     try {
       await session.setTyping(chatId, true);
@@ -50,7 +50,20 @@ export const createWhatsAppHost = (session: WhatsAppSession): WhatsAppSayPort =>
 
     let delivery: DeliveryReceipt;
     try {
-      const message = await session.send(chatId, { text });
+      const message = await session.send(
+        chatId,
+        { text },
+        replyTo === undefined
+          ? undefined
+          : {
+              quote: {
+                id: replyTo.messageId,
+                chatId,
+                fromMe: replyTo.fromMe,
+                ...(replyTo.participant === undefined ? {} : { participant: replyTo.participant }),
+              },
+            },
+      );
       delivery = { delivery: "sent", messageId: message.id };
       log.info(
         { operatorEvent: "agent.say", text, chatId, messageId: message.id },
