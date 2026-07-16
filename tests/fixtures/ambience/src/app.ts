@@ -126,6 +126,21 @@ const respond = async (context: Context) => {
   if (serialized.includes("github.issue.opened")) {
     return fauxAssistantMessage("Private verified GitHub delivery processed without speaking.");
   }
+  if (serialized.includes("github.pull-request.opened")) {
+    const pullRequestUrl = serialized.match(/https:\/\/github\.com\/acme\/widgets\/pull\/[0-9]+/)?.[0];
+    if (!pullRequestUrl) throw new Error("Normalized pull-request delivery is missing its link");
+    const issuesStart = serialized.indexOf("issues");
+    const pullRequestStart = serialized.indexOf("pullRequest", issuesStart);
+    const issueCount =
+      issuesStart < 0 || pullRequestStart < 0
+        ? 0
+        : (serialized.slice(issuesStart, pullRequestStart).match(/number/g) ?? []).length;
+    if (issueCount === 0) throw new Error("Normalized pull-request delivery is missing captured issues");
+    return fauxAssistantMessage(
+      Array.from({ length: issueCount }, () => fauxToolCall("say", { text: pullRequestUrl })),
+      { stopReason: "toolUse" },
+    );
+  }
   if (serialized.includes("SPEAK_ONCE")) {
     return fauxAssistantMessage(fauxToolCall("say", { text: "one explicit outbound" }), { stopReason: "toolUse" });
   }
@@ -188,6 +203,7 @@ const githubIngressStore = installGitHubIngressRuntime(
     routes: new Map([["acme/widgets", "github-ingress-29@g.us"]]),
   },
   async (chatId, input) => await dispatchAmbience({ id: chatId, input }),
+  issueOperations,
 );
 const source = await Effect.runPromise(Queue.unbounded<IncomingMessage>());
 configureWhatsAppParticipationPort({

@@ -6,6 +6,8 @@ import { DatabaseSync } from "node:sqlite";
 
 import type { GitHubWebhookDelivery } from "@flue/github";
 
+import type { GitHubIngressInput } from "../../src/ambience/events.ts";
+import { createIssueOperationStore } from "../../src/capabilities/issue-management/operation-store.ts";
 import { createGitHubIngress } from "../../src/github/ingress.ts";
 import { createGitHubIngressStore } from "../../src/github/ingress-store.ts";
 
@@ -31,7 +33,246 @@ const issueOpenedDelivery = (deliveryId: string): GitHubWebhookDelivery =>
     },
   }) as GitHubWebhookDelivery;
 
+const pullRequestOpenedDelivery = (
+  deliveryId: string,
+  options: { readonly body?: string; readonly draft?: boolean } = {},
+): GitHubWebhookDelivery =>
+  ({
+    name: "pull_request",
+    deliveryId,
+    payload: {
+      action: "opened",
+      installation: { id: 77 },
+      repository: {
+        id: 101,
+        name: "widgets",
+        html_url: "https://github.com/acme/widgets",
+        owner: { login: "acme" },
+      },
+      pull_request: {
+        number: 42,
+        html_url: "https://github.com/acme/widgets/pull/42",
+        title: "Fix admission proof",
+        body: options.body ?? "Closes #29",
+        state: "open",
+        draft: options.draft ?? false,
+      },
+      sender: { login: "octocat", id: 1, type: "User" },
+    },
+  }) as GitHubWebhookDelivery;
 describe("GitHub ingress delivery ledger", () => {
+  it("routes a PR link event only when it closes an issue captured by Ambience", async () => {
+    const store = createGitHubIngressStore(":memory:");
+    const operations = createIssueOperationStore(":memory:");
+    const dispatched: GitHubIngressInput[] = [];
+    try {
+      operations.begin({
+        operationId: "capture-29",
+        kind: "create-issue",
+        repository: "acme/widgets",
+        startedAt: "2026-07-16T00:00:00.000Z",
+      });
+      operations.complete("capture-29", 29, "2026-07-16T00:00:01.000Z");
+      const ingress = createGitHubIngress({
+        store,
+        operations,
+        routes: new Map([["acme/widgets", "chat-29@g.us"]]),
+        dispatch: async (_chatId, input) => {
+          dispatched.push(input);
+          return { dispatchId: "dispatch-pr-42", acceptedAt: "2026-07-16T00:00:02.000Z" };
+        },
+        logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+      });
+
+      await expect(ingress(pullRequestOpenedDelivery("pr-42"))).resolves.toMatchObject({
+        status: "done",
+        repository: "acme/widgets",
+        chatId: "chat-29@g.us",
+      });
+      expect(dispatched).toEqual([
+        {
+          type: "github.pull-request.opened",
+          chatId: "chat-29@g.us",
+          deliveryId: "pr-42",
+          installationId: 77,
+          repository: {
+            owner: "acme",
+            repo: "widgets",
+            id: 101,
+            url: "https://github.com/acme/widgets",
+          },
+          issues: [{ number: 29 }],
+          pullRequest: {
+            number: 42,
+            url: "https://github.com/acme/widgets/pull/42",
+            title: "Fix admission proof",
+            state: "open",
+            draft: false,
+          },
+          sender: { login: "octocat", id: 1, type: "User" },
+        },
+      ]);
+    } finally {
+      operations.close();
+      store.close();
+    }
+  });
+
+  it("keeps all captured concerns and accepts GitHub's colon-form closing keywords", async () => {
+    const store = createGitHubIngressStore(":memory:");
+    const operations = createIssueOperationStore(":memory:");
+    const dispatched: GitHubIngressInput[] = [];
+    try {
+      for (const issueNumber of [29, 30]) {
+        const operationId = `capture-${issueNumber}`;
+        operations.begin({
+          operationId,
+          kind: "create-issue",
+          repository: "acme/widgets",
+          startedAt: `2026-07-16T00:00:0${issueNumber - 29}.000Z`,
+        });
+        operations.complete(operationId, issueNumber, `2026-07-16T00:00:0${issueNumber - 28}.000Z`);
+      }
+      const ingress = createGitHubIngress({
+        store,
+        operations,
+        routes: new Map([["acme/widgets", "chat-29@g.us"]]),
+        dispatch: async (_chatId, input) => {
+          dispatched.push(input);
+          return { dispatchId: "dispatch-pr-42", acceptedAt: "2026-07-16T00:00:03.000Z" };
+        },
+        logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+      });
+
+      await expect(
+        ingress(
+          pullRequestOpenedDelivery("pr-two-issues", {
+            body: "Closes: #29\nFixes: acme/widgets#30",
+          }),
+        ),
+      ).resolves.toMatchObject({ status: "done" });
+      expect(dispatched).toHaveLength(1);
+      expect(dispatched[0]).toMatchObject({
+        type: "github.pull-request.opened",
+        issues: [{ number: 29 }, { number: 30 }],
+      });
+    } finally {
+      operations.close();
+      store.close();
+    }
+  });
+
+  it("keeps a PR delivery retryable until an uncertain issue create is reconciled", async () => {
+    const store = createGitHubIngressStore(":memory:");
+    const operations = createIssueOperationStore(":memory:");
+    const dispatched: GitHubIngressInput[] = [];
+    try {
+      operations.begin({
+        operationId: "capture-29",
+        kind: "create-issue",
+        repository: "acme/widgets",
+        startedAt: "2026-07-16T00:00:00.000Z",
+      });
+      operations.uncertain("capture-29", "provider outcome unknown", "2026-07-16T00:00:01.000Z");
+      const ingress = createGitHubIngress({
+        store,
+        operations,
+        routes: new Map([["acme/widgets", "chat-29@g.us"]]),
+        dispatch: async (_chatId, input) => {
+          dispatched.push(input);
+          return { dispatchId: "dispatch-pr-42", acceptedAt: "2026-07-16T00:00:03.000Z" };
+        },
+        logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+      });
+      const delivery = pullRequestOpenedDelivery("pr-after-reconciliation");
+
+      await expect(ingress(delivery)).resolves.toMatchObject({ status: "deferred" });
+      expect(store.get("pr-after-reconciliation")).toMatchObject({ status: "received" });
+      expect(dispatched).toEqual([]);
+
+      operations.resolveUncertain({
+        operationId: "capture-29",
+        status: "completed",
+        resolution: "reconciled",
+        settledAt: "2026-07-16T00:00:02.000Z",
+        issueNumber: 29,
+      });
+      await expect(ingress(delivery)).resolves.toMatchObject({ status: "done" });
+      expect(dispatched).toHaveLength(1);
+      expect(store.get("pr-after-reconciliation")).toMatchObject({ status: "done" });
+    } finally {
+      operations.close();
+      store.close();
+    }
+  });
+
+  it("delivers an opened draft because ready-for-review is not a supported ingress transition", async () => {
+    const store = createGitHubIngressStore(":memory:");
+    const operations = createIssueOperationStore(":memory:");
+    const dispatched: GitHubIngressInput[] = [];
+    try {
+      operations.begin({
+        operationId: "capture-29",
+        kind: "create-issue",
+        repository: "acme/widgets",
+        startedAt: "2026-07-16T00:00:00.000Z",
+      });
+      operations.complete("capture-29", 29, "2026-07-16T00:00:01.000Z");
+      const ingress = createGitHubIngress({
+        store,
+        operations,
+        routes: new Map([["acme/widgets", "chat-29@g.us"]]),
+        dispatch: async (_chatId, input) => {
+          dispatched.push(input);
+          return { dispatchId: "dispatch-draft-42", acceptedAt: "2026-07-16T00:00:02.000Z" };
+        },
+        logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+      });
+
+      await expect(ingress(pullRequestOpenedDelivery("draft-pr-42", { draft: true }))).resolves.toMatchObject({
+        status: "done",
+      });
+      expect(dispatched[0]).toMatchObject({ pullRequest: { draft: true } });
+    } finally {
+      operations.close();
+      store.close();
+    }
+  });
+
+  it("does not route a PR that lacks a closing reference to a captured issue", async () => {
+    const store = createGitHubIngressStore(":memory:");
+    const operations = createIssueOperationStore(":memory:");
+    try {
+      operations.begin({
+        operationId: "capture-29",
+        kind: "create-issue",
+        repository: "acme/widgets",
+        startedAt: "2026-07-16T00:00:00.000Z",
+      });
+      operations.complete("capture-29", 29, "2026-07-16T00:00:01.000Z");
+      const ingress = createGitHubIngress({
+        store,
+        operations,
+        routes: new Map([["acme/widgets", "chat-29@g.us"]]),
+        dispatch: async () => {
+          throw new Error("unrelated PR must not dispatch");
+        },
+        logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+      });
+
+      await expect(
+        ingress(pullRequestOpenedDelivery("pr-unrelated", { body: "Documents #29" })),
+      ).resolves.toEqual({
+        status: "uncorrelated",
+        deliveryId: "pr-unrelated",
+        repository: "acme/widgets",
+      });
+    } finally {
+      operations.close();
+      store.close();
+    }
+  });
+
   it("atomically claims a delivery identifier only once and persists correlation", () => {
     const store = createGitHubIngressStore(":memory:");
     try {
