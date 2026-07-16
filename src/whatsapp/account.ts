@@ -23,6 +23,7 @@ import {
   conversationMutationFingerprint,
   conversationMutationScope,
   conversationSent,
+  smokeCanaryArrival,
   conversationUpdate,
 } from "../intake/conversation-event.ts";
 
@@ -58,6 +59,8 @@ export interface WhatsAppAccountSetup {
 
 export interface ManagedWhatsAppAccount extends WhatsAppAccountSetup {
   session(): WhatsAppSession;
+  /** Send the live smoke stimulus, then admit that exact provider-acknowledged message as the canary input. */
+  sendSmokeCanary?(chatId: string, text: string): Promise<{ readonly messageId: string }>;
   stop(): Promise<void>;
 }
 
@@ -153,11 +156,12 @@ export const createWhatsAppAccount = (options: CreateWhatsAppAccountOptions): Ma
     for (const chat of batch.chats) chats.set(chat.id, chat);
     for (const message of batch.messages) options.archive.append(conversationArrival(message));
   };
-  const unsubscribeMessage = session.onMessage(async (message) => {
+  const ingestMessage = async (message: IncomingMessage): Promise<void> => {
     const inserted = options.archive.append(conversationArrival(message));
     if (!inserted) return;
     for (const subscriber of messageSubscribers) await subscriber(message);
-  });
+  };
+  const unsubscribeMessage = session.onMessage(ingestMessage);
   const unsubscribeUpdate = session.onUpdate(async (update) => {
     const event = conversationUpdate(update);
     const fingerprint = event.kind === "receipt" ? undefined : conversationMutationFingerprint(event);
@@ -344,6 +348,31 @@ export const createWhatsAppAccount = (options: CreateWhatsAppAccountOptions): Ma
         throw new WhatsAppAccountError("not_authenticated", "Authenticate WhatsApp before starting participation.");
       }
       return managedSession;
+    },
+    sendSmokeCanary: async (chatId, text) => {
+      if (authenticated === undefined) {
+        throw new WhatsAppAccountError("not_authenticated", "Authenticate WhatsApp before sending a smoke canary.");
+      }
+      const message = await session.send(chatId, { text });
+      const acknowledged = {
+        id: message.id,
+        chatId,
+        from: authenticated.jid,
+        ...(authenticated.pushName === undefined ? {} : { pushName: authenticated.pushName }),
+        fromMe: true,
+        timestamp: now(),
+        live: false,
+        isGroup: chatId.endsWith("@g.us"),
+        kind: "text",
+        text,
+        reply: async (content, sendOptions) =>
+          await session.send(chatId, typeof content === "string" ? { text: content } : content, sendOptions),
+      } satisfies IncomingMessage;
+      const inserted = options.archive.append(smokeCanaryArrival(acknowledged));
+      if (!inserted) throw new Error(`The provider-acknowledged smoke message ${message.id} was already archived.`);
+      const admitted = { ...acknowledged, fromMe: false, live: true } satisfies IncomingMessage;
+      for (const subscriber of messageSubscribers) await subscriber(admitted);
+      return { messageId: message.id };
     },
     stop: async () => {
       for (const settle of initialSyncWaiters) {

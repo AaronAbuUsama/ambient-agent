@@ -9,7 +9,12 @@ import {
 import { createIssueOperationStore } from "./capabilities/issue-management/operation-store.js";
 import { installGitHubIngressRuntime } from "./github/ingress-runtime.js";
 import { createOctokitIssueRepository } from "./host/github-issue-repository.js";
-import { getWhatsAppRuntimeStatus, startWhatsAppRuntime } from "./host/whatsapp-runtime.js";
+import {
+  getWhatsAppRuntimeStatus,
+  startWhatsAppRuntime,
+  type WhatsAppRuntimeControl,
+} from "./host/whatsapp-runtime.js";
+import { installSmokeRoute } from "./host/smoke-route.js";
 import { installAgentActivityReporter } from "./logging/agent-activity-reporter.js";
 import {
   deferWhatsAppRuntimeStart,
@@ -46,14 +51,21 @@ export const createAmbientAgentApp = async ({
   );
 
   const app = new Hono();
+  const installationId = runtimeInstallationId(githubCredential.webhookSecret);
+  let whatsappControl: WhatsAppRuntimeControl | undefined;
   app.get("/health", (context) => {
     const runtime = ambientRuntimeHealth(getWhatsAppRuntimeStatus());
     return context.json({
       ok: runtime.state === "healthy",
-      installationId: runtimeInstallationId(githubCredential.webhookSecret),
+      installationId,
       ...subscription,
       runtime: { state: runtime.state, whatsapp: { phase: runtime.whatsapp.phase } },
     });
+  });
+  installSmokeRoute(app, {
+    webhookSecret: githubCredential.webhookSecret,
+    canaryConfigured: configuration.smoke !== undefined,
+    control: () => whatsappControl,
   });
   app.route("/", flue());
 
@@ -66,7 +78,9 @@ export const createAmbientAgentApp = async ({
       storeDirectory: paths.whatsapp,
       applicationDatabase: paths.applicationDatabase,
       managedChats: configuration.managedChats,
+      ...(configuration.smoke === undefined ? {} : { canaryChat: configuration.smoke.canaryChat }),
     });
+    whatsappControl = whatsapp;
     for (const signal of ["SIGINT", "SIGTERM"] as const) {
       const shutdown = () => {
         void whatsapp.stop().finally(() => {

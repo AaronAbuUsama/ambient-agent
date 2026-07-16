@@ -2,6 +2,7 @@ import { Cause, Effect, Exit, Fiber, Layer, type Scope } from "effect";
 import type { MessageRef, WhatsAppSession } from "whatsappd";
 
 import { makeAmbienceWindowDispatcher, type DispatchAmbience } from "../ambience/dispatch.js";
+import type { AmbienceDispatchEvent, AmbienceObserver } from "../ambience/observer.js";
 import {
   configureWhatsAppParticipationPort,
   type WhatsAppHistoryPort,
@@ -16,7 +17,11 @@ import { configLayer, type CoalescerConfigValues } from "../coalescer/config.js"
 import { botIdsOf, whatsappEventSource } from "../coalescer/whatsapp.js";
 import { createConversationArchive } from "../intake/conversation-archive.js";
 import { createManagedChatInbox, managedChatWindowStore, type ManagedChatInbox } from "../intake/managed-chat-inbox.js";
-import { configureAgentActivityRecovery, reportAgentSpoke } from "../logging/agent-activity-reporter.js";
+import {
+  configureAgentActivityRecovery,
+  observeAgentActivity,
+  reportAgentSpoke,
+} from "../logging/agent-activity-reporter.js";
 import { effectLoggerLayer, getLogger, upstreamWhatsAppLogger } from "../logging/logging.js";
 import type { WhatsAppRuntimeStatus } from "../managed/runtime-health.js";
 import { errorMessage } from "../shared/errors.js";
@@ -163,16 +168,41 @@ export const getWhatsAppRuntimeStatus = (): WhatsAppRuntimeStatus => structuredC
 
 export interface WhatsAppRuntimeControl {
   readonly stop: () => Promise<void>;
+  readonly smokeCanary: (
+    nonce: string,
+    timeoutMillis: number,
+  ) => Promise<{
+    readonly chatId: string;
+    readonly text: string;
+    readonly stages: readonly ["admission", "dispatch", "settled-silent"];
+  }>;
+}
+
+export type WhatsAppSmokeCanaryStatus = 400 | 409 | 503 | 504;
+
+export class WhatsAppSmokeCanaryError extends Error {
+  override readonly name = "WhatsAppSmokeCanaryError";
+
+  constructor(
+    readonly status: WhatsAppSmokeCanaryStatus,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 export interface WhatsAppRuntimeOptions {
   readonly storeDirectory: string;
   readonly applicationDatabase: string;
   readonly managedChats: readonly string[];
+  readonly canaryChat?: string;
   readonly botLid?: string;
   /** Test seams only: a fake session and a captured exit instead of process.exit. */
   readonly sessionFactory?: () => WhatsAppSession;
   readonly exit?: (code: number) => void;
+  readonly dispatch?: DispatchAmbience;
+  readonly coalescer?: Partial<CoalescerConfigValues>;
+  readonly observeActivity?: (observer: AmbienceObserver) => () => void;
 }
 
 export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppRuntimeControl => {
@@ -186,6 +216,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
       ? undefined
       : { windowId: window.id, chatId: window.chatId, messageCount: window.messages.length };
   });
+  let activeCanary: { readonly chatId: string; readonly text: string } | undefined;
   const account = createWhatsAppAccount({
     storeDirectory: storeDir,
     archive: inbox.recorder,
@@ -228,7 +259,14 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
         "Ambience WhatsApp online",
       ),
     );
-    yield* runWhatsAppSession(session, { gate, history: archive, inbox, botLid: options.botLid });
+    yield* runWhatsAppSession(session, {
+      gate,
+      history: archive,
+      inbox,
+      botLid: options.botLid,
+      ...(options.dispatch === undefined ? {} : { dispatch: options.dispatch }),
+      ...(options.coalescer === undefined ? {} : { coalescer: options.coalescer }),
+    });
   });
 
   const fiber = Effect.runFork(Effect.scoped(program).pipe(Effect.provide(effectLoggerLayer(log))));
@@ -253,6 +291,93 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
     }
   });
   return {
+    smokeCanary: async (nonce, timeoutMillis) => {
+      const chatId = options.canaryChat;
+      if (chatId === undefined) {
+        throw new WhatsAppSmokeCanaryError(409, "No dedicated smoke canary group is configured.");
+      }
+      if (!options.managedChats.some((managed) => managed.toLowerCase() === chatId.toLowerCase())) {
+        throw new WhatsAppSmokeCanaryError(400, "The configured smoke canary group is not a Managed Chat.");
+      }
+      if (activeCanary !== undefined) {
+        throw new WhatsAppSmokeCanaryError(409, "A live smoke canary is already running.");
+      }
+      const text = `SMOKE ${nonce} — ignore`;
+      activeCanary = { chatId, text };
+      let dispatchId: string | undefined;
+      let providerMessageId: string | undefined;
+      const observedDispatches: AmbienceDispatchEvent[] = [];
+      const observedTerminal = new Map<string, "silent" | Error>();
+      let finishLifecycle: ((result: "silent" | Error) => void) | undefined;
+      const correlateDispatch = (event: AmbienceDispatchEvent): void => {
+        if (providerMessageId === undefined || dispatchId !== undefined) return;
+        const window = inbox.window(event.windowId);
+        if (window?.messages.some((message) => message.id === providerMessageId)) {
+          dispatchId = event.dispatchId;
+          const terminal = observedTerminal.get(event.dispatchId);
+          if (terminal !== undefined) finishLifecycle?.(terminal);
+        }
+      };
+      let unsubscribe: () => void = () => undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const lifecycle = new Promise<void>((resolve, reject) => {
+          const finish = (result: "silent" | Error): void => {
+            if (timer !== undefined) clearTimeout(timer);
+            if (result === "silent") resolve();
+            else reject(result);
+          };
+          finishLifecycle = finish;
+          const terminal = (candidateDispatchId: string, result: "silent" | Error): void => {
+            observedTerminal.set(candidateDispatchId, result);
+            if (candidateDispatchId === dispatchId) finish(result);
+          };
+          unsubscribe = (options.observeActivity ?? observeAgentActivity)({
+            windowDispatched: (event) => {
+              observedDispatches.push(event);
+              correlateDispatch(event);
+            },
+            spoke: (event) => {
+              terminal(
+                event.dispatchId,
+                new WhatsAppSmokeCanaryError(504, "The SMOKE canary spoke instead of settling silent."),
+              );
+            },
+            settledSilent: (event) => {
+              terminal(event.dispatchId, "silent");
+            },
+            settledFailed: (event) => {
+              terminal(event.dispatchId, new WhatsAppSmokeCanaryError(504, "The SMOKE canary dispatch failed."));
+            },
+          });
+          timer = setTimeout(
+            () =>
+              finish(
+                new WhatsAppSmokeCanaryError(
+                  504,
+                  "The SMOKE canary timed out before admission, dispatch, and silent settlement.",
+                ),
+              ),
+            timeoutMillis,
+          );
+        });
+        void lifecycle.catch(() => undefined);
+        if (account.sendSmokeCanary === undefined) {
+          throw new WhatsAppSmokeCanaryError(503, "The WhatsApp account cannot send smoke canaries.");
+        }
+        providerMessageId = (await account.sendSmokeCanary(chatId, text)).messageId;
+        for (const event of observedDispatches) correlateDispatch(event);
+        await lifecycle;
+        if (dispatchId === undefined) {
+          throw new WhatsAppSmokeCanaryError(504, "The SMOKE canary settled without a correlated dispatch.");
+        }
+        return { chatId, text, stages: ["admission", "dispatch", "settled-silent"] };
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+        unsubscribe();
+        activeCanary = undefined;
+      }
+    },
     stop: async () => {
       stopping = true;
       await Effect.runPromise(Fiber.interrupt(fiber));

@@ -86,6 +86,7 @@ const eventIdOf = (message: IncomingMessage): string => `arrival:${message.chatI
 
 const decodeIncoming = (row: InboxEventRow): IncomingMessage => {
   const payload = JSON.parse(row.payload_json) as ConversationArrivalPayload;
+  const applicationCanary = payload.applicationAdmission === "smoke-canary";
   return {
     id: row.provider_message_id,
     chatId: row.chat_id,
@@ -94,8 +95,8 @@ const decodeIncoming = (row: InboxEventRow): IncomingMessage => {
     text: payload.text,
     timestamp: row.occurred_at_ms,
     isGroup: payload.isGroup,
-    fromMe: row.direction === "outbound",
-    live: payload.live,
+    fromMe: applicationCanary ? false : row.direction === "outbound",
+    live: applicationCanary ? true : payload.live,
     mentions: payload.context?.mentions ?? [],
     ...(payload.context?.quoted?.from === undefined ? {} : { quotedFrom: payload.context.quoted.from }),
   };
@@ -106,8 +107,8 @@ const acceptedArrival = (
   allowed: CreateManagedChatInboxOptions["allowed"],
 ): event is ConversationArrival =>
   event.kind === "arrival" &&
-  event.direction === "inbound" &&
-  event.payload.live &&
+  ((event.direction === "inbound" && event.payload.live) ||
+    (event.direction === "outbound" && event.payload.applicationAdmission === "smoke-canary")) &&
   allowed(event.chatId, event.payload.isGroup);
 
 const admissionTable = `

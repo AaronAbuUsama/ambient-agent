@@ -4,6 +4,8 @@ import {
   ambientRuntimeHealth,
   probeAmbientRuntimeHealth,
   runtimeInstallationId,
+  runtimeSmokeAuthorization,
+  runtimeSmokeAuthorizationMatches,
 } from "../../src/managed/runtime-health.ts";
 
 describe("managed runtime health", () => {
@@ -70,5 +72,19 @@ describe("managed runtime health", () => {
     const id = runtimeInstallationId("private-webhook-secret");
     expect(id).toBe(runtimeInstallationId("private-webhook-secret"));
     expect(id).not.toContain("private-webhook-secret");
+  });
+
+  it("requires the private credential for request-scoped smoke authorization", () => {
+    const authorization = runtimeSmokeAuthorization("private-webhook-secret", "abc123", 30_000);
+    expect(runtimeSmokeAuthorizationMatches(authorization, "private-webhook-secret", "abc123", 30_000)).toBe(true);
+    expect(
+      runtimeSmokeAuthorizationMatches(
+        runtimeInstallationId("private-webhook-secret"),
+        "private-webhook-secret",
+        "abc123",
+        30_000,
+      ),
+    ).toBe(false);
+    expect(runtimeSmokeAuthorizationMatches(authorization, "private-webhook-secret", "other", 30_000)).toBe(false);
   });
 });

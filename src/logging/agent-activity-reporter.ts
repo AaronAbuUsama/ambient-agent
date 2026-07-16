@@ -67,29 +67,43 @@ export const createAgentActivityReporter = (logger?: ActivityLogger, initialReso
   const announced = new Set<string>();
   const spoken = new Set<string>();
   const processingByChat = new Map<string, string>();
+  const subscribers = new Set<AmbienceObserver>();
   let resolver = initialResolver;
   const activityLog = (): ActivityLogger => logger ?? getLogger("agent");
+  const notify = <Method extends keyof AmbienceObserver>(method: Method, event: Parameters<AmbienceObserver[Method]>[0]) => {
+    for (const subscriber of subscribers) {
+      try {
+        (subscriber[method] as (value: typeof event) => void)(event);
+      } catch {
+        // Observer diagnostics must never change the agent lifecycle they observe.
+      }
+    }
+  };
 
   const observer: AmbienceObserver = {
     windowDispatched(event): void {
       announced.add(event.dispatchId);
       activityLog().info({ operatorEvent: "agent.processing", ...event }, "Ambience processing a WhatsApp Window");
+      notify("windowDispatched", event);
     },
     spoke(event): void {
       spoken.add(event.dispatchId);
       activityLog().info({ operatorEvent: "agent.say", ...event }, "Ambience said a WhatsApp message");
+      notify("spoke", event);
     },
     settledSilent(event): void {
       activityLog().info(
         { operatorEvent: "agent.settled_silent", ...event },
         "Ambience settled without saying a WhatsApp message",
       );
+      notify("settledSilent", event);
     },
     settledFailed(event): void {
       activityLog().error(
         { operatorEvent: "agent.failed", detail: event.error, ...event },
         "Ambience processing failed",
       );
+      notify("settledFailed", event);
     },
   };
 
@@ -225,6 +239,10 @@ export const createAgentActivityReporter = (logger?: ActivityLogger, initialReso
 
   return {
     ...observer,
+    subscribe(subscriber: AmbienceObserver): () => void {
+      subscribers.add(subscriber);
+      return () => subscribers.delete(subscriber);
+    },
     accepted(receipt: DispatchReceiptLike, input: DispatchInputLike): void {
       prune();
       if (input.type !== "whatsapp.window" || input.windowId === undefined || input.chatId === undefined) {
@@ -282,3 +300,5 @@ export const reportAcceptedAgentDispatch = (receipt: DispatchReceiptLike, input:
 
 export const reportAgentSpoke = (chatId: string, text: string, messageId?: string): boolean =>
   activityReporter.spokeForChat(chatId, text, messageId);
+
+export const observeAgentActivity = (observer: AmbienceObserver): (() => void) => activityReporter.subscribe(observer);

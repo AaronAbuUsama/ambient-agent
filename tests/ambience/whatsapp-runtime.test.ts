@@ -52,7 +52,9 @@ const temporaryArchive = () => {
   };
 };
 
-const fakeSession = (options: { readonly sendError?: Error; readonly typingOffError?: Error } = {}) => {
+const fakeSession = (
+  options: { readonly sendError?: Error; readonly typingOffError?: Error; readonly echoSent?: boolean } = {},
+) => {
   const messageListeners = new Set<(message: WhatsAppMessage) => void | Promise<void>>();
   const syncListeners = new Set<(batch: ConversationSyncBatch) => void | Promise<void>>();
   const updateListeners = new Set<(update: Update) => void | Promise<void>>();
@@ -84,7 +86,15 @@ const fakeSession = (options: { readonly sendError?: Error; readonly typingOffEr
     async send(chatId: string, content: Outbound, sendOptions?: SendOptions): Promise<MessageRef> {
       sent.push({ chatId, content, ...(sendOptions === undefined ? {} : { options: sendOptions }) });
       if (options.sendError) throw options.sendError;
-      return { id: `real-host-message-${++nextMessage}`, chatId, fromMe: true };
+      const ref = { id: `real-host-message-${++nextMessage}`, chatId, fromMe: true } as const;
+      if (options.echoSent && "text" in content) {
+        queueMicrotask(() => {
+          for (const listener of messageListeners) {
+            void listener(inbound({ id: ref.id, chatId, fromMe: true, text: content.text }));
+          }
+        });
+      }
+      return ref;
     },
     async setTyping(chatId: string, on: boolean): Promise<void> {
       typing.push({ chatId, on });
@@ -136,6 +146,93 @@ const location = (): WhatsAppMessage =>
   }) as unknown as WhatsAppMessage;
 
 describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
+  it("admits only the provider-acknowledged SMOKE canary while retaining the outbound conversation fact", async () => {
+    const { archive, storeDirectory } = temporaryArchive();
+    const fake = fakeSession();
+    const gate = makeManagedChatGate([CHAT]);
+    const inbox = createManagedChatInbox(archive, {
+      allowed: gate.allowed,
+      createId: () => "window-smoke-31",
+    });
+    const canaryText = "SMOKE abc123 — ignore";
+    const account = createWhatsAppAccount({
+      storeDirectory,
+      archive: inbox.recorder,
+      sessionFactory: () => fake.session,
+    });
+    await account.authenticate({});
+    const dispatches: AmbienceDispatchRequest[] = [];
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* Effect.forkScoped(
+            runWhatsAppSession(account.session(), {
+              gate,
+              history: archive,
+              inbox,
+              coalescer: { debounceWindow: Duration.millis(10), maxWait: Duration.millis(20) },
+              dispatch: async (request) => {
+                dispatches.push(request);
+                return { dispatchId: "dispatch-smoke-31", acceptedAt: "2026-07-16T18:00:00.000Z" };
+              },
+            }),
+          );
+          yield* Effect.yieldNow;
+          yield* Effect.promise(async () => {
+            for (const listener of fake.messageListeners) {
+              await listener(inbound({ id: "ordinary-self-31", fromMe: true, text: "ordinary self echo" }));
+              await listener(inbound({ id: "wrong-smoke-31", fromMe: true, text: "SMOKE wrong — ignore" }));
+              await listener(inbound({ id: "matching-self-31", fromMe: true, text: canaryText }));
+            }
+            await account.sendSmokeCanary!(CHAT, canaryText);
+          });
+          yield* Effect.sleep(Duration.millis(40));
+        }),
+      ),
+    );
+
+    expect(dispatches).toEqual([
+      {
+        id: CHAT,
+        input: expect.objectContaining({
+          type: "whatsapp.window",
+          messages: [expect.objectContaining({ id: "real-host-message-1", text: canaryText, fromMe: false })],
+        }),
+      },
+    ]);
+    expect(archive.readThread(CHAT, 10)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "ordinary-self-31", direction: "outbound" }),
+        expect.objectContaining({ id: "wrong-smoke-31", direction: "outbound" }),
+        expect.objectContaining({ id: "matching-self-31", direction: "outbound" }),
+        expect.objectContaining({ id: "real-host-message-1", direction: "outbound" }),
+      ]),
+    );
+    await account.stop();
+    archive.close();
+  });
+
+  it("fails loudly if a provider self-echo archives the SMOKE acknowledgement before local admission", async () => {
+    const { archive, storeDirectory } = temporaryArchive();
+    const fake = fakeSession({ echoSent: true });
+    const account = createWhatsAppAccount({
+      storeDirectory,
+      archive,
+      sessionFactory: () => fake.session,
+    });
+    await account.authenticate({});
+
+    await expect(account.sendSmokeCanary!(CHAT, "SMOKE abc123 — ignore")).rejects.toThrow(
+      "provider-acknowledged smoke message real-host-message-1 was already archived",
+    );
+    expect(archive.readThread(CHAT, 10)).toEqual([
+      expect.objectContaining({ id: "real-host-message-1", direction: "outbound" }),
+    ]);
+    await account.stop();
+    archive.close();
+  });
+
   it("uses one managed session for gated ingress, history, Ambience dispatch, and explicit say", async () => {
     const { archive, storeDirectory } = temporaryArchive();
     const fake = fakeSession();
@@ -527,6 +624,86 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
 });
 
 describe("foreground runtime terminal logged_out", () => {
+  it("sends the configured canary through WhatsApp and resolves only after observer-backed silent settlement", async () => {
+    const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
+    archive.close();
+    const fake = fakeSession();
+    let observer: import("../../src/ambience/observer.ts").AmbienceObserver | undefined;
+    let canaryDispatches = 0;
+    const runtime = startWhatsAppRuntime({
+      storeDirectory,
+      applicationDatabase,
+      managedChats: [CHAT],
+      canaryChat: CHAT,
+      sessionFactory: () => fake.session,
+      coalescer: { debounceWindow: Duration.millis(10), maxWait: Duration.millis(20) },
+      observeActivity: (next) => {
+        observer = next;
+        queueMicrotask(() => {
+          next.windowDispatched({
+            windowId: "unrelated-window",
+            chatId: CHAT,
+            dispatchId: "unrelated-dispatch",
+            messageCount: 1,
+          });
+          next.settledSilent({
+            windowId: "unrelated-window",
+            chatId: CHAT,
+            dispatchId: "unrelated-dispatch",
+          });
+        });
+        return () => {
+          observer = undefined;
+        };
+      },
+      dispatch: async (request) => {
+        canaryDispatches += 1;
+        const dispatchId = "dispatch-live-smoke-31";
+        observer?.windowDispatched({
+          windowId: request.input.type === "whatsapp.window" ? request.input.windowId : "unexpected",
+          chatId: CHAT,
+          dispatchId,
+          messageCount: 1,
+        });
+        queueMicrotask(() =>
+          observer?.settledSilent({
+            windowId: request.input.type === "whatsapp.window" ? request.input.windowId : "unexpected",
+            chatId: CHAT,
+            dispatchId,
+          }),
+        );
+        return { dispatchId, acceptedAt: "2026-07-16T18:00:00.000Z" };
+      },
+    });
+    await vi.waitFor(() => expect(getWhatsAppRuntimeStatus().phase).toBe("online"));
+
+    await expect(runtime.smokeCanary("abc123", 1_000)).resolves.toEqual({
+      chatId: CHAT,
+      text: "SMOKE abc123 — ignore",
+      stages: ["admission", "dispatch", "settled-silent"],
+    });
+    expect(canaryDispatches).toBe(1);
+    expect(fake.sent).toEqual([{ chatId: CHAT, content: { text: "SMOKE abc123 — ignore" } }]);
+    await runtime.stop();
+  });
+
+  it("handles the observer lifecycle rejection when the provider send fails first", async () => {
+    const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
+    archive.close();
+    const runtime = startWhatsAppRuntime({
+      storeDirectory,
+      applicationDatabase,
+      managedChats: [CHAT],
+      canaryChat: CHAT,
+      sessionFactory: () => fakeSession({ sendError: new Error("provider send rejected") }).session,
+    });
+    await vi.waitFor(() => expect(getWhatsAppRuntimeStatus().phase).toBe("online"));
+
+    await expect(runtime.smokeCanary("abc123", 10)).rejects.toThrow("provider send rejected");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await runtime.stop();
+  });
+
   it("fails the runtime status and exits cleanly pointing at the guided re-pair", async () => {
     const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
     archive.close();
