@@ -209,6 +209,7 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
             },
           ]);
           expect(fake.sent).toEqual([]);
+          expect(fake.typing).toEqual([]);
 
           const say = createSayTool(CHAT);
           expect(
@@ -515,6 +516,18 @@ describe("foreground runtime terminal logged_out", () => {
 });
 
 describe("real WhatsApp Host outcome boundary", () => {
+  it("keeps typing visible for a perceptible beat before the send", async () => {
+    const fake = fakeSession();
+    const host = createWhatsAppHost(fake.session);
+
+    const result = host.say(CHAT, "show typing before this message");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(fake.typing).toEqual([{ chatId: CHAT, on: true }]);
+    expect(fake.sent).toEqual([]);
+    await expect(result).resolves.toMatchObject({ delivery: "sent" });
+  });
+
   it("quotes the requested triggering message without exposing chat selection to the model", async () => {
     const fake = fakeSession();
     const host = createWhatsAppHost(fake.session);
@@ -567,6 +580,20 @@ describe("real WhatsApp Host outcome boundary", () => {
       typing: "cleared",
     });
     expect(fake.sent).toHaveLength(1);
+    expect(fake.typing.at(-1)).toEqual({ chatId: CHAT, on: false });
+  });
+
+  it("clears typing when delivery bookkeeping itself throws", async () => {
+    const sendError = new Error("provider outcome unknown");
+    Object.defineProperty(sendError, "message", {
+      get: () => {
+        throw new Error("delivery bookkeeping failed");
+      },
+    });
+    const fake = fakeSession({ sendError });
+    const host = createWhatsAppHost(fake.session);
+
+    await expect(host.say(CHAT, "cleanup survives bookkeeping")).rejects.toThrow("delivery bookkeeping failed");
     expect(fake.typing.at(-1)).toEqual({ chatId: CHAT, on: false });
   });
 

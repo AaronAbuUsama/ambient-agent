@@ -5,6 +5,7 @@ export type OperatorEvent =
   | "chat.received"
   | "agent.processing"
   | "agent.say"
+  | "agent.settled_silent"
   | "agent.final"
   | "agent.completed"
   | "agent.retrying"
@@ -70,16 +71,16 @@ const stripTerminalControls = (value: string): string => {
       continue;
     }
     const isBidirectionalControl =
-      code === 0x200e ||
-      code === 0x200f ||
-      (code >= 0x202a && code <= 0x202e) ||
-      (code >= 0x2066 && code <= 0x2069);
+      code === 0x200e || code === 0x200f || (code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069);
     clean += code < 32 || (code >= 127 && code <= 159) || isBidirectionalControl ? " " : value[index];
   }
   return clean;
 };
 
-const oneLine = (value: unknown): string => stripTerminalControls(String(value ?? "")).replace(/\s+/g, " ").trim();
+const oneLine = (value: unknown): string =>
+  stripTerminalControls(String(value ?? ""))
+    .replace(/\s+/g, " ")
+    .trim();
 
 const actorName = (value: unknown): string => oneLine(value).replaceAll("[", "").replaceAll("]", "");
 
@@ -111,6 +112,8 @@ const semanticBody = (record: OperatorLogRecord): { readonly color: keyof typeof
     }
     case "agent.say":
       return { color: "blue", body: `→ [AGENT] Response: ${oneLine(record.text)}` };
+    case "agent.settled_silent":
+      return { color: "dim", body: "— settled silent" };
     case "agent.final":
       return { color: "magenta", body: `◇ [AGENT] Final: ${oneLine(record.text)}` };
     case "agent.completed":
@@ -160,10 +163,7 @@ export const renderOperatorRecord = (record: OperatorLogRecord, options: RenderO
   return `${paint(plainTime, "dim", options.colorize)}  ${paint(clippedBody, color, options.colorize)}`;
 };
 
-export const createOperatorConsoleSink = (
-  destination: NodeJS.WritableStream,
-  options: RenderOptions,
-): Writable => {
+export const createOperatorConsoleSink = (destination: NodeJS.WritableStream, options: RenderOptions): Writable => {
   let buffered = "";
   const writeLine = (line: string): void => {
     if (line.length === 0) return;

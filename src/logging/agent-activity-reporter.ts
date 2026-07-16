@@ -1,6 +1,7 @@
 import { observe, type FlueObservation } from "@flue/runtime";
 import type { Logger } from "pino";
 
+import type { AmbienceObserver, AmbienceSpokeEvent } from "../ambience/observer.js";
 import { getLogger } from "./logging.js";
 
 interface DispatchReceiptLike {
@@ -55,28 +56,79 @@ const dropOldest = <T>(entries: Map<string, T>): void => {
 
 /**
  * Correlates Flue's public prompt-operation lifecycle with WhatsApp Windows.
- * Flue beta.9 exposes no settlement event for a recovered dispatch that fails
- * before a prompt starts; admission failures remain covered by Admission Relay.
+ * A prompt operation is the normal settlement signal; submission_settled is
+ * emitted only when Flue recovery settles interrupted durable work.
  */
 export const createAgentActivityReporter = (logger?: ActivityLogger, initialResolver?: AgentDispatchResolver) => {
   const active = new Map<string, ExpiringContext>();
   const early = new Map<string, BufferedObservations>();
   const settled = new Map<string, number>();
   const ignored = new Map<string, number>();
+  const announced = new Set<string>();
+  const spoken = new Set<string>();
+  const processingByChat = new Map<string, string>();
   let resolver = initialResolver;
   const activityLog = (): ActivityLogger => logger ?? getLogger("agent");
 
+  const observer: AmbienceObserver = {
+    windowDispatched(event): void {
+      announced.add(event.dispatchId);
+      activityLog().info({ operatorEvent: "agent.processing", ...event }, "Ambience processing a WhatsApp Window");
+    },
+    spoke(event): void {
+      spoken.add(event.dispatchId);
+      activityLog().info({ operatorEvent: "agent.say", ...event }, "Ambience said a WhatsApp message");
+    },
+    settledSilent(event): void {
+      activityLog().info(
+        { operatorEvent: "agent.settled_silent", ...event },
+        "Ambience settled without saying a WhatsApp message",
+      );
+    },
+    settledFailed(event): void {
+      activityLog().error(
+        { operatorEvent: "agent.failed", detail: event.error, ...event },
+        "Ambience processing failed",
+      );
+    },
+  };
+
+  const forget = (dispatchId: string): void => {
+    const context = active.get(dispatchId)?.context;
+    active.delete(dispatchId);
+    announced.delete(dispatchId);
+    spoken.delete(dispatchId);
+    if (context !== undefined && processingByChat.get(context.chatId) === dispatchId) {
+      processingByChat.delete(context.chatId);
+    }
+  };
+
+  const markSettled = (dispatchId: string): void => {
+    forget(dispatchId);
+    dropOldest(settled);
+    settled.set(dispatchId, Date.now() + TRACKING_TTL_MS);
+  };
+
   const prune = (): void => {
     const now = Date.now();
-    for (const [dispatchId, entry] of active) if (entry.expiresAt <= now) active.delete(dispatchId);
+    for (const [dispatchId, entry] of active) if (entry.expiresAt <= now) forget(dispatchId);
     for (const [dispatchId, entry] of early) if (entry.expiresAt <= now) early.delete(dispatchId);
     for (const [dispatchId, expiresAt] of settled) if (expiresAt <= now) settled.delete(dispatchId);
     for (const [dispatchId, expiresAt] of ignored) if (expiresAt <= now) ignored.delete(dispatchId);
   };
 
   const remember = (dispatchId: string, context: AgentDispatchContext): void => {
-    dropOldest(active);
+    while (active.size >= MAX_TRACKED_DISPATCHES) {
+      const oldest = active.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      forget(oldest);
+    }
     active.set(dispatchId, { context, expiresAt: Date.now() + TRACKING_TTL_MS });
+  };
+
+  const announce = (dispatchId: string, context: AgentDispatchContext): void => {
+    if (announced.has(dispatchId)) return;
+    observer.windowDispatched({ dispatchId, ...context });
   };
 
   const resolve = (dispatchId: string): AgentDispatchContext | undefined => {
@@ -97,33 +149,35 @@ export const createAgentActivityReporter = (logger?: ActivityLogger, initialReso
   const report = (event: FlueObservation, context: AgentDispatchContext): void => {
     const dispatchId = event.dispatchId!;
     if (event.type === "operation_start") {
-      activityLog().info(
-        {
-          operatorEvent: "agent.processing",
-          ...context,
-          dispatchId,
-          operationId: event.operationId,
-        },
-        "Ambience processing a WhatsApp Window",
-      );
+      processingByChat.set(context.chatId, dispatchId);
+      announce(dispatchId, context);
       return;
     }
 
-    active.delete(dispatchId);
-    dropOldest(settled);
-    settled.set(dispatchId, Date.now() + TRACKING_TTL_MS);
     const correlation = { windowId: context.windowId, chatId: context.chatId, dispatchId };
+    if (event.type === "submission_settled") {
+      announce(dispatchId, context);
+      if (event.outcome === "completed") {
+        if (!spoken.has(dispatchId)) observer.settledSilent(correlation);
+      } else {
+        observer.settledFailed({
+          ...correlation,
+          error: event.error?.message ?? `Agent processing ${event.outcome}`,
+        });
+      }
+      markSettled(dispatchId);
+      return;
+    }
+
     if (event.type !== "operation") return;
 
     const operationCorrelation = { ...correlation, operationId: event.operationId };
     if (event.isError) {
-      activityLog().error(
-        { operatorEvent: "agent.failed", detail: errorMessage(event.error), ...operationCorrelation },
-        "Ambience processing failed",
-      );
+      observer.settledFailed({ ...correlation, error: errorMessage(event.error) });
+      markSettled(dispatchId);
       return;
     }
-    if (event.agentOutput?.type === "text") {
+    if (event.agentOutput?.type === "text" && event.agentOutput.text.trim() !== "") {
       activityLog().info(
         { operatorEvent: "agent.final", text: event.agentOutput.text, ...operationCorrelation },
         "Ambience produced its private final output",
@@ -133,6 +187,8 @@ export const createAgentActivityReporter = (logger?: ActivityLogger, initialReso
       { operatorEvent: "agent.completed", durationMs: event.durationMs, ...operationCorrelation },
       "Ambience processing completed",
     );
+    if (!spoken.has(dispatchId)) observer.settledSilent(correlation);
+    markSettled(dispatchId);
   };
 
   const replay = (dispatchId: string, context: AgentDispatchContext): void => {
@@ -148,7 +204,8 @@ export const createAgentActivityReporter = (logger?: ActivityLogger, initialReso
   const observed = (event: FlueObservation): void => {
     const relevant =
       (event.type === "operation_start" && event.operationKind === "prompt") ||
-      (event.type === "operation" && event.operationKind === "prompt");
+      (event.type === "operation" && event.operationKind === "prompt") ||
+      event.type === "submission_settled";
     if (!relevant || event.dispatchId === undefined) return;
     prune();
     if (settled.has(event.dispatchId) || ignored.has(event.dispatchId)) return;
@@ -162,11 +219,12 @@ export const createAgentActivityReporter = (logger?: ActivityLogger, initialReso
       dropOldest(early);
       early.set(event.dispatchId, { events: [event], expiresAt: Date.now() + TRACKING_TTL_MS });
     } else {
-      if (buffered.events.length < 3) buffered.events.push(event);
+      if (buffered.events.length < 4) buffered.events.push(event);
     }
   };
 
   return {
+    ...observer,
     accepted(receipt: DispatchReceiptLike, input: DispatchInputLike): void {
       prune();
       if (input.type !== "whatsapp.window" || input.windowId === undefined || input.chatId === undefined) {
@@ -182,6 +240,7 @@ export const createAgentActivityReporter = (logger?: ActivityLogger, initialReso
         messageCount: input.messages?.length ?? 0,
       };
       remember(receipt.dispatchId, context);
+      announce(receipt.dispatchId, context);
       replay(receipt.dispatchId, context);
     },
     observed,
@@ -192,6 +251,13 @@ export const createAgentActivityReporter = (logger?: ActivityLogger, initialReso
         const context = resolve(dispatchId);
         if (context !== undefined) replay(dispatchId, context);
       }
+    },
+    spokeForChat(chatId: string, text: string, messageId?: string): boolean {
+      const dispatchId = processingByChat.get(chatId);
+      if (dispatchId === undefined || !active.has(dispatchId)) return false;
+      const event: AmbienceSpokeEvent = { chatId, dispatchId, text, ...(messageId === undefined ? {} : { messageId }) };
+      observer.spoke(event);
+      return true;
     },
   };
 };
@@ -213,3 +279,6 @@ export const configureAgentActivityRecovery = (resolver: AgentDispatchResolver):
 export const reportAcceptedAgentDispatch = (receipt: DispatchReceiptLike, input: DispatchInputLike): void => {
   activityReporter.accepted(receipt, input);
 };
+
+export const reportAgentSpoke = (chatId: string, text: string, messageId?: string): boolean =>
+  activityReporter.spokeForChat(chatId, text, messageId);
