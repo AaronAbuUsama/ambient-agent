@@ -23,7 +23,10 @@ import {
   type AmbientRuntimeHealth,
   type AmbientRuntimeState,
 } from "../managed/runtime-health.js";
-import { installManagedRuntimeDependencies } from "../managed/runtime-dependencies.js";
+import {
+  installManagedRuntimeDependencies,
+  startDeferredWhatsAppRuntime,
+} from "../managed/runtime-dependencies.js";
 import {
   createUncertainWorkController,
   inspectUncertainWorkStatus,
@@ -111,6 +114,11 @@ const parseRuntimePort = (value: string): number => {
   return port;
 };
 
+const portOccupied = (cause: unknown): boolean =>
+  cause instanceof AggregateError
+    ? cause.errors.some(portOccupied)
+    : (cause as NodeJS.ErrnoException | null)?.code === "EADDRINUSE";
+
 const startGeneratedRuntime = async (
   paths: ManagedPaths,
   logging: RuntimeLoggingOptions,
@@ -139,11 +147,26 @@ const startGeneratedRuntime = async (
   const previousPort = process.env.PORT;
   process.env.PORT = String(configuration.runtime.port);
   try {
+    // The generated server top-level-awaits its HTTP bind, so this import resolves
+    // only once the configured port is actually listening and rejects (after the
+    // server stopped everything it started) when the port is occupied.
     await importServer(serverEntry.href);
+  } catch (cause) {
+    if (portOccupied(cause)) {
+      throw new Error(
+        `Port ${configuration.runtime.port} is already in use; free it or run ambient-agent config --port <port> to choose another port.`,
+        { cause },
+      );
+    }
+    throw cause;
   } finally {
     if (previousPort === undefined) delete process.env.PORT;
     else process.env.PORT = previousPort;
   }
+  // ponytail: if a mismatched dist ships a server without the deferred starter, this
+  // throw leaves the bound HTTP server running; stopping it needs the generated server
+  // to export its lifecycle — add that seam if bundle mismatch ever becomes reachable.
+  startDeferredWhatsAppRuntime();
 };
 
 const requiredPrompt = async (label: string, prompt: () => Promise<string | symbol>): Promise<string> => {
