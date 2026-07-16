@@ -15,7 +15,7 @@ import type {
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { AmbienceDispatchRequest } from "../../src/ambience/dispatch.ts";
-import { makeChatGate } from "../../src/coalescer/chat-gate.ts";
+import { makeManagedChatGate } from "../../src/coalescer/chat-gate.ts";
 import {
   createWhatsAppHost,
   getWhatsAppRuntimeStatus,
@@ -24,7 +24,7 @@ import {
 } from "../../src/host/whatsapp-runtime.ts";
 import { createConversationArchive } from "../../src/intake/conversation-archive.ts";
 import { conversationArrival } from "../../src/intake/conversation-event.ts";
-import { createManagedChatInbox } from "../../src/intake/managed-chat-inbox.ts";
+import { createTestManagedChatInbox as createManagedChatInbox } from "../support/managed-chat-inbox.ts";
 import {
   createReadWhatsAppThreadTool,
   createSayTool,
@@ -138,7 +138,7 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
   it("uses one managed session for gated ingress, history, Ambience dispatch, and explicit say", async () => {
     const { archive, storeDirectory } = temporaryArchive();
     const fake = fakeSession();
-    const gate = makeChatGate({ groupIds: CHAT });
+    const gate = makeManagedChatGate([CHAT]);
     const inbox = createManagedChatInbox(archive, {
       allowed: gate.allowed,
       createId: () => "window-runtime-31",
@@ -249,7 +249,7 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
   it("replays an unwindowed accepted arrival after the application database is reopened", async () => {
     const { applicationDatabase, archive, storeDirectory } = temporaryArchive();
     const fake = fakeSession();
-    const gate = makeChatGate({ groupIds: CHAT });
+    const gate = makeManagedChatGate([CHAT]);
     const inbox = createManagedChatInbox(archive, { allowed: gate.allowed });
     const account = createWhatsAppAccount({
       storeDirectory,
@@ -327,7 +327,7 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
 
   it("replays a pending Window with its stable identity after restart", async () => {
     const { applicationDatabase, archive } = temporaryArchive();
-    const gate = makeChatGate({ groupIds: CHAT });
+    const gate = makeManagedChatGate([CHAT]);
     const inbox = createManagedChatInbox(archive, {
       allowed: gate.allowed,
       createId: () => "window-pending-31",
@@ -385,7 +385,7 @@ describe("paired whatsappd -> Coalescer -> Ambience seam", () => {
 
   it("keeps a non-text Window payload canonical and does not redispatch it after admission", async () => {
     const { applicationDatabase, archive, storeDirectory } = temporaryArchive();
-    const gate = makeChatGate({ groupIds: CHAT });
+    const gate = makeManagedChatGate([CHAT]);
     const inbox = createManagedChatInbox(archive, {
       allowed: gate.allowed,
       createId: () => "window-location-31",
