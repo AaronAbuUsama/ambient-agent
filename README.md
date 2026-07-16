@@ -306,14 +306,22 @@ npm install --global ./artifacts/ambient-agent-*.tgz
 ambient-agent --data-dir "$HOME/.ambient-agent-dev" init
 ```
 
-Behavioral evaluations run through the same public Flue HTTP interface used by production:
+Behavioral evaluations run through the same public Flue HTTP interface used by production. The default command starts
+fresh fixture processes and runs the exact faux-model mechanics first, followed by the real-model judged suites:
 
 ```bash
-FLUE_BASE_URL=http://127.0.0.1:3583 pnpm run evals
+export AMBIENCE_FIXTURE_DATA_DIR=/path/to/initialized/non-production/data
+export BRAINTRUST_API_KEY=replace-with-a-non-production-key
+export BRAINTRUST_PROJECT_ID=replace-with-an-existing-project-id
+pnpm evals
 ```
 
-Live model and provider checks are separately gated. They are not substitutes for deterministic tests, and deterministic
-green checks are not presented as proof of real provider delivery.
+`pnpm evals:deterministic` runs only the credential-free mechanics family; `pnpm evals:live` runs only the real-model and
+LLM-judge family. Each command creates a run-scoped Braintrust experiment name unless `BRAINTRUST_EXPERIMENT_NAME` is
+set intentionally to append to an existing experiment. `AMBIENCE_EVAL_PORT` can pin the otherwise dynamically allocated
+fixture port. Braintrust traces and experiment records are content-bearing, so use a reviewed non-production project and
+credential. Live model checks are not substitutes for deterministic tests, and deterministic green checks are not
+presented as proof of real provider delivery.
 
 ### Releases
 
