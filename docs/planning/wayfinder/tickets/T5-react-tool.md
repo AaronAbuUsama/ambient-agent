@@ -98,6 +98,12 @@ outcomes ≠ delivery outcomes.
 | Parallelizable | independent | independent | conflicts with D6 |
 | Fit | mirrors say pattern | adds config | fights D6 |
 
-**Recommendation: O1.** Open sub-decisions for Aaron: (a) allow remove-reaction in v1?
-(b) any participation-rubric coupling — e.g. "prefer a 👍 react over a 'noted' reply"
-(feeds T1's rubric axes)?
+**Recommendation: O1.**
+
+## Resolution (Aaron, 2026-07-16)
+
+**O1 ratified, broadened surface**: `say` gains optional `replyTo?: messageId`
+(mapped to `SendOptions.quote` via a `MessageRef`); `react({ messageId, emoji })`
+ships as a separate sibling tool; free-form emoji (max 8 chars), no remove-reaction
+in v1; outbound `@mentions` stays fog. Aaron declined the explicit react-vs-reply
+rubric axis (plain O1, not O1+rubric). CLOSED.

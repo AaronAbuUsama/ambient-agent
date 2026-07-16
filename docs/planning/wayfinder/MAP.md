@@ -36,10 +36,9 @@ someone goes and does the thing.
 
 ## Open tickets (the frontier, in suggested order)
 
-- [T1 — Participation rubric ratification](tickets/T1-participation-rubric.md) — HITL grilling; the evals critical path (new axes from T5/T7: react-vs-reply preference, SMOKE carve-out)
-- [T5 — Outbound tool surface: react + reply-to](tickets/T5-react-tool.md) — broadened per Aaron; transport supports `SendOptions.quote` natively
+- [T1 — Participation rubric ratification](tickets/T1-participation-rubric.md) — HITL grilling; the evals critical path (T7 adds the SMOKE carve-out axis)
 - [T2 — Harness window input + faux/live boundary](tickets/T2-harness-window-input.md) — blocked by T1
-- [T8 — Ratify the implementation DAG](tickets/T8-dag-ratification.md) — blocked by T1, T2, T5; gates /to-spec → /to-tickets
+- [T8 — Ratify the implementation DAG](tickets/T8-dag-ratification.md) — blocked by T1, T2; gates /to-spec → /to-tickets
 
 ## Decisions so far
 
@@ -56,6 +55,9 @@ someone goes and does the thing.
 - [T7 — Smoke canary](tickets/T7-smoke-canary.md) — O2: dedicated canary group,
   `SMOKE <nonce> — ignore`, settled-silent asserted via the T3 observer; rubric
   carve-out feeds T1.
+- [T5 — Outbound tool surface](tickets/T5-react-tool.md) — O1 broadened: `say` gains
+  `replyTo` (→ `SendOptions.quote`), `react({ messageId, emoji })` as sibling tool;
+  no remove-reaction v1; outbound mentions stays fog.
 - Flue dispatch-settlement investigation (was the B2 gate) — resolved during charting:
   `dispatch()` settles at admission only, but `@flue/runtime` `observe()` emits
   `agent_end`/`submission_settled` correlated by `dispatchId`; evidence quoted in
