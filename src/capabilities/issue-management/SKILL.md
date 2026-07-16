@@ -26,6 +26,6 @@ Never capture, say, or react to system, pairing, or status traffic or to a messa
 
 1. Once the report is template-fillable, file the issue. (Axis 3)
 2. Reply to the report's source message with the filed issue link. (Axes 3–4)
-3. When a pull request lands for a captured issue, post the pull-request link back to the chat as its own task-workflow message. (Axes 3–4)
+3. When a pull request lands for captured issues, post the pull-request link back to the chat once per captured issue, keeping every issue concern separate. (Axes 3–4)
 
 Repository label names are technical reference data, not participation policy. Read [references/labels.md](references/labels.md) only when a label is needed.

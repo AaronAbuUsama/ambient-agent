@@ -171,7 +171,7 @@ function githubIssueOpenedPayload(repository = "widgets"): string {
   });
 }
 
-function githubPullRequestOpenedPayload(issueNumber: number, pullRequestNumber = 42): string {
+function githubPullRequestOpenedPayload(issueNumbers: readonly number[], pullRequestNumber = 42): string {
   return JSON.stringify({
     action: "opened",
     installation: { id: 77 },
@@ -185,7 +185,7 @@ function githubPullRequestOpenedPayload(issueNumber: number, pullRequestNumber =
       number: pullRequestNumber,
       html_url: `https://github.com/acme/widgets/pull/${pullRequestNumber}`,
       title: "Fix the captured issue",
-      body: `Closes #${issueNumber}`,
+      body: issueNumbers.map((issueNumber) => `Closes: #${issueNumber}`).join("\n"),
       state: "open",
       draft: false,
     },
@@ -387,30 +387,32 @@ describe("persisted Ambience admission", () => {
     expect(serverOutput).toContain(`"runId":null`);
   });
 
-  it("posts the PR link when a verified PR closes an issue captured by Ambience", async () => {
+  it("posts one PR-link message per captured issue when a verified PR closes multiple concerns", async () => {
     const chatId = "github-ingress-29@g.us";
     await resetWhatsApp();
     await prompt(chatId, "CREATE_COMPLETE_ISSUE");
-    const completedCreate = [...(await githubOperations())]
+    await prompt(chatId, "CREATE_COMPLETE_FEATURE");
+    const completedCreates = [...(await githubOperations())]
       .reverse()
-      .find((operation) => operation.kind === "create-issue" && operation.status === "completed");
-    expect(completedCreate).toMatchObject({ repository: "acme/widgets" });
-    const issueNumber = completedCreate?.issueNumber;
-    expect(typeof issueNumber).toBe("number");
+      .filter((operation) => operation.kind === "create-issue" && operation.status === "completed")
+      .slice(0, 2);
+    expect(completedCreates).toHaveLength(2);
+    expect(completedCreates).toEqual([
+      expect.objectContaining({ repository: "acme/widgets", issueNumber: expect.any(Number) }),
+      expect.objectContaining({ repository: "acme/widgets", issueNumber: expect.any(Number) }),
+    ]);
+    const issueNumbers = completedCreates.map((operation) => operation.issueNumber as number);
 
     const deliveryId = "42-captured-pr";
-    const body = githubPullRequestOpenedPayload(issueNumber as number);
+    const body = githubPullRequestOpenedPayload(issueNumbers);
     const response = await githubDelivery({ deliveryId, body, event: "pull_request" });
     expect(response.status, await response.text()).toBe(200);
     await waitFor(
       async () =>
-        (await whatsappEvents()).some(
-          (event) =>
-            event.kind === "send" &&
-            event.outcome === "sent" &&
-            event.text === "https://github.com/acme/widgets/pull/42",
-        ),
-      "captured issue pull-request link delivery",
+        (await whatsappEvents()).filter(
+          (event) => event.kind === "send" && event.text === "https://github.com/acme/widgets/pull/42",
+        ).length === 2,
+      "captured issues pull-request link delivery",
     );
     expect(await githubIngressRecords()).toContainEqual(
       expect.objectContaining({

@@ -26,6 +26,11 @@ export interface IssueOperationRecord {
   readonly settledAt?: string;
 }
 
+export interface IssueCreateCorrelation {
+  readonly completedIssueNumbers: readonly number[];
+  readonly hasPendingCreate: boolean;
+}
+
 interface IssueOperationRow {
   operation_id: string;
   kind: IssueOperationKind;
@@ -81,6 +86,7 @@ export interface IssueOperationStore {
   }): { readonly previous: IssueOperationRecord; readonly replacement: IssueOperationRecord };
   uncertainForDiagnosis(limit: number): readonly IssueOperationRecord[];
   markExamined(operationId: string, examinedAt: string): void;
+  correlateCreateIssues(repository: string, issueNumbers: readonly number[]): IssueCreateCorrelation;
   get(operationId: string): IssueOperationRecord | undefined;
   list(): readonly IssueOperationRecord[];
   close(): void;
@@ -189,6 +195,23 @@ export const createIssueOperationStore = (databasePath: string): IssueOperationS
     VALUES (?, ?)
     ON CONFLICT(operation_id) DO UPDATE SET examined_at = excluded.examined_at
   `);
+  const completedCreateIssue = database.prepare(`
+    SELECT 1
+      FROM github_issue_operations
+     WHERE kind = 'create-issue'
+       AND status = 'completed'
+       AND repository = ? COLLATE NOCASE
+       AND issue_number = ?
+     LIMIT 1
+  `);
+  const pendingCreateIssue = database.prepare(`
+    SELECT 1
+      FROM github_issue_operations
+     WHERE kind = 'create-issue'
+       AND status IN ('attempting', 'uncertain')
+       AND repository = ? COLLATE NOCASE
+     LIMIT 1
+  `);
   const get = (operationId: string): IssueOperationRecord | undefined => {
     const row = select.get(operationId) as IssueOperationRow | undefined;
     return row === undefined ? undefined : hydrate(row);
@@ -271,6 +294,12 @@ export const createIssueOperationStore = (databasePath: string): IssueOperationS
       if (operation === undefined) throw new Error(`Issue operation ${operationId} does not exist.`);
       markExamined.run(operationId, examinedAt);
     },
+    correlateCreateIssues: (repository, issueNumbers) => ({
+      completedIssueNumbers: [...new Set(issueNumbers)].filter(
+        (issueNumber) => completedCreateIssue.get(repository, issueNumber) !== undefined,
+      ),
+      hasPendingCreate: pendingCreateIssue.get(repository) !== undefined,
+    }),
     get,
     list: () => (list.all() as unknown as IssueOperationRow[]).map(hydrate),
     close: () => database.close(),

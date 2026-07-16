@@ -70,9 +70,10 @@ export const githubPullRequestOpenedInputSchema = v.object({
     id: v.pipe(v.number(), v.integer(), v.minValue(1)),
     url: nonEmptyString,
   }),
-  issue: v.object({
-    number: v.pipe(v.number(), v.integer(), v.minValue(1)),
-  }),
+  issues: v.pipe(
+    v.array(v.object({ number: v.pipe(v.number(), v.integer(), v.minValue(1)) })),
+    v.minLength(1),
+  ),
   pullRequest: v.object({
     number: v.pipe(v.number(), v.integer(), v.minValue(1)),
     url: nonEmptyString,

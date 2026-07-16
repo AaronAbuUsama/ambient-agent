@@ -11,7 +11,8 @@ export const channel = createGitHubChannel({
   webhook: async ({ delivery }) => {
     const result = await handleGitHubDelivery(delivery);
     return new Response(JSON.stringify(result), {
-      status: 200,
+      // Keep the delivery retryable while a referenced issue-create operation awaits reconciliation.
+      status: result.status === "deferred" ? 503 : 200,
       headers: { "content-type": "application/json; charset=UTF-8" },
     });
   },

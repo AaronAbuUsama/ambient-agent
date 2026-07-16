@@ -70,11 +70,11 @@ const repositoryKey = (owner: string, repo: string): string => `${owner.trim()}/
 
 const linkedIssueNumbers = (body: string, repository: string): readonly number[] => {
   const numbers = new Set<number>();
-  const shorthand = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+))?#([1-9]\d*)\b/gi;
+  const shorthand = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)(?::\s*|\s+)(?:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+))?#([1-9]\d*)\b/gi;
   for (const match of body.matchAll(shorthand)) {
     if (match[1] === undefined || match[1].toLowerCase() === repository) numbers.add(Number(match[2]));
   }
-  const fullUrl = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/issues\/([1-9]\d*)\b/gi;
+  const fullUrl = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)(?::\s*|\s+)https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/issues\/([1-9]\d*)\b/gi;
   for (const match of body.matchAll(fullUrl)) {
     if (match[1]!.toLowerCase() === repository) numbers.add(Number(match[2]));
   }
@@ -137,6 +137,7 @@ export type GitHubIngressResult =
   | { readonly status: "duplicate"; readonly record: GitHubIngressRecord }
   | { readonly status: "unsupported"; readonly deliveryId: string }
   | { readonly status: "uncorrelated"; readonly deliveryId: string; readonly repository: string }
+  | { readonly status: "deferred"; readonly deliveryId: string; readonly repository: string; readonly reason: string }
   | { readonly status: "failed"; readonly record: GitHubIngressRecord }
   | {
       readonly status: "done";
@@ -294,21 +295,25 @@ export const createGitHubIngress = (options: {
         sender: payload.sender,
       });
     } else if ("pull_request" in payload) {
-      const captured = new Set(
-        (options.operations?.list() ?? [])
-          .filter(
-            (operation) =>
-              operation.kind === "create-issue" &&
-              operation.status === "completed" &&
-              operation.repository.toLowerCase() === repository &&
-              operation.issueNumber !== undefined,
-          )
-          .map((operation) => operation.issueNumber!),
-      );
-      const issueNumber = linkedIssueNumbers(payload.pull_request.body ?? "", repository).find((number) =>
-        captured.has(number),
-      );
-      if (issueNumber === undefined) {
+      const linkedNumbers = linkedIssueNumbers(payload.pull_request.body ?? "", repository);
+      const correlation = options.operations?.correlateCreateIssues(repository, linkedNumbers) ?? {
+        completedIssueNumbers: [],
+        hasPendingCreate: false,
+      };
+      if (correlation.hasPendingCreate && correlation.completedIssueNumbers.length < linkedNumbers.length) {
+        const reason = "referenced issue correlation is waiting for an issue-create operation to settle";
+        logger.warn({
+          event: "github.ingress.deferred",
+          deliveryId: delivery.deliveryId,
+          repository,
+          chatId,
+          ambience: null,
+          dispatchId: null,
+          reason,
+        });
+        return { status: "deferred", deliveryId: delivery.deliveryId, repository, reason };
+      }
+      if (correlation.completedIssueNumbers.length === 0) {
         options.store.settle(delivery.deliveryId, {
           status: "uncorrelated",
           repository,
@@ -336,12 +341,14 @@ export const createGitHubIngress = (options: {
           id: payload.repository.id,
           url: payload.repository.html_url,
         },
-        issue: { number: issueNumber },
+        issues: correlation.completedIssueNumbers.map((number) => ({ number })),
         pullRequest: {
           number: payload.pull_request.number,
           url: payload.pull_request.html_url,
           title: payload.pull_request.title,
           state: payload.pull_request.state,
+          // A draft has landed and has a usable link. Preserve that fact instead of waiting for an unsupported
+          // ready_for_review transition that would otherwise make the Axis 3 notification impossible.
           draft: payload.pull_request.draft,
         },
         sender: payload.sender,

@@ -35,7 +35,7 @@ const issueOpenedDelivery = (deliveryId: string): GitHubWebhookDelivery =>
 
 const pullRequestOpenedDelivery = (
   deliveryId: string,
-  body = "Closes #29",
+  options: { readonly body?: string; readonly draft?: boolean } = {},
 ): GitHubWebhookDelivery =>
   ({
     name: "pull_request",
@@ -53,9 +53,9 @@ const pullRequestOpenedDelivery = (
         number: 42,
         html_url: "https://github.com/acme/widgets/pull/42",
         title: "Fix admission proof",
-        body,
+        body: options.body ?? "Closes #29",
         state: "open",
-        draft: false,
+        draft: options.draft ?? false,
       },
       sender: { login: "octocat", id: 1, type: "User" },
     },
@@ -159,7 +159,7 @@ describe("GitHub ingress delivery ledger", () => {
             id: 101,
             url: "https://github.com/acme/widgets",
           },
-          issue: { number: 29 },
+          issues: [{ number: 29 }],
           pullRequest: {
             number: 42,
             url: "https://github.com/acme/widgets/pull/42",
@@ -170,6 +170,127 @@ describe("GitHub ingress delivery ledger", () => {
           sender: { login: "octocat", id: 1, type: "User" },
         },
       ]);
+    } finally {
+      operations.close();
+      store.close();
+    }
+  });
+
+  it("keeps all captured concerns and accepts GitHub's colon-form closing keywords", async () => {
+    const store = createGitHubIngressStore(":memory:");
+    const operations = createIssueOperationStore(":memory:");
+    const dispatched: GitHubIngressInput[] = [];
+    try {
+      for (const issueNumber of [29, 30]) {
+        const operationId = `capture-${issueNumber}`;
+        operations.begin({
+          operationId,
+          kind: "create-issue",
+          repository: "acme/widgets",
+          startedAt: `2026-07-16T00:00:0${issueNumber - 29}.000Z`,
+        });
+        operations.complete(operationId, issueNumber, `2026-07-16T00:00:0${issueNumber - 28}.000Z`);
+      }
+      const ingress = createGitHubIngress({
+        store,
+        operations,
+        routes: new Map([["acme/widgets", "chat-29@g.us"]]),
+        dispatch: async (_chatId, input) => {
+          dispatched.push(input);
+          return { dispatchId: "dispatch-pr-42", acceptedAt: "2026-07-16T00:00:03.000Z" };
+        },
+        logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+      });
+
+      await expect(
+        ingress(
+          pullRequestOpenedDelivery("pr-two-issues", {
+            body: "Closes: #29\nFixes: acme/widgets#30",
+          }),
+        ),
+      ).resolves.toMatchObject({ status: "done" });
+      expect(dispatched).toHaveLength(1);
+      expect(dispatched[0]).toMatchObject({
+        type: "github.pull-request.opened",
+        issues: [{ number: 29 }, { number: 30 }],
+      });
+    } finally {
+      operations.close();
+      store.close();
+    }
+  });
+
+  it("keeps a PR delivery retryable until an uncertain issue create is reconciled", async () => {
+    const store = createGitHubIngressStore(":memory:");
+    const operations = createIssueOperationStore(":memory:");
+    const dispatched: GitHubIngressInput[] = [];
+    try {
+      operations.begin({
+        operationId: "capture-29",
+        kind: "create-issue",
+        repository: "acme/widgets",
+        startedAt: "2026-07-16T00:00:00.000Z",
+      });
+      operations.uncertain("capture-29", "provider outcome unknown", "2026-07-16T00:00:01.000Z");
+      const ingress = createGitHubIngress({
+        store,
+        operations,
+        routes: new Map([["acme/widgets", "chat-29@g.us"]]),
+        dispatch: async (_chatId, input) => {
+          dispatched.push(input);
+          return { dispatchId: "dispatch-pr-42", acceptedAt: "2026-07-16T00:00:03.000Z" };
+        },
+        logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+      });
+      const delivery = pullRequestOpenedDelivery("pr-after-reconciliation");
+
+      await expect(ingress(delivery)).resolves.toMatchObject({ status: "deferred" });
+      expect(store.get("pr-after-reconciliation")).toMatchObject({ status: "received" });
+      expect(dispatched).toEqual([]);
+
+      operations.resolveUncertain({
+        operationId: "capture-29",
+        status: "completed",
+        resolution: "reconciled",
+        settledAt: "2026-07-16T00:00:02.000Z",
+        issueNumber: 29,
+      });
+      await expect(ingress(delivery)).resolves.toMatchObject({ status: "done" });
+      expect(dispatched).toHaveLength(1);
+      expect(store.get("pr-after-reconciliation")).toMatchObject({ status: "done" });
+    } finally {
+      operations.close();
+      store.close();
+    }
+  });
+
+  it("delivers an opened draft because ready-for-review is not a supported ingress transition", async () => {
+    const store = createGitHubIngressStore(":memory:");
+    const operations = createIssueOperationStore(":memory:");
+    const dispatched: GitHubIngressInput[] = [];
+    try {
+      operations.begin({
+        operationId: "capture-29",
+        kind: "create-issue",
+        repository: "acme/widgets",
+        startedAt: "2026-07-16T00:00:00.000Z",
+      });
+      operations.complete("capture-29", 29, "2026-07-16T00:00:01.000Z");
+      const ingress = createGitHubIngress({
+        store,
+        operations,
+        routes: new Map([["acme/widgets", "chat-29@g.us"]]),
+        dispatch: async (_chatId, input) => {
+          dispatched.push(input);
+          return { dispatchId: "dispatch-draft-42", acceptedAt: "2026-07-16T00:00:02.000Z" };
+        },
+        logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+      });
+
+      await expect(ingress(pullRequestOpenedDelivery("draft-pr-42", { draft: true }))).resolves.toMatchObject({
+        status: "done",
+      });
+      expect(dispatched[0]).toMatchObject({ pullRequest: { draft: true } });
     } finally {
       operations.close();
       store.close();
@@ -197,7 +318,9 @@ describe("GitHub ingress delivery ledger", () => {
         logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
       });
 
-      await expect(ingress(pullRequestOpenedDelivery("pr-unrelated", "Documents #29"))).resolves.toEqual({
+      await expect(
+        ingress(pullRequestOpenedDelivery("pr-unrelated", { body: "Documents #29" })),
+      ).resolves.toEqual({
         status: "uncorrelated",
         deliveryId: "pr-unrelated",
         repository: "acme/widgets",
