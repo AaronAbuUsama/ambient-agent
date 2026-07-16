@@ -16,12 +16,13 @@ import { configLayer, type CoalescerConfigValues } from "../coalescer/config.js"
 import { botIdsOf, whatsappEventSource } from "../coalescer/whatsapp.js";
 import { createConversationArchive } from "../intake/conversation-archive.js";
 import { createManagedChatInbox, managedChatWindowStore, type ManagedChatInbox } from "../intake/managed-chat-inbox.js";
-import { configureAgentActivityRecovery } from "../logging/agent-activity-reporter.js";
+import { configureAgentActivityRecovery, reportAgentSpoke } from "../logging/agent-activity-reporter.js";
 import { effectLoggerLayer, getLogger, upstreamWhatsAppLogger } from "../logging/logging.js";
 import { createWhatsAppAccount, WhatsAppAccountError } from "../whatsapp/account.js";
 
 const errorMessage = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
 const isKnownPreSendFailure = (message: string): boolean => /^not online \(phase: [^)]+\)$/.test(message);
+const TYPING_LEAD_MS = 750;
 
 type DeliveryReceipt =
   | { readonly delivery: "sent"; readonly messageId: string }
@@ -42,34 +43,42 @@ const combineReceipt = (delivery: DeliveryReceipt, typingError?: string): WhatsA
 export const createWhatsAppHost = (session: WhatsAppSession): WhatsAppSayPort => ({
   say: async (chatId, text) => {
     const log = getLogger("whatsapp");
+    let typingStarted = false;
     try {
       await session.setTyping(chatId, true);
+      typingStarted = true;
     } catch (cause) {
       log.warn({ chatId, error: errorMessage(cause) }, "Typing-on failed before a WhatsApp reply");
     }
 
-    let delivery: DeliveryReceipt;
-    try {
-      const message = await session.send(chatId, { text });
-      delivery = { delivery: "sent", messageId: message.id };
-      log.info(
-        { operatorEvent: "agent.say", text, chatId, messageId: message.id },
-        "Ambience said a WhatsApp message",
-      );
-    } catch (cause) {
-      const deliveryError = errorMessage(cause);
-      const outcome = isKnownPreSendFailure(deliveryError) ? "failed" : "unknown";
-      delivery = { delivery: outcome, deliveryError };
-      log.error({ chatId, error: deliveryError }, `WhatsApp reply delivery ${outcome}`);
-    }
+    if (typingStarted) await new Promise((resolve) => setTimeout(resolve, TYPING_LEAD_MS));
 
+    let delivery: DeliveryReceipt;
     let typingError: string | undefined;
     try {
-      await session.setTyping(chatId, false);
-      log.debug({ chatId }, "WhatsApp typing indicator cleared");
-    } catch (cause) {
-      typingError = errorMessage(cause);
-      log.warn({ chatId, error: typingError }, "WhatsApp typing indicator state is unknown");
+      try {
+        const message = await session.send(chatId, { text });
+        delivery = { delivery: "sent", messageId: message.id };
+        if (!reportAgentSpoke(chatId, text, message.id)) {
+          log.info(
+            { operatorEvent: "agent.say", text, chatId, messageId: message.id },
+            "Ambience said a WhatsApp message",
+          );
+        }
+      } catch (cause) {
+        const deliveryError = errorMessage(cause);
+        const outcome = isKnownPreSendFailure(deliveryError) ? "failed" : "unknown";
+        delivery = { delivery: outcome, deliveryError };
+        log.error({ chatId, error: deliveryError }, `WhatsApp reply delivery ${outcome}`);
+      }
+    } finally {
+      try {
+        await session.setTyping(chatId, false);
+        log.debug({ chatId }, "WhatsApp typing indicator cleared");
+      } catch (cause) {
+        typingError = errorMessage(cause);
+        log.warn({ chatId, error: typingError }, "WhatsApp typing indicator state is unknown");
+      }
     }
     return combineReceipt(delivery, typingError);
   },

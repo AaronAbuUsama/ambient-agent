@@ -35,7 +35,7 @@ const operation = (overrides: Partial<FlueObservation>): FlueObservation =>
     ...overrides,
   }) as FlueObservation;
 
-const operationStart = (): FlueObservation =>
+const operationStart = (overrides: Partial<FlueObservation> = {}): FlueObservation =>
   ({
     v: 3,
     eventIndex: 1,
@@ -45,10 +45,27 @@ const operationStart = (): FlueObservation =>
     dispatchId: "dispatch-1",
     operationId: "operation-1",
     operationKind: "prompt",
+    ...overrides,
+  }) as FlueObservation;
+
+const settled = (
+  outcome: "completed" | "failed" | "aborted" = "completed",
+  error?: { readonly message: string },
+): FlueObservation =>
+  ({
+    v: 3,
+    eventIndex: 3,
+    timestamp: new Date().toISOString(),
+    type: "submission_settled",
+    instanceId: "chat@g.us",
+    dispatchId: "dispatch-1",
+    submissionId: "submission-1",
+    outcome,
+    ...(error === undefined ? {} : { error }),
   }) as FlueObservation;
 
 describe("agent activity reporter", () => {
-  it("reports an accepted WhatsApp window, its private final, and completion", () => {
+  it("reports a dispatched WhatsApp window and its silent settlement", () => {
     const { entries, logger } = captureLogger();
     const reporter = createAgentActivityReporter(logger);
 
@@ -61,20 +78,69 @@ describe("agent activity reporter", () => {
         messages: [{ id: "message-1" }, { id: "message-2" }],
       },
     );
-    expect(entries).toEqual([]);
+    expect(entries.map(({ fields }) => fields.operatorEvent)).toEqual(["agent.processing"]);
     reporter.observed(operationStart());
     reporter.observed(
-      operation({ agentOutput: { type: "text", text: "Replied to Lavin with the available repository.", finishReason: "stop" } }),
+      operation({
+        agentOutput: { type: "text", text: "Replied to Lavin with the available repository.", finishReason: "stop" },
+      }),
     );
 
     expect(entries.map(({ fields }) => fields.operatorEvent)).toEqual([
       "agent.processing",
       "agent.final",
       "agent.completed",
+      "agent.settled_silent",
     ]);
     expect(entries[0]?.fields).toMatchObject({ messageCount: 2, windowId: "window-1", dispatchId: "dispatch-1" });
     expect(entries[1]?.fields).toMatchObject({ text: "Replied to Lavin with the available repository." });
     expect(entries[2]?.fields).toMatchObject({ durationMs: 4_300 });
+    expect(entries[3]?.fields).toMatchObject({ windowId: "window-1", chatId: "chat@g.us", dispatchId: "dispatch-1" });
+  });
+
+  it("correlates speech by dispatchId and does not report a speaking window as silent", () => {
+    const { entries, logger } = captureLogger();
+    const reporter = createAgentActivityReporter(logger);
+    reporter.accepted(
+      { dispatchId: "dispatch-1" },
+      { type: "whatsapp.window", windowId: "window-1", chatId: "chat@g.us", messages: [{ id: "message-1" }] },
+    );
+
+    reporter.spoke({ chatId: "chat@g.us", dispatchId: "dispatch-1", text: "A visible reply" });
+    reporter.observed(operation({}));
+
+    expect(entries.map(({ fields }) => fields.operatorEvent)).toEqual([
+      "agent.processing",
+      "agent.say",
+      "agent.completed",
+    ]);
+    expect(entries[1]?.fields).toMatchObject({
+      chatId: "chat@g.us",
+      dispatchId: "dispatch-1",
+      text: "A visible reply",
+    });
+  });
+
+  it("attributes speech to the processing window when another window is already queued for the chat", () => {
+    const { entries, logger } = captureLogger();
+    const reporter = createAgentActivityReporter(logger);
+    reporter.accepted(
+      { dispatchId: "dispatch-1" },
+      { type: "whatsapp.window", windowId: "window-1", chatId: "chat@g.us", messages: [{ id: "message-1" }] },
+    );
+    reporter.accepted(
+      { dispatchId: "dispatch-2" },
+      { type: "whatsapp.window", windowId: "window-2", chatId: "chat@g.us", messages: [{ id: "message-2" }] },
+    );
+
+    reporter.observed(operationStart({ dispatchId: "dispatch-1" }));
+    expect(reporter.spokeForChat("chat@g.us", "First window reply")).toBe(true);
+    reporter.observed(operation({ dispatchId: "dispatch-1" }));
+
+    expect(entries.find(({ fields }) => fields.operatorEvent === "agent.say")?.fields).toMatchObject({
+      dispatchId: "dispatch-1",
+      text: "First window reply",
+    });
   });
 
   it("ignores tool and thinking observations", () => {
@@ -88,10 +154,10 @@ describe("agent activity reporter", () => {
     reporter.observed({ type: "thinking_end", dispatchId: "dispatch-1" } as FlueObservation);
     reporter.observed({ type: "tool", dispatchId: "dispatch-1" } as FlueObservation);
 
-    expect(entries).toEqual([]);
+    expect(entries.map(({ fields }) => fields.operatorEvent)).toEqual(["agent.processing"]);
   });
 
-  it("reports a failed prompt once and forgets the dispatch", () => {
+  it("reports a failed settlement once and forgets the dispatch", () => {
     const { entries, logger } = captureLogger();
     const reporter = createAgentActivityReporter(logger);
     reporter.accepted(
@@ -102,7 +168,9 @@ describe("agent activity reporter", () => {
     reporter.observed(operationStart());
     const failed = operation({ isError: true, error: new Error("model unavailable") });
     reporter.observed(failed);
-    reporter.observed(failed);
+    const failedSettlement = settled("failed", { message: "model unavailable" });
+    reporter.observed(failedSettlement);
+    reporter.observed(failedSettlement);
 
     expect(entries.map(({ fields }) => fields.operatorEvent)).toEqual(["agent.processing", "agent.failed"]);
     expect(entries[1]).toMatchObject({ level: "error", fields: { detail: "model unavailable" } });
@@ -111,10 +179,7 @@ describe("agent activity reporter", () => {
   it("does not report non-WhatsApp dispatches", () => {
     const { entries, logger } = captureLogger();
     const reporter = createAgentActivityReporter(logger);
-    reporter.accepted(
-      { dispatchId: "dispatch-1" },
-      { type: "github.issue.opened", chatId: "chat@g.us" },
-    );
+    reporter.accepted({ dispatchId: "dispatch-1" }, { type: "github.issue.opened", chatId: "chat@g.us" });
 
     reporter.observed(operation({}));
     expect(entries).toEqual([]);
@@ -125,10 +190,7 @@ describe("agent activity reporter", () => {
     const reporter = createAgentActivityReporter(logger);
 
     reporter.observed(operationStart());
-    reporter.accepted(
-      { dispatchId: "dispatch-1" },
-      { type: "github.issue.opened", chatId: "chat@g.us" },
-    );
+    reporter.accepted({ dispatchId: "dispatch-1" }, { type: "github.issue.opened", chatId: "chat@g.us" });
     reporter.observed(operation({}));
 
     expect(entries).toEqual([]);
@@ -139,12 +201,8 @@ describe("agent activity reporter", () => {
     const reporter = createAgentActivityReporter(logger);
 
     reporter.observed(operationStart());
-    reporter.observed(
-      operation({ agentOutput: { type: "text", text: "Private final", finishReason: "stop" } }),
-    );
-    reporter.observed(
-      operation({ agentOutput: { type: "text", text: "Duplicate final", finishReason: "stop" } }),
-    );
+    reporter.observed(operation({ agentOutput: { type: "text", text: "Private final", finishReason: "stop" } }));
+    reporter.observed(operation({ agentOutput: { type: "text", text: "Duplicate final", finishReason: "stop" } }));
     expect(entries).toEqual([]);
 
     reporter.accepted(
@@ -161,28 +219,39 @@ describe("agent activity reporter", () => {
       "agent.processing",
       "agent.final",
       "agent.completed",
+      "agent.settled_silent",
     ]);
   });
 
   it("resolves recovered dispatches without a process-local acceptance", () => {
     const { entries, logger } = captureLogger();
     const reporter = createAgentActivityReporter(logger, (dispatchId) =>
-      dispatchId === "dispatch-1"
-        ? { windowId: "window-1", chatId: "chat@g.us", messageCount: 3 }
-        : undefined,
+      dispatchId === "dispatch-1" ? { windowId: "window-1", chatId: "chat@g.us", messageCount: 3 } : undefined,
     );
 
     reporter.observed(operationStart());
-    reporter.observed(
-      operation({ agentOutput: { type: "text", text: "Recovered final", finishReason: "stop" } }),
-    );
+    reporter.observed(operation({ agentOutput: { type: "text", text: "Recovered final", finishReason: "stop" } }));
 
     expect(entries.map(({ fields }) => fields.operatorEvent)).toEqual([
       "agent.processing",
       "agent.final",
       "agent.completed",
+      "agent.settled_silent",
     ]);
     expect(entries[0]?.fields.messageCount).toBe(3);
   });
 
+  it("uses recovery-only submission settlement when no prompt operation completes", () => {
+    const { entries, logger } = captureLogger();
+    const reporter = createAgentActivityReporter(logger, (dispatchId) =>
+      dispatchId === "dispatch-1" ? { windowId: "window-1", chatId: "chat@g.us", messageCount: 1 } : undefined,
+    );
+
+    reporter.observed(settled());
+
+    expect(entries.map(({ fields }) => fields.operatorEvent)).toEqual([
+      "agent.processing",
+      "agent.settled_silent",
+    ]);
+  });
 });

@@ -1,14 +1,20 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  renderOperatorRecord,
-  type OperatorLogRecord,
-} from "../../src/logging/operator-reporter.ts";
+import { renderOperatorRecord, type OperatorLogRecord } from "../../src/logging/operator-reporter.ts";
 
 const at = (hour: number, minute: number, second: number): number =>
   new Date(2026, 6, 16, hour, minute, second).getTime();
 
 describe("operator reporter", () => {
+  it("renders deliberate silence as a dimmed default-console line", () => {
+    const rendered = renderOperatorRecord(
+      { time: at(14, 2, 23), level: 30, operatorEvent: "agent.settled_silent" },
+      { colorize: true },
+    );
+
+    expect(rendered).toContain("\u001B[2m— settled silent\u001B[0m");
+  });
+
   it("renders the locked flat activity feed", () => {
     const records: OperatorLogRecord[] = [
       { time: at(14, 1, 1), level: 30, operatorEvent: "agent.online", detail: "managed chat connected" },
@@ -64,9 +70,7 @@ describe("operator reporter", () => {
       { colorize: false },
     );
 
-    expect(line).toBe(
-      "2:01:36 PM  × [AGENT] Ambience admission failed; the chat is fail-stopped: WindowDispatchError",
-    );
+    expect(line).toBe("2:01:36 PM  × [AGENT] Ambience admission failed; the chat is fail-stopped: WindowDispatchError");
     expect(line).not.toMatch(/[{}]/);
     expect(line.split("\n")).toHaveLength(1);
   });
