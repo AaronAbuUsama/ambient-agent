@@ -910,7 +910,8 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
       // component opens a database or credential file. --data-dir skips it.
       const migration = await (dependencies.migrateManagedData ?? migrateLegacyManagedData)();
       if (migration.migrated) {
-        output.stdout(`Moved managed data from ${migration.source} to ${migration.root}.\n`);
+        // stderr keeps stdout clean for machine consumers of `status --json`.
+        output.stderr(`Moved managed data from ${migration.source} to ${migration.root}.\n`);
       }
     }
     const bare = bareDataDirectory(args);

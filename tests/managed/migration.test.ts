@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { migrateLegacyManagedData } from "../../src/managed/migration.ts";
+import { createManagedConfig } from "../../src/managed/schema.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -117,6 +118,51 @@ describe("managed data migration", () => {
       root: migrated,
     });
     expect(await readdir(homeDirectory)).not.toContainEqual(expect.stringContaining(".staging-"));
+  });
+
+  it("fails closed when the legacy runtime verifiably answers its health endpoint", async () => {
+    const homeDirectory = await home();
+    const legacy = await populateLegacy(homeDirectory);
+    await writeFile(join(legacy, "config.json"), JSON.stringify(createManagedConfig(["120363000@g.us"], "owner/repo")), {
+      mode: 0o600,
+    });
+    await writeFile(
+      join(legacy, "credentials", "github.json"),
+      JSON.stringify({ schemaVersion: 1, kind: "personal-token", token: "t", webhookSecret: "s" }),
+      { mode: 0o600 },
+    );
+    const probes: number[] = [];
+    const live = async (options: { readonly port: number }) => {
+      probes.push(options.port);
+      return { state: "healthy", whatsapp: { phase: "online" } } as const;
+    };
+    await expect(
+      migrateLegacyManagedData({ ...environment(homeDirectory), probeRuntimeHealth: live }),
+    ).rejects.toThrow("still running against");
+    expect(probes).toEqual([3000]);
+    await expect(lstat(newPath(homeDirectory))).rejects.toMatchObject({ code: "ENOENT" });
+
+    // A port holder that is not verifiably ours cannot block the migration.
+    const foreign = async () => ({ state: "failed", whatsapp: { phase: "failed" } }) as const;
+    await expect(
+      migrateLegacyManagedData({ ...environment(homeDirectory), probeRuntimeHealth: foreign }),
+    ).resolves.toMatchObject({ migrated: true });
+  });
+
+  it("serializes on the setup lock and sweeps stale staging directories", async () => {
+    const homeDirectory = await home();
+    await populateLegacy(homeDirectory);
+    const lockPath = join(homeDirectory, "..ambient-agent.setup.lock");
+    await mkdir(lockPath, { mode: 0o700 });
+    await expect(migrateLegacyManagedData(environment(homeDirectory))).rejects.toThrow("already in progress");
+    await expect(lstat(newPath(homeDirectory))).rejects.toMatchObject({ code: "ENOENT" });
+    await rm(lockPath, { recursive: true, force: true });
+
+    const stale = `${newPath(homeDirectory)}.staging-99999`;
+    await mkdir(stale, { mode: 0o700 });
+    await expect(migrateLegacyManagedData(environment(homeDirectory))).resolves.toMatchObject({ migrated: true });
+    await expect(lstat(stale)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("cleans the staging directory and keeps the source intact when the copy cannot be promoted", async () => {

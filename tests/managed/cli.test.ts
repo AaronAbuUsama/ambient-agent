@@ -1331,7 +1331,7 @@ describe("managed CLI", () => {
     vi.stubEnv("HOME", paths.parent);
     try {
       expect(
-        await runCli(["status"], {
+        await runCli(["status", "--json"], {
           ...migratedCli,
           migrateManagedData: async () => {
             migrations += 1;
@@ -1343,7 +1343,8 @@ describe("managed CLI", () => {
       vi.unstubAllEnvs();
     }
     expect(migrations).toBe(1);
-    expect(migratedCli.stdout()).toContain(`Moved managed data from ${join(paths.parent, "legacy")} to ${paths.data}`);
+    expect(migratedCli.stderr()).toContain(`Moved managed data from ${join(paths.parent, "legacy")} to ${paths.data}`);
+    expect(JSON.parse(migratedCli.stdout())).toMatchObject({ state: "unconfigured" });
   });
 
   it("fails closed with a nonzero exit code when the root migration refuses to choose", async () => {

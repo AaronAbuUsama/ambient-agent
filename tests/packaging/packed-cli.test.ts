@@ -282,8 +282,8 @@ describe("packed ambient-agent executable", () => {
     );
 
     const migrated = await executeAmbientAgent(["status", "--json"], migrationEnvironment);
-    expect(migrated.stdout).toContain(`Moved managed data from ${legacyData} to ${adoptedData}.`);
-    expect(JSON.parse(migrated.stdout.slice(migrated.stdout.indexOf("{")))).toMatchObject({
+    expect(migrated.stderr).toContain(`Moved managed data from ${legacyData} to ${adoptedData}.`);
+    expect(JSON.parse(migrated.stdout)).toMatchObject({
       state: "configured",
       dataDirectory: adoptedData,
       modelAuthentication: { state: "ready" },
@@ -297,7 +297,7 @@ describe("packed ambient-agent executable", () => {
     record.close();
 
     const settled = await executeAmbientAgent(["status", "--json"], migrationEnvironment);
-    expect(settled.stdout).not.toContain("Moved managed data");
+    expect(settled.stderr).not.toContain("Moved managed data");
     expect(JSON.parse(settled.stdout)).toMatchObject({ state: "configured", dataDirectory: adoptedData });
 
     const conflictedHome = join(root, "conflicted-home");

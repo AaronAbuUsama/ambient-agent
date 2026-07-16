@@ -1,13 +1,16 @@
 import { chmod, copyFile, lstat, mkdir, open, readdir, rename, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { readManagedConfig, readManagedGitHubCredential } from "./configuration.js";
+import { acquireSetupLock, releaseSetupLock } from "./installation.js";
 import {
   managedPaths,
   resolveLegacyManagedDataDirectory,
   resolveManagedDataDirectory,
   type ManagedPathEnvironment,
 } from "./paths.js";
+import { probeAmbientRuntimeHealth, runtimeInstallationId } from "./runtime-health.js";
 
 export interface ManagedDataMigration {
   readonly migrated: boolean;
@@ -18,6 +21,8 @@ export interface ManagedDataMigration {
 export interface MigrateManagedDataOptions extends ManagedPathEnvironment {
   /** Test seam so the cross-filesystem (EXDEV) copy fallback is exercisable. */
   readonly rename?: typeof rename;
+  /** Test seam for the legacy-runtime liveness probe. */
+  readonly probeRuntimeHealth?: typeof probeAmbientRuntimeHealth;
 }
 
 const errorCode = (cause: unknown): string | undefined =>
@@ -94,10 +99,55 @@ const migrationRecorded = (applicationDatabase: string, source: string): boolean
 };
 
 /**
+ * Fail closed when the legacy runtime verifiably answers its health endpoint:
+ * renaming the directory under a live process would leave it writing into the
+ * moved tree through open file descriptors. An unreadable legacy config or a
+ * port holder that is not verifiably ours cannot block the migration.
+ */
+const assertLegacyRuntimeStopped = async (
+  legacy: string,
+  probe: typeof probeAmbientRuntimeHealth,
+): Promise<void> => {
+  let state: string;
+  try {
+    const legacyPaths = managedPaths({ dataDirectory: legacy });
+    const config = await readManagedConfig(legacyPaths.config);
+    const credential = await readManagedGitHubCredential(legacyPaths.githubCredential);
+    if (credential.webhookSecret === undefined) return;
+    const health = await probe({
+      port: config.runtime.port,
+      installationId: runtimeInstallationId(credential.webhookSecret),
+      timeoutMillis: 750,
+    });
+    state = health.state;
+  } catch {
+    return;
+  }
+  // "stopped" is nothing listening; "failed" is a port holder that did not
+  // prove it is our runtime. Every other state came from a verified health
+  // response, so the legacy installation is live.
+  if (state !== "stopped" && state !== "failed") {
+    throw new Error(
+      `The Ambient Agent runtime is still running against ${legacy} (${state}). ` +
+        `Stop it, then run ambient-agent again to migrate the managed data.`,
+    );
+  }
+};
+
+const removeStaleStaging = async (root: string): Promise<void> => {
+  const prefix = `${basename(root)}.staging-`;
+  for (const entry of await readdir(dirname(root))) {
+    if (entry.startsWith(prefix)) await rm(join(dirname(root), entry), { recursive: true, force: true });
+  }
+};
+
+/**
  * One-time adoption of a pre-ADR-0015 installation into ~/.ambient-agent.
  * Atomic: same-filesystem rename, or staged copy + rename on EXDEV (the source
  * then remains intact as the backup). Fails closed when both directories exist
- * without a recorded migration, and never runs under a dataDirectory override.
+ * without a recorded migration or when the legacy runtime is still live, and
+ * never runs under a dataDirectory override. Concurrent invocations serialize
+ * on the managed setup lock.
  */
 export const migrateLegacyManagedData = async (
   options: MigrateManagedDataOptions = {},
@@ -105,32 +155,46 @@ export const migrateLegacyManagedData = async (
   const root = resolveManagedDataDirectory(options);
   if (options.dataDirectory !== undefined) return { migrated: false, root };
   const legacy = resolveLegacyManagedDataDirectory(options);
-  if (legacy === undefined || legacy === root || !(await exists(legacy))) return { migrated: false, root };
+  if (legacy === undefined || legacy === root) return { migrated: false, root };
   const paths = managedPaths(options);
-  if (await exists(root)) {
+  // Returns the settled outcome, or undefined when a migration is still needed.
+  const settled = async (): Promise<ManagedDataMigration | undefined> => {
+    if (!(await exists(legacy))) return { migrated: false, root };
+    if (!(await exists(root))) return undefined;
     if (migrationRecorded(paths.applicationDatabase, legacy)) return { migrated: false, root };
     throw new Error(
       `Managed data exists at both ${root} and the former default ${legacy}. ` +
         `Remove or rename whichever directory is not the real installation, then run ambient-agent again.`,
     );
-  }
-  const move = options.rename ?? rename;
+  };
+  const early = await settled();
+  if (early !== undefined) return early;
+  const lock = await acquireSetupLock(root);
   try {
-    await move(legacy, root);
-    await recordMigration(paths.applicationDatabase, legacy);
-  } catch (cause) {
-    if (errorCode(cause) !== "EXDEV") throw cause;
-    const staging = `${root}.staging-${process.pid}`;
+    const raced = await settled();
+    if (raced !== undefined) return raced;
+    await assertLegacyRuntimeStopped(legacy, options.probeRuntimeHealth ?? probeAmbientRuntimeHealth);
+    await removeStaleStaging(root);
+    const move = options.rename ?? rename;
     try {
-      await copySecureTree(legacy, staging);
-      // Record before promoting so a post-promote crash never leaves both
-      // directories present without the record that marks the source a backup.
-      await recordMigration(join(staging, "application.sqlite"), legacy);
-      await move(staging, root);
-    } catch (copyCause) {
-      await rm(staging, { recursive: true, force: true });
-      throw copyCause;
+      await move(legacy, root);
+      await recordMigration(paths.applicationDatabase, legacy);
+    } catch (cause) {
+      if (errorCode(cause) !== "EXDEV") throw cause;
+      const staging = `${root}.staging-${process.pid}`;
+      try {
+        await copySecureTree(legacy, staging);
+        // Record before promoting so a post-promote crash never leaves both
+        // directories present without the record that marks the source a backup.
+        await recordMigration(join(staging, "application.sqlite"), legacy);
+        await move(staging, root);
+      } catch (copyCause) {
+        await rm(staging, { recursive: true, force: true });
+        throw copyCause;
+      }
     }
+    return { migrated: true, root, source: legacy };
+  } finally {
+    await releaseSetupLock(lock);
   }
-  return { migrated: true, root, source: legacy };
 };
