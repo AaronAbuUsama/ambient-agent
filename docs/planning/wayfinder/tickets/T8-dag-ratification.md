@@ -99,6 +99,16 @@ wants pulled forward/dropped.
 - `W-compose` — T6-O1 composeAmbience (after W-windows-everything)
 - `W-cut` — C5 four-package cut ← evals-green + W-symbolfor + W-compose + W-c3 + W-c4
 
-## Resolution
+## Resolution (Aaron, 2026-07-16)
 
-Pending Aaron's ratification (+ explicit go-ahead before anything is filed on GitHub).
+**Ratified as drawn** (16 tickets, wave-0 bundle incl. W-skill-tree, evals-green gates
+the cut, W-compose after W-windows-everything, D4+D3 merged). GitHub filing approved:
+**/to-tickets may file the issues with blocking edges on AaronAbuUsama/ambient-agent
+AFTER the /to-spec output is reviewed by Aaron.**
+
+Filing requirement (Aaron): the master issue AND every child must be self-contained —
+plain-language description of the effort, the two-liner, the exact end state, links to
+the architectural docs, mermaid architecture + sequence diagrams. No bare
+title+acceptance-criteria tickets.
+
+CLOSED — the map is complete; the way to the destination is clear.

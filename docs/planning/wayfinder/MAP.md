@@ -36,10 +36,19 @@ someone goes and does the thing.
 
 ## Open tickets (the frontier, in suggested order)
 
-- [T2 — Harness window input + faux/live boundary](tickets/T2-harness-window-input.md) — unblocked (T1 resolved)
-- [T8 — Ratify the implementation DAG](tickets/T8-dag-ratification.md) — blocked by T2; gates /to-spec → /to-tickets
+None — **the map is complete** (all eight tickets resolved 2026-07-16). Next:
+/to-spec (specs reviewed by Aaron) → /to-tickets (files GitHub issues, master + children
+each fully self-contained: narrative, end state, mermaid architecture + sequence
+diagrams, blocking edges).
 
 ## Decisions so far
+
+- [T2 — Harness window input](tickets/T2-harness-window-input.md) — O1: additive
+  `window` variant → `/test/coalescer` + admission polling; faux/live boundary as
+  drafted (judges grade against the skill-bundle text).
+- [T8 — Implementation DAG](tickets/T8-dag-ratification.md) — ratified as drawn
+  (16 tickets; evals-green gates the cut); GitHub filing approved after spec review;
+  every filed issue must carry full context + diagrams.
 
 - **Skill layering architecture** (Aaron, in-session 2026-07-16) — tools are code (the
   machine); ALL policy/behavior lives in skills (the mind); skills are layered bundles
