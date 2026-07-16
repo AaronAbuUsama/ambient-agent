@@ -58,7 +58,14 @@ const stripTerminalControls = (value: string): string => {
         while (index < value.length && (value.charCodeAt(index) < 64 || value.charCodeAt(index) > 126)) index += 1;
       } else if (introducer === 93) {
         index += 2;
-        while (index < value.length && value.charCodeAt(index) !== 7) index += 1;
+        while (index < value.length) {
+          if (value.charCodeAt(index) === 7) break;
+          if (value.charCodeAt(index) === 27 && value.charCodeAt(index + 1) === 92) {
+            index += 1;
+            break;
+          }
+          index += 1;
+        }
       }
       continue;
     }

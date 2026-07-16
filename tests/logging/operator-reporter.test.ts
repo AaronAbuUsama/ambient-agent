@@ -101,6 +101,21 @@ describe("operator reporter", () => {
     ).toBe("2:01:32 PM  ← [Lavin UK] hello red spoof");
   });
 
+  it("preserves content after ST-terminated OSC controls", () => {
+    expect(
+      renderOperatorRecord(
+        {
+          time: at(14, 1, 32),
+          level: 30,
+          operatorEvent: "chat.received",
+          actor: "Lavin UK",
+          text: "before \u001B]8;;https://example.com\u001B\\linked\u001B]8;;\u001B\\ after",
+        },
+        { colorize: false },
+      ),
+    ).toBe("2:01:32 PM  ← [Lavin UK] before linked after");
+  });
+
   it("strips bidirectional override characters from untrusted content", () => {
     expect(
       renderOperatorRecord(
