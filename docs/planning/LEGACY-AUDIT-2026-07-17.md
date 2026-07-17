@@ -114,14 +114,13 @@ exports `apps/cli/src/inspection.ts:29`, `apps/cli/src/program.ts:95-96`,
    eval-file scaffolding repeats (`issue-management.eval.ts`, `participation-mechanics.eval.ts`),
    and `tests/fixtures/packed-oauth-fetch.cjs` vs `packed-runtime.mjs` (fixtures, fine duplicated).
 
-## RESOLVED same day: capabilities/skills placement
+## RESOLVED same day (corrected): capabilities are SHARED across agents
 
-Aaron ratified: **each agent is its own thing — skills stay inside the agent's folder.**
-Per-agent ownership is the point of `packages/agents` ("one folder per agent"); do NOT hoist
-skills to a shared `capabilities/` level or a separate package. A hoist option was presented
-and explicitly rejected. Agent #2 arrives as a sibling folder owning its own skills; anything
-genuinely shared graduates down to `packages/engine` only when a second agent actually needs it
-(precedent: #131 already moved operation-store and input contracts down for exactly that reason).
+Aaron's final ratification, correcting an earlier misreading in this same doc: agents stay
+self-contained *identities*, but **skills/capabilities are shared across agents** — they move
+out of `ambience/` to `packages/agents/src/capabilities/`. Full plan:
+[SHARED-CAPABILITIES-SPEC.md](SHARED-CAPABILITIES-SPEC.md) (30 reference sites enumerated,
+new capabilities→agent boundary rule, Phase 2 for de-Ambiencing prompt-visible text).
 
 ## Open question parked here: activity-reporter placement
 
