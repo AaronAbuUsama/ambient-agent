@@ -25,11 +25,14 @@ Confidence, Provenance, Commitment, Cross-platform identity) land in `CONTEXT.md
 that vocabulary and does not restate it.
 
 **Scope note — the memory & state arm only.** The Reviewer workflow shape
-([#147](https://github.com/AaronAbuUsama/ambient-agent/issues/147)) is the one
-suite decision still open. It consumes the same Worker contract and identity model
-the Coder does, so nothing here waits on it; where the Reviewer would slot in, this
-spec points at the Coder template ([#136](https://github.com/AaronAbuUsama/ambient-agent/issues/136))
-it will inherit and moves on.
+([#147](https://github.com/AaronAbuUsama/ambient-agent/issues/147)) is a **suite**
+decision, not a memory & state one — it was ratified in parallel (the standalone
+Reviewer: a PR opens, it runs, posts a verdict under `reviewer[bot]`, owns no loop).
+It consumes the same Worker contract and identity model the Coder does, so nothing
+here waits on it; where the Reviewer would slot in, this spec points at the Coder
+template ([#136](https://github.com/AaronAbuUsama/ambient-agent/issues/136)) it
+inherits and moves on. Its implementation issue (a sibling of #158) is suite build
+work, out of scope for this spec.
 
 ---
 
@@ -73,7 +76,7 @@ flowchart TB
 
   subgraph workers["Workers (workflow-wrapped, own GitHub App each)"]
     CODER["Coder"]
-    REV["Reviewer (#147, open)"]
+    REV["Reviewer (#147)"]
     PLAN["Planner"]
   end
   SPKA -->|start_coder_job(invoke) → runId| CODER
@@ -105,7 +108,7 @@ Five named agents in two run modes, connected only by the shared graph.
 | **Speaker** | Continuing per-thread instance (`dispatch`, durable transcript) | Yes | Shares the **Planner** App for inline issue-filing (§7) | Manages one thread and responds. Talk/stay-silent per window. Quick inline actions; launches Workers for real work, never blocks. Replaces "Ambience". |
 | **Scribe** | Continuing per-thread instance, same input stream, debounced | Never | None | Extracts ontology into the graph. Its only tools write/read the graph. |
 | **Coder** | Workflow-wrapped (`defineWorkflow({ agent })`, fresh context per run) | Via GitHub | Own App (`github-coder.json`) | Long-running implementation → PR. |
-| **Reviewer** | Workflow-wrapped | Via GitHub | Own App (`github-reviewer.json`) | Reviews PRs; its approval counts (§7). Shape open in #147. |
+| **Reviewer** | Workflow-wrapped | Via GitHub | Own App (`github-reviewer.json`) | Reviews PRs; its approval counts (§7). Standalone-Reviewer shape ratified in #147. |
 | **Planner** | Workflow-wrapped | Via GitHub | Own App (`github-planner.json`) | Label/milestone administration & planning Issue Management defers. |
 
 **Two run modes, grounded in Flue.** *Continuing* agents (Speaker, Scribe) own a
@@ -649,9 +652,10 @@ each Worker's SKILL (§8, #147).
 
 ## 11. What this arm does not settle
 
-- **#147 (Reviewer workflow shape)** — the one open suite decision. Consumes this
-  contract + identity model; inherits the Coder template (§8). Its implementation
-  issue lands after #147 ratifies.
+- **#147 (Reviewer workflow shape)** — ratified in parallel (standalone Reviewer, no
+  loop). Consumes this contract + identity model; inherits the Coder template (§8). Its
+  implementation issue — a sibling of #158, reusing #157 transport + #153 identity — is
+  suite build work, not part of this memory & state arm.
 - **The "monologue agent" fog** (#132): keyless-entity consolidation (the later pass
   the Scribe leans on) and overdue-commitment nudges (the first named instance, §9).
   Deliberately unbuilt until honest-recording proves insufficient.
