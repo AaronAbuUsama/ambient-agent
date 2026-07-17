@@ -96,8 +96,8 @@ describe("the post-Eve production cut", () => {
 
   it("keeps the workspace boundaries: the ratified arrow diagram, enforced", async () => {
     // engine -> nothing internal; agents -> engine; installation -> agents+engine;
-    // apps/server -> all packages; apps/cli -> installation+engine (NEVER agents);
-    // test-support -> anything.
+    // apps/server -> engine+agents+installation (never test-support);
+    // apps/cli -> installation+engine (NEVER agents); test-support -> anything.
     const boundaries: ReadonlyArray<readonly [string, RegExp]> = [
       ["packages/engine/src", /@ambient-agent\//],
       ["packages/agents/src", /@ambient-agent\/(?!engine\/)/],
