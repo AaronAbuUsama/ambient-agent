@@ -1,0 +1,81 @@
+# Architecture map
+
+The ratified taxonomy (#117 → #131): three packages, two apps, one arrow diagram —
+enforced, not aspirational (`tests/ambience/hard-cut.test.ts`).
+
+```mermaid
+graph TD
+  subgraph apps
+    CLI["apps/cli<br/>operate the installation"]
+    SRV["apps/server<br/>Flue build root — hosts Ambience"]
+  end
+  subgraph packages
+    AG["agents<br/>everything that thinks:<br/>agents own identity,<br/>capabilities are shared"]
+    INST["installation<br/>on-disk state + lifecycle<br/>of one running install"]
+    ENG["engine<br/>agent-agnostic conversation<br/>machinery — imports nothing internal"]
+  end
+  TS["test-support<br/>fakes + eval battery<br/>(may import anything)"]
+  CLI --> INST
+  CLI --> ENG
+  SRV --> AG
+  SRV --> INST
+  SRV --> ENG
+  AG --> ENG
+  INST --> AG
+  INST --> ENG
+```
+
+**Rules** (verbatim from the hard-cut test): engine → nothing internal; agents → engine;
+installation → agents+engine; apps/server → all packages; apps/cli → installation+engine
+(**never** agents); test-support → anything. Additionally: capabilities may never import
+from an agent folder, and no package may publish a `./*` wildcard export.
+
+## How a message becomes work
+
+```mermaid
+sequenceDiagram
+  participant WA as WhatsApp (whatsappd)
+  participant ENG as engine (Coalescer + intake)
+  participant AG as agents (Ambience)
+  participant FLUE as Flue runtime
+  participant GH as GitHub
+
+  WA->>ENG: ConversationEvent → Conversation Archive (append-only)
+  ENG->>ENG: Coalescer: one fiber per chatId,<br/>throttle + settle window → Window
+  ENG->>AG: WindowDispatcher port → admitWindow (admission, retry, at-least-once)
+  AG->>FLUE: dispatchAmbience (Flue dispatch + activity correlation)
+  FLUE->>AG: runs Ambience with mounted capabilities
+  AG->>WA: Say / React (whatsapp-participation port)
+  AG->>GH: issue operations with Operation Identity (issue-management port)
+  FLUE-->>AG: lifecycle observations (dispatchId only)<br/>→ activity reporter re-attaches chat context
+```
+
+## Where things live — quick answers
+
+- **"Any agent needs this"** → `packages/engine`. Precedent: operation-store and input
+  contracts moved down in #131; the dispatch-correlator split is next
+  (survey: `docs/planning/LEGACY-AUDIT-2026-07-17.md`, activity-reporter section).
+- **"A kind of work an agent can do"** → `packages/agents/src/capabilities/<name>/`
+  (SKILL.md + tools + port). Shared across agents; ratified in
+  `docs/planning/SHARED-CAPABILITIES-SPEC.md`.
+- **"Who an agent is"** → `packages/agents/src/<agent>/` (instructions, composition,
+  dispatch).
+- **"On-disk state of an install"** → `packages/installation`.
+- **Deployables** → `apps/` (cli = operate, server = host). Both are bundled; internal
+  packages are compiled in, the server's `package.json` dependency list is the flue-build
+  externals manifest.
+
+## Domain vocabulary
+
+`CONTEXT.md` at the repo root is the ratified glossary (Capability, Skill, Window,
+Managed Chat, Operation Identity, Uncertain, …). Name things from it; propose additions
+there first. Design records: `docs/COALESCER-DESIGN.md` (D1–D4), ADRs 0010–0016,
+`docs/planning/` for in-flight specs.
+
+## Per-package docs
+
+Each workspace has a README: [engine](../packages/engine/README.md) ·
+[agents](../packages/agents/README.md) ·
+[installation](../packages/installation/README.md) ·
+[test-support](../packages/test-support/README.md) ·
+[cli](../apps/cli/README.md) · [server](../apps/server/README.md)
