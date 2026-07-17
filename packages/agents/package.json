@@ -13,5 +13,16 @@
     "./capabilities/issue-management/issue-repository.ts": "./src/capabilities/issue-management/issue-repository.ts",
     "./capabilities/issue-management/runtime.ts": "./src/capabilities/issue-management/runtime.ts",
     "./capabilities/whatsapp-participation/whatsapp-port.ts": "./src/capabilities/whatsapp-participation/whatsapp-port.ts"
+  },
+  "dependencies": {
+    "@flue/runtime": "1.0.0-beta.9",
+    "effect": "4.0.0-beta.98",
+    "hono": "4.12.30",
+    "pino": "^10.3.1",
+    "valibot": "1.4.2"
+  },
+  "devDependencies": {
+    "@flue/sdk": "1.0.0-beta.9",
+    "vitest-evals": "0.14.0"
   }
 }

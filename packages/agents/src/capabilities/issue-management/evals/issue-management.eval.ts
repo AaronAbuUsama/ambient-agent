@@ -1,10 +1,10 @@
 import { expect } from "vitest";
 import { describeEval, toolCalls } from "vitest-evals";
 
-import { createFlueAgentHarness } from "./harness.ts";
+import { createFlueAgentHarness } from "../../../../../test-support/src/evals/harness.ts";
+import { githubEventKinds, windowMessage } from "../../../../evals/shared.ts";
 
 const harness = createFlueAgentHarness({ agentName: "ambience" });
-const window = (text: string): string => `WhatsApp Window for the current managed chat:\nAlice: ${text}`;
 
 describeEval(
   "Issue Management deterministic contract",
@@ -12,7 +12,7 @@ describeEval(
   (it) => {
     it("creates one complete report after duplicate search", async ({ run }) => {
       const result = await run({
-        message: window("CREATE_COMPLETE_ISSUE"),
+        message: windowMessage("CREATE_COMPLETE_ISSUE"),
         fixture: { resetGitHub: true, resetWhatsApp: true },
       });
       const calls = toolCalls(result);
@@ -26,7 +26,7 @@ describeEval(
         },
         result: { status: "created", issue: { number: 1 } },
       });
-      expect(result.output.githubEvents.map((event) => (event as { kind?: string }).kind)).toEqual([
+      expect(githubEventKinds(result.output)).toEqual([
         "search",
         "create",
       ]);
@@ -37,7 +37,7 @@ describeEval(
 
     it("creates one complete feature request with its audience and motivation", async ({ run }) => {
       const result = await run({
-        message: window("CREATE_COMPLETE_FEATURE"),
+        message: windowMessage("CREATE_COMPLETE_FEATURE"),
         fixture: { resetGitHub: true, resetWhatsApp: true },
       });
       const create = toolCalls(result).filter((call) => call.name === "github_create_issue");
@@ -51,7 +51,7 @@ describeEval(
         },
         result: { status: "created", issue: { number: 1 } },
       });
-      expect(result.output.githubEvents.map((event) => (event as { kind?: string }).kind)).toEqual([
+      expect(githubEventKinds(result.output)).toEqual([
         "search",
         "create",
       ]);
@@ -59,7 +59,7 @@ describeEval(
 
     it("corrects and organizes one existing issue, then acknowledges it once", async ({ run }) => {
       const result = await run({
-        message: window("UPDATE_EXISTING_ISSUE"),
+        message: windowMessage("UPDATE_EXISTING_ISSUE"),
         fixture: {
           resetGitHub: true,
           resetWhatsApp: true,
@@ -102,7 +102,7 @@ describeEval(
           arguments: { text: "Updated issue #1 with the corrected title and repository organization." },
         }),
       ]);
-      expect(result.output.githubEvents.map((event) => (event as { kind?: string }).kind)).toEqual([
+      expect(githubEventKinds(result.output)).toEqual([
         "get",
         "list-options",
         "update",
@@ -114,7 +114,7 @@ describeEval(
 
     it("asks one focused question when the report is incomplete", async ({ run }) => {
       const result = await run({
-        message: window("INCOMPLETE_ISSUE"),
+        message: windowMessage("INCOMPLETE_ISSUE"),
         fixture: { resetGitHub: true, resetWhatsApp: true },
       });
       const calls = toolCalls(result);
@@ -130,7 +130,7 @@ describeEval(
 
     it("redirects an existing report without a create mutation", async ({ run }) => {
       const result = await run({
-        message: window("DUPLICATE_ISSUE"),
+        message: windowMessage("DUPLICATE_ISSUE"),
         fixture: {
           resetGitHub: true,
           resetWhatsApp: true,
@@ -142,7 +142,7 @@ describeEval(
       expect(create[0]).toMatchObject({ status: "ok", result: { status: "duplicate" } });
       expect(toolCalls(result).filter((call) => call.name === "say")).toEqual([]);
       expect(result.output.whatsappEvents).toEqual([]);
-      expect(result.output.githubEvents.map((event) => (event as { kind?: string }).kind)).toEqual(["search"]);
+      expect(githubEventKinds(result.output)).toEqual(["search"]);
       expect(result.output.githubOperations).toEqual([]);
     });
   },

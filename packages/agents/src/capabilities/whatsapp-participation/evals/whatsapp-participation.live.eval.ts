@@ -1,9 +1,9 @@
 import { afterAll } from "vitest";
 import { describeEval } from "vitest-evals";
 
-import { finishBraintrustReport, recordRubricScore } from "./braintrust-reporter.ts";
-import { createFlueAgentHarness } from "./harness.ts";
-import { participationAxes, participationSkillBundle, rubricJudgeHarness } from "./rubric-judges.ts";
+import { finishBraintrustReport, recordRubricScore } from "../../../../../test-support/src/evals/braintrust-reporter.ts";
+import { createFlueAgentHarness } from "../../../../../test-support/src/evals/harness.ts";
+import { participationAxes, participationSkillBundle, rubricJudgeHarness } from "../../../../evals/rubric-judges.ts";
 
 const harness = createFlueAgentHarness({ agentName: "ambience" });
 const liveOnly = () => process.env.AMBIENCE_EVAL_LIVE_MODEL !== "true";

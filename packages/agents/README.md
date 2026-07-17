@@ -11,7 +11,8 @@ Everything that thinks. Two kinds of thing live here, with an enforced arrow bet
 - **`capabilities/` — shared units of work, agent-agnostic.** A Capability is "a cohesive
   kind of work the Ambient Agent can perform for the group... the canonical way the product
   grows" (`CONTEXT.md`). Each bundle is: `SKILL.md` (the Skill — policy and process) +
-  `tools.ts` (the Tools — validated operations) + a port at the seam. Any agent may mount
+  `tools.ts` (the Tools — validated operations) + a port at the seam + `evals/` (the
+  capability's own proof: its deterministic and `.live` suites). Any agent may mount
   any capability; **capabilities may never import from an agent folder** (enforced by
   `tests/ambience/hard-cut.test.ts`). Ratified 2026-07-17; see
   `docs/planning/SHARED-CAPABILITIES-SPEC.md`.
@@ -71,5 +72,8 @@ discovery) and `@ambient-agent/installation` (issue-repository types). `apps/cli
 ## Tested by
 
 `tests/ambience/{agent-boundary,dispatch,issue-management,participation,whatsapp-runtime}.test.ts`,
-`tests/logging/agent-activity-reporter.test.ts`; behavior is gated by the eval battery in
-`packages/test-support/src/evals/`.
+`tests/logging/agent-activity-reporter.test.ts`; behavior is gated by the eval battery: each
+capability's suites live in its own `evals/` folder, cross-capability mechanics and the
+rubric judges in `packages/agents/evals/`, and the harness + Braintrust reporting in
+test-support. The #113 baseline on this battery gates every structural refactor
+("structure changed, behaviour didn't").

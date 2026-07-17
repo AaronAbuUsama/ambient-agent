@@ -2,11 +2,11 @@ import { createFlueClient } from "@flue/sdk";
 import { readFileSync } from "node:fs";
 import { createJudge, createJudgeHarness, type JudgeResult } from "vitest-evals";
 
-import { recordRubricScore } from "./braintrust-reporter.ts";
-import type { FlueAgentEvalInput, FlueAgentEvalOutput } from "./harness.ts";
+import { recordRubricScore } from "../../test-support/src/evals/braintrust-reporter.ts";
+import type { FlueAgentEvalInput, FlueAgentEvalOutput } from "../../test-support/src/evals/harness.ts";
 
-const whatsappSkill = readFileSync(new URL("../../../agents/src/capabilities/whatsapp-participation/SKILL.md", import.meta.url), "utf8");
-const issueSkill = readFileSync(new URL("../../../agents/src/capabilities/issue-management/SKILL.md", import.meta.url), "utf8");
+const whatsappSkill = readFileSync(new URL("../src/capabilities/whatsapp-participation/SKILL.md", import.meta.url), "utf8");
+const issueSkill = readFileSync(new URL("../src/capabilities/issue-management/SKILL.md", import.meta.url), "utf8");
 const skillBundle = [whatsappSkill, issueSkill].join("\n\n---\n\n");
 
 const client = createFlueClient({

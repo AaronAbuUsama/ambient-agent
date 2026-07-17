@@ -1,8 +1,9 @@
 import { afterAll, expect } from "vitest";
 import { describeEval, toolCalls } from "vitest-evals";
 
-import { finishBraintrustReport, recordRubricScore } from "./braintrust-reporter.ts";
-import { createFlueAgentHarness } from "./harness.ts";
+import { finishBraintrustReport, recordRubricScore } from "../../test-support/src/evals/braintrust-reporter.ts";
+import { createFlueAgentHarness } from "../../test-support/src/evals/harness.ts";
+import { expectNoExternalEffects } from "./shared.ts";
 import { hardSilenceCriterion, participationSkillBundle } from "./rubric-judges.ts";
 
 const harness = createFlueAgentHarness({ agentName: "ambience" });
@@ -17,9 +18,7 @@ describeEval(
         fixture: { resetGitHub: true, resetWhatsApp: true },
       });
 
-      expect(result.output.whatsappEvents).toEqual([]);
-      expect(result.output.githubEvents).toEqual([]);
-      expect(result.output.githubOperations).toEqual([]);
+      expectNoExternalEffects(result.output);
       expect(result.output.windowMessages).toEqual([
         {
           id: expect.stringMatching(/^eval-window-/),
@@ -123,9 +122,7 @@ describeEval(
         fixture: { resetGitHub: true, resetWhatsApp: true },
       });
 
-      expect(result.output.whatsappEvents).toEqual([]);
-      expect(result.output.githubEvents).toEqual([]);
-      expect(result.output.githubOperations).toEqual([]);
+      expectNoExternalEffects(result.output);
       expect(toolCalls(result).filter((call) => call.name === "say" || call.name.startsWith("github_"))).toEqual([]);
       recordRubricScore({
         axis: 5,

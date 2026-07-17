@@ -1,10 +1,10 @@
 import { expect } from "vitest";
 import { describeEval, toolCalls } from "vitest-evals";
 
-import { createFlueAgentHarness } from "./harness.ts";
+import { createFlueAgentHarness } from "../../../../../test-support/src/evals/harness.ts";
+import { windowMessage } from "../../../../evals/shared.ts";
 
 const harness = createFlueAgentHarness({ agentName: "ambience" });
-const window = (text: string): string => `WhatsApp Window for the current managed chat:\nAlice: ${text}`;
 
 describeEval(
   "WhatsApp Participation deterministic contract",
@@ -12,7 +12,7 @@ describeEval(
   (it) => {
     it("keeps casual group conversation private", async ({ run }) => {
       const result = await run({
-        message: window("Beautiful sunset today."),
+        message: windowMessage("Beautiful sunset today."),
         fixture: { resetWhatsApp: true },
       });
 
@@ -22,7 +22,7 @@ describeEval(
 
     it("uses exactly one Say for a useful direct request", async ({ run }) => {
       const result = await run({
-        message: window("Ambience, please tell the group that the release call starts at 16:00 UTC."),
+        message: windowMessage("Ambience, please tell the group that the release call starts at 16:00 UTC."),
         fixture: { resetWhatsApp: true },
       });
 
@@ -45,7 +45,7 @@ describeEval(
     it("searches only the current managed chat", async ({ run }) => {
       const otherChatId = `eval-other-${crypto.randomUUID()}@g.us`;
       const result = await run({
-        message: window("Search WhatsApp history for release details before deciding whether to speak."),
+        message: windowMessage("Search WhatsApp history for release details before deciding whether to speak."),
         fixture: {
           resetWhatsApp: true,
           history: [

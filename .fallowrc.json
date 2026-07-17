@@ -2,7 +2,8 @@
   "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
   "entry": [
     "apps/server/src/app.ts",
-    "packages/test-support/src/evals/*.eval.ts",
+    "packages/agents/evals/*.eval.ts",
+    "packages/agents/src/capabilities/*/evals/*.eval.ts",
     "vitest.evals.config.ts",
     "tests/fixtures/packed-oauth-fetch.cjs",
     "apps/server/src/agents/**/*.ts",
