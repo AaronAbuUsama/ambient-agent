@@ -41,4 +41,18 @@ describe("smoke stations", () => {
       detail: "GitHub access verified",
     });
   });
+
+  it("reports a malformed canary receipt instead of a success detail", async () => {
+    const stations = await smokeStations(readyReport, paths, "abc123", 30_000, async () => ({
+      chatId: "120363000@g.us",
+      text: "SMOKE wrong — ignore",
+      stages: ["admission", "dispatch", "settled-silent"],
+    }));
+
+    expect(stations.find(({ name }) => name === "canary")).toEqual({
+      name: "canary",
+      passed: false,
+      detail: "The live canary response was malformed or did not prove the required lifecycle.",
+    });
+  });
 });
