@@ -68,7 +68,7 @@ All green locally at the PR tip:
 - Host: `code-factory` (user `abuusama`)
 - Persistent runtime: tmux session `validate-88`, window `run117`
 - Tarball: `$HOME/validate-88/ambient-agent-0.3.0-issue117.tgz`
-- Packed artifact SHA-256: `74a610bc0702200054f9f167a919bc27a55d8cca426017ca3e2a42c082fc1ed1`
+- Packed artifact SHA-256: `94a8002a1ee1420d2314a2375d8fb4865038163b5cc86a3f5381b452c48c098e`
 - Data directory: the isolated `$HOME/validate-88/issue126-data` clone (same as the #126 proof; no
   schema change in this PR)
 - Runtime health endpoint: `http://127.0.0.1:42069/health`
@@ -107,24 +107,24 @@ PASS chatgpt: authentication ready; live readiness complete
 PASS runtime: healthy; WhatsApp online
 PASS backlog: 0 pending, 0 failed, no Uncertain work
 PASS github: access to AaronAbuUsama/ambient-agent
-PASS canary: SMOKE e5fdcb4e4326 settled silent (admission → dispatch → settled-silent)
+PASS canary: SMOKE 5c2a3a3739ed settled silent (admission → dispatch → settled-silent)
 ```
 
 The persistent runtime independently recorded the same nonce and lifecycle
 (`$HOME/validate-88/issue131-runtime.log`):
 
 ```json
-{"operatorEvent":"chat.received","text":"SMOKE e5fdcb4e4326 — ignore","chatId":"120363410063306573@g.us",...}
-{"operatorEvent":"agent.settled_silent","windowId":"0876961a-...","dispatchId":"a9f921ad-...",
+{"operatorEvent":"chat.received","text":"SMOKE 5c2a3a3739ed — ignore","chatId":"120363410063306573@g.us",...}
+{"operatorEvent":"agent.settled_silent","windowId":"...","dispatchId":"...",
  "msg":"Ambience settled without saying a WhatsApp message"}
 ```
 
 ## Eval battery vs the #113 baseline
 
 `pnpm evals` ran on the rig from a checkout of the PR tip
-(`$HOME/validate-88/issue117-eval-source`, log `issue131-evals.log`), authenticated to Braintrust.
+(`$HOME/validate-88/issue117-eval-source`, log `issue131-evals-final.log`), authenticated to Braintrust.
 Experiment:
-[ambient-agent-eval-baseline-2026-07-17T13-22-06-031Z](https://www.braintrust.dev/app/capxul/p/ambient%20agents/experiments/ambient-agent-eval-baseline-2026-07-17T13-22-06-031Z).
+[ambient-agent-eval-baseline-2026-07-17T13-41-37-968Z](https://www.braintrust.dev/app/capxul/p/ambient%20agents/experiments/ambient-agent-eval-baseline-2026-07-17T13-41-37-968Z).
 Application and judge model unchanged: `openai-codex/gpt-5.6-luna`.
 
 Receipt: deterministic 12 passed (9 live gated); live judged 9 passed (12 deterministic gated) —

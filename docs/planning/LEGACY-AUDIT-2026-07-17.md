@@ -67,6 +67,53 @@ Net if all four go: roughly −900 lines (source + tests), −0 deps.
   `apps/cli/src/inspection.ts:29`, `apps/cli/src/program.ts:95-96`; root devDeps
   `@ambient-agent/{cli,server,test-support}` flagged unused.
 
+## Validated fallow config fix (dry-run against a scratchpad config, repo untouched)
+
+Unused files 12 → 0, MI 89.5 → 91.1, zero suppress comments. The whole fix is `entry` +
+one plugin-pattern update in `.fallowrc.json`:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "entry": [
+    "apps/server/src/app.ts",
+    "apps/server/src/agents/**/*.ts",
+    "apps/server/src/channels/**/*.ts",
+    "packages/test-support/src/evals/*.eval.ts",
+    "vitest.evals.config.ts",
+    "tests/fixtures/packed-oauth-fetch.cjs"
+  ],
+  "framework": [{
+    "name": "flue-agent-modules",
+    "enablers": ["@flue/runtime"],
+    "usedExports": [{ "pattern": "apps/server/src/agents/**/*.ts", "exports": ["description", "default"] }]
+  }],
+  "ignoreDependencies": ["qrcode-terminal"]
+}
+```
+
+Why each entry: `app.ts` (build root, was `src/app.ts`), `agents/**` + `channels/**` (Flue
+loads these by directory convention, never imported), evals + `vitest.evals.config.ts` +
+packed fixture (reachable only through vitest/pack, invisible to import tracing). Adding
+`"default"` to the plugin's usedExports clears the last false "unused export" on the agent stub.
+
+Real remainder after the fix: `apps/server/src/db.ts:7` unused default export; unused type
+exports `apps/cli/src/inspection.ts:29`, `apps/cli/src/program.ts:95-96`,
+`packages/test-support/src/evals/harness.ts:17,23`; the deps-centralization decision (§ above).
+
+## Duplication (fallow dupes): 9 clone groups, 219 lines, 1.99% — two worth extracting
+
+1. **`apps/cli/src/program.ts:288-296, 435-443, 515-523`** — the same 9-line
+   "inspect managed data, refuse unless ready" guard pasted into three commands (config /
+   repair / start), differing only in the verb inside the error string. Extract one
+   `requireReadyManagedData(dataDir, verb)` helper → −18 lines, one place to fix.
+2. **`packages/agents/src/ambience/skills/issue-management/tools.ts`** — two internal pairs
+   (75-111 vs 127-145; 226-244 vs 350-366), ~40 duplicated lines of tool schema/result shaping.
+   Extract shared helpers within the file.
+3. Low priority / leave: `engine/src/github/ingress.ts:18-26 vs 39-47` (9 lines),
+   eval-file scaffolding repeats (`issue-management.eval.ts`, `participation-mechanics.eval.ts`),
+   and `tests/fixtures/packed-oauth-fetch.cjs` vs `packed-runtime.mjs` (fixtures, fine duplicated).
+
 ## RESOLVED same day: capabilities/skills placement
 
 Aaron ratified: **each agent is its own thing — skills stay inside the agent's folder.**
