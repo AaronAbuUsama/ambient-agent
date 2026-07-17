@@ -7,6 +7,7 @@
   "exports": {
     "./braintrust.ts": "./src/braintrust.ts",
     "./coalescer/chat-gate.ts": "./src/coalescer/chat-gate.ts",
+    "./dispatch/dispatch-correlator.ts": "./src/dispatch/dispatch-correlator.ts",
     "./coalescer/coalescer.ts": "./src/coalescer/coalescer.ts",
     "./coalescer/config.ts": "./src/coalescer/config.ts",
     "./coalescer/events.ts": "./src/coalescer/events.ts",
@@ -27,6 +28,18 @@
     "./model/chatgpt-authentication.ts": "./src/model/chatgpt-authentication.ts",
     "./model/pi-subscription.ts": "./src/model/pi-subscription.ts",
     "./shared/errors.ts": "./src/shared/errors.ts",
+    "./shared/flue-global.ts": "./src/shared/flue-global.ts",
     "./shared/whatsapp-jid.ts": "./src/shared/whatsapp-jid.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.80.2",
+    "@flue/github": "1.0.0-beta.1",
+    "@flue/runtime": "1.0.0-beta.9",
+    "braintrust": "3.17.0",
+    "effect": "4.0.0-beta.98",
+    "pino": "^10.3.1",
+    "pino-roll": "^4.0.0",
+    "valibot": "1.4.2",
+    "whatsappd": "^0.2.1"
   }
 }

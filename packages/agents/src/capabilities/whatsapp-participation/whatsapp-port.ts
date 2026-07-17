@@ -1,4 +1,5 @@
 import type { ProjectedConversationMessage } from "@ambient-agent/engine/intake/conversation-archive.ts";
+import { createFlueGlobal } from "@ambient-agent/engine/shared/flue-global.ts";
 
 export type WhatsAppDeliveryResult =
   | { readonly delivery: "sent"; readonly messageId: string }
@@ -36,19 +37,13 @@ export interface WhatsAppMessageLookupPort {
 
 export interface WhatsAppParticipationPort extends WhatsAppOutboundPort, WhatsAppHistoryPort {}
 
-const WHATSAPP_PARTICIPATION_PORT = Symbol.for("ambient-agent.whatsapp-participation-port");
-const participationGlobal = globalThis as typeof globalThis & {
-  [WHATSAPP_PARTICIPATION_PORT]?: WhatsAppParticipationPort;
-};
+const portSlot = createFlueGlobal<WhatsAppParticipationPort>(
+  "whatsapp-participation-port",
+  "The WhatsApp Participation port is not configured for Ambience.",
+);
 
-export const configureWhatsAppParticipationPort = (port: WhatsAppParticipationPort): void => {
-  participationGlobal[WHATSAPP_PARTICIPATION_PORT] = port;
-};
+export const configureWhatsAppParticipationPort = (port: WhatsAppParticipationPort): void => portSlot.set(port);
 
 export const getWhatsAppParticipationPort = (): WhatsAppParticipationPort => {
-  const port = participationGlobal[WHATSAPP_PARTICIPATION_PORT];
-  if (port === undefined) {
-    throw new Error("The WhatsApp Participation port is not configured for Ambience.");
-  }
-  return port;
+  return portSlot.get();
 };

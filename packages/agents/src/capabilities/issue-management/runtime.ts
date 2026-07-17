@@ -1,5 +1,6 @@
 import type { IssueRepository, RepositoryRef } from "./issue-repository.ts";
 import type { IssueOperationStore } from "@ambient-agent/engine/github/operation-store.ts";
+import { createFlueGlobal } from "@ambient-agent/engine/shared/flue-global.ts";
 import { parseGitHubRepository } from "@ambient-agent/engine/github/repository.ts";
 
 const parseRepository = (value: string): RepositoryRef =>
@@ -36,15 +37,10 @@ export interface IssueManagementRuntime {
   readonly policy: IssueManagementPolicy;
 }
 
-const ISSUE_MANAGEMENT_RUNTIME = Symbol.for("ambient-agent.issue-management-runtime");
-const runtimeGlobal = globalThis as typeof globalThis & { [ISSUE_MANAGEMENT_RUNTIME]?: IssueManagementRuntime };
+const runtimeSlot = createFlueGlobal<IssueManagementRuntime>(
+  "issue-management-runtime",
+  "Issue Management runtime is not configured",
+);
 
-export const configureIssueManagementRuntime = (runtime: IssueManagementRuntime): void => {
-  runtimeGlobal[ISSUE_MANAGEMENT_RUNTIME] = runtime;
-};
-
-export const getIssueManagementRuntime = (): IssueManagementRuntime => {
-  const runtime = runtimeGlobal[ISSUE_MANAGEMENT_RUNTIME];
-  if (runtime === undefined) throw new Error("Issue Management runtime is not configured");
-  return runtime;
-};
+export const configureIssueManagementRuntime = (runtime: IssueManagementRuntime): void => runtimeSlot.set(runtime);
+export const getIssueManagementRuntime = (): IssueManagementRuntime => runtimeSlot.get();

@@ -6,7 +6,7 @@ import type { ConversationWindow } from "@ambient-agent/engine/coalescer/events.
 import { WindowDispatchError, WindowDispatcher } from "@ambient-agent/engine/coalescer/ports.ts";
 import { admitWindow, type DispatchRetryPolicy } from "@ambient-agent/engine/intake/admission-relay.ts";
 import type { ManagedChatInbox } from "@ambient-agent/engine/intake/managed-chat-inbox.ts";
-import { reportAcceptedAgentDispatch } from "./activity-reporter.ts";
+import { ambienceActivity } from "./activity-reporter.ts";
 import { whatsappWindowInput, type AmbienceInput } from "@ambient-agent/engine/inputs.ts";
 
 export interface AmbienceDispatchRequest {
@@ -18,7 +18,7 @@ export type DispatchAmbience = (request: AmbienceDispatchRequest) => Promise<Dis
 
 export const dispatchAmbience = async ({ id, input }: AmbienceDispatchRequest): Promise<DispatchReceipt> => {
   const receipt = await dispatch(ambience, { id, input });
-  reportAcceptedAgentDispatch(receipt, input);
+  ambienceActivity.accepted(receipt, input);
   return receipt;
 };
 

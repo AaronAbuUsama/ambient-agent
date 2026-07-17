@@ -17,11 +17,7 @@ import { configLayer, type CoalescerConfigValues } from "@ambient-agent/engine/c
 import { botIdsOf, whatsappEventSource } from "@ambient-agent/engine/coalescer/whatsapp.ts";
 import { createConversationArchive } from "@ambient-agent/engine/intake/conversation-archive.ts";
 import { createManagedChatInbox, managedChatWindowStore, type ManagedChatInbox } from "@ambient-agent/engine/intake/managed-chat-inbox.ts";
-import {
-  configureAgentActivityRecovery,
-  observeAgentActivity,
-  reportAgentSpoke,
-} from "@ambient-agent/agents/ambience/activity-reporter.ts";
+import { ambienceActivity } from "@ambient-agent/agents/ambience/activity-reporter.ts";
 import { effectLoggerLayer, getLogger, upstreamWhatsAppLogger } from "@ambient-agent/engine/logging/logging.ts";
 import type { WhatsAppRuntimeStatus } from "@ambient-agent/installation/runtime-health.ts";
 import { errorMessage } from "@ambient-agent/engine/shared/errors.ts";
@@ -68,7 +64,7 @@ export const createWhatsAppHost = (
       try {
         const message = await session.send(chatId, { text }, quote === undefined ? undefined : { quote });
         delivery = { delivery: "sent", messageId: message.id };
-        if (!reportAgentSpoke(chatId, text, message.id)) {
+        if (!ambienceActivity.spokeForChat(chatId, text, message.id)) {
           log.info(
             { operatorEvent: "agent.say", text, chatId, messageId: message.id },
             "Ambience said a WhatsApp message",
@@ -214,7 +210,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   const gate = makeManagedChatGate(options.managedChats);
   const archive = createConversationArchive(options.applicationDatabase);
   const inbox = createManagedChatInbox(archive, { allowed: gate.allowed });
-  configureAgentActivityRecovery((dispatchId) => {
+  ambienceActivity.recoverWith((dispatchId) => {
     const window = inbox.windowForDispatch(dispatchId);
     return window === undefined
       ? undefined
@@ -336,7 +332,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
             observedTerminal.set(candidateDispatchId, result);
             if (candidateDispatchId === dispatchId) finish(result);
           };
-          unsubscribe = (options.observeActivity ?? observeAgentActivity)({
+          unsubscribe = (options.observeActivity ?? ambienceActivity.subscribe)({
             windowDispatched: (event) => {
               observedDispatches.push(event);
               correlateDispatch(event);

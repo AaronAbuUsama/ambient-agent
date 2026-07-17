@@ -5,15 +5,14 @@ import type { GitHubIngressInput } from "../inputs.ts";
 import type { IssueOperationStore } from "./operation-store.ts";
 import { createGitHubIngress, type GitHubIngressResult, type GitHubIngressSettings } from "./ingress.ts";
 import { createGitHubIngressStore, type GitHubIngressStore } from "./ingress-store.ts";
+import { createFlueGlobal } from "../shared/flue-global.ts";
 
 type GitHubIngressHandler = (delivery: GitHubWebhookDelivery) => Promise<GitHubIngressResult>;
 
-const GITHUB_INGRESS_HANDLER = Symbol.for("ambient-agent.github-ingress-handler");
-const ingressGlobal = globalThis as typeof globalThis & { [GITHUB_INGRESS_HANDLER]?: GitHubIngressHandler };
-
-const configureGitHubIngressRuntime = (handler: GitHubIngressHandler): void => {
-  ingressGlobal[GITHUB_INGRESS_HANDLER] = handler;
-};
+const ingressHandler = createFlueGlobal<GitHubIngressHandler>(
+  "github-ingress-handler",
+  "GitHub ingress runtime is not configured",
+);
 
 export const installGitHubIngressRuntime = (
   settings: GitHubIngressSettings,
@@ -21,7 +20,7 @@ export const installGitHubIngressRuntime = (
   operations: IssueOperationStore,
 ): GitHubIngressStore => {
   const store = createGitHubIngressStore(settings.databasePath);
-  configureGitHubIngressRuntime(
+  ingressHandler.set(
     createGitHubIngress({
       store,
       routes: settings.routes,
@@ -32,8 +31,5 @@ export const installGitHubIngressRuntime = (
   return store;
 };
 
-export const handleGitHubDelivery = (delivery: GitHubWebhookDelivery): Promise<GitHubIngressResult> => {
-  const handler = ingressGlobal[GITHUB_INGRESS_HANDLER];
-  if (handler === undefined) throw new Error("GitHub ingress runtime is not configured");
-  return handler(delivery);
-};
+export const handleGitHubDelivery = (delivery: GitHubWebhookDelivery): Promise<GitHubIngressResult> =>
+  ingressHandler.get()(delivery);

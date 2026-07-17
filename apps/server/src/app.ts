@@ -12,7 +12,6 @@ import {
   type WhatsAppRuntimeControl,
 } from "./host/whatsapp-runtime.ts";
 import { installSmokeRoute } from "./host/smoke-route.ts";
-import { installAgentActivityReporter } from "@ambient-agent/agents/ambience/activity-reporter.ts";
 import {
   deferWhatsAppRuntimeStart,
   getManagedRuntimeDependencies,
@@ -27,7 +26,6 @@ export const createAmbientAgentApp = async ({
   githubCredential,
   paths,
 }: ManagedRuntimeDependencies): Promise<Hono> => {
-  installAgentActivityReporter();
   const subscription = await connectPiChatGptSubscription({ authentication });
   const issueOperations = createIssueOperationStore(paths.applicationDatabase);
   const installationId = runtimeInstallationId(githubCredential.webhookSecret);
