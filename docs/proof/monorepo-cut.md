@@ -2,48 +2,65 @@
 
 Date: 2026-07-17
 
-Ticket: [#117](https://github.com/AaronAbuUsama/ambient-agent/issues/117)
+Tickets: [#117](https://github.com/AaronAbuUsama/ambient-agent/issues/117) (the cut) +
+[#131](https://github.com/AaronAbuUsama/ambient-agent/issues/131) (the ratified taxonomy, folded
+into the same PR per Aaron's direction)
 
 This records the proof that the monorepo cut changed structure, not behavior: the packed-tarball npx
 install on the rig with every smoke station passing, and the full eval battery at the recorded
 [#113 baseline](./eval-baseline.md) floors.
 
-## The cut
+## The taxonomy (ratified live, 2026-07-17)
 
-- `apps/cli` — the CLI **application** (per Aaron's in-session direction: the CLI is cut as an
-  application, not a package), with `setup/` folded inside it. The workspace root keeps only the
-  publishable `ambient-agent` shell (bin, `dist`, scripts) — no root-level source.
-- `packages/core` — composeAmbience (the one composition root, T6 O1), the ambience agent + dispatch
-  (together, per T8), capabilities with their skill bundles, coalescer, intake, GitHub ingress,
-  managed installation, model, logging, shared, WhatsApp account.
-- `packages/server` — the Flue build root: `app.ts`, `db.ts`, agent discovery (re-export of core's
-  agent), GitHub channel, WhatsApp runtime host, smoke route.
-- `packages/test-support` — fake hosts and repositories, the eval harness, judges, and eval suites.
+```text
+apps/
+├── cli/            the operator application (setup/ folded in)
+└── server/         the Flue application (build root: flue build --root apps/server)
+packages/
+├── engine/         agent-agnostic conversation machinery: coalescer (WindowDispatcher port),
+│                   intake, GitHub ingress + operation store, the agent input contracts,
+│                   model/provider glue, logging, shared. Imports nothing internal.
+├── agents/         everything that thinks; one folder per agent. ambience/ owns agent.ts,
+│                   layered domain skills (SKILL bundle + tools + port per slice), compose,
+│                   dispatch (T8: beside the agent), observer, activity reporter.
+├── station/        installation machinery, flat (name still open per #131): paths, config,
+│                   schema, installation, diagnostics, migration, uncertain-work, runtime
+│                   health + the globalThis handshake, credentials, WhatsApp pairing,
+│                   Octokit adapter, qr/files.
+└── test-support/   fakes + eval harness/judges/suites.
+```
 
-Boundaries are enforced by `tests/ambience/hard-cut.test.ts`: core imports no sibling; cli and server
-share nothing but the `Symbol.for` globalThis handshake (untouched).
+The arrows, enforced by `tests/ambience/hard-cut.test.ts`: engine imports nothing internal;
+agents → engine; station → agents + engine; apps/server → all three; **apps/cli → station +
+engine, never agents** (the operator surface and the thinking surface meet only at the running
+server). Wildcard `./*` exports are gone and asserted gone — each package exports an explicit
+measured surface (engine 23, agents 8, station 12 subpaths); root tests use relative white-box
+paths so the public surfaces stay honest.
+
+Composition: `composeAmbience(adapters)` (T6 O1) is the one composition root, consumed by
+`apps/server/src/app.ts` and the eval fixture; the coalescer stack deliberately stays outside it
+(production: `runWhatsAppSession`; fixture: its Effect fork with test seams). Identity stays in
+the agent's `instructions:` — Flue skills are progressively disclosed per the Agent Skills spec,
+so standing identity is precisely the frame a skill can't carry (recorded on #131); all behavior
+policy lives in the two skill bundles.
 
 **Bundling mechanism** (the load-bearing discovery): `flue build` externalizes exactly the
-dependencies declared in its `--root` manifest. `packages/server/package.json` therefore declares
-the real npm runtime dependencies but deliberately **not** `@ambient-agent/core`, so core is bundled
-into the published `dist/server.mjs` while npm dependencies stay external — the tarball remains
-self-contained with an unchanged layout. The CLI bundle pins the same property explicitly with
-`pack.noExternal: [/^@ambient-agent\//]`.
-
-**Deferred, documented**: the coalescer stack is NOT part of `composeAmbience` (T6 O1 ratified; O2
-deferred). It stays in `runWhatsAppSession` (production) and the fixture's Effect fork (test seams:
-injected failure, test debounce).
+dependencies declared in its `--root` manifest. `apps/server/package.json` therefore declares the
+real npm runtime dependencies but deliberately **no** internal `@ambient-agent/*` packages, so
+engine/agents/station bundle into the published `dist/server.mjs` while npm dependencies stay
+external — the tarball remains self-contained with an unchanged layout. The CLI bundle pins the
+same property with `pack.noExternal: [/^@ambient-agent\//]`.
 
 ## Checks
 
 All green locally at the PR tip:
 
-- `pnpm build` — flue server build (agent + channel discovered from `packages/server`) + vp pack CLI
-- `pnpm exec vp lint .` — one pre-existing warning (`no-useless-catch` in
-  `model/chatgpt-authentication.ts`), no new findings
+- `pnpm build` — flue server build (agent + channel discovered from `apps/server`) + vp pack CLI
+- `pnpm exec vp lint .` — one pre-existing warning (`no-useless-catch`), no new findings
 - `pnpm exec tsc --noEmit` — clean
 - `pnpm test` — 377 passed, 3 skipped (39 files), including `tests/packaging/packed-cli.test.ts`
-  (npm pack → pnpm install → init/status/start/doctor journeys against the installed tarball)
+  (npm pack → pnpm install → init/status/start/doctor journeys against the installed tarball) and
+  the boundary test enforcing the arrow diagram + explicit-exports rule
 - `pnpm evals` — see below (authenticated run on the rig)
 
 ## Rig
@@ -51,14 +68,12 @@ All green locally at the PR tip:
 - Host: `code-factory` (user `abuusama`)
 - Persistent runtime: tmux session `validate-88`, window `run117`
 - Tarball: `$HOME/validate-88/ambient-agent-0.3.0-issue117.tgz`
-- Packed artifact SHA-256: `1ee35e74878dea6b4003b28a31521301ea60a6ef39dc78dbd8a3b4d13c2fdf00`
+- Packed artifact SHA-256: `74a610bc0702200054f9f167a919bc27a55d8cca426017ca3e2a42c082fc1ed1`
 - Data directory: the isolated `$HOME/validate-88/issue126-data` clone (same as the #126 proof; no
   schema change in this PR)
 - Runtime health endpoint: `http://127.0.0.1:42069/health`
 
 ## npx install transcript
-
-The packed runtime was started with:
 
 ```sh
 npx --yes --package=file:$HOME/validate-88/ambient-agent-0.3.0-issue117.tgz \
@@ -73,14 +88,9 @@ Health after start:
  "runtime":{"state":"healthy","whatsapp":{"phase":"online"}}}
 ```
 
-`status --json` (same npx form): `state: ready`, all checks
-`application-database:ready · flue-database:ready · whatsapp-session:online ·
-github-credential:ready`, `observedRuntime: healthy/online`, uncertain work healthy with 0
-mutations, window deliveries 0 pending / 0 failed.
-
-`doctor --json`: exit 0, `state: ready`, `chatgpt: ready`, checks
-`application-database:ready · flue-database:ready · whatsapp-session:paired ·
-github-credential:ready`.
+`status --json` (same npx form): `state: ready`; checks `application-database:ready ·
+flue-database:ready · whatsapp-session:online · github-credential:ready`; observed runtime
+healthy. `doctor --json`: exit 0, `state: ready`, `chatgpt: ready`.
 
 ## Six-station smoke transcript
 
@@ -97,24 +107,24 @@ PASS chatgpt: authentication ready; live readiness complete
 PASS runtime: healthy; WhatsApp online
 PASS backlog: 0 pending, 0 failed, no Uncertain work
 PASS github: access to AaronAbuUsama/ambient-agent
-PASS canary: SMOKE 1506b0797481 settled silent (admission → dispatch → settled-silent)
+PASS canary: SMOKE e5fdcb4e4326 settled silent (admission → dispatch → settled-silent)
 ```
 
 The persistent runtime independently recorded the same nonce and lifecycle
-(`$HOME/validate-88/issue117-runtime.log`):
+(`$HOME/validate-88/issue131-runtime.log`):
 
 ```json
-{"operatorEvent":"chat.received","text":"SMOKE 1506b0797481 — ignore","chatId":"120363410063306573@g.us",...}
-{"operatorEvent":"agent.settled_silent","windowId":"a9722148-...","dispatchId":"18309592-...",
+{"operatorEvent":"chat.received","text":"SMOKE e5fdcb4e4326 — ignore","chatId":"120363410063306573@g.us",...}
+{"operatorEvent":"agent.settled_silent","windowId":"0876961a-...","dispatchId":"a9f921ad-...",
  "msg":"Ambience settled without saying a WhatsApp message"}
 ```
 
 ## Eval battery vs the #113 baseline
 
 `pnpm evals` ran on the rig from a checkout of the PR tip
-(`$HOME/validate-88/issue117-eval-source`, log `issue117-evals-final.log`), authenticated to
-Braintrust. Experiment:
-[ambient-agent-eval-baseline-2026-07-17T09-53-40-324Z](https://www.braintrust.dev/app/capxul/p/ambient%20agents/experiments/ambient-agent-eval-baseline-2026-07-17T09-53-40-324Z).
+(`$HOME/validate-88/issue117-eval-source`, log `issue131-evals.log`), authenticated to Braintrust.
+Experiment:
+[ambient-agent-eval-baseline-2026-07-17T13-22-06-031Z](https://www.braintrust.dev/app/capxul/p/ambient%20agents/experiments/ambient-agent-eval-baseline-2026-07-17T13-22-06-031Z).
 Application and judge model unchanged: `openai-codex/gpt-5.6-luna`.
 
 Receipt: deterministic 12 passed (9 live gated); live judged 9 passed (12 deterministic gated) —
@@ -128,19 +138,17 @@ identical counts to the baseline receipt.
 | 2 — usefulness            | Addressed-say rate (mechanics)  |     100% |  100% |   100.0% | HOLDS   |
 | 3 — issue capture         | Capture-conversation grade      |     100% |   80% |   100.0% | HOLDS   |
 | 3 — issue capture         | Filed-issue receipt rate        |     100% |  100% |   100.0% | HOLDS   |
-| 4 — multi-message Windows | Per-concern handling grade      |      80% |   50% |    50.0% | HOLDS   |
+| 4 — multi-message Windows | Per-concern handling grade      |      80% |   50% |   100.0% | HOLDS   |
 | 5 — hard silence          | SMOKE hard-silence rate         |     100% |  100% |   100.0% | HOLDS   |
 | 6 — elicitation           | Elicitation-quality grade       |     100% |   80% |   100.0% | HOLDS   |
 
-Axis 4 note, stated plainly: the single judged multi-concern sample graded 0.50 in this run against
-an 0.80 baseline sample — at its floor, not above it. The same suite at the branch's previous
-commit (identical behavior-relevant code; the two commits differ only by file moves) graded 0.90
-(`issue117-evals.log`), confirming what the baseline document already records: this axis's judged
-grade is stochastic and its floor deliberately conservative, while the exact no-chatter and
-mutation mechanics stay protected by deterministic assertions (all passed in both runs).
+Axis 4 note: this stochastic judged axis graded 0.90 and 0.50 in two intermediate runs on this
+branch (both at/above the 50% floor) and 1.00 at the final tip — consistent with the baseline
+document's warning that its judged grade varies while the exact no-chatter and mutation mechanics
+stay protected by deterministic assertions (all passed in every run).
 
 ## Verdict
 
 Structure changed, behavior didn't: all suites/lint/typecheck green, the packed npx flow runs the
 real installation end-to-end with every smoke station passing, and every eval axis meets its
-recorded regression floor.
+recorded regression floor at the final taxonomy.
