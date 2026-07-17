@@ -3,14 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { inspectManagedData } from "../../src/managed/installation.ts";
-import type { ManagedPaths } from "../../src/managed/paths.ts";
+import { inspectManagedData } from "../../packages/installation/src/installation.ts";
+import type { ManagedPaths } from "../../packages/installation/src/paths.ts";
 import {
   runFirstRunSetup,
   type FirstRunPrompts,
   type FirstRunServices,
   type SetupReview,
-} from "../../src/setup/first-run.ts";
+} from "../../apps/cli/src/setup/first-run.ts";
 
 const roots: string[] = [];
 afterEach(async () => {

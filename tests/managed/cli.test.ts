@@ -3,15 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { runCli, type CliOutput } from "../../src/cli/program.ts";
-import { inspectManagedData } from "../../src/managed/installation.ts";
-import { deferWhatsAppRuntimeStart, getManagedRuntimeDependencies } from "../../src/managed/runtime-dependencies.ts";
-import { managedPaths, type ManagedPaths } from "../../src/managed/paths.ts";
-import type { ChatGptOAuthAdapter } from "../../src/model/chatgpt-authentication.ts";
-import { ChatGptReadinessError } from "../../src/model/pi-subscription.ts";
-import { WhatsAppAccountError } from "../../src/whatsapp/account.ts";
-import { createIssueOperationStore } from "../../src/capabilities/issue-management/operation-store.ts";
-import type { UncertainWorkController } from "../../src/managed/uncertain-work.ts";
+import { runCli, type CliOutput } from "../../apps/cli/src/program.ts";
+import { inspectManagedData } from "../../packages/installation/src/installation.ts";
+import { deferWhatsAppRuntimeStart, getManagedRuntimeDependencies } from "../../packages/installation/src/runtime-dependencies.ts";
+import { managedPaths, type ManagedPaths } from "../../packages/installation/src/paths.ts";
+import type { ChatGptOAuthAdapter } from "../../packages/engine/src/model/chatgpt-authentication.ts";
+import { ChatGptReadinessError } from "../../packages/engine/src/model/pi-subscription.ts";
+import { WhatsAppAccountError } from "../../packages/installation/src/whatsapp-account.ts";
+import { createIssueOperationStore } from "../../packages/engine/src/github/operation-store.ts";
+import type { UncertainWorkController } from "../../packages/installation/src/uncertain-work.ts";
 
 const roots: string[] = [];
 afterEach(async () => {

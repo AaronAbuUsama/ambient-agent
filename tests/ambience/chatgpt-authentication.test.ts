@@ -10,9 +10,9 @@ import {
   createChatGptAuthentication,
   type ChatGptOAuthAdapter,
   type DeviceCodeCallbacks,
-} from "../../src/model/chatgpt-authentication.ts";
-import { createManagedChatGptAuthentication } from "../../src/managed/chatgpt-authentication.ts";
-import { managedPaths } from "../../src/managed/paths.ts";
+} from "../../packages/engine/src/model/chatgpt-authentication.ts";
+import { createManagedChatGptAuthentication } from "../../packages/installation/src/chatgpt-authentication.ts";
+import { managedPaths } from "../../packages/installation/src/paths.ts";
 
 const roots: string[] = [];
 

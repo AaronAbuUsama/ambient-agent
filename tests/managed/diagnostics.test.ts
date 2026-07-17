@@ -4,10 +4,10 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { createConversationArchive } from "../../src/intake/conversation-archive.ts";
-import { APPLICATION_DATABASE_ID, APPLICATION_DATABASE_SCHEMA_VERSION } from "../../src/managed/database-versions.ts";
-import { inspectManagedServices } from "../../src/managed/diagnostics.ts";
-import { managedPaths } from "../../src/managed/paths.ts";
+import { createConversationArchive } from "../../packages/engine/src/intake/conversation-archive.ts";
+import { APPLICATION_DATABASE_ID, APPLICATION_DATABASE_SCHEMA_VERSION } from "../../packages/engine/src/intake/database-versions.ts";
+import { inspectManagedServices } from "../../packages/installation/src/diagnostics.ts";
+import { managedPaths } from "../../packages/installation/src/paths.ts";
 
 const roots: string[] = [];
 afterEach(async () => await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));

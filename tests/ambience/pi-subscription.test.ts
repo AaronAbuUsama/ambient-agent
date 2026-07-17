@@ -8,13 +8,13 @@ import {
   connectPiChatGptSubscription,
   prepareLunaResponsesLiteRequest,
   runChatGptReadinessCheck,
-} from "../../src/model/pi-subscription.js";
+} from "../../packages/engine/src/model/pi-subscription.ts";
 import {
   createChatGptAuthentication,
   createManagedChatGptCredentialStore,
   type ChatGptAuthentication,
-} from "../../src/model/chatgpt-authentication.js";
-import { managedPaths } from "../../src/managed/paths.js";
+} from "../../packages/engine/src/model/chatgpt-authentication.ts";
+import { managedPaths } from "../../packages/installation/src/paths.ts";
 
 const authentication = (apiKey = "header.payload.signature"): ChatGptAuthentication => ({
   authenticate: vi.fn(async () => undefined),

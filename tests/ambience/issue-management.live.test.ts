@@ -3,10 +3,10 @@ import { randomUUID } from "node:crypto";
 import { Octokit } from "@octokit/rest";
 import { describe, expect, it } from "vite-plus/test";
 
-import { createIssueOperationStore } from "../../src/capabilities/issue-management/operation-store.ts";
-import { createIssueManagementPolicy } from "../../src/capabilities/issue-management/runtime.ts";
-import { createIssueManagementTools } from "../../src/capabilities/issue-management/tools.ts";
-import { createOctokitIssueRepository } from "../../src/host/github-issue-repository.ts";
+import { createIssueOperationStore } from "../../packages/engine/src/github/operation-store.ts";
+import { createIssueManagementPolicy } from "../../packages/agents/src/capabilities/issue-management/runtime.ts";
+import { createIssueManagementTools } from "../../packages/agents/src/capabilities/issue-management/tools.ts";
+import { createOctokitIssueRepository } from "../../packages/installation/src/github-issue-repository.ts";
 
 const token = process.env.ISSUE_MANAGEMENT_SANDBOX_TOKEN?.trim();
 const sandbox = process.env.ISSUE_MANAGEMENT_SANDBOX_REPOSITORY?.trim();

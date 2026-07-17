@@ -8,9 +8,9 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-import type { IncomingMessage } from "../../src/coalescer/events.ts";
-import type { FakeIssueRepositoryEvent } from "../support/fake-issue-repository.ts";
-import type { FakeWhatsAppEvent } from "../support/fake-whatsapp-host.ts";
+import type { IncomingMessage } from "../../packages/engine/src/coalescer/events.ts";
+import type { FakeIssueRepositoryEvent } from "../../packages/test-support/src/fake-issue-repository.ts";
+import type { FakeWhatsAppEvent } from "../../packages/test-support/src/fake-whatsapp-host.ts";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureRoot = join(repoRoot, "tests/fixtures/ambience");

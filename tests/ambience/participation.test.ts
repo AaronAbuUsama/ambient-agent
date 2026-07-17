@@ -3,14 +3,14 @@ import { join } from "node:path";
 import * as v from "valibot";
 import { describe, expect, it } from "vite-plus/test";
 
-import ambience from "../../src/agents/ambience.ts";
+import ambience from "../../packages/agents/src/ambience/agent.ts";
 import {
   configureIssueManagementRuntime,
   createIssueManagementPolicy,
-} from "../../src/capabilities/issue-management/runtime.ts";
-import { createIssueOperationStore } from "../../src/capabilities/issue-management/operation-store.ts";
-import { createReactTool, createSayTool } from "../../src/capabilities/whatsapp-participation/tools.ts";
-import { createFakeIssueRepository } from "../support/fake-issue-repository.ts";
+} from "../../packages/agents/src/capabilities/issue-management/runtime.ts";
+import { createIssueOperationStore } from "../../packages/engine/src/github/operation-store.ts";
+import { createReactTool, createSayTool } from "../../packages/agents/src/capabilities/whatsapp-participation/tools.ts";
+import { createFakeIssueRepository } from "../../packages/test-support/src/fake-issue-repository.ts";
 
 const root = process.cwd();
 const read = async (path: string) => await readFile(join(root, path), "utf8");
@@ -36,8 +36,8 @@ describe("WhatsApp Participation capability", () => {
 
   it("registers a versioned packaged skill instead of embedding participation policy in standing instructions", async () => {
     const [agent, skill] = await Promise.all([
-      read("src/agents/ambience.ts"),
-      read("src/capabilities/whatsapp-participation/SKILL.md"),
+      read("packages/agents/src/ambience/agent.ts"),
+      read("packages/agents/src/capabilities/whatsapp-participation/SKILL.md"),
     ]);
 
     expect(agent).toContain('import whatsappParticipation from "../capabilities/whatsapp-participation/SKILL.md"');
@@ -81,8 +81,8 @@ describe("WhatsApp Participation capability", () => {
 
   it("assembles React, Say, thread-read, and history-search as one chat-bound capability", async () => {
     const [tools, port] = await Promise.all([
-      read("src/capabilities/whatsapp-participation/tools.ts"),
-      read("src/capabilities/whatsapp-participation/whatsapp-port.ts"),
+      read("packages/agents/src/capabilities/whatsapp-participation/tools.ts"),
+      read("packages/agents/src/capabilities/whatsapp-participation/whatsapp-port.ts"),
     ]);
 
     expect(tools).toContain("createWhatsAppParticipationTools");

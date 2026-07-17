@@ -5,7 +5,7 @@ import {
   discoverOriginRepository,
   normalizeGitHubRepository,
   verifyGitHubRepositoryAccess,
-} from "../../src/setup/github.ts";
+} from "../../apps/cli/src/setup/github.ts";
 
 describe("first-run GitHub discovery", () => {
   it.each([

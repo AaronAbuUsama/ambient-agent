@@ -3,11 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { windowContents } from "../../src/coalescer/events.ts";
-import { createConversationArchive } from "../../src/intake/conversation-archive.ts";
-import { conversationArrival, conversationUpdate, smokeCanaryArrival } from "../../src/intake/conversation-event.ts";
-import { inspectWindowDeliveryCounts } from "../../src/intake/managed-chat-inbox.ts";
-import { createTestManagedChatInbox as createManagedChatInbox } from "../support/managed-chat-inbox.ts";
+import { windowContents } from "../../packages/engine/src/coalescer/events.ts";
+import { createConversationArchive } from "../../packages/engine/src/intake/conversation-archive.ts";
+import { conversationArrival, conversationUpdate, smokeCanaryArrival } from "../../packages/engine/src/intake/conversation-event.ts";
+import { inspectWindowDeliveryCounts } from "../../packages/engine/src/intake/managed-chat-inbox.ts";
+import { createTestManagedChatInbox as createManagedChatInbox } from "../../packages/test-support/src/managed-chat-inbox.ts";
 import type { IncomingMessage, Update } from "whatsappd";
 
 const roots: string[] = [];

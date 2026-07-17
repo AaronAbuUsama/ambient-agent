@@ -14,25 +14,25 @@ import type {
 } from "whatsappd";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import type { AmbienceDispatchRequest } from "../../src/ambience/dispatch.ts";
-import { makeManagedChatGate } from "../../src/coalescer/chat-gate.ts";
-import { windowContents } from "../../src/coalescer/events.ts";
+import type { AmbienceDispatchRequest } from "../../packages/agents/src/ambience/dispatch.ts";
+import { makeManagedChatGate } from "../../packages/engine/src/coalescer/chat-gate.ts";
+import { windowContents } from "../../packages/engine/src/coalescer/events.ts";
 import {
   createWhatsAppHost,
   getWhatsAppRuntimeStatus,
   runWhatsAppSession,
   startWhatsAppRuntime,
-} from "../../src/host/whatsapp-runtime.ts";
-import { createConversationArchive } from "../../src/intake/conversation-archive.ts";
-import { conversationArrival } from "../../src/intake/conversation-event.ts";
-import { createTestManagedChatInbox as createManagedChatInbox } from "../support/managed-chat-inbox.ts";
+} from "../../apps/server/src/host/whatsapp-runtime.ts";
+import { createConversationArchive } from "../../packages/engine/src/intake/conversation-archive.ts";
+import { conversationArrival } from "../../packages/engine/src/intake/conversation-event.ts";
+import { createTestManagedChatInbox as createManagedChatInbox } from "../../packages/test-support/src/managed-chat-inbox.ts";
 import {
   createReactTool,
   createReadWhatsAppThreadTool,
   createSayTool,
   createSearchWhatsAppHistoryTool,
-} from "../../src/capabilities/whatsapp-participation/tools.ts";
-import { createWhatsAppAccount } from "../../src/whatsapp/account.ts";
+} from "../../packages/agents/src/capabilities/whatsapp-participation/tools.ts";
+import { createWhatsAppAccount } from "../../packages/installation/src/whatsapp-account.ts";
 
 const CHAT = "managed-31@g.us";
 const OTHER_CHAT = "unmanaged-31@g.us";
@@ -740,7 +740,7 @@ describe("foreground runtime terminal logged_out", () => {
     const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
     archive.close();
     const fake = fakeSession();
-    let observer: import("../../src/ambience/observer.ts").AmbienceObserver | undefined;
+    let observer: import("../../packages/agents/src/ambience/observer.ts").AmbienceObserver | undefined;
     let canaryDispatches = 0;
     const runtime = startWhatsAppRuntime({
       storeDirectory,

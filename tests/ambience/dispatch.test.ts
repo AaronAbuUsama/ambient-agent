@@ -2,18 +2,18 @@ import { describe, expect, it } from "vite-plus/test";
 import { Duration, Effect, Layer, Queue, Ref, Schedule } from "effect";
 import * as v from "valibot";
 
-import * as Coalescer from "../../src/coalescer/coalescer.ts";
-import { configLayer } from "../../src/coalescer/config.ts";
-import type { IncomingMessage } from "../../src/coalescer/events.ts";
-import { inMemoryWindowStore, queueEventSource } from "../../src/coalescer/mocks.ts";
-import { makeAmbienceWindowDispatcher, type AmbienceDispatchRequest } from "../../src/ambience/dispatch.ts";
-import { createReactTool, createSayTool } from "../../src/capabilities/whatsapp-participation/tools.ts";
+import * as Coalescer from "../../packages/engine/src/coalescer/coalescer.ts";
+import { configLayer } from "../../packages/engine/src/coalescer/config.ts";
+import type { IncomingMessage } from "../../packages/engine/src/coalescer/events.ts";
+import { inMemoryWindowStore, queueEventSource } from "../../packages/test-support/src/coalescer-mocks.ts";
+import { makeAmbienceWindowDispatcher, type AmbienceDispatchRequest } from "../../packages/agents/src/ambience/dispatch.ts";
+import { createReactTool, createSayTool } from "../../packages/agents/src/capabilities/whatsapp-participation/tools.ts";
 import {
   configureWhatsAppParticipationPort,
   type WhatsAppOutboundPort,
-} from "../../src/capabilities/whatsapp-participation/whatsapp-port.ts";
-import { createFakeWhatsAppHost } from "../support/fake-whatsapp-host.ts";
-import type { ManagedChatInbox, WindowAdmission } from "../../src/intake/managed-chat-inbox.ts";
+} from "../../packages/agents/src/capabilities/whatsapp-participation/whatsapp-port.ts";
+import { createFakeWhatsAppHost } from "../../packages/test-support/src/fake-whatsapp-host.ts";
+import type { ManagedChatInbox, WindowAdmission } from "../../packages/engine/src/intake/managed-chat-inbox.ts";
 
 const BOT = "bot@s.whatsapp.net";
 const CHAT = "team@g.us";
