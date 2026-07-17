@@ -1,0 +1,21 @@
+{
+  "name": "@ambient-agent/station",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Installation machinery: the managed data directory (paths, config, schema, installation, diagnostics, migration, repair), credentials, WhatsApp pairing, and platform adapters. What ambient-agent init/config/repair/doctor operate on.",
+  "exports": {
+    "./chatgpt-authentication.ts": "./src/chatgpt-authentication.ts",
+    "./configuration.ts": "./src/configuration.ts",
+    "./diagnostics.ts": "./src/diagnostics.ts",
+    "./github-issue-repository.ts": "./src/github-issue-repository.ts",
+    "./installation.ts": "./src/installation.ts",
+    "./migration.ts": "./src/migration.ts",
+    "./paths.ts": "./src/paths.ts",
+    "./qr.ts": "./src/qr.ts",
+    "./runtime-dependencies.ts": "./src/runtime-dependencies.ts",
+    "./runtime-health.ts": "./src/runtime-health.ts",
+    "./uncertain-work.ts": "./src/uncertain-work.ts",
+    "./whatsapp-account.ts": "./src/whatsapp-account.ts"
+  }
+}

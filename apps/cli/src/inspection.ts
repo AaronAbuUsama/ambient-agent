@@ -1,30 +1,30 @@
-import { createOctokitIssueRepository } from "@ambient-agent/core/host/github-issue-repository.ts";
-import { createConversationArchive } from "@ambient-agent/core/intake/conversation-archive.ts";
-import { createManagedChatInbox, inspectWindowDeliveryCounts } from "@ambient-agent/core/intake/managed-chat-inbox.ts";
-import { createIssueOperationStore } from "@ambient-agent/core/capabilities/issue-management/operation-store.ts";
-import { createManagedChatGptAuthentication } from "@ambient-agent/core/managed/chatgpt-authentication.ts";
-import { readManagedConfig, readManagedGitHubCredential } from "@ambient-agent/core/managed/configuration.ts";
-import { inspectManagedServices } from "@ambient-agent/core/managed/diagnostics.ts";
-import { inspectManagedData } from "@ambient-agent/core/managed/installation.ts";
-import { managedPaths, type ManagedPaths } from "@ambient-agent/core/managed/paths.ts";
-import { probeAmbientRuntimeHealth, runtimeInstallationId, type AmbientRuntimeHealth } from "@ambient-agent/core/managed/runtime-health.ts";
+import { createOctokitIssueRepository } from "@ambient-agent/station/github-issue-repository.ts";
+import { createConversationArchive } from "@ambient-agent/engine/intake/conversation-archive.ts";
+import { createManagedChatInbox, inspectWindowDeliveryCounts } from "@ambient-agent/engine/intake/managed-chat-inbox.ts";
+import { createIssueOperationStore } from "@ambient-agent/engine/github/operation-store.ts";
+import { createManagedChatGptAuthentication } from "@ambient-agent/station/chatgpt-authentication.ts";
+import { readManagedConfig, readManagedGitHubCredential } from "@ambient-agent/station/configuration.ts";
+import { inspectManagedServices } from "@ambient-agent/station/diagnostics.ts";
+import { inspectManagedData } from "@ambient-agent/station/installation.ts";
+import { managedPaths, type ManagedPaths } from "@ambient-agent/station/paths.ts";
+import { probeAmbientRuntimeHealth, runtimeInstallationId, type AmbientRuntimeHealth } from "@ambient-agent/station/runtime-health.ts";
 import {
   createUncertainWorkController,
   inspectUncertainWorkStatus,
   type UncertainWorkController,
   type UncertainWorkRef,
   type UncertainWorkStatus,
-} from "@ambient-agent/core/managed/uncertain-work.ts";
-import type { ChatGptAuthentication, ChatGptAuthenticationStatus } from "@ambient-agent/core/model/chatgpt-authentication.ts";
+} from "@ambient-agent/station/uncertain-work.ts";
+import type { ChatGptAuthentication, ChatGptAuthenticationStatus } from "@ambient-agent/engine/model/chatgpt-authentication.ts";
 import {
   AMBIENCE_MODEL_SPECIFIER,
   ChatGptReadinessError,
   runChatGptReadinessCheck,
   type ChatGptReadinessReceipt,
-} from "@ambient-agent/core/model/pi-subscription.ts";
-import { verifyGitHubRepositoryAccess } from "./setup/github.js";
-import type { CliDependencies, CliOutput } from "./program.js";
-import { renderInspection, type InspectionReport, type WindowDeliveryCounts } from "./rendering.js";
+} from "@ambient-agent/engine/model/pi-subscription.ts";
+import { verifyGitHubRepositoryAccess } from "./setup/github.ts";
+import type { CliDependencies, CliOutput } from "./program.ts";
+import { renderInspection, type InspectionReport, type WindowDeliveryCounts } from "./rendering.ts";
 
 export type InspectionUncertainty =
   | { readonly mode: "status" }

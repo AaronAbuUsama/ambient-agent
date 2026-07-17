@@ -2,8 +2,8 @@ import { Writable } from "node:stream";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { createRootLogger } from "@ambient-agent/core/logging/logging.ts";
-import { createWhatsAppAccount } from "@ambient-agent/core/whatsapp/account.ts";
+import { createRootLogger } from "../../packages/engine/src/logging/logging.ts";
+import { createWhatsAppAccount } from "../../packages/station/src/whatsapp-account.ts";
 
 vi.mock("whatsappd", () => {
   const session = {

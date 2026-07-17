@@ -8,15 +8,15 @@ import {
   type IssueRepositoryOptions,
   type IssueStateChangeReason,
   type RepositoryRef,
-} from "@ambient-agent/core/capabilities/issue-management/issue-repository.ts";
-import { repositoryName } from "@ambient-agent/core/capabilities/issue-management/runtime.ts";
+} from "../../agents/src/ambience/skills/issue-management/issue-repository.ts";
+import { repositoryName } from "../../agents/src/ambience/skills/issue-management/runtime.ts";
 import {
   commentProviderBody,
   issueOperationMarker,
   issueProviderBody,
   parseCommentProviderBody,
   parseIssueProviderBody,
-} from "@ambient-agent/core/host/issue-operation-footer.ts";
+} from "../../station/src/issue-operation-footer.ts";
 
 const publicRecord = (issue: Issue): Issue => ({ ...issue, body: parseIssueProviderBody(issue.body).publicBody });
 const FAKE_PROVIDER_AUTHOR = "ambient-agent";

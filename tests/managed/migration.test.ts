@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { migrateLegacyManagedData } from "@ambient-agent/core/managed/migration.ts";
-import { createManagedConfig } from "@ambient-agent/core/managed/schema.ts";
+import { migrateLegacyManagedData } from "../../packages/station/src/migration.ts";
+import { createManagedConfig } from "../../packages/station/src/schema.ts";
 
 const roots: string[] = [];
 afterEach(async () => {

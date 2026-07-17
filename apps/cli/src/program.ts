@@ -4,69 +4,69 @@ import { resolve } from "node:path";
 import { Command, CommanderError } from "@commander-js/extra-typings";
 import packageManifest from "../../../package.json" with { type: "json" };
 
-import { upstreamWhatsAppLogger } from "@ambient-agent/core/logging/logging.ts";
+import { upstreamWhatsAppLogger } from "@ambient-agent/engine/logging/logging.ts";
 import {
   acquireSetupLock,
   inspectManagedData,
   promoteReplacementWhatsAppStore,
   releaseSetupLock,
-} from "@ambient-agent/core/managed/installation.ts";
-import { createManagedChatGptAuthentication } from "@ambient-agent/core/managed/chatgpt-authentication.ts";
+} from "@ambient-agent/station/installation.ts";
+import { createManagedChatGptAuthentication } from "@ambient-agent/station/chatgpt-authentication.ts";
 import {
   readManagedConfig,
   readManagedGitHubCredential,
   writeManagedConfiguration,
-} from "@ambient-agent/core/managed/configuration.ts";
-import { inspectManagedServices, inspectWhatsAppSession } from "@ambient-agent/core/managed/diagnostics.ts";
-import { migrateLegacyManagedData, type ManagedDataMigration } from "@ambient-agent/core/managed/migration.ts";
-import { managedPaths, type ManagedPaths } from "@ambient-agent/core/managed/paths.ts";
+} from "@ambient-agent/station/configuration.ts";
+import { inspectManagedServices, inspectWhatsAppSession } from "@ambient-agent/station/diagnostics.ts";
+import { migrateLegacyManagedData, type ManagedDataMigration } from "@ambient-agent/station/migration.ts";
+import { managedPaths, type ManagedPaths } from "@ambient-agent/station/paths.ts";
 import {
   probeAmbientRuntimeHealth,
   runtimeInstallationId,
   type AmbientRuntimeHealth,
-} from "@ambient-agent/core/managed/runtime-health.ts";
+} from "@ambient-agent/station/runtime-health.ts";
 import {
   type UncertainWorkController,
   type UncertainWorkRef,
   type UncertainWorkStatus,
-} from "@ambient-agent/core/managed/uncertain-work.ts";
+} from "@ambient-agent/station/uncertain-work.ts";
 import {
   type ChatGptOAuthAdapter,
   type ChatGptAuthentication,
-} from "@ambient-agent/core/model/chatgpt-authentication.ts";
-import type { ChatGptReadinessReceipt } from "@ambient-agent/core/model/pi-subscription.ts";
+} from "@ambient-agent/engine/model/chatgpt-authentication.ts";
+import type { ChatGptReadinessReceipt } from "@ambient-agent/engine/model/pi-subscription.ts";
 import {
   discoverGitHubCredential,
   discoverOriginRepository,
   normalizeGitHubRepository,
   verifyGitHubRepositoryAccess,
-} from "./setup/github.js";
-import { runFirstRunSetup, type FirstRunServices, type SetupReview } from "./setup/first-run.js";
-import { createWhatsAppAccount } from "@ambient-agent/core/whatsapp/account.ts";
-import { createConversationArchive, migrateConversationArchiveSchema } from "@ambient-agent/core/intake/conversation-archive.ts";
-import { createDeviceCodeCallbacks, createWhatsAppCallbacks, defaultSetupPrompts, type SetupPrompts } from "./prompts.js";
+} from "./setup/github.ts";
+import { runFirstRunSetup, type FirstRunServices, type SetupReview } from "./setup/first-run.ts";
+import { createWhatsAppAccount } from "@ambient-agent/station/whatsapp-account.ts";
+import { createConversationArchive, migrateConversationArchiveSchema } from "@ambient-agent/engine/intake/conversation-archive.ts";
+import { createDeviceCodeCallbacks, createWhatsAppCallbacks, defaultSetupPrompts, type SetupPrompts } from "./prompts.ts";
 import {
   parseRuntimePort,
   startGeneratedRuntime,
   type ImportRuntime,
   type RuntimeLoggingOptions,
   type StartRuntime,
-} from "./lifecycle.js";
-import { createInspectionReporter } from "./inspection.js";
-import type { WindowDeliveryCounts } from "./rendering.js";
+} from "./lifecycle.ts";
+import { createInspectionReporter } from "./inspection.ts";
+import type { WindowDeliveryCounts } from "./rendering.ts";
 import {
   renderSmokeStations,
   requestRuntimeSmokeCanary,
   smokeStations,
   type SmokeCanary,
-} from "./smoke.js";
+} from "./smoke.ts";
 
 export interface CliOutput {
   readonly stdout: (text: string) => void;
   readonly stderr: (text: string) => void;
 }
 
-export type { SetupPrompts } from "./prompts.js";
+export type { SetupPrompts } from "./prompts.ts";
 
 export interface CliDependencies {
   readonly output?: CliOutput;
@@ -92,8 +92,8 @@ export interface CliDependencies {
   readonly createNonce?: () => string;
 }
 
-export type { ImportRuntime, RuntimeLoggingOptions, StartRuntime } from "./lifecycle.js";
-export type { InspectionReport, WindowDeliveryCounts } from "./rendering.js";
+export type { ImportRuntime, RuntimeLoggingOptions, StartRuntime } from "./lifecycle.ts";
+export type { InspectionReport, WindowDeliveryCounts } from "./rendering.ts";
 
 const defaultOutput: CliOutput = {
   stdout: (text) => process.stdout.write(text),

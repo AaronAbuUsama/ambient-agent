@@ -10,9 +10,9 @@ import {
   createChatGptAuthentication,
   type ChatGptOAuthAdapter,
   type DeviceCodeCallbacks,
-} from "@ambient-agent/core/model/chatgpt-authentication.ts";
-import { createManagedChatGptAuthentication } from "@ambient-agent/core/managed/chatgpt-authentication.ts";
-import { managedPaths } from "@ambient-agent/core/managed/paths.ts";
+} from "../../packages/engine/src/model/chatgpt-authentication.ts";
+import { createManagedChatGptAuthentication } from "../../packages/station/src/chatgpt-authentication.ts";
+import { managedPaths } from "../../packages/station/src/paths.ts";
 
 const roots: string[] = [];
 

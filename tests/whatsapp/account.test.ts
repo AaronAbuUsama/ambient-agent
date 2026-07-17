@@ -5,8 +5,8 @@ import { join } from "node:path";
 import type { ConversationSyncBatch, IncomingMessage, Status, Update, WhatsAppSession } from "whatsappd";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { createConversationArchive } from "@ambient-agent/core/intake/conversation-archive.ts";
-import { createWhatsAppAccount } from "@ambient-agent/core/whatsapp/account.ts";
+import { createConversationArchive } from "../../packages/engine/src/intake/conversation-archive.ts";
+import { createWhatsAppAccount } from "../../packages/station/src/whatsapp-account.ts";
 
 const roots: string[] = [];
 

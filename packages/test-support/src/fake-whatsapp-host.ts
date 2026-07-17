@@ -3,7 +3,7 @@ import {
   type WhatsAppOutboundPort,
   type WhatsAppSayResult,
   withTypingResult,
-} from "@ambient-agent/core/capabilities/whatsapp-participation/whatsapp-port.ts";
+} from "../../agents/src/ambience/skills/whatsapp-participation/whatsapp-port.ts";
 
 export type FakeWhatsAppEvent =
   | {

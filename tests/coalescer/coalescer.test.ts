@@ -14,16 +14,16 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Duration, Effect, Layer, Queue, Ref } from "effect";
 import { TestClock } from "effect/testing";
-import * as Coalescer from "@ambient-agent/core/coalescer/coalescer.ts";
-import { type CoalescerConfigValues, configLayer } from "@ambient-agent/core/coalescer/config.ts";
+import * as Coalescer from "../../packages/engine/src/coalescer/coalescer.ts";
+import { type CoalescerConfigValues, configLayer } from "../../packages/engine/src/coalescer/config.ts";
 import type {
   CoalescerEvent,
   ConversationUpdate,
   ConversationWindow,
   IncomingMessage,
-} from "@ambient-agent/core/coalescer/events.ts";
-import { inMemoryWindowStore, queueEventSource, recordingWindowDispatcher } from "@ambient-agent/core/coalescer/mocks.ts";
-import { WindowDispatcher, WindowDispatchError, WindowStore, WindowStoreError } from "@ambient-agent/core/coalescer/ports.ts";
+} from "../../packages/engine/src/coalescer/events.ts";
+import { inMemoryWindowStore, queueEventSource, recordingWindowDispatcher } from "../../packages/test-support/src/coalescer-mocks.ts";
+import { WindowDispatcher, WindowDispatchError, WindowStore, WindowStoreError } from "../../packages/engine/src/coalescer/ports.ts";
 
 const BOT = "bot@s.whatsapp.net";
 const CHAT = "team@g.us";

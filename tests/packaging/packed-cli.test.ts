@@ -9,14 +9,14 @@ import { promisify } from "node:util";
 import { sqlite } from "@flue/runtime/node";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-import { createIssueOperationStore } from "@ambient-agent/core/capabilities/issue-management/operation-store.ts";
-import { windowContents } from "@ambient-agent/core/coalescer/events.ts";
-import { createConversationArchive } from "@ambient-agent/core/intake/conversation-archive.ts";
-import { conversationArrival } from "@ambient-agent/core/intake/conversation-event.ts";
-import { createManagedChatInbox } from "@ambient-agent/core/intake/managed-chat-inbox.ts";
-import { APPLICATION_DATABASE_SCHEMA_VERSION } from "@ambient-agent/core/managed/database-versions.ts";
-import { inspectManagedData } from "@ambient-agent/core/managed/installation.ts";
-import { managedPaths } from "@ambient-agent/core/managed/paths.ts";
+import { createIssueOperationStore } from "../../packages/engine/src/github/operation-store.ts";
+import { windowContents } from "../../packages/engine/src/coalescer/events.ts";
+import { createConversationArchive } from "../../packages/engine/src/intake/conversation-archive.ts";
+import { conversationArrival } from "../../packages/engine/src/intake/conversation-event.ts";
+import { createManagedChatInbox } from "../../packages/engine/src/intake/managed-chat-inbox.ts";
+import { APPLICATION_DATABASE_SCHEMA_VERSION } from "../../packages/engine/src/intake/database-versions.ts";
+import { inspectManagedData } from "../../packages/station/src/installation.ts";
+import { managedPaths } from "../../packages/station/src/paths.ts";
 import type { InboundMessage } from "whatsappd";
 
 const execute = promisify(execFile);

@@ -7,10 +7,10 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import {
   createIssueOperationStore,
   type IssueOperationKind,
-} from "@ambient-agent/core/capabilities/issue-management/operation-store.ts";
-import { createFakeIssueRepository } from "@ambient-agent/test-support/fake-issue-repository.ts";
-import { commentProviderBody, issueOperationMarker, issueProviderBody } from "@ambient-agent/core/host/issue-operation-footer.ts";
-import { createUncertainWorkController, inspectUncertainWorkStatus } from "@ambient-agent/core/managed/uncertain-work.ts";
+} from "../../packages/engine/src/github/operation-store.ts";
+import { createFakeIssueRepository } from "../../packages/test-support/src/fake-issue-repository.ts";
+import { commentProviderBody, issueOperationMarker, issueProviderBody } from "../../packages/station/src/issue-operation-footer.ts";
+import { createUncertainWorkController, inspectUncertainWorkStatus } from "../../packages/station/src/uncertain-work.ts";
 
 const roots: string[] = [];
 afterEach(() => {

@@ -8,13 +8,13 @@ import {
   connectPiChatGptSubscription,
   prepareLunaResponsesLiteRequest,
   runChatGptReadinessCheck,
-} from "@ambient-agent/core/model/pi-subscription.ts";
+} from "../../packages/engine/src/model/pi-subscription.ts";
 import {
   createChatGptAuthentication,
   createManagedChatGptCredentialStore,
   type ChatGptAuthentication,
-} from "@ambient-agent/core/model/chatgpt-authentication.ts";
-import { managedPaths } from "@ambient-agent/core/managed/paths.ts";
+} from "../../packages/engine/src/model/chatgpt-authentication.ts";
+import { managedPaths } from "../../packages/station/src/paths.ts";
 
 const authentication = (apiKey = "header.payload.signature"): ChatGptAuthentication => ({
   authenticate: vi.fn(async () => undefined),

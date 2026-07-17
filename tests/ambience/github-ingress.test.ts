@@ -6,10 +6,10 @@ import { DatabaseSync } from "node:sqlite";
 
 import type { GitHubWebhookDelivery } from "@flue/github";
 
-import type { GitHubIngressInput } from "@ambient-agent/core/ambience/events.ts";
-import { createIssueOperationStore } from "@ambient-agent/core/capabilities/issue-management/operation-store.ts";
-import { createGitHubIngress } from "@ambient-agent/core/github/ingress.ts";
-import { createGitHubIngressStore } from "@ambient-agent/core/github/ingress-store.ts";
+import type { GitHubIngressInput } from "../../packages/engine/src/inputs.ts";
+import { createIssueOperationStore } from "../../packages/engine/src/github/operation-store.ts";
+import { createGitHubIngress } from "../../packages/engine/src/github/ingress.ts";
+import { createGitHubIngressStore } from "../../packages/engine/src/github/ingress-store.ts";
 
 const issueOpenedDelivery = (deliveryId: string): GitHubWebhookDelivery =>
   ({

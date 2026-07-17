@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { smokeStations } from "@ambient-agent/cli/smoke.ts";
-import type { InspectionReport } from "@ambient-agent/cli/rendering.ts";
-import type { ManagedPaths } from "@ambient-agent/core/managed/paths.ts";
+import { smokeStations } from "../../apps/cli/src/smoke.ts";
+import type { InspectionReport } from "../../apps/cli/src/rendering.ts";
+import type { ManagedPaths } from "../../packages/station/src/paths.ts";
 
 const paths = {
   root: "/missing",

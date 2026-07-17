@@ -1,17 +1,17 @@
 import { chmod, cp, lstat, opendir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 
-import { createConversationArchive, type ConversationArchive } from "@ambient-agent/core/intake/conversation-archive.ts";
-import { installPreparedManagedData, type InstallManagedDataResult } from "@ambient-agent/core/managed/installation.ts";
-import { managedPaths, type ManagedPathEnvironment, type ManagedPaths } from "@ambient-agent/core/managed/paths.ts";
-import type { ChatGptAuthentication, DeviceCodeCallbacks } from "@ambient-agent/core/model/chatgpt-authentication.ts";
+import { createConversationArchive, type ConversationArchive } from "@ambient-agent/engine/intake/conversation-archive.ts";
+import { installPreparedManagedData, type InstallManagedDataResult } from "@ambient-agent/station/installation.ts";
+import { managedPaths, type ManagedPathEnvironment, type ManagedPaths } from "@ambient-agent/station/paths.ts";
+import type { ChatGptAuthentication, DeviceCodeCallbacks } from "@ambient-agent/engine/model/chatgpt-authentication.ts";
 import {
   WhatsAppAccountError,
   type ChatCandidate,
   type ManagedWhatsAppAccount,
   type PairingCallbacks,
-} from "@ambient-agent/core/whatsapp/account.ts";
-import { normalizeGitHubRepository, type DiscoveredGitHubCredential } from "./github.js";
+} from "@ambient-agent/station/whatsapp-account.ts";
+import { normalizeGitHubRepository, type DiscoveredGitHubCredential } from "./github.ts";
 
 export interface SetupReview {
   readonly dataDirectory: string;

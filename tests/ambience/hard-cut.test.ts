@@ -34,7 +34,7 @@ describe("the post-Eve production cut", () => {
     };
 
     expect(packageJson.scripts.dev).toBe("pnpm run build && pnpm start");
-    expect(packageJson.scripts["build:server"]).toBe("flue build --target node --root packages/server --output dist");
+    expect(packageJson.scripts["build:server"]).toBe("flue build --target node --root apps/server --output dist");
     expect(packageJson.scripts["build:cli"]).toBe("vp pack");
     expect(packageJson.scripts.build).toBe("pnpm run build:server && pnpm run build:cli");
     expect(packageJson.scripts.start).toBe("node dist/cli/main.js start");
@@ -75,11 +75,11 @@ describe("the post-Eve production cut", () => {
   });
 
   it("keeps the canonical Coalescer-to-Ambience dispatch free of API-key fallback", async () => {
-    const runtime = await readFile(path.join(root, "packages/server/src/host/whatsapp-runtime.ts"), "utf8");
+    const runtime = await readFile(path.join(root, "apps/server/src/host/whatsapp-runtime.ts"), "utf8");
     expect(runtime).toContain("makeAmbienceWindowDispatcher");
 
     const files = (
-      await Promise.all(["apps/cli/src", "packages/core/src", "packages/server/src"].map(sourceFiles))
+      await Promise.all(["apps/cli/src", "apps/server/src", "packages/engine/src", "packages/agents/src", "packages/station/src"].map(sourceFiles))
     ).flat();
     const productionSource = await Promise.all(
       files.map(async (relativePath) => ({
@@ -94,19 +94,28 @@ describe("the post-Eve production cut", () => {
     }
   });
 
-  it("keeps the workspace boundaries: core imports no sibling, cli and server meet only via the handshake", async () => {
+  it("keeps the workspace boundaries: the ratified arrow diagram, enforced", async () => {
+    // engine -> nothing internal; agents -> engine; station -> agents+engine;
+    // apps/server -> all packages; apps/cli -> station+engine (NEVER agents);
+    // test-support -> anything.
     const boundaries: ReadonlyArray<readonly [string, RegExp]> = [
-      // core is the foundation: it must never import the application, server, or test support
-      ["packages/core/src", /@ambient-agent\/(?:cli|server|test-support)/],
-      // the CLI application never imports the server package (globalThis handshake only)
-      ["apps/cli/src", /@ambient-agent\/(?:server|test-support)/],
-      // the server never imports the CLI application or test support
-      ["packages/server/src", /@ambient-agent\/(?:cli|test-support)/],
+      ["packages/engine/src", /@ambient-agent\//],
+      ["packages/agents/src", /@ambient-agent\/(?!engine\/)/],
+      ["packages/station/src", /@ambient-agent\/(?!engine\/|agents\/)/],
+      ["apps/cli/src", /@ambient-agent\/(?!engine\/|station\/)/],
+      ["apps/server/src", /@ambient-agent\/(?!engine\/|agents\/|station\/)/],
     ];
     for (const [directory, forbidden] of boundaries) {
       for (const relativePath of await sourceFiles(directory)) {
         expect(await readFile(path.join(root, relativePath), "utf8"), relativePath).not.toMatch(forbidden);
       }
+    }
+    // Wildcard exports are shallow: every package must publish an explicit surface.
+    for (const pkg of ["engine", "agents", "station"]) {
+      const manifest = JSON.parse(await readFile(path.join(root, "packages", pkg, "package.json"), "utf8")) as {
+        exports?: Record<string, string>;
+      };
+      expect(Object.keys(manifest.exports ?? {}), pkg).not.toContain("./*");
     }
   });
 });

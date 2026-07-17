@@ -4,11 +4,11 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { admitWindow } from "@ambient-agent/core/intake/admission-relay.ts";
-import { windowContents } from "@ambient-agent/core/coalescer/events.ts";
-import { createConversationArchive } from "@ambient-agent/core/intake/conversation-archive.ts";
-import { conversationArrival } from "@ambient-agent/core/intake/conversation-event.ts";
-import { createTestManagedChatInbox as createManagedChatInbox } from "@ambient-agent/test-support/managed-chat-inbox.ts";
+import { admitWindow } from "../../packages/engine/src/intake/admission-relay.ts";
+import { windowContents } from "../../packages/engine/src/coalescer/events.ts";
+import { createConversationArchive } from "../../packages/engine/src/intake/conversation-archive.ts";
+import { conversationArrival } from "../../packages/engine/src/intake/conversation-event.ts";
+import { createTestManagedChatInbox as createManagedChatInbox } from "../../packages/test-support/src/managed-chat-inbox.ts";
 import type { IncomingMessage } from "whatsappd";
 
 const CHAT = "managed-admission@g.us";

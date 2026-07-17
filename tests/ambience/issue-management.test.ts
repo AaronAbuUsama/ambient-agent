@@ -6,19 +6,19 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vite-plus/test";
 import * as v from "valibot";
 
-import ambience from "@ambient-agent/core/agents/ambience.ts";
+import ambience from "../../packages/agents/src/ambience/agent.ts";
 import {
   configureIssueManagementRuntime,
   createIssueManagementPolicy,
-} from "@ambient-agent/core/capabilities/issue-management/runtime.ts";
+} from "../../packages/agents/src/ambience/skills/issue-management/runtime.ts";
 import {
   isUncertainIssueMutationError,
   MAX_PUBLIC_COMMENT_BODY_LENGTH,
   MAX_PUBLIC_ISSUE_BODY_LENGTH,
-} from "@ambient-agent/core/capabilities/issue-management/issue-repository.ts";
-import { createIssueManagementTools } from "@ambient-agent/core/capabilities/issue-management/tools.ts";
-import { createIssueOperationStore } from "@ambient-agent/core/capabilities/issue-management/operation-store.ts";
-import { createFakeIssueRepository } from "@ambient-agent/test-support/fake-issue-repository.ts";
+} from "../../packages/agents/src/ambience/skills/issue-management/issue-repository.ts";
+import { createIssueManagementTools } from "../../packages/agents/src/ambience/skills/issue-management/tools.ts";
+import { createIssueOperationStore } from "../../packages/engine/src/github/operation-store.ts";
+import { createFakeIssueRepository } from "../../packages/test-support/src/fake-issue-repository.ts";
 import {
   GITHUB_ISSUE_BODY_LIMIT,
   createOctokitIssueRepository,
@@ -26,8 +26,8 @@ import {
   githubIssueProviderBody,
   githubIssueRecord,
   githubIssueSearchQuery,
-} from "@ambient-agent/core/host/github-issue-repository.ts";
-import { commentProviderBody, issueOperationMarker } from "@ambient-agent/core/host/issue-operation-footer.ts";
+} from "../../packages/station/src/github-issue-repository.ts";
+import { commentProviderBody, issueOperationMarker } from "../../packages/station/src/issue-operation-footer.ts";
 
 const CHAT = "issue-management@g.us";
 const REPOSITORY = { owner: "acme", repo: "widgets" } as const;
@@ -950,7 +950,7 @@ describe("production Issue Management tools", () => {
     const config = await ambience.initialize({ id: CHAT, env: {} });
     expect(config.skills?.map((skill) => skill.name)).toEqual(["whatsapp-participation", "issue-management"]);
     await expect(
-      readFile(join(process.cwd(), "packages/core/src/capabilities/issue-management/SKILL.md"), "utf8"),
+      readFile(join(process.cwd(), "packages/agents/src/ambience/skills/issue-management/SKILL.md"), "utf8"),
     ).resolves.toContain('version: "2.0.0"');
     expect(config.tools?.map((tool) => tool.name)).toEqual([
       "react",
