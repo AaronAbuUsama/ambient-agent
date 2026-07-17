@@ -23,11 +23,11 @@ import {
   reportAgentSpoke,
 } from "@ambient-agent/agents/ambience/activity-reporter.ts";
 import { effectLoggerLayer, getLogger, upstreamWhatsAppLogger } from "@ambient-agent/engine/logging/logging.ts";
-import type { WhatsAppRuntimeStatus } from "@ambient-agent/station/runtime-health.ts";
+import type { WhatsAppRuntimeStatus } from "@ambient-agent/installation/runtime-health.ts";
 import { errorMessage } from "@ambient-agent/engine/shared/errors.ts";
-import { renderQr } from "@ambient-agent/station/qr.ts";
+import { renderQr } from "@ambient-agent/installation/qr.ts";
 import { isGroupJid } from "@ambient-agent/engine/shared/whatsapp-jid.ts";
-import { createWhatsAppAccount, WhatsAppAccountError } from "@ambient-agent/station/whatsapp-account.ts";
+import { createWhatsAppAccount, WhatsAppAccountError } from "@ambient-agent/installation/whatsapp-account.ts";
 
 const isKnownTransportRejection = (message: string): boolean => /^not online \(phase: [^)]+\)$/.test(message);
 const deliveryFailure = (

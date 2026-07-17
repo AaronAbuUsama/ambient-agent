@@ -25,8 +25,8 @@ import { createFakeWhatsAppHost } from "../../../../packages/test-support/src/fa
 import { createConversationArchive } from "../../../../packages/engine/src/intake/conversation-archive.ts";
 import { conversationArrival } from "../../../../packages/engine/src/intake/conversation-event.ts";
 import { createManagedChatInbox, managedChatWindowStore } from "../../../../packages/engine/src/intake/managed-chat-inbox.ts";
-import { createManagedChatGptAuthentication } from "../../../../packages/station/src/chatgpt-authentication.ts";
-import { managedPaths } from "../../../../packages/station/src/paths.ts";
+import { createManagedChatGptAuthentication } from "../../../../packages/installation/src/chatgpt-authentication.ts";
+import { managedPaths } from "../../../../packages/installation/src/paths.ts";
 import { connectPiChatGptSubscription } from "../../../../packages/engine/src/model/pi-subscription.ts";
 
 const liveModel = process.env.AMBIENCE_FIXTURE_LIVE_MODEL === "true";

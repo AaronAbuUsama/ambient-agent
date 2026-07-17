@@ -1,20 +1,20 @@
-import { createOctokitIssueRepository } from "@ambient-agent/station/github-issue-repository.ts";
+import { createOctokitIssueRepository } from "@ambient-agent/installation/github-issue-repository.ts";
 import { createConversationArchive } from "@ambient-agent/engine/intake/conversation-archive.ts";
 import { createManagedChatInbox, inspectWindowDeliveryCounts } from "@ambient-agent/engine/intake/managed-chat-inbox.ts";
 import { createIssueOperationStore } from "@ambient-agent/engine/github/operation-store.ts";
-import { createManagedChatGptAuthentication } from "@ambient-agent/station/chatgpt-authentication.ts";
-import { readManagedConfig, readManagedGitHubCredential } from "@ambient-agent/station/configuration.ts";
-import { inspectManagedServices } from "@ambient-agent/station/diagnostics.ts";
-import { inspectManagedData } from "@ambient-agent/station/installation.ts";
-import { managedPaths, type ManagedPaths } from "@ambient-agent/station/paths.ts";
-import { probeAmbientRuntimeHealth, runtimeInstallationId, type AmbientRuntimeHealth } from "@ambient-agent/station/runtime-health.ts";
+import { createManagedChatGptAuthentication } from "@ambient-agent/installation/chatgpt-authentication.ts";
+import { readManagedConfig, readManagedGitHubCredential } from "@ambient-agent/installation/configuration.ts";
+import { inspectManagedServices } from "@ambient-agent/installation/diagnostics.ts";
+import { inspectManagedData } from "@ambient-agent/installation/installation.ts";
+import { managedPaths, type ManagedPaths } from "@ambient-agent/installation/paths.ts";
+import { probeAmbientRuntimeHealth, runtimeInstallationId, type AmbientRuntimeHealth } from "@ambient-agent/installation/runtime-health.ts";
 import {
   createUncertainWorkController,
   inspectUncertainWorkStatus,
   type UncertainWorkController,
   type UncertainWorkRef,
   type UncertainWorkStatus,
-} from "@ambient-agent/station/uncertain-work.ts";
+} from "@ambient-agent/installation/uncertain-work.ts";
 import type { ChatGptAuthentication, ChatGptAuthenticationStatus } from "@ambient-agent/engine/model/chatgpt-authentication.ts";
 import {
   AMBIENCE_MODEL_SPECIFIER,

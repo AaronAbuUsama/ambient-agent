@@ -1,6 +1,6 @@
-import { readManagedConfig, readManagedGitHubCredential } from "@ambient-agent/station/configuration.ts";
-import { runtimeSmokeAuthorization } from "@ambient-agent/station/runtime-health.ts";
-import type { ManagedPaths } from "@ambient-agent/station/paths.ts";
+import { readManagedConfig, readManagedGitHubCredential } from "@ambient-agent/installation/configuration.ts";
+import { runtimeSmokeAuthorization } from "@ambient-agent/installation/runtime-health.ts";
+import type { ManagedPaths } from "@ambient-agent/installation/paths.ts";
 import type { InspectionReport } from "./rendering.ts";
 
 export interface SmokeCanaryReceipt {

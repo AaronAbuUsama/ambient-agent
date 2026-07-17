@@ -10,26 +10,26 @@ import {
   inspectManagedData,
   promoteReplacementWhatsAppStore,
   releaseSetupLock,
-} from "@ambient-agent/station/installation.ts";
-import { createManagedChatGptAuthentication } from "@ambient-agent/station/chatgpt-authentication.ts";
+} from "@ambient-agent/installation/installation.ts";
+import { createManagedChatGptAuthentication } from "@ambient-agent/installation/chatgpt-authentication.ts";
 import {
   readManagedConfig,
   readManagedGitHubCredential,
   writeManagedConfiguration,
-} from "@ambient-agent/station/configuration.ts";
-import { inspectManagedServices, inspectWhatsAppSession } from "@ambient-agent/station/diagnostics.ts";
-import { migrateLegacyManagedData, type ManagedDataMigration } from "@ambient-agent/station/migration.ts";
-import { managedPaths, type ManagedPaths } from "@ambient-agent/station/paths.ts";
+} from "@ambient-agent/installation/configuration.ts";
+import { inspectManagedServices, inspectWhatsAppSession } from "@ambient-agent/installation/diagnostics.ts";
+import { migrateLegacyManagedData, type ManagedDataMigration } from "@ambient-agent/installation/migration.ts";
+import { managedPaths, type ManagedPaths } from "@ambient-agent/installation/paths.ts";
 import {
   probeAmbientRuntimeHealth,
   runtimeInstallationId,
   type AmbientRuntimeHealth,
-} from "@ambient-agent/station/runtime-health.ts";
+} from "@ambient-agent/installation/runtime-health.ts";
 import {
   type UncertainWorkController,
   type UncertainWorkRef,
   type UncertainWorkStatus,
-} from "@ambient-agent/station/uncertain-work.ts";
+} from "@ambient-agent/installation/uncertain-work.ts";
 import {
   type ChatGptOAuthAdapter,
   type ChatGptAuthentication,
@@ -42,7 +42,7 @@ import {
   verifyGitHubRepositoryAccess,
 } from "./setup/github.ts";
 import { runFirstRunSetup, type FirstRunServices, type SetupReview } from "./setup/first-run.ts";
-import { createWhatsAppAccount } from "@ambient-agent/station/whatsapp-account.ts";
+import { createWhatsAppAccount } from "@ambient-agent/installation/whatsapp-account.ts";
 import { createConversationArchive, migrateConversationArchiveSchema } from "@ambient-agent/engine/intake/conversation-archive.ts";
 import { createDeviceCodeCallbacks, createWhatsAppCallbacks, defaultSetupPrompts, type SetupPrompts } from "./prompts.ts";
 import {

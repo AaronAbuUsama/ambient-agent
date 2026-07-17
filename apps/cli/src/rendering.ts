@@ -1,11 +1,11 @@
-import type { InstallationInspection } from "@ambient-agent/station/installation.ts";
-import type { ManagedCheck } from "@ambient-agent/station/diagnostics.ts";
-import type { AmbientRuntimeHealth } from "@ambient-agent/station/runtime-health.ts";
+import type { InstallationInspection } from "@ambient-agent/installation/installation.ts";
+import type { ManagedCheck } from "@ambient-agent/installation/diagnostics.ts";
+import type { AmbientRuntimeHealth } from "@ambient-agent/installation/runtime-health.ts";
 import type {
   UncertainActionResult,
   UncertainDoctorReport,
   UncertainWorkStatus,
-} from "@ambient-agent/station/uncertain-work.ts";
+} from "@ambient-agent/installation/uncertain-work.ts";
 import type { ChatGptAuthenticationStatus } from "@ambient-agent/engine/model/chatgpt-authentication.ts";
 import type { ChatGptReadinessReceipt } from "@ambient-agent/engine/model/pi-subscription.ts";
 

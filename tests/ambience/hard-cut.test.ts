@@ -79,7 +79,7 @@ describe("the post-Eve production cut", () => {
     expect(runtime).toContain("makeAmbienceWindowDispatcher");
 
     const files = (
-      await Promise.all(["apps/cli/src", "apps/server/src", "packages/engine/src", "packages/agents/src", "packages/station/src"].map(sourceFiles))
+      await Promise.all(["apps/cli/src", "apps/server/src", "packages/engine/src", "packages/agents/src", "packages/installation/src"].map(sourceFiles))
     ).flat();
     const productionSource = await Promise.all(
       files.map(async (relativePath) => ({
@@ -95,15 +95,15 @@ describe("the post-Eve production cut", () => {
   });
 
   it("keeps the workspace boundaries: the ratified arrow diagram, enforced", async () => {
-    // engine -> nothing internal; agents -> engine; station -> agents+engine;
-    // apps/server -> all packages; apps/cli -> station+engine (NEVER agents);
+    // engine -> nothing internal; agents -> engine; installation -> agents+engine;
+    // apps/server -> all packages; apps/cli -> installation+engine (NEVER agents);
     // test-support -> anything.
     const boundaries: ReadonlyArray<readonly [string, RegExp]> = [
       ["packages/engine/src", /@ambient-agent\//],
       ["packages/agents/src", /@ambient-agent\/(?!engine\/)/],
-      ["packages/station/src", /@ambient-agent\/(?!engine\/|agents\/)/],
-      ["apps/cli/src", /@ambient-agent\/(?!engine\/|station\/)/],
-      ["apps/server/src", /@ambient-agent\/(?!engine\/|agents\/|station\/)/],
+      ["packages/installation/src", /@ambient-agent\/(?!engine\/|agents\/)/],
+      ["apps/cli/src", /@ambient-agent\/(?!engine\/|installation\/)/],
+      ["apps/server/src", /@ambient-agent\/(?!engine\/|agents\/|installation\/)/],
     ];
     for (const [directory, forbidden] of boundaries) {
       for (const relativePath of await sourceFiles(directory)) {
@@ -111,7 +111,7 @@ describe("the post-Eve production cut", () => {
       }
     }
     // Wildcard exports are shallow: every package must publish an explicit surface.
-    for (const pkg of ["engine", "agents", "station"]) {
+    for (const pkg of ["engine", "agents", "installation"]) {
       const manifest = JSON.parse(await readFile(path.join(root, "packages", pkg, "package.json"), "utf8")) as {
         exports?: Record<string, string>;
       };

@@ -32,7 +32,7 @@ import {
   createSayTool,
   createSearchWhatsAppHistoryTool,
 } from "../../packages/agents/src/ambience/skills/whatsapp-participation/tools.ts";
-import { createWhatsAppAccount } from "../../packages/station/src/whatsapp-account.ts";
+import { createWhatsAppAccount } from "../../packages/installation/src/whatsapp-account.ts";
 
 const CHAT = "managed-31@g.us";
 const OTHER_CHAT = "unmanaged-31@g.us";

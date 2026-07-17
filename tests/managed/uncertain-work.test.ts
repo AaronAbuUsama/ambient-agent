@@ -9,8 +9,8 @@ import {
   type IssueOperationKind,
 } from "../../packages/engine/src/github/operation-store.ts";
 import { createFakeIssueRepository } from "../../packages/test-support/src/fake-issue-repository.ts";
-import { commentProviderBody, issueOperationMarker, issueProviderBody } from "../../packages/station/src/issue-operation-footer.ts";
-import { createUncertainWorkController, inspectUncertainWorkStatus } from "../../packages/station/src/uncertain-work.ts";
+import { commentProviderBody, issueOperationMarker, issueProviderBody } from "../../packages/installation/src/issue-operation-footer.ts";
+import { createUncertainWorkController, inspectUncertainWorkStatus } from "../../packages/installation/src/uncertain-work.ts";
 
 const roots: string[] = [];
 afterEach(() => {

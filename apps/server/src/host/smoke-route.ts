@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 
-import { runtimeSmokeAuthorizationMatches } from "@ambient-agent/station/runtime-health.ts";
+import { runtimeSmokeAuthorizationMatches } from "@ambient-agent/installation/runtime-health.ts";
 import {
   WhatsAppSmokeCanaryError,
   type WhatsAppRuntimeControl,

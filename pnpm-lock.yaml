@@ -74,12 +74,12 @@ importers:
       '@ambient-agent/engine':
         specifier: workspace:*
         version: link:packages/engine
+      '@ambient-agent/installation':
+        specifier: workspace:*
+        version: link:packages/installation
       '@ambient-agent/server':
         specifier: workspace:*
         version: link:apps/server
-      '@ambient-agent/station':
-        specifier: workspace:*
-        version: link:packages/station
       '@ambient-agent/test-support':
         specifier: workspace:*
         version: link:packages/test-support
@@ -165,7 +165,7 @@ importers:
 
   packages/engine: {}
 
-  packages/station: {}
+  packages/installation: {}
 
   packages/test-support: {}
 

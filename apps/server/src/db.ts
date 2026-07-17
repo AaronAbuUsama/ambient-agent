@@ -1,6 +1,6 @@
 import { sqlite } from "@flue/runtime/node";
 
-import { getManagedRuntimeDependencies } from "@ambient-agent/station/runtime-dependencies.ts";
+import { getManagedRuntimeDependencies } from "@ambient-agent/installation/runtime-dependencies.ts";
 
 export const flueDatabasePath = (): string => getManagedRuntimeDependencies().paths.flueDatabase;
 

@@ -26,8 +26,8 @@ import {
   githubIssueProviderBody,
   githubIssueRecord,
   githubIssueSearchQuery,
-} from "../../packages/station/src/github-issue-repository.ts";
-import { commentProviderBody, issueOperationMarker } from "../../packages/station/src/issue-operation-footer.ts";
+} from "../../packages/installation/src/github-issue-repository.ts";
+import { commentProviderBody, issueOperationMarker } from "../../packages/installation/src/issue-operation-footer.ts";
 
 const CHAT = "issue-management@g.us";
 const REPOSITORY = { owner: "acme", repo: "widgets" } as const;

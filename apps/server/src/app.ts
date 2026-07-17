@@ -5,7 +5,7 @@ import { composeAmbience } from "@ambient-agent/agents/ambience/compose.ts";
 import { dispatchAmbience } from "@ambient-agent/agents/ambience/dispatch.ts";
 import { createIssueManagementPolicy } from "@ambient-agent/agents/ambience/skills/issue-management/runtime.ts";
 import { createIssueOperationStore } from "@ambient-agent/engine/github/operation-store.ts";
-import { createOctokitIssueRepository } from "@ambient-agent/station/github-issue-repository.ts";
+import { createOctokitIssueRepository } from "@ambient-agent/installation/github-issue-repository.ts";
 import {
   getWhatsAppRuntimeStatus,
   startWhatsAppRuntime,
@@ -17,8 +17,8 @@ import {
   deferWhatsAppRuntimeStart,
   getManagedRuntimeDependencies,
   type ManagedRuntimeDependencies,
-} from "@ambient-agent/station/runtime-dependencies.ts";
-import { ambientRuntimeHealth, runtimeInstallationId } from "@ambient-agent/station/runtime-health.ts";
+} from "@ambient-agent/installation/runtime-dependencies.ts";
+import { ambientRuntimeHealth, runtimeInstallationId } from "@ambient-agent/installation/runtime-health.ts";
 import { connectPiChatGptSubscription } from "@ambient-agent/engine/model/pi-subscription.ts";
 
 export const createAmbientAgentApp = async ({

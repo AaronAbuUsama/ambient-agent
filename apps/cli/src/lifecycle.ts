@@ -2,9 +2,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { configureLogging, type LogFormat } from "@ambient-agent/engine/logging/logging.ts";
-import { ensureManagedGitHubWebhookSecret, readManagedConfig, readManagedGitHubCredential } from "@ambient-agent/station/configuration.ts";
-import { installManagedRuntimeDependencies, startDeferredWhatsAppRuntime } from "@ambient-agent/station/runtime-dependencies.ts";
-import type { ManagedPaths } from "@ambient-agent/station/paths.ts";
+import { ensureManagedGitHubWebhookSecret, readManagedConfig, readManagedGitHubCredential } from "@ambient-agent/installation/configuration.ts";
+import { installManagedRuntimeDependencies, startDeferredWhatsAppRuntime } from "@ambient-agent/installation/runtime-dependencies.ts";
+import type { ManagedPaths } from "@ambient-agent/installation/paths.ts";
 import type { ChatGptAuthentication } from "@ambient-agent/engine/model/chatgpt-authentication.ts";
 
 export interface RuntimeLoggingOptions {

@@ -8,8 +8,8 @@ import {
   inspectManagedData,
   installPreparedManagedData,
   promoteReplacementWhatsAppStore,
-} from "../../packages/station/src/installation.ts";
-import { managedPaths, type ManagedPaths } from "../../packages/station/src/paths.ts";
+} from "../../packages/installation/src/installation.ts";
+import { managedPaths, type ManagedPaths } from "../../packages/installation/src/paths.ts";
 import { createManagedChatGptCredentialStore } from "../../packages/engine/src/model/chatgpt-authentication.ts";
 import { installManagedData } from "../../packages/test-support/src/managed-installation.ts";
 

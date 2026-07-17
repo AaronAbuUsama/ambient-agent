@@ -6,7 +6,7 @@ import type { ConversationSyncBatch, IncomingMessage, Status, Update, WhatsAppSe
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { createConversationArchive } from "../../packages/engine/src/intake/conversation-archive.ts";
-import { createWhatsAppAccount } from "../../packages/station/src/whatsapp-account.ts";
+import { createWhatsAppAccount } from "../../packages/installation/src/whatsapp-account.ts";
 
 const roots: string[] = [];
 

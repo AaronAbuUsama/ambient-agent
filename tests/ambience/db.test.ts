@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { installManagedRuntimeDependencies } from "../../packages/station/src/runtime-dependencies.ts";
-import { managedPaths } from "../../packages/station/src/paths.ts";
+import { installManagedRuntimeDependencies } from "../../packages/installation/src/runtime-dependencies.ts";
+import { managedPaths } from "../../packages/installation/src/paths.ts";
 
 describe("Flue database configuration", () => {
   it("uses the typed managed Flue database path rather than process.env", async () => {

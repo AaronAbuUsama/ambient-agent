@@ -15,8 +15,8 @@ import { createConversationArchive } from "../../packages/engine/src/intake/conv
 import { conversationArrival } from "../../packages/engine/src/intake/conversation-event.ts";
 import { createManagedChatInbox } from "../../packages/engine/src/intake/managed-chat-inbox.ts";
 import { APPLICATION_DATABASE_SCHEMA_VERSION } from "../../packages/engine/src/intake/database-versions.ts";
-import { inspectManagedData } from "../../packages/station/src/installation.ts";
-import { managedPaths } from "../../packages/station/src/paths.ts";
+import { inspectManagedData } from "../../packages/installation/src/installation.ts";
+import { managedPaths } from "../../packages/installation/src/paths.ts";
 import type { InboundMessage } from "whatsappd";
 
 const execute = promisify(execFile);

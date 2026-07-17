@@ -141,6 +141,7 @@ export const createOctokitIssueRepository = (token: string, request?: OctokitReq
   const providerAuthor = createSuccessfulPromiseCache(async () =>
     octokit.rest.users.getAuthenticated().then((response) => response.data.login),
   );
+
   const readIssue = async (repository: RepositoryRef, number: number, signal?: AbortSignal): Promise<Issue> => {
     const response = await octokit.rest.issues.get({
       owner: repository.owner,
@@ -150,6 +151,7 @@ export const createOctokitIssueRepository = (token: string, request?: OctokitReq
     });
     return githubIssueRecord(repository, response.data);
   };
+  
   const readComments = async (
     repository: RepositoryRef,
     number: number,
@@ -167,6 +169,7 @@ export const createOctokitIssueRepository = (token: string, request?: OctokitReq
     ]);
     return comments.map((comment) => githubIssueCommentRecord(repository, number, author, comment));
   };
+  
   return {
     search: async ({ repository, query, signal }) => {
       const repositoryUrl = `https://api.github.com/repos/${repository.owner}/${repository.repo}`.toLowerCase();

@@ -16,7 +16,7 @@ import {
   issueProviderBody,
   parseCommentProviderBody,
   parseIssueProviderBody,
-} from "../../station/src/issue-operation-footer.ts";
+} from "../../installation/src/issue-operation-footer.ts";
 
 const publicRecord = (issue: Issue): Issue => ({ ...issue, body: parseIssueProviderBody(issue.body).publicBody });
 const FAKE_PROVIDER_AUTHOR = "ambient-agent";

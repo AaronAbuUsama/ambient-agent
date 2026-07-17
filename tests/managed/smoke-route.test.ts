@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { installSmokeRoute } from "../../apps/server/src/host/smoke-route.ts";
 import { WhatsAppSmokeCanaryError, type WhatsAppRuntimeControl } from "../../apps/server/src/host/whatsapp-runtime.ts";
-import { runtimeSmokeAuthorization } from "../../packages/station/src/runtime-health.ts";
+import { runtimeSmokeAuthorization } from "../../packages/installation/src/runtime-health.ts";
 
 const SECRET = "private-webhook-secret";
 const NONCE = "abc123";

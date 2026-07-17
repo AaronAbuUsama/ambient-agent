@@ -23,7 +23,7 @@ packages/
 ├── agents/         everything that thinks; one folder per agent. ambience/ owns agent.ts,
 │                   layered domain skills (SKILL bundle + tools + port per slice), compose,
 │                   dispatch (T8: beside the agent), observer, activity reporter.
-├── station/        installation machinery, flat (name still open per #131): paths, config,
+├── installation/   installation machinery, flat (name ratified 2026-07-17): paths, config,
 │                   schema, installation, diagnostics, migration, uncertain-work, runtime
 │                   health + the globalThis handshake, credentials, WhatsApp pairing,
 │                   Octokit adapter, qr/files.
@@ -31,10 +31,10 @@ packages/
 ```
 
 The arrows, enforced by `tests/ambience/hard-cut.test.ts`: engine imports nothing internal;
-agents → engine; station → agents + engine; apps/server → all three; **apps/cli → station +
+agents → engine; installation → agents + engine; apps/server → all three; **apps/cli → installation +
 engine, never agents** (the operator surface and the thinking surface meet only at the running
 server). Wildcard `./*` exports are gone and asserted gone — each package exports an explicit
-measured surface (engine 23, agents 8, station 12 subpaths); root tests use relative white-box
+measured surface (engine 23, agents 8, installation 12 subpaths); root tests use relative white-box
 paths so the public surfaces stay honest.
 
 Composition: `composeAmbience(adapters)` (T6 O1) is the one composition root, consumed by
@@ -47,7 +47,7 @@ policy lives in the two skill bundles.
 **Bundling mechanism** (the load-bearing discovery): `flue build` externalizes exactly the
 dependencies declared in its `--root` manifest. `apps/server/package.json` therefore declares the
 real npm runtime dependencies but deliberately **no** internal `@ambient-agent/*` packages, so
-engine/agents/station bundle into the published `dist/server.mjs` while npm dependencies stay
+engine/agents/installation bundle into the published `dist/server.mjs` while npm dependencies stay
 external — the tarball remains self-contained with an unchanged layout. The CLI bundle pins the
 same property with `pack.noExternal: [/^@ambient-agent\//]`.
 
