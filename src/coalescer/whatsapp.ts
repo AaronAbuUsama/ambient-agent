@@ -8,9 +8,11 @@
  * session is a scoped resource: it is stopped and unsubscribed on scope close.
  */
 import { Effect, Layer, Queue, Stream } from "effect";
-import { type IncomingMessage as WaMessage, type WhatsAppSession } from "whatsappd";
+import { type IncomingMessage as WaMessage, type Update, type WhatsAppSession } from "whatsappd";
+import { conversationUpdate } from "../intake/conversation-event.ts";
 import { getLogger } from "../logging/logging.ts";
-import type { IncomingMessage } from "./events.ts";
+import { isGroupJid } from "../shared/whatsapp-jid.ts";
+import { coalescerEventId, type CoalescerEvent, type ConversationUpdate, type IncomingMessage } from "./events.ts";
 import { EventSource } from "./ports.ts";
 
 /** Plain-text body of an inbound message (media captions included; non-text → ""). */
@@ -106,15 +108,20 @@ export const botIdsOf = (session: WhatsAppSession, rawLid?: string): readonly st
 };
 
 export interface DurableWhatsAppIntake {
-  readonly replay: () => readonly IncomingMessage[];
-  readonly accepted: (message: WaMessage) => IncomingMessage | undefined;
+  readonly replay: () => readonly CoalescerEvent[];
+  readonly accepted: (event: CoalescerEvent) => CoalescerEvent | undefined;
 }
 
+const toUpdate = (update: Update): ConversationUpdate | undefined => {
+  const event = conversationUpdate(update);
+  return event.kind === "receipt" ? undefined : event;
+};
+
 /**
- * EventSource over `session.onMessage`. Messages are pushed onto an unbounded
- * queue (WhatsApp's inbound rate is low) and surfaced as a Stream; `allow` gates
- * which chats reach the loop before Ambience dispatch. The listener is
- * removed on scope close.
+ * EventSource over `session.onMessage` and `session.onUpdate`. Events are pushed
+ * onto an unbounded queue (WhatsApp's inbound rate is low) and surfaced as a
+ * Stream; `allow` gates which chats reach the loop before Ambience dispatch.
+ * Both listeners are removed on scope close.
  */
 export const whatsappEventSource = (
   session: WhatsAppSession,
@@ -124,26 +131,35 @@ export const whatsappEventSource = (
   Layer.effect(
     EventSource,
     Effect.gen(function* () {
-      const queue = yield* Queue.unbounded<IncomingMessage>();
-      const unsub = session.onMessage((msg) => {
+      const queue = yield* Queue.unbounded<CoalescerEvent>();
+      const unsubMessage = session.onMessage((msg) => {
         const allowed = allow(msg.chatId, msg.isGroup);
         if (!allowed) {
           logInbound(msg, false, false);
           return;
         }
-        const incoming = durable === undefined ? toIncoming(msg) : durable.accepted(msg);
+        const mapped = toIncoming(msg);
+        const incoming = durable === undefined ? mapped : durable.accepted(mapped);
         logInbound(msg, true, incoming !== undefined);
         if (incoming === undefined) return;
         // Unbounded offer never suspends; the unsafe API preserves callback arrival order.
         Queue.offerUnsafe(queue, incoming);
       });
-      yield* Effect.addFinalizer(() => Effect.sync(() => unsub()));
+      const unsubUpdate = session.onUpdate((raw) => {
+        const update = toUpdate(raw);
+        if (update === undefined || !allow(update.chatId, isGroupJid(update.chatId))) return;
+        const accepted = durable === undefined ? update : durable.accepted(update);
+        if (accepted !== undefined) Queue.offerUnsafe(queue, accepted);
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          unsubUpdate();
+          unsubMessage();
+        }),
+      );
       const replay = durable?.replay() ?? [];
-      const replayOverlap = new Set(replay.map((message) => `${message.chatId}\u0000${message.id}`));
-      const isNotReplayOverlap = (message: IncomingMessage): boolean => {
-        const key = `${message.chatId}\u0000${message.id}`;
-        return !replayOverlap.delete(key);
-      };
+      const replayOverlap = new Set(replay.map(coalescerEventId));
+      const isNotReplayOverlap = (event: CoalescerEvent): boolean => !replayOverlap.delete(coalescerEventId(event));
       return {
         events: Stream.concat(
           Stream.fromIterable(replay),
