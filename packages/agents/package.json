@@ -10,8 +10,8 @@
     "./ambience/compose.ts": "./src/ambience/compose.ts",
     "./ambience/dispatch.ts": "./src/ambience/dispatch.ts",
     "./ambience/observer.ts": "./src/ambience/observer.ts",
-    "./ambience/skills/issue-management/issue-repository.ts": "./src/ambience/skills/issue-management/issue-repository.ts",
-    "./ambience/skills/issue-management/runtime.ts": "./src/ambience/skills/issue-management/runtime.ts",
-    "./ambience/skills/whatsapp-participation/whatsapp-port.ts": "./src/ambience/skills/whatsapp-participation/whatsapp-port.ts"
+    "./capabilities/issue-management/issue-repository.ts": "./src/capabilities/issue-management/issue-repository.ts",
+    "./capabilities/issue-management/runtime.ts": "./src/capabilities/issue-management/runtime.ts",
+    "./capabilities/whatsapp-participation/whatsapp-port.ts": "./src/capabilities/whatsapp-participation/whatsapp-port.ts"
   }
 }

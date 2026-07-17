@@ -31,7 +31,7 @@ import {
   createReadWhatsAppThreadTool,
   createSayTool,
   createSearchWhatsAppHistoryTool,
-} from "../../packages/agents/src/ambience/skills/whatsapp-participation/tools.ts";
+} from "../../packages/agents/src/capabilities/whatsapp-participation/tools.ts";
 import { createWhatsAppAccount } from "../../packages/installation/src/whatsapp-account.ts";
 
 const CHAT = "managed-31@g.us";

@@ -11,7 +11,7 @@ import {
   type IssueStateChangeReason,
   type IssueUpdate,
   type RepositoryRef,
-} from "@ambient-agent/agents/ambience/skills/issue-management/issue-repository.ts";
+} from "@ambient-agent/agents/capabilities/issue-management/issue-repository.ts";
 import type {
   IssueOperationKind,
   IssueOperationRecord,

@@ -10,13 +10,13 @@ import ambience from "../../packages/agents/src/ambience/agent.ts";
 import {
   configureIssueManagementRuntime,
   createIssueManagementPolicy,
-} from "../../packages/agents/src/ambience/skills/issue-management/runtime.ts";
+} from "../../packages/agents/src/capabilities/issue-management/runtime.ts";
 import {
   isUncertainIssueMutationError,
   MAX_PUBLIC_COMMENT_BODY_LENGTH,
   MAX_PUBLIC_ISSUE_BODY_LENGTH,
-} from "../../packages/agents/src/ambience/skills/issue-management/issue-repository.ts";
-import { createIssueManagementTools } from "../../packages/agents/src/ambience/skills/issue-management/tools.ts";
+} from "../../packages/agents/src/capabilities/issue-management/issue-repository.ts";
+import { createIssueManagementTools } from "../../packages/agents/src/capabilities/issue-management/tools.ts";
 import { createIssueOperationStore } from "../../packages/engine/src/github/operation-store.ts";
 import { createFakeIssueRepository } from "../../packages/test-support/src/fake-issue-repository.ts";
 import {
@@ -950,7 +950,7 @@ describe("production Issue Management tools", () => {
     const config = await ambience.initialize({ id: CHAT, env: {} });
     expect(config.skills?.map((skill) => skill.name)).toEqual(["whatsapp-participation", "issue-management"]);
     await expect(
-      readFile(join(process.cwd(), "packages/agents/src/ambience/skills/issue-management/SKILL.md"), "utf8"),
+      readFile(join(process.cwd(), "packages/agents/src/capabilities/issue-management/SKILL.md"), "utf8"),
     ).resolves.toContain('version: "2.0.0"');
     expect(config.tools?.map((tool) => tool.name)).toEqual([
       "react",

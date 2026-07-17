@@ -1,4 +1,4 @@
-import type { OperationIdentity } from "@ambient-agent/agents/ambience/skills/issue-management/issue-repository.ts";
+import type { OperationIdentity } from "@ambient-agent/agents/capabilities/issue-management/issue-repository.ts";
 
 const FOOTER_START = "<!-- ambience-operation-footer:v1 -->";
 const FOOTER_END = "<!-- /ambience-operation-footer -->";

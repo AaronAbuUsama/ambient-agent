@@ -8,8 +8,8 @@ import {
   type IssueRepositoryOptions,
   type IssueStateChangeReason,
   type RepositoryRef,
-} from "../../agents/src/ambience/skills/issue-management/issue-repository.ts";
-import { repositoryName } from "../../agents/src/ambience/skills/issue-management/runtime.ts";
+} from "../../agents/src/capabilities/issue-management/issue-repository.ts";
+import { repositoryName } from "../../agents/src/capabilities/issue-management/runtime.ts";
 import {
   commentProviderBody,
   issueOperationMarker,

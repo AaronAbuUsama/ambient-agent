@@ -1,9 +1,9 @@
 import { defineAgent } from "@flue/runtime";
 
-import issueManagement from "./skills/issue-management/SKILL.md" with { type: "skill" };
-import { createIssueManagementTools } from "./skills/issue-management/tools.ts";
-import whatsappParticipation from "./skills/whatsapp-participation/SKILL.md" with { type: "skill" };
-import { createWhatsAppParticipationTools } from "./skills/whatsapp-participation/tools.ts";
+import issueManagement from "../capabilities/issue-management/SKILL.md" with { type: "skill" };
+import { createIssueManagementTools } from "../capabilities/issue-management/tools.ts";
+import whatsappParticipation from "../capabilities/whatsapp-participation/SKILL.md" with { type: "skill" };
+import { createWhatsAppParticipationTools } from "../capabilities/whatsapp-participation/tools.ts";
 import { AMBIENCE_MODEL_SPECIFIER } from "@ambient-agent/engine/model/pi-subscription.ts";
 
 export const description = "A continuing private ambient agent instance identified by its managed WhatsApp chatId.";

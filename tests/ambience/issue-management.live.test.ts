@@ -4,8 +4,8 @@ import { Octokit } from "@octokit/rest";
 import { describe, expect, it } from "vite-plus/test";
 
 import { createIssueOperationStore } from "../../packages/engine/src/github/operation-store.ts";
-import { createIssueManagementPolicy } from "../../packages/agents/src/ambience/skills/issue-management/runtime.ts";
-import { createIssueManagementTools } from "../../packages/agents/src/ambience/skills/issue-management/tools.ts";
+import { createIssueManagementPolicy } from "../../packages/agents/src/capabilities/issue-management/runtime.ts";
+import { createIssueManagementTools } from "../../packages/agents/src/capabilities/issue-management/tools.ts";
 import { createOctokitIssueRepository } from "../../packages/installation/src/github-issue-repository.ts";
 
 const token = process.env.ISSUE_MANAGEMENT_SANDBOX_TOKEN?.trim();

@@ -2,14 +2,14 @@ import type { DispatchReceipt } from "@flue/runtime";
 import { flue } from "@flue/runtime/routing";
 import { Hono } from "hono";
 
-import type { IssueRepository } from "./skills/issue-management/issue-repository.ts";
+import type { IssueRepository } from "../capabilities/issue-management/issue-repository.ts";
 import type { IssueOperationStore } from "@ambient-agent/engine/github/operation-store.ts";
 import {
   configureIssueManagementRuntime,
   type IssueManagementPolicy,
-} from "./skills/issue-management/runtime.ts";
-import { configureWhatsAppParticipationPort } from "./skills/whatsapp-participation/whatsapp-port.ts";
-import type { WhatsAppParticipationPort } from "./skills/whatsapp-participation/whatsapp-port.ts";
+} from "../capabilities/issue-management/runtime.ts";
+import { configureWhatsAppParticipationPort } from "../capabilities/whatsapp-participation/whatsapp-port.ts";
+import type { WhatsAppParticipationPort } from "../capabilities/whatsapp-participation/whatsapp-port.ts";
 import { installGitHubIngressRuntime } from "@ambient-agent/engine/github/ingress-runtime.ts";
 import type { GitHubIngressStore } from "@ambient-agent/engine/github/ingress-store.ts";
 import type { GitHubIngressSettings } from "@ambient-agent/engine/github/ingress.ts";

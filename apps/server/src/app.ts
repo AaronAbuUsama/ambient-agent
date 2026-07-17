@@ -3,7 +3,7 @@ import type { Hono } from "hono";
 import "@ambient-agent/engine/braintrust.ts";
 import { composeAmbience } from "@ambient-agent/agents/ambience/compose.ts";
 import { dispatchAmbience } from "@ambient-agent/agents/ambience/dispatch.ts";
-import { createIssueManagementPolicy } from "@ambient-agent/agents/ambience/skills/issue-management/runtime.ts";
+import { createIssueManagementPolicy } from "@ambient-agent/agents/capabilities/issue-management/runtime.ts";
 import { createIssueOperationStore } from "@ambient-agent/engine/github/operation-store.ts";
 import { createOctokitIssueRepository } from "@ambient-agent/installation/github-issue-repository.ts";
 import {

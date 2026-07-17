@@ -110,6 +110,12 @@ describe("the post-Eve production cut", () => {
         expect(await readFile(path.join(root, relativePath), "utf8"), relativePath).not.toMatch(forbidden);
       }
     }
+    // Capabilities are shared across agents: they may never import from an agent folder.
+    for (const relativePath of await sourceFiles("packages/agents/src/capabilities")) {
+      const source = await readFile(path.join(root, relativePath), "utf8");
+      expect(source, relativePath).not.toMatch(/from ["']\.\.\/(?:\.\.\/)?ambience\//);
+      expect(source, relativePath).not.toMatch(/@ambient-agent\/agents\/ambience\//);
+    }
     // Wildcard exports are shallow: every package must publish an explicit surface.
     for (const pkg of ["engine", "agents", "installation"]) {
       const manifest = JSON.parse(await readFile(path.join(root, "packages", pkg, "package.json"), "utf8")) as {

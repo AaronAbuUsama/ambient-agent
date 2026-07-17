@@ -12,9 +12,9 @@ import { makeAmbienceWindowDispatcher, dispatchAmbience } from "../../../../pack
 import type {
   IssueMilestone,
   IssueRepositoryOptions,
-} from "../../../../packages/agents/src/ambience/skills/issue-management/issue-repository.ts";
+} from "../../../../packages/agents/src/capabilities/issue-management/issue-repository.ts";
 import { createIssueOperationStore } from "../../../../packages/engine/src/github/operation-store.ts";
-import { createIssueManagementPolicy } from "../../../../packages/agents/src/ambience/skills/issue-management/runtime.ts";
+import { createIssueManagementPolicy } from "../../../../packages/agents/src/capabilities/issue-management/runtime.ts";
 import * as Coalescer from "../../../../packages/engine/src/coalescer/coalescer.ts";
 import { configLayer } from "../../../../packages/engine/src/coalescer/config.ts";
 import type { CoalescerEvent, IncomingMessage } from "../../../../packages/engine/src/coalescer/events.ts";

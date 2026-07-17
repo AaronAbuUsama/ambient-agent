@@ -10,7 +10,7 @@ import {
   type WhatsAppOutboundPort,
   type WhatsAppDeliveryResult,
   withTypingResult,
-} from "@ambient-agent/agents/ambience/skills/whatsapp-participation/whatsapp-port.ts";
+} from "@ambient-agent/agents/capabilities/whatsapp-participation/whatsapp-port.ts";
 import { makeManagedChatGate, type ChatGate } from "@ambient-agent/engine/coalescer/chat-gate.ts";
 import * as Coalescer from "@ambient-agent/engine/coalescer/coalescer.ts";
 import { configLayer, type CoalescerConfigValues } from "@ambient-agent/engine/coalescer/config.ts";
