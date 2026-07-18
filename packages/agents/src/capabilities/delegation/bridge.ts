@@ -1,4 +1,4 @@
-import { getRun, instrument, type RunRecord } from "@flue/runtime";
+import { getRun, instrument, type FlueExecutionOperation, type RunRecord } from "@flue/runtime";
 
 import type { SpecialistMilestoneInput, SpecialistResultInput } from "@ambient-agent/engine/inputs.ts";
 import type { RunLedger } from "./ledger.ts";
@@ -30,10 +30,12 @@ const buildResultEnvelope = (runId: string, chatId: string, run: RunRecord): Spe
     type: "specialist.result",
     chatId,
     runId,
-    // ponytail: an errored (thrown) run has no `result` and still delivers status "ok" —
-    // the Specialist contract (§8) returns business failures as a terminal `result`
-    // (e.g. Coder `outcome:"blocked"`), never by throwing, so this is the crash edge only.
-    status: "ok",
+    // A completed run delivers its nested `result` as "ok". A crashed (thrown → status
+    // "errored") run has no `result`, so it delivers "interrupted": the §8 envelope has no
+    // "errored" arm and "ok" without a result would be a false success. Business failures
+    // ride back as a terminal `result` (e.g. Coder `outcome:"blocked"`) and stay "ok".
+    // deliverTerminalResult only reaches here once terminal, so status is completed | errored.
+    status: run.status === "completed" ? "ok" : "interrupted",
     ...(run.result === undefined || run.result === null ? {} : { result: run.result }),
     ...(jobInput.graphContext === undefined ? {} : { graphContext: jobInput.graphContext }),
   };
@@ -94,6 +96,31 @@ export const dispatchSpecialistMilestone = async (input: {
   await dispatch({ id: input.chatId, input: { type: "specialist.milestone", ...input } });
 };
 
+/**
+ * The `instrument()` interceptor body (exported so the seam test can drive it directly).
+ * Runs the operation, then — in `finally` — delivers a workflow run's terminal result.
+ * The `finally` is load-bearing: flue's `withWorkflowRunLifecycle` persists `run_end` and
+ * then RETHROWS an errored run, so `await next()` rejects; without the `finally` the errored
+ * terminal would go undelivered until the next boot's sweep. `getRun` reflects the (now
+ * durable) terminal record either way, so `deliverTerminalResult` gates on it.
+ */
+export const deliverAfterExecution = async <T>(
+  operation: FlueExecutionOperation,
+  next: () => Promise<T>,
+): Promise<T> => {
+  try {
+    return await next();
+  } finally {
+    if (operation.type === "workflow") {
+      const { ledger, dispatch } = getDelegationRuntime();
+      // Detached: run finalization must not wait on the Speaker turn the result triggers.
+      void deliverTerminalResult(operation.runId, { ledger, dispatch, getRun }).catch((cause) => {
+        console.error("[delegation] result delivery failed", operation.runId, cause);
+      });
+    }
+  }
+};
+
 let installed: (() => Promise<void>) | undefined;
 
 /**
@@ -105,17 +132,7 @@ export const installDelegationBridge = (): (() => Promise<void>) => {
   if (installed !== undefined) return installed;
   installed = instrument({
     observe: () => {},
-    interceptor: async (operation, _ctx, next) => {
-      const result = await next();
-      if (operation.type === "workflow") {
-        const { ledger, dispatch } = getDelegationRuntime();
-        // Detached: run finalization must not wait on the Speaker turn the result triggers.
-        void deliverTerminalResult(operation.runId, { ledger, dispatch, getRun }).catch((cause) => {
-          console.error("[delegation] result delivery failed", operation.runId, cause);
-        });
-      }
-      return result;
-    },
+    interceptor: (operation, _ctx, next) => deliverAfterExecution(operation, next),
     dispose: () => {},
   });
   return installed;

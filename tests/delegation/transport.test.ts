@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { RunRecord } from "@flue/runtime";
+import { configureFlueRuntime, InMemoryRunStore } from "@flue/runtime/internal";
 
 import { createRunLedger } from "../../packages/agents/src/capabilities/delegation/ledger.ts";
 import {
+  deliverAfterExecution,
   deliverTerminalResult,
+  installDelegationBridge,
   sweepUnsettledLaunches,
 } from "../../packages/agents/src/capabilities/delegation/bridge.ts";
+import { configureDelegationRuntime } from "../../packages/agents/src/capabilities/delegation/runtime.ts";
 import type { SpecialistInput } from "../../packages/engine/src/inputs.ts";
 
 const CHAT = "home@g.us";
@@ -115,6 +119,73 @@ describe("deliverTerminalResult — the ADR 0001 durable gate", () => {
     await deliverTerminalResult("unknown", deps); // never in the ledger
 
     expect(dispatched).toEqual([]);
+  });
+});
+
+describe("the installed instrument() interceptor — the whole seam", () => {
+  // Drives the real bridge function `installDelegationBridge()` registers, over a real
+  // ambient run store (so the bridge's own `getRun` reads it). `next()` stands in for a
+  // workflow run: it persists the terminal record the way flue's lifecycle does, then
+  // resolves (complete) or rethrows (crash). A placeholder Specialist would take this exact
+  // path; no live model is needed to prove the return seam.
+  const seam = () => {
+    const runStore = new InMemoryRunStore();
+    // ponytail: only `target`/`runStore` are read by ambient getRun — the rest of the
+    // FlueRuntime shape is irrelevant here, so cast past it rather than build a fake app.
+    configureFlueRuntime({ target: "node", runStore } as never);
+    const ledger = createRunLedger(":memory:");
+    const dispatched: { id: string; input: SpecialistInput }[] = [];
+    configureDelegationRuntime({
+      ledger,
+      dispatch: async (request) => {
+        dispatched.push(request);
+        return undefined;
+      },
+    });
+    installDelegationBridge();
+    return { runStore, ledger, dispatched };
+  };
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0)); // delivery is detached (void)
+  const op = (runId: string) =>
+    ({ type: "workflow", runId, workflowName: "coder", phase: "start", startedAt: "t0" }) as const;
+
+  it("delivers status 'ok' with the result when the run completes", async () => {
+    const { runStore, ledger, dispatched } = seam();
+    ledger.record({ runId: "done", chatId: CHAT, workflow: "coder", launchedAt: "t0" });
+    await runStore.createRun({ runId: "done", workflowName: "coder", startedAt: "t0", input: undefined });
+
+    await deliverAfterExecution(op("done"), async () => {
+      await runStore.endRun({ runId: "done", endedAt: "t1", isError: false, durationMs: 1, result: { outcome: "opened-pr" } });
+      return { outcome: "opened-pr" };
+    });
+    await flush();
+
+    expect(dispatched).toEqual([
+      {
+        id: CHAT,
+        input: { type: "specialist.result", chatId: CHAT, runId: "done", status: "ok", result: { outcome: "opened-pr" } },
+      },
+    ]);
+  });
+
+  it("still delivers (as 'interrupted', no payload) when the run throws — the crash never goes silent", async () => {
+    const { runStore, ledger, dispatched } = seam();
+    ledger.record({ runId: "boom", chatId: CHAT, workflow: "coder", launchedAt: "t0" });
+    await runStore.createRun({ runId: "boom", workflowName: "coder", startedAt: "t0", input: undefined });
+    const boom = new Error("crashed mid-run");
+
+    await expect(
+      deliverAfterExecution(op("boom"), async () => {
+        // flue's withWorkflowRunLifecycle persists run_end (errored) then RETHROWS.
+        await runStore.endRun({ runId: "boom", endedAt: "t1", isError: true, durationMs: 1, error: { message: "crashed" } });
+        throw boom;
+      }),
+    ).rejects.toBe(boom); // the interceptor must not swallow the error
+    await flush();
+
+    expect(dispatched).toEqual([
+      { id: CHAT, input: { type: "specialist.result", chatId: CHAT, runId: "boom", status: "interrupted" } },
+    ]);
   });
 });
 

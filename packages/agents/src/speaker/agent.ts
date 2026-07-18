@@ -5,6 +5,7 @@ import { createIssueManagementTools } from "../capabilities/issue-management/too
 import whatsappParticipation from "../capabilities/whatsapp-participation/SKILL.md" with { type: "skill" };
 import { createWhatsAppParticipationTools } from "../capabilities/whatsapp-participation/tools.ts";
 import { createSpeakerGraphTools } from "../capabilities/graph/tools.ts";
+import { createDelegationTools } from "../capabilities/delegation/tools.ts";
 import { SPEAKER_MODEL_SPECIFIER } from "@ambient-agent/engine/model/pi-subscription.ts";
 
 export const description = "A continuing private ambient agent instance identified by its managed WhatsApp chatId.";
@@ -13,7 +14,14 @@ export default defineAgent(({ id }) => ({
   model: SPEAKER_MODEL_SPECIFIER,
   thinkingLevel: "low",
   skills: [whatsappParticipation, issueManagement],
-  tools: [...createWhatsAppParticipationTools(id), ...createIssueManagementTools(), ...createSpeakerGraphTools()],
+  tools: [
+    ...createWhatsAppParticipationTools(id),
+    ...createIssueManagementTools(),
+    ...createSpeakerGraphTools(),
+    // With no Specialists configured yet (#158 supplies the first), this yields just
+    // `check_jobs` — the Speaker's memory of what it launched across restarts (§8 Progress).
+    ...createDelegationTools(id),
+  ],
   instructions: [
     "You are Speaker, the continuing private ambient agent for one managed WhatsApp chat.",
     "Process every accepted input and retain useful private working context across turns.",
