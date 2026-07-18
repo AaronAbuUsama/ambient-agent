@@ -95,6 +95,8 @@ export interface PreparedManagedData {
 
 export interface InstallPreparedManagedDataInput extends ManagedPathEnvironment {
   readonly prepare: (paths: ManagedPaths) => Promise<PreparedManagedData>;
+  /** Tenant-backed model credentials are verified through their store, not a staged local secret file. */
+  readonly modelCredentialStorage?: "managed-file" | "tenant-database";
   readonly signal?: AbortSignal;
 }
 
@@ -658,7 +660,8 @@ export const installPreparedManagedData = async (
       (await exists(stagingPaths.chatGptOAuthCredential)) || (await exists(stagingPaths.legacyPiAuthCredential));
     // Credential files are component-owned and never fail an existing installation,
     // but first-run setup must still stage a complete tree before promotion.
-    if (stagingInspection.state !== "ready" || !chatGptStaged) {
+    const modelCredentialReady = input.modelCredentialStorage === "tenant-database" || chatGptStaged;
+    if (stagingInspection.state !== "ready" || !modelCredentialReady) {
       throw new Error("Managed staging verification failed; setup did not commit any files.");
     }
     if (input.signal?.aborted) {

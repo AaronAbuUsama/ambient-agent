@@ -1,4 +1,5 @@
-import { createClient, type Client } from "@libsql/client";
+import { createClient, type Client, type Transaction } from "@libsql/client";
+import { setTimeout as delay } from "node:timers/promises";
 import type { SessionStore } from "whatsappd";
 
 import {
@@ -39,7 +40,17 @@ export const tenantCredentialDatabaseFromEnvironment = (
 };
 
 const createTenantClient = ({ url, authToken }: TenantCredentialDatabase): Client =>
-  createClient({ url, ...(authToken === undefined ? {} : { authToken }) });
+  createClient({ url, timeout: 0, ...(authToken === undefined ? {} : { authToken }) });
+
+const initializeClient = (database: TenantCredentialDatabase, schema: string): (() => Promise<Client>) => {
+  const client = createTenantClient(database);
+  let ready: Promise<void> | undefined;
+  return async () => {
+    ready ??= client.execute(schema).then(() => undefined);
+    await ready;
+    return client;
+  };
+};
 
 const whatsappSchema = `
   CREATE TABLE IF NOT EXISTS whatsapp_auth_state (
@@ -50,13 +61,7 @@ const whatsappSchema = `
 
 /** A whatsappd SessionStore backed by the tenant's isolated libSQL database. */
 export const libsqlStore = (database: TenantCredentialDatabase): SessionStore => {
-  const client = createTenantClient(database);
-  let ready: Promise<void> | undefined;
-  const connect = async (): Promise<Client> => {
-    ready ??= client.execute(whatsappSchema).then(() => undefined);
-    await ready;
-    return client;
-  };
+  const connect = initializeClient(database, whatsappSchema);
 
   return {
     async read(key) {
@@ -93,61 +98,154 @@ export const libsqlStore = (database: TenantCredentialDatabase): SessionStore =>
 const modelSchema = `
   CREATE TABLE IF NOT EXISTS model_credentials (
     provider_id TEXT PRIMARY KEY NOT NULL,
-    credential_json TEXT NOT NULL,
-    revision INTEGER NOT NULL,
-    updated_at_ms INTEGER NOT NULL
+    credential_json TEXT NOT NULL
   )
 `;
 const MAX_CREDENTIAL_BYTES = 1024 * 1024;
-const MAX_CONFLICT_RETRIES = 8;
-const credentialOperations = new Map<string, Promise<void>>();
-
-const abortReason = (signal: AbortSignal): unknown =>
-  signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
+const localCredentialOperations = new Map<string, Promise<void>>();
 
 const throwIfAborted = (signal?: AbortSignal): void => {
-  if (signal?.aborted) throw abortReason(signal);
+  if (signal?.aborted) {
+    throw signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
+  }
 };
 
-const abortable = async <T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> => {
-  throwIfAborted(signal);
-  if (signal === undefined) return await operation;
-  return await new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(abortReason(signal));
-    signal.addEventListener("abort", onAbort, { once: true });
-    void operation.then(
-      (value) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(value);
-      },
-      (cause: unknown) => {
-        signal.removeEventListener("abort", onAbort);
-        reject(cause);
-      },
-    );
-  });
-};
+const isDatabaseBusy = (cause: unknown): boolean =>
+  typeof cause === "object" && cause !== null && Reflect.get(cause, "code") === "SQLITE_BUSY";
 
-const serializeCredentialOperation = async <T>(
-  databaseUrl: string,
-  operation: () => Promise<T>,
-  signal?: AbortSignal,
-): Promise<T> => {
-  const predecessor = credentialOperations.get(databaseUrl) ?? Promise.resolve();
-  const current = predecessor.then(async () => {
+const beginWriteTransaction = async (client: Client, signal?: AbortSignal): Promise<Transaction> => {
+  const deadline = Date.now() + 30_000;
+  let retryDelay = 10;
+  for (;;) {
     throwIfAborted(signal);
-    return await operation();
-  });
+    try {
+      return await client.transaction("write");
+    } catch (cause) {
+      if (!isDatabaseBusy(cause) || Date.now() >= deadline) throw cause;
+      await delay(retryDelay, undefined, signal === undefined ? undefined : { signal });
+      retryDelay = Math.min(retryDelay * 2, 100);
+    }
+  }
+};
+
+/**
+ * Keep the local libSQL driver from synchronously contending with itself. The
+ * database write transaction remains the cross-process/remote integrity lock.
+ */
+const serializeLocalCredentialOperation = async <T>(databaseUrl: string, operation: () => Promise<T>): Promise<T> => {
+  const predecessor = localCredentialOperations.get(databaseUrl) ?? Promise.resolve();
+  const current = predecessor.then(operation);
   const tail = current.then(
     () => undefined,
     () => undefined,
   );
-  credentialOperations.set(databaseUrl, tail);
+  localCredentialOperations.set(databaseUrl, tail);
   void tail.finally(() => {
-    if (credentialOperations.get(databaseUrl) === tail) credentialOperations.delete(databaseUrl);
+    if (localCredentialOperations.get(databaseUrl) === tail) localCredentialOperations.delete(databaseUrl);
   });
-  return await abortable(current, signal);
+  return await current;
 };
+
+interface TenantCredentialSnapshot {
+  readonly whatsapp: ReadonlyArray<readonly [key: string, value: string]>;
+  readonly models: ReadonlyArray<readonly [providerId: string, credentialJson: string]>;
+}
+
+type TenantCredentialRollbackScope = "all" | "whatsapp";
+
+const captureTenantCredentials = async (
+  database: TenantCredentialDatabase,
+  scope: TenantCredentialRollbackScope,
+): Promise<TenantCredentialSnapshot> => {
+  const client = createTenantClient(database);
+  try {
+    await client.batch(scope === "all" ? [whatsappSchema, modelSchema] : [whatsappSchema], "write");
+    const results = await client.batch([
+      "SELECT key, value FROM whatsapp_auth_state ORDER BY key",
+      ...(scope === "all" ? ["SELECT provider_id, credential_json FROM model_credentials ORDER BY provider_id"] : []),
+    ], "read");
+    const whatsapp = results[0]!;
+    const models = results[1];
+    return {
+      whatsapp: whatsapp.rows.map((row) => {
+        if (typeof row.key !== "string" || typeof row.value !== "string") {
+          throw new Error("The tenant WhatsApp credential table is malformed.");
+        }
+        return [row.key, row.value] as const;
+      }),
+      models:
+        models?.rows.map((row) => {
+          if (typeof row.provider_id !== "string" || typeof row.credential_json !== "string") {
+            throw new Error("The tenant model credential table is malformed.");
+          }
+          return [row.provider_id, row.credential_json] as const;
+        }) ?? [],
+    };
+  } finally {
+    client.close();
+  }
+};
+
+const restoreTenantCredentials = async (
+  database: TenantCredentialDatabase,
+  snapshot: TenantCredentialSnapshot,
+  scope: TenantCredentialRollbackScope,
+): Promise<void> => {
+  const client = createTenantClient(database);
+  try {
+    await client.batch(scope === "all" ? [whatsappSchema, modelSchema] : [whatsappSchema], "write");
+    const transaction = await beginWriteTransaction(client);
+    try {
+      await transaction.batch([
+        "DELETE FROM whatsapp_auth_state",
+        ...(scope === "all" ? ["DELETE FROM model_credentials"] : []),
+        ...snapshot.whatsapp.map(([key, value]) => ({
+          sql: "INSERT INTO whatsapp_auth_state (key, value) VALUES (?, ?)",
+          args: [key, value],
+        })),
+        ...snapshot.models.map(([providerId, credentialJson]) => ({
+          sql: "INSERT INTO model_credentials (provider_id, credential_json) VALUES (?, ?)",
+          args: [providerId, credentialJson],
+        })),
+      ]);
+      await transaction.commit();
+    } finally {
+      transaction.close();
+    }
+  } finally {
+    client.close();
+  }
+};
+
+const withCredentialRollback = async <T>(
+  database: TenantCredentialDatabase,
+  operation: () => Promise<T>,
+  scope: TenantCredentialRollbackScope,
+): Promise<T> => {
+  const snapshot = await captureTenantCredentials(database, scope);
+  try {
+    return await operation();
+  } catch (cause) {
+    try {
+      await restoreTenantCredentials(database, snapshot, scope);
+    } catch (rollbackCause) {
+      throw new AggregateError([cause, rollbackCause], "Tenant credential rollback failed.");
+    }
+    throw cause;
+  }
+};
+
+/** Restore both tenant secret stores when a multi-step first-run workflow fails. */
+export const withTenantCredentialRollback = async <T>(
+  database: TenantCredentialDatabase,
+  operation: () => Promise<T>,
+): Promise<T> => await withCredentialRollback(database, operation, "all");
+
+/** Restore only WhatsApp state when a pairing workflow fails. */
+export const withTenantWhatsAppCredentialRollback = async <T>(
+  database: TenantCredentialDatabase,
+  operation: () => Promise<T>,
+): Promise<T> => await withCredentialRollback(database, operation, "whatsapp");
 
 const assertChatGptProvider = (providerId: string): void => {
   if (providerId !== CHATGPT_PROVIDER_ID) {
@@ -164,124 +262,94 @@ const serializeCredential = (value: unknown): string => {
   return serialized;
 };
 
-interface StoredCredential {
-  readonly credential: ReturnType<typeof validateChatGptOAuthCredential> | undefined;
-  readonly revision: number | undefined;
-}
+type CredentialExecutor = Pick<Client | Transaction, "execute">;
 
 /** A ChatGptCredentialStore whose atomic modify seam is persisted in libSQL. */
 export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDatabase): ChatGptCredentialStore => {
-  const client = createTenantClient(database);
-  let ready: Promise<void> | undefined;
-  const connect = async (): Promise<Client> => {
-    ready ??= client.execute(modelSchema).then(() => undefined);
-    await ready;
-    return client;
-  };
+  const connect = initializeClient(database, modelSchema);
 
-  const readStored = async (providerId: string): Promise<StoredCredential> => {
-    const result = await (
-      await connect()
-    ).execute({
-      sql: "SELECT credential_json, revision FROM model_credentials WHERE provider_id = ?",
+  const readStored = async (executor: CredentialExecutor, providerId: string) => {
+    const result = await executor.execute({
+      sql: "SELECT credential_json FROM model_credentials WHERE provider_id = ?",
       args: [providerId],
     });
     const row = result.rows[0];
-    if (row === undefined) return { credential: undefined, revision: undefined };
+    if (row === undefined) return undefined;
     const serialized = row.credential_json;
-    const revision = Number(row.revision);
-    if (typeof serialized !== "string" || !Number.isSafeInteger(revision) || revision < 1) {
+    if (typeof serialized !== "string" || Buffer.byteLength(serialized, "utf8") > MAX_CREDENTIAL_BYTES) {
       throw new Error("The managed ChatGPT credential row is malformed.");
     }
-    return { credential: validateChatGptOAuthCredential(JSON.parse(serialized)), revision };
+    return validateChatGptOAuthCredential(JSON.parse(serialized));
   };
 
   const store: ChatGptCredentialStore = {
     async read(providerId, signal) {
       assertChatGptProvider(providerId);
       throwIfAborted(signal);
-      return (await readStored(providerId)).credential;
+      return await readStored(await connect(), providerId);
     },
     async modify(providerId, change, signal) {
       assertChatGptProvider(providerId);
-      return await serializeCredentialOperation(
-        database.url,
-        async () => {
-          for (let attempt = 0; attempt < MAX_CONFLICT_RETRIES; attempt += 1) {
-            throwIfAborted(signal);
-            const current = await readStored(providerId);
-            const next = await change(current.credential);
-            if (next === undefined) return current.credential;
-            const credential = validateChatGptOAuthCredential(next);
-            const serialized = serializeCredential(credential);
-            const result =
-              current.revision === undefined
-                ? await (
-                    await connect()
-                  ).execute({
-                    sql: `
-                      INSERT INTO model_credentials (provider_id, credential_json, revision, updated_at_ms)
-                      VALUES (?, ?, 1, ?)
-                      ON CONFLICT(provider_id) DO NOTHING
-                    `,
-                    args: [providerId, serialized, Date.now()],
-                  })
-                : await (
-                    await connect()
-                  ).execute({
-                    sql: `
-                      UPDATE model_credentials
-                      SET credential_json = ?, revision = revision + 1, updated_at_ms = ?
-                      WHERE provider_id = ? AND revision = ?
-                    `,
-                    args: [serialized, Date.now(), providerId, current.revision],
-                  });
-            if (result.rowsAffected === 1) return credential;
-          }
-          throw new Error("The managed ChatGPT credential changed too many times to update safely.");
-        },
-        signal,
-      );
+      return await serializeLocalCredentialOperation(database.url, async () => {
+        throwIfAborted(signal);
+        const transaction = await beginWriteTransaction(await connect(), signal);
+        try {
+          const current = await readStored(transaction, providerId);
+          const next = await change(current);
+          throwIfAborted(signal);
+          // No replacement means no write. Let close() roll the reserved write
+          // transaction back instead of issuing a needless commit.
+          if (next === undefined) return current;
+          const credential = validateChatGptOAuthCredential(next);
+          await transaction.execute({
+            sql: `
+              INSERT INTO model_credentials (provider_id, credential_json) VALUES (?, ?)
+              ON CONFLICT(provider_id) DO UPDATE SET credential_json = excluded.credential_json
+            `,
+            args: [providerId, serializeCredential(credential)],
+          });
+          await transaction.commit();
+          return credential;
+        } finally {
+          transaction.close();
+        }
+      });
     },
     async replace(providerId, next, signal) {
       assertChatGptProvider(providerId);
       const serialized = serializeCredential(next);
-      await serializeCredentialOperation(
-        database.url,
-        async () => {
-          throwIfAborted(signal);
-          await (
-            await connect()
-          ).execute({
+      await serializeLocalCredentialOperation(database.url, async () => {
+        throwIfAborted(signal);
+        const transaction = await beginWriteTransaction(await connect(), signal);
+        try {
+          await transaction.execute({
             sql: `
-              INSERT INTO model_credentials (provider_id, credential_json, revision, updated_at_ms)
-              VALUES (?, ?, 1, ?)
-              ON CONFLICT(provider_id) DO UPDATE SET
-                credential_json = excluded.credential_json,
-                revision = model_credentials.revision + 1,
-                updated_at_ms = excluded.updated_at_ms
+              INSERT INTO model_credentials (provider_id, credential_json) VALUES (?, ?)
+              ON CONFLICT(provider_id) DO UPDATE SET credential_json = excluded.credential_json
             `,
-            args: [providerId, serialized, Date.now()],
+            args: [providerId, serialized],
           });
-        },
-        signal,
-      );
+          await transaction.commit();
+        } finally {
+          transaction.close();
+        }
+      });
     },
     async delete(providerId, signal) {
       assertChatGptProvider(providerId);
-      await serializeCredentialOperation(
-        database.url,
-        async () => {
-          throwIfAborted(signal);
-          await (
-            await connect()
-          ).execute({
+      await serializeLocalCredentialOperation(database.url, async () => {
+        throwIfAborted(signal);
+        const transaction = await beginWriteTransaction(await connect(), signal);
+        try {
+          await transaction.execute({
             sql: "DELETE FROM model_credentials WHERE provider_id = ?",
             args: [providerId],
           });
-        },
-        signal,
-      );
+          await transaction.commit();
+        } finally {
+          transaction.close();
+        }
+      });
     },
   };
 

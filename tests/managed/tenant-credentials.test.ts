@@ -1,7 +1,9 @@
 import type { OAuthCredential } from "@earendil-works/pi-ai";
-import { lstat, mkdtemp, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { SessionStore, WhatsAppSession } from "whatsappd";
 
@@ -9,16 +11,20 @@ import {
   createLibsqlChatGptCredentialStore,
   libsqlStore,
   tenantCredentialDatabaseFromEnvironment,
+  withTenantCredentialRollback,
+  withTenantWhatsAppCredentialRollback,
 } from "../../packages/installation/src/tenant-credentials.ts";
 import {
   createChatGptAuthentication,
   type ChatGptOAuthAdapter,
 } from "../../packages/engine/src/model/chatgpt-authentication.ts";
 import { createManagedChatGptAuthentication } from "../../packages/installation/src/chatgpt-authentication.ts";
+import { inspectWhatsAppSession } from "../../packages/installation/src/diagnostics.ts";
 import { managedPaths } from "../../packages/installation/src/paths.ts";
 import { createWhatsAppAccount } from "../../packages/installation/src/whatsapp-account.ts";
 
 const roots: string[] = [];
+const execFileAsync = promisify(execFile);
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })));
@@ -99,6 +105,69 @@ describe("tenant credential storage", () => {
     await expect(createLibsqlChatGptCredentialStore({ url }).read("openai-codex")).resolves.toEqual(rotated);
   });
 
+  it("serializes model credential rotation across independent processes", async () => {
+    const { url } = await fixture("cross-process-model-libsql");
+    await createLibsqlChatGptCredentialStore({ url }).replace("openai-codex", credential({ expires: 1 }));
+
+    const runChild = async () => {
+      try {
+        const environment = Object.fromEntries(
+          Object.entries(process.env).filter(([key]) => key !== "NODE_OPTIONS" && !key.startsWith("VITEST")),
+        );
+        return await execFileAsync(
+          join(process.cwd(), "node_modules", ".bin", "tsx"),
+          [join(process.cwd(), "tests", "fixtures", "tenant-credential-worker.ts"), url],
+          { cwd: process.cwd(), env: environment },
+        );
+      } catch (cause) {
+        const stderr = typeof cause === "object" && cause !== null ? Reflect.get(cause, "stderr") : undefined;
+        throw new Error(`Cross-process credential worker failed: ${String(stderr)}`);
+      }
+    };
+    const results = await Promise.all(Array.from({ length: 2 }, runChild));
+    expect(results.map(({ stdout }) => JSON.parse(stdout) as { refreshed: boolean })).toEqual(
+      expect.arrayContaining([{ refreshed: true }, { refreshed: false }]),
+    );
+    await expect(createLibsqlChatGptCredentialStore({ url }).read("openai-codex")).resolves.toMatchObject({
+      access: "cross-process-rotated",
+      refresh: "cross-process-refresh",
+    });
+  });
+
+  it("restores both tenant credential stores when a multi-step workflow fails", async () => {
+    const { url } = await fixture("credential-rollback");
+    const database = { url };
+    const whatsApp = libsqlStore(database);
+    const models = createLibsqlChatGptCredentialStore(database);
+    const original = credential({ access: "original-access", refresh: "original-refresh" });
+    await whatsApp.write({ creds: JSON.stringify({ registered: false }), "pre-key:1": "original-pre-key" });
+    await models.replace("openai-codex", original);
+
+    await expect(
+      withTenantCredentialRollback(database, async () => {
+        await whatsApp.write({ creds: JSON.stringify({ registered: true }), "pre-key:1": null, "session:1": "new" });
+        await models.replace("openai-codex", credential({ access: "changed-access" }));
+        throw new Error("later workflow validation failed");
+      }),
+    ).rejects.toThrow("later workflow validation failed");
+
+    await expect(whatsApp.read("creds")).resolves.toContain('"registered":false');
+    await expect(whatsApp.read("pre-key:1")).resolves.toBe("original-pre-key");
+    await expect(whatsApp.read("session:1")).resolves.toBeNull();
+    await expect(models.read("openai-codex")).resolves.toEqual(original);
+
+    const concurrentModelUpdate = credential({ access: "concurrent-access", refresh: "concurrent-refresh" });
+    await expect(
+      withTenantWhatsAppCredentialRollback(database, async () => {
+        await whatsApp.write({ creds: JSON.stringify({ registered: true }) });
+        await models.replace("openai-codex", concurrentModelUpdate);
+        throw new Error("pairing validation failed");
+      }),
+    ).rejects.toThrow("pairing validation failed");
+    await expect(whatsApp.read("creds")).resolves.toContain('"registered":false');
+    await expect(models.read("openai-codex")).resolves.toEqual(concurrentModelUpdate);
+  });
+
   it("uses the tenant database without creating a local model-credential fallback", async () => {
     const { root, url } = await fixture("configured-model-libsql");
     const paths = managedPaths({ dataDirectory: join(root, "managed") });
@@ -145,5 +214,19 @@ describe("tenant credential storage", () => {
     expect(() => tenantCredentialDatabaseFromEnvironment({ TENANT_DB_TOKEN: "scoped-secret" })).toThrow(
       "TENANT_DB_URL and TENANT_DB_TOKEN",
     );
+  });
+
+  it("reports an unreadable tenant WhatsApp store without accepting local pairing evidence", async () => {
+    const { root } = await fixture("unreadable-whatsapp-libsql");
+    const paths = managedPaths({ dataDirectory: join(root, "managed") });
+    await mkdir(paths.whatsapp, { recursive: true });
+    await writeFile(join(paths.whatsapp, "creds.json"), JSON.stringify({ registered: true }));
+
+    await expect(
+      inspectWhatsAppSession(paths, {
+        TENANT_DB_URL: `file:${join(root, "missing-parent", "tenant.sqlite")}`,
+        TENANT_DB_TOKEN: "local-test-token",
+      }),
+    ).resolves.toMatchObject({ state: "failed", code: "whatsapp.store-unreadable" });
   });
 });

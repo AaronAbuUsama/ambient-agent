@@ -55,6 +55,7 @@ export interface ScriptedFirstRunValues {
 export interface RunFirstRunSetupInput extends ManagedPathEnvironment {
   readonly interactive: boolean;
   readonly allowFreshChatGptAuthentication?: boolean;
+  readonly modelCredentialStorage?: "managed-file" | "tenant-database";
   readonly whatsappStoreSource?: string;
   readonly services: FirstRunServices;
   readonly prompts: FirstRunPrompts;

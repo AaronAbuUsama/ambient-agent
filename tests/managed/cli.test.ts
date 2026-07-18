@@ -12,6 +12,10 @@ import { managedPaths, type ManagedPaths } from "../../packages/installation/src
 import type { ChatGptOAuthAdapter } from "../../packages/engine/src/model/chatgpt-authentication.ts";
 import { ChatGptReadinessError } from "../../packages/engine/src/model/pi-subscription.ts";
 import { WhatsAppAccountError } from "../../packages/installation/src/whatsapp-account.ts";
+import {
+  createLibsqlChatGptCredentialStore,
+  libsqlStore,
+} from "../../packages/installation/src/tenant-credentials.ts";
 import { createIssueOperationStore } from "../../packages/engine/src/github/operation-store.ts";
 import type { UncertainWorkController } from "../../packages/installation/src/uncertain-work.ts";
 
@@ -101,6 +105,164 @@ const files = async () => {
 };
 
 describe("managed CLI", () => {
+  it("initializes, inspects, starts, authenticates, and repairs with tenant credential storage", async () => {
+    const paths = await files();
+    const database = { url: `file:${join(paths.parent, "tenant.sqlite")}`, authToken: "tenant-test-token" };
+    const environment = { TENANT_DB_URL: database.url, TENANT_DB_TOKEN: database.authToken };
+    const whatsApp = libsqlStore(database);
+    const cli = harness();
+    const tenantWhatsAppFor = () => ({
+      authenticate: async () => {
+        await whatsApp.write({
+          creds: JSON.stringify({ registered: true, me: { id: "15550000000@s.whatsapp.net" } }),
+        });
+        return { jid: "15550000000@s.whatsapp.net" };
+      },
+      synchronizedChats: async () => [
+        { jid: "120363000@g.us", name: "Managed Test Chat", kind: "group" as const, lastActivityAt: 1_000 },
+      ],
+      session: () => {
+        throw new Error("not used during setup");
+      },
+      stop: async () => undefined,
+    });
+    const tenantDependencies = {
+      ...cli,
+      environment,
+      firstRunServices: { ...cli.firstRunServices, whatsappFor: tenantWhatsAppFor },
+    };
+
+    const rejectedImport = harness();
+    expect(
+      await runCli(
+        [
+          "--data-dir",
+          paths.data,
+          "init",
+          "--whatsapp-store",
+          join(paths.parent, "local-secret-copy"),
+          "--chat",
+          "120363000@g.us",
+          "--repository",
+          "owner/repo",
+        ],
+        { ...rejectedImport, environment },
+      ),
+    ).toBe(1);
+    expect(rejectedImport.stderr()).toContain("--whatsapp-store is not supported with tenant credential storage");
+
+    const cancelled = harness();
+    expect(
+      await runCli(
+        ["--data-dir", paths.data, "init", "--chat", "120363000@g.us", "--repository", "owner/repo"],
+        {
+          ...cancelled,
+          environment,
+          setupPrompts: { ...cancelled.setupPrompts, review: async () => false },
+          firstRunServices: { ...cancelled.firstRunServices, whatsappFor: tenantWhatsAppFor },
+        },
+      ),
+    ).toBe(1);
+    expect(cancelled.stderr()).toContain("Setup cancelled before promotion");
+    await expect(whatsApp.read("creds")).resolves.toBeNull();
+    await expect(createLibsqlChatGptCredentialStore(database).read("openai-codex")).resolves.toBeUndefined();
+
+    const initExitCode = await runCli(
+      ["--data-dir", paths.data, "init", "--chat", "120363000@g.us", "--repository", "owner/repo"],
+      tenantDependencies,
+    );
+    expect(initExitCode, cli.stderr()).toBe(0);
+
+    const managed = managedPaths({ dataDirectory: paths.data });
+    await expect(lstat(managed.chatGptOAuthCredential)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(join(managed.whatsapp, "creds.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(whatsApp.read("creds")).resolves.toContain('"registered":true');
+    await expect(createLibsqlChatGptCredentialStore(database).read("openai-codex")).resolves.toMatchObject({
+      access: "access-secret",
+      refresh: "refresh-secret",
+    });
+
+    const status = harness();
+    expect(await runCli(["--data-dir", paths.data, "status", "--json"], { ...status, environment })).toBe(0);
+    expect(JSON.parse(status.stdout())).toMatchObject({
+      state: "ready",
+      checks: expect.arrayContaining([
+        expect.objectContaining({ name: "whatsapp-session", state: "paired", code: "whatsapp.paired" }),
+      ]),
+      modelAuthentication: { state: "ready" },
+    });
+
+    const start = harness();
+    const startRuntime = vi.fn(async () => undefined);
+    expect(await runCli(["--data-dir", paths.data, "start"], { ...start, environment, startRuntime })).toBe(0);
+    expect(startRuntime).toHaveBeenCalledOnce();
+
+    await whatsApp.clear();
+    const failedRepair = harness();
+    expect(
+      await runCli(["--data-dir", paths.data, "repair", "whatsapp"], {
+        ...failedRepair,
+        environment,
+        runtimeHealthFor: async () => ({ state: "stopped", whatsapp: { phase: "stopped" } }),
+        firstRunServices: {
+          ...failedRepair.firstRunServices,
+          whatsappFor: () => ({
+            ...tenantWhatsAppFor(),
+            synchronizedChats: async () => [
+              { jid: "other@g.us", name: "Wrong Chat", kind: "group" as const, lastActivityAt: 1_000 },
+            ],
+          }),
+        },
+      }),
+    ).toBe(1);
+    expect(failedRepair.stderr()).toContain("does not see the configured managed chat");
+    await expect(whatsApp.read("creds")).resolves.toBeNull();
+
+    const repair = harness();
+    expect(
+      await runCli(["--data-dir", paths.data, "repair", "whatsapp"], {
+        ...repair,
+        environment,
+        runtimeHealthFor: async () => ({ state: "stopped", whatsapp: { phase: "stopped" } }),
+        firstRunServices: { ...repair.firstRunServices, whatsappFor: tenantWhatsAppFor },
+      }),
+    ).toBe(0);
+    expect(repair.stdout()).toContain("Updated the WhatsApp session in the tenant credential database");
+    await expect(whatsApp.read("creds")).resolves.toContain('"registered":true');
+
+    const auth = harness();
+    expect(await runCli(["--data-dir", paths.data, "auth"], { ...auth, environment })).toBe(0);
+    expect(auth.stdout()).toContain("updated in the tenant credential database");
+    expect(auth.stdout()).not.toContain(managed.chatGptOAuthCredential);
+    await expect(lstat(managed.chatGptOAuthCredential)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const unavailableEnvironment = {
+      TENANT_DB_URL: `file:${join(paths.parent, "missing-parent", "tenant.sqlite")}`,
+      TENANT_DB_TOKEN: "unavailable-test-token",
+    };
+    const unavailableStart = harness();
+    expect(
+      await runCli(["--data-dir", paths.data, "start"], {
+        ...unavailableStart,
+        environment: unavailableEnvironment,
+        startRuntime,
+      }),
+    ).toBe(1);
+    expect(unavailableStart.stderr()).toContain("whatsapp.store-unreadable");
+    expect(unavailableStart.stderr()).toContain("Run ambient-agent doctor");
+    expect(unavailableStart.stderr()).not.toContain("repair whatsapp");
+
+    const unavailableRepair = harness();
+    expect(
+      await runCli(["--data-dir", paths.data, "repair", "whatsapp"], {
+        ...unavailableRepair,
+        environment: unavailableEnvironment,
+      }),
+    ).toBe(1);
+    expect(unavailableRepair.stderr()).toContain("tenant WhatsApp credential store could not be read");
+    expect(unavailableRepair.stderr()).not.toContain("already paired");
+  });
+
   it("starts the generated runtime from the selected managed installation", async () => {
     const paths = await files();
     await runCli(
