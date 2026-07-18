@@ -9,9 +9,12 @@ import { APPLICATION_DATABASE_ID, APPLICATION_DATABASE_SCHEMA_VERSION } from "@a
 import { managedPaths, type ManagedPathEnvironment, type ManagedPaths } from "./paths.ts";
 import {
   createManagedConfig,
-  GitHubCredentialSchema,
+  GITHUB_APP_REFERENCES,
+  GitHubAppCredentialSchema,
   ManagedConfigSchema,
-  type GitHubCredential,
+  type GitHubAppCredential,
+  type GitHubAppReference,
+  type GitHubAppTriples,
   type ManagedConfig,
 } from "./schema.ts";
 import { errorCode } from "@ambient-agent/engine/shared/errors.ts";
@@ -37,7 +40,17 @@ const CONFIG_ISSUE_PATHS = new Set([
   "github.allowedRepositories",
   "github.allowedRepositories.[]",
 ]);
-const GITHUB_CREDENTIAL_ISSUE_PATHS = new Set(["<root>", "schemaVersion", "kind", "token", "webhookSecret"]);
+const GITHUB_CREDENTIAL_ISSUE_PATHS = new Set([
+  "<root>",
+  "schemaVersion",
+  "kind",
+  "appId",
+  "installationId",
+  "privateKey",
+  "webhookSecret",
+]);
+/** Only the Planner file carries the runtime webhook secret; it is also the Speaker's identity. */
+const RUNTIME_WEBHOOK_APP: GitHubAppReference = "planner";
 
 export type InstallationState = "absent" | "incomplete" | "corrupt" | "ready";
 
@@ -76,7 +89,8 @@ export interface InstallationInspection {
 export interface PreparedManagedData {
   readonly managedChats: readonly string[];
   readonly defaultRepository: string;
-  readonly githubToken: string;
+  /** One pasted triple per GitHub App identity (#135); guided-paste setup collects all three. */
+  readonly githubApps: GitHubAppTriples;
 }
 
 export interface InstallPreparedManagedDataInput extends ManagedPathEnvironment {
@@ -508,20 +522,24 @@ export interface GitHubCredentialComponent {
   readonly diagnostics: readonly InstallationDiagnostic[];
 }
 
-/** Static GitHub credential-file inspection; file damage is a component state, never an installation verdict. */
+/**
+ * Static GitHub App credential-file inspection. Each of the three App files is inspected
+ * independently (per-file component model); a lingering `personal-token` file fails the
+ * App schema here and surfaces as `reauthentication-required`. File damage is a component
+ * state, never an installation verdict.
+ */
 export const inspectGitHubCredentialComponent = async (paths: ManagedPaths): Promise<GitHubCredentialComponent> => {
-  const diagnostics = [...(await inspectFile(paths.githubCredential, "GitHub credential file", true))];
-  if (diagnostics.length === 0) {
-    diagnostics.push(
-      ...(
-        await inspectJson(
-          paths.githubCredential,
-          "GitHub credential file",
-          GitHubCredentialSchema,
-          GITHUB_CREDENTIAL_ISSUE_PATHS,
-        )
-      ).diagnostics,
-    );
+  const diagnostics: InstallationDiagnostic[] = [];
+  for (const reference of GITHUB_APP_REFERENCES) {
+    const path = paths.githubAppCredentials[reference];
+    const label = `GitHub ${reference} App credential file`;
+    const fileDiagnostics = await inspectFile(path, label, true);
+    diagnostics.push(...fileDiagnostics);
+    if (fileDiagnostics.length === 0) {
+      diagnostics.push(
+        ...(await inspectJson(path, label, GitHubAppCredentialSchema, GITHUB_CREDENTIAL_ISSUE_PATHS)).diagnostics,
+      );
+    }
   }
   return { state: diagnostics.length === 0 ? "ready" : "reauthentication-required", diagnostics };
 };
@@ -569,13 +587,28 @@ const createPrivateStaging = async (paths: ManagedPaths): Promise<void> => {
   }
 };
 
+/** Turn a pasted triple into a credential file; only the Planner file carries the webhook secret. */
+export const githubAppCredentialFrom = (
+  reference: GitHubAppReference,
+  triples: GitHubAppTriples,
+): GitHubAppCredential => ({
+  schemaVersion: 1,
+  kind: "github-app",
+  appId: triples[reference].appId,
+  installationId: triples[reference].installationId,
+  privateKey: triples[reference].privateKey,
+  ...(reference === RUNTIME_WEBHOOK_APP ? { webhookSecret: randomBytes(32).toString("base64url") } : {}),
+});
+
 const writePreparedConfiguration = async (
   paths: ManagedPaths,
   config: ManagedConfig,
-  github: GitHubCredential,
+  githubApps: Readonly<Record<GitHubAppReference, GitHubAppCredential>>,
 ): Promise<void> => {
   await writeSecureFile(paths.config, json(config));
-  await writeSecureFile(paths.githubCredential, json(github));
+  for (const reference of GITHUB_APP_REFERENCES) {
+    await writeSecureFile(paths.githubAppCredentials[reference], json(githubApps[reference]));
+  }
 };
 
 export const installPreparedManagedData = async (
@@ -611,14 +644,15 @@ export const installPreparedManagedData = async (
       createManagedConfig(prepared.managedChats, prepared.defaultRepository),
     );
     if (!configResult.success) throw new Error("Setup values do not form a valid Ambient Agent configuration.");
-    const githubResult = v.safeParse(GitHubCredentialSchema, {
-      schemaVersion: 1,
-      kind: "personal-token",
-      token: prepared.githubToken,
-      webhookSecret: randomBytes(32).toString("base64url"),
-    });
-    if (!githubResult.success) throw new Error("The GitHub token must not be empty.");
-    await writePreparedConfiguration(stagingPaths, configResult.output, githubResult.output);
+    const githubApps = {} as Record<GitHubAppReference, GitHubAppCredential>;
+    for (const reference of GITHUB_APP_REFERENCES) {
+      const result = v.safeParse(GitHubAppCredentialSchema, githubAppCredentialFrom(reference, prepared.githubApps));
+      if (!result.success) {
+        throw new Error(`The ${reference} GitHub App credential is incomplete; provide a numeric App ID, Installation ID, and private key.`);
+      }
+      githubApps[reference] = result.output;
+    }
+    await writePreparedConfiguration(stagingPaths, configResult.output, githubApps);
     const stagingInspection = await inspectManagedData({ dataDirectory: stagingRoot });
     const chatGptStaged =
       (await exists(stagingPaths.chatGptOAuthCredential)) || (await exists(stagingPaths.legacyPiAuthCredential));

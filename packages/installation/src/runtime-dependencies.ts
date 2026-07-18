@@ -1,11 +1,12 @@
 import type { ChatGptAuthentication } from "@ambient-agent/engine/model/chatgpt-authentication.ts";
 import type { ManagedPaths } from "./paths.ts";
-import type { GitHubCredential, ManagedConfig } from "./schema.ts";
+import type { GitHubAppCredential, ManagedConfig } from "./schema.ts";
 
 export interface ManagedRuntimeDependencies {
   readonly authentication: ChatGptAuthentication;
   readonly configuration: ManagedConfig;
-  readonly githubCredential: GitHubCredential & { readonly webhookSecret: string };
+  /** The Planner App credential — the runtime's issue-filing identity and webhook-secret owner (#135). */
+  readonly githubCredential: GitHubAppCredential & { readonly webhookSecret: string };
   readonly paths: ManagedPaths;
 }
 

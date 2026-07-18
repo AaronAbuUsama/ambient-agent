@@ -1,6 +1,8 @@
 import { homedir } from "node:os";
 import { posix, win32, type PlatformPath } from "node:path";
 
+import { GITHUB_APP_REFERENCES, type GitHubAppReference } from "./schema.ts";
+
 export interface ManagedPathEnvironment {
   readonly platform?: NodeJS.Platform;
   readonly homeDirectory?: string;
@@ -12,7 +14,10 @@ export interface ManagedPaths {
   readonly root: string;
   readonly config: string;
   readonly credentials: string;
-  readonly githubCredential: string;
+  /** One file per GitHub App identity (#135), independently inspectable and rotatable. */
+  readonly githubAppCredentials: Readonly<Record<GitHubAppReference, string>>;
+  /** The retired single-PAT file; only migration reads it, to detect and retire a lingering install. */
+  readonly legacyGithubCredential: string;
   readonly chatGptOAuthCredential: string;
   readonly legacyPiAuthCredential: string;
   readonly applicationDatabase: string;
@@ -75,7 +80,10 @@ export const managedPaths = (options: ManagedPathEnvironment = {}): ManagedPaths
     root,
     config: paths.join(root, "config.json"),
     credentials,
-    githubCredential: paths.join(credentials, "github.json"),
+    githubAppCredentials: Object.fromEntries(
+      GITHUB_APP_REFERENCES.map((reference) => [reference, paths.join(credentials, `github-${reference}.json`)]),
+    ) as Record<GitHubAppReference, string>,
+    legacyGithubCredential: paths.join(credentials, "github.json"),
     chatGptOAuthCredential: paths.join(credentials, "chatgpt-oauth.json"),
     legacyPiAuthCredential: paths.join(credentials, "pi-auth.json"),
     applicationDatabase: paths.join(root, "application.sqlite"),
