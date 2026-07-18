@@ -11,20 +11,47 @@ import {
 import type { ChatGptAuthentication } from "./chatgpt-authentication.ts";
 import type { ModelAuthorization } from "./chatgpt-authentication.ts";
 
-/**
- * The one model the managed ChatGPT Codex subscription serves. It belongs to the
- * credential/provider, not to any single agent — each agent references it through
- * its own specifier and picks its own `thinkingLevel`, so the Scribe can run cheap
- * and minimal-thinking on the same credential the Speaker uses.
- */
-export const LUNA_MODEL_ID = "gpt-5.6-luna";
-const LUNA_MODEL_SPECIFIER = `openai-codex/${LUNA_MODEL_ID}`;
-
-export const SPEAKER_MODEL_ID = LUNA_MODEL_ID;
-export const SPEAKER_MODEL_SPECIFIER = LUNA_MODEL_SPECIFIER;
-export const SCRIBE_MODEL_SPECIFIER = LUNA_MODEL_SPECIFIER;
-
 const PROVIDER_ID = "openai-codex";
+
+export const LUNA_MODEL_ID = "gpt-5.6-luna";
+export const AGENT_MODEL_ROLES = ["speaker", "scribe", "planner", "coder", "verifier"] as const;
+export const MODEL_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
+export type ModelThinkingLevel = (typeof MODEL_THINKING_LEVELS)[number];
+
+export interface AgentModelProfile {
+  readonly id: string;
+  readonly thinkingLevel: ModelThinkingLevel;
+}
+
+export type AgentModelProfiles = Readonly<Record<AgentModelRole, AgentModelProfile>>;
+
+export const DEFAULT_AGENT_MODEL_PROFILES: AgentModelProfiles = {
+  speaker: { id: LUNA_MODEL_ID, thinkingLevel: "low" },
+  scribe: { id: LUNA_MODEL_ID, thinkingLevel: "minimal" },
+  planner: { id: "gpt-5.6-sol", thinkingLevel: "xhigh" },
+  coder: { id: "gpt-5.6-sol", thinkingLevel: "high" },
+  verifier: { id: "gpt-5.6-sol", thinkingLevel: "xhigh" },
+};
+
+let agentModelProfiles = DEFAULT_AGENT_MODEL_PROFILES;
+
+export const modelSpecifier = (id: string): `${typeof PROVIDER_ID}/${string}` => `${PROVIDER_ID}/${id}`;
+
+export const configureAgentModelProfiles = (profiles: AgentModelProfiles): void => {
+  agentModelProfiles = profiles;
+};
+
+export const resolveAgentModelProfile = (role: AgentModelRole) => {
+  const profile = agentModelProfiles[role];
+  return { model: modelSpecifier(profile.id), thinkingLevel: profile.thinkingLevel };
+};
+
+export const configuredModelIds = (profiles: AgentModelProfiles): readonly string[] => [
+  ...new Set(AGENT_MODEL_ROLES.map((role) => profiles[role].id)),
+];
+
 const CODEX_API = "openai-codex-responses";
 const SPEAKER_CODEX_API = "speaker-openai-codex-responses";
 const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
@@ -37,6 +64,7 @@ type ProviderRegistrar = typeof flueRegisterProvider;
 
 export interface PiSubscriptionConnectorOptions {
   authentication: ChatGptAuthentication;
+  profiles: AgentModelProfiles;
   codexApi?: ProviderStreams;
   registerApiProvider?: ApiRegistrar;
   registerProvider?: ProviderRegistrar;
@@ -44,19 +72,22 @@ export interface PiSubscriptionConnectorOptions {
 
 export interface PiSubscriptionReceipt {
   authentication: "chatgpt-oauth";
-  model: typeof SPEAKER_MODEL_SPECIFIER;
+  model: string;
+  models: readonly string[];
   provider: typeof PROVIDER_ID;
 }
 
 export interface ChatGptReadinessReceipt {
-  readonly model: typeof SPEAKER_MODEL_SPECIFIER;
+  readonly model: string;
+  readonly models: readonly string[];
   readonly request: "complete" | "failed";
   readonly reason?: "cancelled" | "timeout" | "credential-rejected" | "request-failed";
 }
 
 export interface ChatGptReadinessCheckOptions {
+  readonly profiles: AgentModelProfiles;
   readonly signal?: AbortSignal;
-  readonly request?: (authorization: ModelAuthorization, signal?: AbortSignal) => Promise<void>;
+  readonly request?: (authorization: ModelAuthorization, modelId: string, signal?: AbortSignal) => Promise<void>;
 }
 
 export type ChatGptReadinessErrorCode = NonNullable<ChatGptReadinessReceipt["reason"]>;
@@ -158,32 +189,38 @@ function installLunaResponsesLiteFetch(): void {
   globalThis.fetch = wrapped;
 }
 
-function lunaModel(model: Model<Api>): Model<Api> {
-  return {
+function codexSubscriptionModel(model: Model<Api>): Model<Api> {
+  const configured = {
     ...model,
     api: CODEX_API,
     reasoning: true,
-    thinkingLevelMap: { ...model.thinkingLevelMap, minimal: "low", xhigh: "xhigh" },
   };
+  return model.id === LUNA_MODEL_ID
+    ? { ...configured, thinkingLevelMap: { ...model.thinkingLevelMap, minimal: "low", xhigh: "xhigh" } }
+    : configured;
 }
 
-function lunaApi(delegate: ProviderStreams): ApiRegistration {
+function codexSubscriptionApi(delegate: ProviderStreams): ApiRegistration {
   return {
     api: SPEAKER_CODEX_API,
     stream: (model, context, options) =>
-      delegate.stream(lunaModel(model), context, { ...options, transport: "sse" }),
+      delegate.stream(codexSubscriptionModel(model), context, { ...options, transport: "sse" }),
     streamSimple: (model, context, options) =>
-      delegate.streamSimple(lunaModel(model), context, { ...options, transport: "sse" }),
+      delegate.streamSimple(codexSubscriptionModel(model), context, { ...options, transport: "sse" }),
   };
 }
 
-const requestChatGptReadiness = async (authorization: ModelAuthorization, signal?: AbortSignal): Promise<void> => {
+const requestChatGptReadiness = async (
+  authorization: ModelAuthorization,
+  modelId: string,
+  signal?: AbortSignal,
+): Promise<void> => {
   if (!nonEmptyString(authorization.apiKey)) throw new Error("ChatGPT model authorization is not ready.");
   installLunaResponsesLiteFetch();
   const stream = openAICodexResponsesApi().streamSimple(
-    lunaModel({
-      id: LUNA_MODEL_ID,
-      name: LUNA_MODEL_ID,
+    codexSubscriptionModel({
+      id: modelId,
+      name: modelId,
       api: CODEX_API,
       provider: PROVIDER_ID,
       baseUrl: CODEX_BASE_URL,
@@ -238,15 +275,22 @@ const readinessFailure = (cause: unknown, signal?: AbortSignal): ChatGptReadines
 
 export const runChatGptReadinessCheck = async (
   authentication: ChatGptAuthentication,
-  options: ChatGptReadinessCheckOptions = {},
+  options: ChatGptReadinessCheckOptions,
 ): Promise<ChatGptReadinessReceipt> => {
   const authorization = await authentication.authorization(options.signal);
+  const modelIds = configuredModelIds(options.profiles);
   try {
-    await (options.request ?? requestChatGptReadiness)(authorization, options.signal);
+    for (const modelId of modelIds) {
+      await (options.request ?? requestChatGptReadiness)(authorization, modelId, options.signal);
+    }
   } catch (cause) {
     throw readinessFailure(cause, options.signal);
   }
-  return { model: SPEAKER_MODEL_SPECIFIER, request: "complete" };
+  return {
+    model: modelSpecifier(options.profiles.speaker.id),
+    models: modelIds.map(modelSpecifier),
+    request: "complete",
+  };
 };
 
 export async function connectPiChatGptSubscription(
@@ -257,18 +301,21 @@ export async function connectPiChatGptSubscription(
 
   if (!options.codexApi) installLunaResponsesLiteFetch();
   const codexApi = options.codexApi ?? openAICodexResponsesApi();
-  (options.registerApiProvider ?? flueRegisterApiProvider)(lunaApi(codexApi));
+  const modelIds = configuredModelIds(options.profiles);
+  (options.registerApiProvider ?? flueRegisterApiProvider)(codexSubscriptionApi(codexApi));
   (options.registerProvider ?? flueRegisterProvider)(PROVIDER_ID, {
     api: SPEAKER_CODEX_API,
     apiKey,
     baseUrl: CODEX_BASE_URL,
     contextWindow: 272_000,
     maxTokens: 128_000,
+    models: Object.fromEntries(modelIds.map((id) => [id, {}])),
   });
 
   return {
     authentication: "chatgpt-oauth",
-    model: SPEAKER_MODEL_SPECIFIER,
+    model: modelSpecifier(options.profiles.speaker.id),
+    models: modelIds.map(modelSpecifier),
     provider: PROVIDER_ID,
   };
 }

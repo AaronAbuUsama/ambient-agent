@@ -27,7 +27,10 @@ import {
   type ManagedRuntimeDependencies,
 } from "@ambient-agent/installation/runtime-dependencies.ts";
 import { ambientRuntimeHealth, runtimeInstallationId } from "@ambient-agent/installation/runtime-health.ts";
-import { connectPiChatGptSubscription } from "@ambient-agent/engine/model/pi-subscription.ts";
+import {
+  configureAgentModelProfiles,
+  connectPiChatGptSubscription,
+} from "@ambient-agent/engine/model/pi-subscription.ts";
 
 /**
  * Bind the Coder's deployment runtime (§8 template rule 1: config-bound, never per-job).
@@ -58,7 +61,11 @@ export const createAmbientAgentApp = async ({
   githubCredential,
   paths,
 }: ManagedRuntimeDependencies): Promise<Hono> => {
-  const subscription = await connectPiChatGptSubscription({ authentication });
+  configureAgentModelProfiles(configuration.model.profiles);
+  const subscription = await connectPiChatGptSubscription({
+    authentication,
+    profiles: configuration.model.profiles,
+  });
   const issueOperations = createIssueOperationStore(paths.applicationDatabase);
   const installationId = runtimeInstallationId(githubCredential.webhookSecret);
   // The Coder Specialist (#158) runs under its own App identity in a config-bound full

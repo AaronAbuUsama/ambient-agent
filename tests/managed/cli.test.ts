@@ -1028,6 +1028,7 @@ describe("managed CLI", () => {
     const live = harness();
     const readinessCheck = vi.fn(async () => ({
       model: "openai-codex/gpt-5.6-luna" as const,
+      models: ["openai-codex/gpt-5.6-luna", "openai-codex/gpt-5.6-sol"] as const,
       request: "complete" as const,
     }));
     const verifyGitHub = vi.fn(async (_credential: GitHubAppTriple, repository: string) => repository);
@@ -1079,7 +1080,11 @@ describe("managed CLI", () => {
     expect(
       await runCli(["--data-dir", paths.data, "smoke"], {
         ...cli,
-        readinessCheck: async () => ({ model: "openai-codex/gpt-5.6-luna", request: "complete" }),
+        readinessCheck: async () => ({
+          model: "openai-codex/gpt-5.6-luna",
+          models: ["openai-codex/gpt-5.6-luna", "openai-codex/gpt-5.6-sol"],
+          request: "complete",
+        }),
         firstRunServices: {
           ...cli.firstRunServices,
           verifyGitHub: async (_credential: GitHubAppTriple, repository: string) => repository,
@@ -1156,7 +1161,11 @@ describe("managed CLI", () => {
     expect(
       await runCli(["--data-dir", paths.data, "doctor", "--live", "--json"], {
         ...live,
-        readinessCheck: async () => ({ model: "openai-codex/gpt-5.6-luna", request: "complete" }),
+        readinessCheck: async () => ({
+          model: "openai-codex/gpt-5.6-luna",
+          models: ["openai-codex/gpt-5.6-luna", "openai-codex/gpt-5.6-sol"],
+          request: "complete",
+        }),
         firstRunServices: {
           ...live.firstRunServices,
           verifyGitHub: async () => {

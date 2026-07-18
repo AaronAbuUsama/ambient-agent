@@ -18,8 +18,9 @@ import {
 } from "@ambient-agent/installation/uncertain-work.ts";
 import type { ChatGptAuthentication, ChatGptAuthenticationStatus } from "@ambient-agent/engine/model/chatgpt-authentication.ts";
 import {
-  SPEAKER_MODEL_SPECIFIER,
   ChatGptReadinessError,
+  configuredModelIds,
+  modelSpecifier,
   runChatGptReadinessCheck,
   type ChatGptReadinessReceipt,
 } from "@ambient-agent/engine/model/pi-subscription.ts";
@@ -99,6 +100,7 @@ export const createInspectionReporter = ({
     const paths = managedPaths({ dataDirectory: dataDirectory() });
     const inspection = await inspectManagedData({ dataDirectory: paths.root });
     const ready = inspection.state === "ready";
+    const configuration = ready ? await readManagedConfig(paths.config) : undefined;
     const checks = ready ? [...(await inspectManagedServices(paths))] : [];
     const githubCredentialReady = checks.some(
       ({ name, state }) => name === "github-credential" && state === "ready",
@@ -117,21 +119,20 @@ export const createInspectionReporter = ({
       });
     }
     if (live && managedGitHubCredential !== undefined) {
-      const config = await readManagedConfig(paths.config);
       try {
-        await verifyGitHub(managedGitHubCredential, config.github.defaultRepository, readinessSignal());
+        await verifyGitHub(managedGitHubCredential, configuration!.github.defaultRepository, readinessSignal());
         checks.push({
           name: "github-access",
           state: "ready",
           code: "github.ready",
-          message: `GitHub authenticated and can access ${config.github.defaultRepository}.`,
+          message: `GitHub authenticated and can access ${configuration!.github.defaultRepository}.`,
         });
       } catch {
         checks.push({
           name: "github-access",
           state: "failed",
           code: "github.access-failed",
-          message: `GitHub authentication or repository access failed for ${config.github.defaultRepository}.`,
+          message: `GitHub authentication or repository access failed for ${configuration!.github.defaultRepository}.`,
           remediation: "Run ambient-agent config --github-app <coder|reviewer|planner> with a fresh App triple, then run doctor --live again.",
         });
       }
@@ -174,7 +175,12 @@ export const createInspectionReporter = ({
     if (live && authenticationStatus.state === "ready") {
       try {
         liveCheck = await (
-          dependencies.readinessCheck ?? ((service, signal) => runChatGptReadinessCheck(service, { signal }))
+          dependencies.readinessCheck ??
+          ((service, signal) =>
+            runChatGptReadinessCheck(service, {
+              profiles: configuration!.model.profiles,
+              signal,
+            }))
         )(authentication!, readinessSignal());
       } catch (cause) {
         const failure =
@@ -185,7 +191,13 @@ export const createInspectionReporter = ({
                 "The ChatGPT live readiness request failed; retry when the service is reachable.",
                 { cause },
               );
-        liveCheck = { model: SPEAKER_MODEL_SPECIFIER, request: "failed", reason: failure.code };
+        const profiles = configuration!.model.profiles;
+        liveCheck = {
+          model: modelSpecifier(profiles.speaker.id),
+          models: configuredModelIds(profiles).map(modelSpecifier),
+          request: "failed",
+          reason: failure.code,
+        };
         if (failure.code === "credential-rejected") {
           authenticationStatus = { state: "unusable", message: failure.message };
         }

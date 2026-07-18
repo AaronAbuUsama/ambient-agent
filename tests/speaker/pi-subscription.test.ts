@@ -1,12 +1,15 @@
 import type { ProviderStreams } from "@earendil-works/pi-ai";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { defineAgentProfile } from "@flue/runtime";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  SPEAKER_MODEL_ID,
-  SPEAKER_MODEL_SPECIFIER,
+  DEFAULT_AGENT_MODEL_PROFILES,
   ChatGptReadinessError,
+  configureAgentModelProfiles,
   connectPiChatGptSubscription,
+  modelSpecifier,
   prepareLunaResponsesLiteRequest,
+  resolveAgentModelProfile,
   runChatGptReadinessCheck,
 } from "../../packages/engine/src/model/pi-subscription.ts";
 import {
@@ -22,6 +25,11 @@ const authentication = (apiKey = "header.payload.signature"): ChatGptAuthenticat
   authorization: vi.fn(async () => ({ apiKey })),
 });
 
+const SPEAKER_MODEL_ID = DEFAULT_AGENT_MODEL_PROFILES.speaker.id;
+const SPEAKER_MODEL_SPECIFIER = modelSpecifier(SPEAKER_MODEL_ID);
+
+afterEach(() => configureAgentModelProfiles(DEFAULT_AGENT_MODEL_PROFILES));
+
 describe("connectPiChatGptSubscription", () => {
   it("loads model authorization only from the injected Ambient Agent authentication service", async () => {
     const registerProvider = vi.fn();
@@ -32,6 +40,7 @@ describe("connectPiChatGptSubscription", () => {
 
     await connectPiChatGptSubscription({
       authentication: authentication("managed-access-token"),
+      profiles: DEFAULT_AGENT_MODEL_PROFILES,
       codexApi,
       registerApiProvider: vi.fn(),
       registerProvider,
@@ -55,6 +64,7 @@ describe("connectPiChatGptSubscription", () => {
     try {
       await connectPiChatGptSubscription({
         authentication: authentication(),
+        profiles: DEFAULT_AGENT_MODEL_PROFILES,
         codexApi,
         registerApiProvider: vi.fn(),
         registerProvider,
@@ -78,12 +88,14 @@ describe("connectPiChatGptSubscription", () => {
     const missing = authentication();
     vi.mocked(missing.authorization).mockRejectedValue(new Error("ChatGPT authentication is missing"));
 
-    await expect(connectPiChatGptSubscription({ authentication: missing })).rejects.toThrow(
+    await expect(
+      connectPiChatGptSubscription({ authentication: missing, profiles: DEFAULT_AGENT_MODEL_PROFILES }),
+    ).rejects.toThrow(
       /ChatGPT authentication is missing/i,
     );
   });
 
-  it("registers Luna through Pi with reasoning enabled and a safe receipt", async () => {
+  it("registers every distinct configured model through Pi with reasoning enabled and a safe receipt", async () => {
     const registerApiProvider = vi.fn();
     const registerProvider = vi.fn();
     const streamResult = {} as ReturnType<ProviderStreams["streamSimple"]>;
@@ -92,8 +104,13 @@ describe("connectPiChatGptSubscription", () => {
       streamSimple: vi.fn(() => streamResult),
     };
 
+    const profiles = {
+      ...DEFAULT_AGENT_MODEL_PROFILES,
+      coder: { id: "gpt-5.6-terra", thinkingLevel: "high" },
+    } as const;
     const receipt = await connectPiChatGptSubscription({
       authentication: authentication(),
+      profiles,
       codexApi,
       registerApiProvider,
       registerProvider,
@@ -102,6 +119,11 @@ describe("connectPiChatGptSubscription", () => {
     expect(receipt).toEqual({
       authentication: "chatgpt-oauth",
       model: SPEAKER_MODEL_SPECIFIER,
+      models: [
+        "openai-codex/gpt-5.6-luna",
+        "openai-codex/gpt-5.6-sol",
+        "openai-codex/gpt-5.6-terra",
+      ],
       provider: "openai-codex",
     });
     expect(receipt).not.toHaveProperty("apiKey");
@@ -142,7 +164,35 @@ describe("connectPiChatGptSubscription", () => {
         api: "speaker-openai-codex-responses",
         apiKey: "header.payload.signature",
         baseUrl: "https://chatgpt.com/backend-api",
+        models: {
+          "gpt-5.6-luna": {},
+          "gpt-5.6-sol": {},
+          "gpt-5.6-terra": {},
+        },
       }),
+    );
+
+    registration.streamSimple(
+      {
+        id: "gpt-5.6-sol",
+        name: "gpt-5.6-sol",
+        api: "speaker-openai-codex-responses",
+        provider: "openai-codex",
+        baseUrl: "https://chatgpt.com/backend-api",
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 0,
+        maxTokens: 0,
+      },
+      { messages: [] },
+      { reasoning: "high" },
+    );
+    expect(codexApi.streamSimple).toHaveBeenNthCalledWith(
+      2,
+      expect.not.objectContaining({ thinkingLevelMap: expect.anything() }),
+      { messages: [] },
+      expect.objectContaining({ reasoning: "high" }),
     );
   });
 
@@ -190,16 +240,66 @@ describe("connectPiChatGptSubscription", () => {
     const managedAuthentication = authentication("managed-readiness-token");
     const request = vi.fn(async () => undefined);
 
-    await expect(runChatGptReadinessCheck(managedAuthentication, { request })).resolves.toEqual({
+    await expect(
+      runChatGptReadinessCheck(managedAuthentication, {
+        profiles: DEFAULT_AGENT_MODEL_PROFILES,
+        request,
+      }),
+    ).resolves.toEqual({
       model: SPEAKER_MODEL_SPECIFIER,
+      models: ["openai-codex/gpt-5.6-luna", "openai-codex/gpt-5.6-sol"],
       request: "complete",
     });
     expect(managedAuthentication.authorization).toHaveBeenCalledTimes(1);
-    expect(request).toHaveBeenCalledWith({ apiKey: "managed-readiness-token" }, undefined);
+    expect(request).toHaveBeenNthCalledWith(
+      1,
+      { apiKey: "managed-readiness-token" },
+      "gpt-5.6-luna",
+      undefined,
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      2,
+      { apiKey: "managed-readiness-token" },
+      "gpt-5.6-sol",
+      undefined,
+    );
+  });
+
+  it("resolves every agent role from configured model and thinking profiles", () => {
+    configureAgentModelProfiles({
+      ...DEFAULT_AGENT_MODEL_PROFILES,
+      speaker: { id: "gpt-5.6-terra", thinkingLevel: "medium" },
+      verifier: { id: "gpt-5.6-luna", thinkingLevel: "max" },
+    });
+
+    expect(resolveAgentModelProfile("speaker")).toEqual({
+      model: "openai-codex/gpt-5.6-terra",
+      thinkingLevel: "medium",
+    });
+    expect(resolveAgentModelProfile("scribe")).toEqual({
+      model: "openai-codex/gpt-5.6-luna",
+      thinkingLevel: "minimal",
+    });
+    expect(resolveAgentModelProfile("planner")).toEqual({
+      model: "openai-codex/gpt-5.6-sol",
+      thinkingLevel: "xhigh",
+    });
+    expect(resolveAgentModelProfile("coder")).toEqual({
+      model: "openai-codex/gpt-5.6-sol",
+      thinkingLevel: "high",
+    });
+    expect(resolveAgentModelProfile("verifier")).toEqual({
+      model: "openai-codex/gpt-5.6-luna",
+      thinkingLevel: "max",
+    });
+    expect(() =>
+      defineAgentProfile({ name: "verifier", ...resolveAgentModelProfile("verifier") }),
+    ).not.toThrow();
   });
 
   it("types transport and credential failures without exposing provider details", async () => {
     const transportFailure = runChatGptReadinessCheck(authentication(), {
+      profiles: DEFAULT_AGENT_MODEL_PROFILES,
       request: async () => {
         throw new Error("network response with must-not-be-printed");
       },
@@ -212,6 +312,7 @@ describe("connectPiChatGptSubscription", () => {
 
     await expect(
       runChatGptReadinessCheck(authentication(), {
+        profiles: DEFAULT_AGENT_MODEL_PROFILES,
         request: async () => {
           throw new ChatGptReadinessError("credential-rejected", "ChatGPT rejected the managed credential.");
         },
@@ -233,7 +334,10 @@ describe("connectPiChatGptSubscription", () => {
       });
 
       await expect(
-        runChatGptReadinessCheck(managedAuthentication, { signal: AbortSignal.timeout(60_000) }),
+        runChatGptReadinessCheck(managedAuthentication, {
+          profiles: DEFAULT_AGENT_MODEL_PROFILES,
+          signal: AbortSignal.timeout(60_000),
+        }),
       ).resolves.toMatchObject({ request: "complete" });
     },
     70_000,

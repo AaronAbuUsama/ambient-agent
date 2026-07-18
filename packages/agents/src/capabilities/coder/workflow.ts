@@ -2,7 +2,7 @@ import { defineAgent, defineWorkflow, type FlueHarness, type FlueLogger } from "
 
 import coderSkill from "./SKILL.md" with { type: "skill" };
 import { createSpecialistGraphTools } from "../graph/tools.ts";
-import { SPEAKER_MODEL_SPECIFIER } from "@ambient-agent/engine/model/pi-subscription.ts";
+import { resolveAgentModelProfile } from "@ambient-agent/engine/model/pi-subscription.ts";
 import { parseGitHubRepository } from "@ambient-agent/engine/github/repository.ts";
 import type { SpecialistSpec } from "../delegation/tools.ts";
 import { getCoderRuntime } from "./runtime.ts";
@@ -38,7 +38,7 @@ const SHELL_TIMEOUT_MS = 20 * 60 * 1000;
 const coderAgent = defineAgent(() => {
   const { sandbox } = getCoderRuntime();
   return {
-    model: SPEAKER_MODEL_SPECIFIER,
+    ...resolveAgentModelProfile("coder"),
     sandbox,
     skills: [coderSkill],
     tools: createSpecialistGraphTools(),

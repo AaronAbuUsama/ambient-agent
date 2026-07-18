@@ -27,7 +27,10 @@ import { conversationArrival } from "../../../../packages/engine/src/intake/conv
 import { createManagedChatInbox, managedChatWindowStore } from "../../../../packages/engine/src/intake/managed-chat-inbox.ts";
 import { createManagedChatGptAuthentication } from "../../../../packages/installation/src/chatgpt-authentication.ts";
 import { managedPaths } from "../../../../packages/installation/src/paths.ts";
-import { connectPiChatGptSubscription } from "../../../../packages/engine/src/model/pi-subscription.ts";
+import {
+  DEFAULT_AGENT_MODEL_PROFILES,
+  connectPiChatGptSubscription,
+} from "../../../../packages/engine/src/model/pi-subscription.ts";
 
 const liveModel = process.env.SPEAKER_FIXTURE_LIVE_MODEL === "true";
 const provider = liveModel ? undefined : registerFauxProvider({ provider: "speaker-fixture" });
@@ -219,6 +222,7 @@ if (provider === undefined) {
   if (!dataDirectory) throw new Error("SPEAKER_FIXTURE_DATA_DIR is required for a live-model fixture.");
   await connectPiChatGptSubscription({
     authentication: createManagedChatGptAuthentication(managedPaths({ dataDirectory })),
+    profiles: DEFAULT_AGENT_MODEL_PROFILES,
   });
 } else {
   provider.setResponses(Array.from({ length: 100 }, () => respond));
