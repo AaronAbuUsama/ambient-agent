@@ -200,7 +200,7 @@ CREATE TABLE scribe_backfills (
   snapshot_high_water INTEGER,
   snapshot_unknown_time INTEGER,
   snapshot_occurred_at_ms INTEGER,
-  snapshot_event_id TEXT,
+  snapshot_sequence INTEGER,
   after_sequence INTEGER NOT NULL DEFAULT 0,
   run_id TEXT,
   last_error TEXT,
@@ -233,24 +233,32 @@ SELECT rowid AS archive_sequence, *
  WHERE chat_id = :chat_id
    AND rowid <= :snapshot_high_water
    AND (
-     CASE WHEN occurred_at_ms = 0 THEN 1 ELSE 0 END,
-     occurred_at_ms,
-     event_id
-   ) > (
-     :snapshot_unknown_time,
-     :snapshot_occurred_at_ms,
-     :snapshot_event_id
+     :snapshot_sequence IS NULL
+     OR (
+       CASE WHEN occurred_at_ms = 0 THEN 1 ELSE 0 END,
+       occurred_at_ms,
+       rowid
+     ) > (
+       :snapshot_unknown_time,
+       :snapshot_occurred_at_ms,
+       :snapshot_sequence
+     )
    )
  ORDER BY
    CASE WHEN occurred_at_ms = 0 THEN 1 ELSE 0 END,
    occurred_at_ms,
-   event_id
+   rowid
  LIMIT 50;
 ```
 
-Treat unknown timestamps as a deterministic final bucket. The tuple cursor makes the
-snapshot resumable without assuming that the provider delivered history batches in
-conversation order.
+Admission initializes all three snapshot cursor fields to `NULL`. The
+`:snapshot_sequence IS NULL` branch admits the first page without comparing a row
+tuple to `NULL`; after each checkpoint, all three fields become non-null atomically.
+
+Treat unknown timestamps as a deterministic final bucket. Within the same timestamp,
+`rowid` preserves archive insertion order, matching the existing archive reader. The
+tuple cursor makes the snapshot resumable without assuming that the provider delivered
+history batches in conversation order.
 
 ### 6.2 Tail
 
@@ -551,7 +559,7 @@ The implementation session should work in this dependency order:
    - receipt filtering with raw-page cursor advancement;
    - `scribe_backfills` state transitions;
    - transactional final handoff;
-   - focused race/checkpoint and receipt-only-page tests.
+   - focused first-page/order, race/checkpoint, and receipt-only-page tests.
 
 2. **Shared keyless convergence**
 
@@ -588,6 +596,8 @@ The implementation is complete when all of the following are proven:
 - The Speaker handles a live message while that chat is still backfilling.
 - The same message is archived but not offered to live Scribe during catch-up.
 - Initial history is presented chronologically in windows of at most 50 events.
+- A newly admitted chat reads its first snapshot page, and equal-timestamp events retain
+  archive insertion order.
 - Mixed and receipt-only archive pages never send receipts to Scribe and still advance
   the durable raw archive cursor.
 - Windows run sequentially on one Scribe conversation and update the graph after each
