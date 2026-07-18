@@ -271,8 +271,41 @@ because its provider timestamp is old.
 
 ### 6.3 Window shape
 
-Each page contains at most 50 archive events. Decode arrivals and updates into the
-existing `ConversationWindow` shape, then present the existing Scribe vocabulary:
+Each raw page contains at most 50 archive rows. Keep receipts in that raw scan so a
+receipt-only region cannot pin the durable cursor, but never decode or send them to
+Scribe. This matches the live path: `acceptedUpdate()` excludes receipts at
+`packages/engine/src/intake/managed-chat-inbox.ts:160-164`, and `decodeUpdate()` rejects
+them at lines 121-146.
+
+Checkpoint the terminal raw-page cursor, not the last Scribe-visible event:
+
+```ts
+const page = await readArchivePage(cursor, 50);
+const through = cursorOf(page.at(-1)!);
+const scribeEvents = page.filter((event) => event.kind !== "receipt");
+
+if (scribeEvents.length === 0) {
+  checkpoint(through);
+  log.info("scribe_backfill.window.skipped", {
+    chatId,
+    phase,
+    throughSequence: through.sequence,
+    receiptCount: page.length,
+  });
+  continue;
+}
+
+await session.prompt(renderScribeBatch(scribeEvents));
+checkpoint(through);
+```
+
+For a mixed page, cursor advancement still waits for the Scribe turn to succeed. For a
+receipt-only page, there is no model or graph work to retry, so checkpoint it
+immediately. Do not add `kind <> 'receipt'` to the pagination SQL: advancing over raw
+rows is what guarantees progress through receipt-only history.
+
+Decode the remaining arrivals and updates into the existing `ConversationWindow`
+shape, then present the existing Scribe vocabulary:
 
 ```ts
 scribeBatchInput([
@@ -295,7 +328,7 @@ cross-window context.
 
 ## 7. Per-window transaction semantics
 
-For every window:
+For every raw page that contains at least one Scribe-visible event:
 
 1. Check that the chat remains managed.
 2. Emit `scribe_backfill.window.started`.
@@ -305,7 +338,8 @@ For every window:
 
 Cursor advancement happens only after the model turn and its graph tool calls finish.
 If the process dies after graph writes but before checkpointing, the same window may
-run again. Section 8 makes that replay convergent.
+run again. Section 8 makes that replay convergent. A receipt-only page is the sole
+exception: it advances without a model turn because it has no Scribe-visible work.
 
 ## 8. Idempotency
 
@@ -423,7 +457,9 @@ log.info("scribe_backfill.window.started", {
   window,
   fromSequence,
   throughSequence,
-  eventCount,
+  archiveEventCount,
+  scribeEventCount,
+  receiptCount,
 });
 
 log.info("scribe_backfill.window.completed", {
@@ -432,6 +468,13 @@ log.info("scribe_backfill.window.completed", {
   window,
   throughSequence,
   eventsProcessed,
+});
+
+log.info("scribe_backfill.window.skipped", {
+  chatId,
+  phase,
+  throughSequence,
+  receiptCount,
 });
 
 log.warn("scribe_backfill.window.retrying", {
@@ -505,9 +548,10 @@ The implementation session should work in this dependency order:
 1. **Archive pagination and state store**
 
    - sequence-aware snapshot/tail reads;
+   - receipt filtering with raw-page cursor advancement;
    - `scribe_backfills` state transitions;
    - transactional final handoff;
-   - one focused race/checkpoint test.
+   - focused race/checkpoint and receipt-only-page tests.
 
 2. **Shared keyless convergence**
 
@@ -544,6 +588,8 @@ The implementation is complete when all of the following are proven:
 - The Speaker handles a live message while that chat is still backfilling.
 - The same message is archived but not offered to live Scribe during catch-up.
 - Initial history is presented chronologically in windows of at most 50 events.
+- Mixed and receipt-only archive pages never send receipts to Scribe and still advance
+  the durable raw archive cursor.
 - Windows run sequentially on one Scribe conversation and update the graph after each
   turn.
 - A process interruption resumes from the last successful checkpoint.
