@@ -52,7 +52,9 @@ export const createInspectionReporter = ({
   operationSignal,
 }: InspectionReporterOptions) => {
   const authenticationFor =
-    authenticationOverride ?? ((paths: ManagedPaths) => createManagedChatGptAuthentication(paths, dependencies.chatGptOAuth));
+    authenticationOverride ??
+    ((paths: ManagedPaths) =>
+      createManagedChatGptAuthentication(paths, dependencies.chatGptOAuth, dependencies.environment ?? process.env));
   const inspectUncertainWork = dependencies.inspectUncertainWork ?? inspectUncertainWorkStatus;
   const inspectWindowDeliveries = dependencies.inspectWindowDeliveries ?? inspectWindowDeliveryCounts;
   const readinessSignal = (): AbortSignal => operationSignal(dependencies.readinessTimeoutMillis ?? 60_000);
@@ -99,7 +101,7 @@ export const createInspectionReporter = ({
     const paths = managedPaths({ dataDirectory: dataDirectory() });
     const inspection = await inspectManagedData({ dataDirectory: paths.root });
     const ready = inspection.state === "ready";
-    const checks = ready ? [...(await inspectManagedServices(paths))] : [];
+    const checks = ready ? [...(await inspectManagedServices(paths, dependencies.environment ?? process.env))] : [];
     const githubCredentialReady = checks.some(
       ({ name, state }) => name === "github-credential" && state === "ready",
     );

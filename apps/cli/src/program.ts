@@ -33,6 +33,13 @@ import {
 } from "@ambient-agent/installation/schema.ts";
 import { managedPaths, type ManagedPaths } from "@ambient-agent/installation/paths.ts";
 import {
+  libsqlStore,
+  tenantCredentialDatabaseFromEnvironment,
+  type TenantCredentialEnvironment,
+  withTenantCredentialRollback,
+  withTenantWhatsAppCredentialRollback,
+} from "@ambient-agent/installation/tenant-credentials.ts";
+import {
   probeAmbientRuntimeHealth,
   runtimeInstallationId,
   type AmbientRuntimeHealth,
@@ -101,6 +108,8 @@ export interface CliDependencies {
   readonly smokeCanaryFor?: SmokeCanary;
   readonly smokeTimeoutMillis?: number;
   readonly createNonce?: () => string;
+  /** Injectable tenant database environment for self-contained CLI tests. */
+  readonly environment?: TenantCredentialEnvironment;
 }
 
 export type { ImportRuntime, StartRuntime } from "./lifecycle.ts";
@@ -157,12 +166,13 @@ const bareDataDirectory = (args: readonly string[]): { readonly dataDirectory?: 
 
 export const runCli = async (argv: readonly string[], dependencies: CliDependencies = {}): Promise<number> => {
   const output = dependencies.output ?? defaultOutput;
+  const environment = dependencies.environment ?? process.env;
   const setupPrompts = dependencies.setupPrompts ?? defaultSetupPrompts;
   const interactive =
     dependencies.interactive ??
     (dependencies.setupPrompts !== undefined || (process.stdin.isTTY === true && process.stdout.isTTY === true));
   const authenticationFor = (paths: ManagedPaths) =>
-    createManagedChatGptAuthentication(paths, dependencies.chatGptOAuth);
+    createManagedChatGptAuthentication(paths, dependencies.chatGptOAuth, environment);
   const serviceOverrides = dependencies.firstRunServices ?? {};
   const firstRunServices: FirstRunServices = {
     chatGptFor: serviceOverrides.chatGptFor ?? authenticationFor,
@@ -173,6 +183,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           storeDirectory: paths.whatsapp,
           archive,
           logger: upstreamWhatsAppLogger(),
+          environment,
         })),
     discoverRepository: serviceOverrides.discoverRepository ?? (() => discoverOriginRepository()),
     verifyGitHub:
@@ -251,24 +262,34 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           `Refusing to replace ${current.state} managed data at ${current.dataDirectory}; run ambient-agent doctor.`,
         );
       }
+      const tenantDatabase = tenantCredentialDatabaseFromEnvironment(environment);
+      if (tenantDatabase !== undefined && options.whatsappStore !== undefined) {
+        throw new Error(
+          "--whatsapp-store is not supported with tenant credential storage; pair directly into the tenant database.",
+        );
+      }
       const scriptedApps =
         options.githubAppsFile === undefined ? undefined : await readGitHubAppTriplesFile(options.githubAppsFile);
-      const result = await runFirstRunSetup({
-        dataDirectory: global.dataDir,
-        interactive,
-        allowFreshChatGptAuthentication: options.authorize ?? false,
-        ...(options.whatsappStore === undefined ? {} : { whatsappStoreSource: resolve(options.whatsappStore) }),
-        services: firstRunServices,
-        prompts: setupPrompts,
-        scripted: {
-          ...(options.chat === undefined ? {} : { chat: options.chat }),
-          ...(options.repository === undefined ? {} : { repository: options.repository }),
-          ...(scriptedApps === undefined ? {} : { githubApps: scriptedApps }),
-        },
-        chatGptCallbacks: deviceCodeCallbacks,
-        whatsappCallbacks,
-        signal: authenticationSignal(),
-      });
+      const setup = async () =>
+        await runFirstRunSetup({
+          dataDirectory: global.dataDir,
+          interactive,
+          allowFreshChatGptAuthentication: options.authorize ?? false,
+          modelCredentialStorage: tenantDatabase === undefined ? "managed-file" : "tenant-database",
+          ...(options.whatsappStore === undefined ? {} : { whatsappStoreSource: resolve(options.whatsappStore) }),
+          services: firstRunServices,
+          prompts: setupPrompts,
+          scripted: {
+            ...(options.chat === undefined ? {} : { chat: options.chat }),
+            ...(options.repository === undefined ? {} : { repository: options.repository }),
+            ...(scriptedApps === undefined ? {} : { githubApps: scriptedApps }),
+          },
+          chatGptCallbacks: deviceCodeCallbacks,
+          whatsappCallbacks,
+          signal: authenticationSignal(),
+        });
+      const result =
+        tenantDatabase === undefined ? await setup() : await withTenantCredentialRollback(tenantDatabase, setup);
       output.stdout(
         result.created
           ? `Created secure managed installation at ${result.inspection.dataDirectory}.\n`
@@ -281,22 +302,33 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .description("authenticate ChatGPT for an existing managed installation")
     .action(async () => {
       const paths = await readyManagedPaths("authenticate against");
+      const tenantDatabase = tenantCredentialDatabaseFromEnvironment(environment);
       // Fail before the device flow when the credential path can never persist a login.
-      try {
-        if (!(await lstat(paths.chatGptOAuthCredential)).isFile()) {
-          throw new Error(
-            `The managed ChatGPT credential path at ${paths.chatGptOAuthCredential} is not a regular file; run ambient-agent doctor.`,
-          );
+      if (tenantDatabase === undefined) {
+        try {
+          if (!(await lstat(paths.chatGptOAuthCredential)).isFile()) {
+            throw new Error(
+              `The managed ChatGPT credential path at ${paths.chatGptOAuthCredential} is not a regular file; run ambient-agent doctor.`,
+            );
+          }
+        } catch (cause) {
+          if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
         }
-      } catch (cause) {
-        if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
       }
-      await authenticationFor(paths).authenticate(deviceCodeCallbacks, authenticationSignal());
+      const authentication = authenticationFor(paths);
+      await authentication.authenticate(deviceCodeCallbacks, authenticationSignal());
+      if ((await authentication.inspect()).state !== "ready") {
+        throw new Error("ChatGPT authentication was saved, but the managed credential store did not verify it.");
+      }
       const verified = await inspectManagedData({ dataDirectory: paths.root });
       if (verified.state !== "ready") {
         throw new Error(`ChatGPT authentication was saved, but managed data verification failed at ${paths.root}.`);
       }
-      output.stdout(`ChatGPT authentication updated at ${paths.chatGptOAuthCredential}.\n`);
+      output.stdout(
+        tenantDatabase === undefined
+          ? `ChatGPT authentication updated at ${paths.chatGptOAuthCredential}.\n`
+          : "ChatGPT authentication updated in the tenant credential database.\n",
+      );
     });
 
   program
@@ -478,7 +510,12 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
         throw new Error(`Unknown repair component "${component}"; only whatsapp re-pairing is supported.`);
       }
       const paths = await readyManagedPaths("repair components of");
-      if ((await inspectWhatsAppSession(paths)).state !== "re-pair-required") {
+      const tenantDatabase = tenantCredentialDatabaseFromEnvironment(environment);
+      const sessionCheck = await inspectWhatsAppSession(paths, environment);
+      if (sessionCheck.state === "failed") {
+        throw new Error(`${sessionCheck.message} ${sessionCheck.remediation ?? "Run ambient-agent doctor."}`);
+      }
+      if (sessionCheck.state !== "re-pair-required") {
         throw new Error(
           "The managed WhatsApp store is already paired; nothing to repair. To pair a different account, unlink this device from the phone first (Linked devices), then run the repair again.",
         );
@@ -507,29 +544,40 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
         await chmod(stagingPaths.whatsapp, 0o700);
         // The staging archive absorbs the pairing sync and is discarded; the application
         // database, credentials, configuration, and unresolved work are never touched.
-        const archive = createConversationArchive(stagingPaths.applicationDatabase);
-        const account = firstRunServices.whatsappFor(stagingPaths, archive);
-        try {
-          const identity = await account.authenticate(whatsappCallbacks, authenticationSignal());
-          const candidates = await account.synchronizedChats(authenticationSignal());
-          const managedChat = configuration.managedChats[0]!;
-          if (!candidates.some((candidate) => candidate.jid.toLowerCase() === managedChat.toLowerCase())) {
-            throw new Error(
-              `The newly paired WhatsApp account (${identity.jid}) does not see the configured managed chat ${managedChat}; nothing was replaced.`,
+        const repair = async () => {
+          if (tenantDatabase !== undefined) await libsqlStore(tenantDatabase).clear();
+          const archive = createConversationArchive(stagingPaths.applicationDatabase);
+          const account = firstRunServices.whatsappFor(stagingPaths, archive);
+          try {
+            const identity = await account.authenticate(whatsappCallbacks, authenticationSignal());
+            const candidates = await account.synchronizedChats(authenticationSignal());
+            const managedChat = configuration.managedChats[0]!;
+            if (!candidates.some((candidate) => candidate.jid.toLowerCase() === managedChat.toLowerCase())) {
+              throw new Error(
+                `The newly paired WhatsApp account (${identity.jid}) does not see the configured managed chat ${managedChat}; nothing was replaced.`,
+              );
+            }
+            output.stdout(`Paired WhatsApp as ${identity.jid}; the configured managed chat is visible.\n`);
+          } finally {
+            try {
+              await account.stop();
+            } finally {
+              archive.close();
+            }
+          }
+          if (tenantDatabase === undefined) {
+            await promoteReplacementWhatsAppStore(paths, stagingPaths.whatsapp);
+            output.stdout(
+              `Replaced the managed WhatsApp store at ${paths.whatsapp}; configuration, credentials, and history are unchanged.\n`,
+            );
+          } else {
+            output.stdout(
+              "Updated the WhatsApp session in the tenant credential database; configuration and local history are unchanged.\n",
             );
           }
-          output.stdout(`Paired WhatsApp as ${identity.jid}; the configured managed chat is visible.\n`);
-        } finally {
-          try {
-            await account.stop();
-          } finally {
-            archive.close();
-          }
-        }
-        await promoteReplacementWhatsAppStore(paths, stagingPaths.whatsapp);
-        output.stdout(
-          `Replaced the managed WhatsApp store at ${paths.whatsapp}; configuration, credentials, and history are unchanged.\n`,
-        );
+        };
+        if (tenantDatabase === undefined) await repair();
+        else await withTenantWhatsAppCredentialRollback(tenantDatabase, repair);
       } finally {
         try {
           await rm(lock.stagingRoot, { recursive: true, force: true });
@@ -553,12 +601,12 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
       // Application schema migrations must run before diagnostics compare the
       // on-disk version with the current owned schema.
       migrateConversationArchiveSchema(paths.applicationDatabase);
-      const blockingCheck = (await inspectManagedServices(paths)).find(
+      const blockingCheck = (await inspectManagedServices(paths, environment)).find(
         ({ state }) => state !== "ready" && state !== "paired",
       );
       if (blockingCheck !== undefined) {
         throw new Error(
-          blockingCheck.name === "whatsapp-session"
+          blockingCheck.name === "whatsapp-session" && blockingCheck.state === "re-pair-required"
             ? `WhatsApp requires re-pairing (${blockingCheck.code}). Run ambient-agent repair whatsapp; the rest of the managed installation is preserved.`
             : `Refusing to start managed data at ${paths.root}: ${blockingCheck.code}. Run ambient-agent doctor.`,
         );
@@ -666,7 +714,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
       else if (
         inspection.state === "ready" &&
         interactive &&
-        (await inspectWhatsAppSession(managedPaths({ dataDirectory: bare.dataDirectory }))).state ===
+        (await inspectWhatsAppSession(managedPaths({ dataDirectory: bare.dataDirectory }), environment)).state ===
           "re-pair-required"
       ) {
         args.push("repair", "whatsapp");
