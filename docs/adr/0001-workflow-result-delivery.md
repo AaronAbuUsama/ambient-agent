@@ -29,7 +29,7 @@ not a delivery mechanism.
 
 Bounded Workflows are autonomous. They do not suspend for human input or hold a
 conversation open while waiting for an answer. If work cannot continue, the run
-returns a terminal failure or blocked outcome to Ambience, which owns any later
+returns a terminal failure or blocked outcome to the Speaker, which owns any later
 conversation. Segmented continuation runs and durable human-in-the-loop
 orchestration are outside this decision.
 
