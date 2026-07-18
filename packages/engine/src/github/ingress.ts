@@ -5,6 +5,7 @@ import * as v from "valibot";
 import {
   githubIssueOpenedInputSchema,
   githubPullRequestOpenedInputSchema,
+  githubPullRequestReviewSubmittedInputSchema,
   type GitHubIngressInput,
 } from "../inputs.ts";
 import type { IssueOperationStore } from "./operation-store.ts";
@@ -52,6 +53,38 @@ const pullRequestOpenedPayloadSchema = v.object({
     body: v.nullable(v.string()),
     state: v.literal("open"),
     draft: v.boolean(),
+  }),
+  sender: v.object({
+    login: nonEmptyString,
+    id: positiveInteger,
+    type: nonEmptyString,
+  }),
+});
+const pullRequestReviewSubmittedPayloadSchema = v.object({
+  action: v.literal("submitted"),
+  installation: v.optional(v.nullable(v.object({ id: positiveInteger }))),
+  repository: v.object({
+    id: positiveInteger,
+    name: nonEmptyString,
+    html_url: nonEmptyString,
+    owner: v.object({ login: nonEmptyString }),
+  }),
+  pull_request: v.object({
+    number: positiveInteger,
+    html_url: nonEmptyString,
+    title: nonEmptyString,
+    state: v.union([v.literal("open"), v.literal("closed")]),
+    draft: v.boolean(),
+  }),
+  review: v.object({
+    id: positiveInteger,
+    html_url: nonEmptyString,
+    state: v.union([
+      v.literal("commented"),
+      v.literal("changes_requested"),
+      v.literal("approved"),
+      v.literal("dismissed"),
+    ]),
   }),
   sender: v.object({
     login: nonEmptyString,
@@ -168,7 +201,9 @@ export const createGitHubIngress = (options: {
 
     const isIssueOpened = delivery.name === "issues" && delivery.payload.action === "opened";
     const isPullRequestOpened = delivery.name === "pull_request" && delivery.payload.action === "opened";
-    if (!isIssueOpened && !isPullRequestOpened) {
+    const isPullRequestReviewSubmitted =
+      delivery.name === "pull_request_review" && delivery.payload.action === "submitted";
+    if (!isIssueOpened && !isPullRequestOpened && !isPullRequestReviewSubmitted) {
       options.store.settle(delivery.deliveryId, {
         status: "unsupported",
         settledAt: now().toISOString(),
@@ -183,9 +218,15 @@ export const createGitHubIngress = (options: {
 
     const parsed = isIssueOpened
       ? v.safeParse(issueOpenedPayloadSchema, delivery.payload)
-      : v.safeParse(pullRequestOpenedPayloadSchema, delivery.payload);
+      : isPullRequestOpened
+        ? v.safeParse(pullRequestOpenedPayloadSchema, delivery.payload)
+        : v.safeParse(pullRequestReviewSubmittedPayloadSchema, delivery.payload);
     if (!parsed.success) {
-      const event = isIssueOpened ? "issues.opened" : "pull_request.opened";
+      const event = isIssueOpened
+        ? "issues.opened"
+        : isPullRequestOpened
+          ? "pull_request.opened"
+          : "pull_request_review.submitted";
       const error = `Verified ${event} delivery did not match the supported application contract`;
       options.store.settle(delivery.deliveryId, {
         status: "unsupported",
@@ -228,7 +269,34 @@ export const createGitHubIngress = (options: {
           },
           sender: payload.sender,
         });
-    } else if ("pull_request" in payload) {
+    } else if (isPullRequestReviewSubmitted && "review" in payload) {
+      buildInput = (chatId) =>
+        v.parse(githubPullRequestReviewSubmittedInputSchema, {
+          type: "github.pull-request-review.submitted",
+          chatId,
+          deliveryId: delivery.deliveryId,
+          ...(payload.installation ? { installationId: payload.installation.id } : {}),
+          repository: {
+            owner: payload.repository.owner.login,
+            repo: payload.repository.name,
+            id: payload.repository.id,
+            url: payload.repository.html_url,
+          },
+          pullRequest: {
+            number: payload.pull_request.number,
+            url: payload.pull_request.html_url,
+            title: payload.pull_request.title,
+            state: payload.pull_request.state,
+            draft: payload.pull_request.draft,
+          },
+          review: {
+            id: payload.review.id,
+            url: payload.review.html_url,
+            state: payload.review.state,
+          },
+          sender: payload.sender,
+        });
+    } else if ("pull_request" in payload && "body" in payload.pull_request) {
       const linkedNumbers = linkedIssueNumbers(payload.pull_request.body ?? "", repository);
       const correlation = options.operations?.correlateCreateIssues(repository, linkedNumbers) ?? {
         completedIssueNumbers: [],
