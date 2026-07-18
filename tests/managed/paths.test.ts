@@ -65,12 +65,18 @@ describe("managed data paths", () => {
       root: "D:\\Agent",
       config: "D:\\Agent\\config.json",
       credentials: "D:\\Agent\\credentials",
-      githubCredential: "D:\\Agent\\credentials\\github.json",
+      githubAppCredentials: {
+        coder: "D:\\Agent\\credentials\\github-coder.json",
+        reviewer: "D:\\Agent\\credentials\\github-reviewer.json",
+        planner: "D:\\Agent\\credentials\\github-planner.json",
+      },
+      legacyGithubCredential: "D:\\Agent\\credentials\\github.json",
       chatGptOAuthCredential: "D:\\Agent\\credentials\\chatgpt-oauth.json",
       legacyPiAuthCredential: "D:\\Agent\\credentials\\pi-auth.json",
       applicationDatabase: "D:\\Agent\\application.sqlite",
       flueDatabase: "D:\\Agent\\flue.sqlite",
       whatsapp: "D:\\Agent\\whatsapp",
+      workspaces: "D:\\Agent\\workspaces",
       logs: "D:\\Agent\\logs",
     });
   });
@@ -125,12 +131,18 @@ describe("managed data paths", () => {
       root: "/managed",
       config: posix.join("/managed", "config.json"),
       credentials: posix.join("/managed", "credentials"),
-      githubCredential: posix.join("/managed", "credentials", "github.json"),
+      githubAppCredentials: {
+        coder: posix.join("/managed", "credentials", "github-coder.json"),
+        reviewer: posix.join("/managed", "credentials", "github-reviewer.json"),
+        planner: posix.join("/managed", "credentials", "github-planner.json"),
+      },
+      legacyGithubCredential: posix.join("/managed", "credentials", "github.json"),
       chatGptOAuthCredential: posix.join("/managed", "credentials", "chatgpt-oauth.json"),
       legacyPiAuthCredential: posix.join("/managed", "credentials", "pi-auth.json"),
       applicationDatabase: posix.join("/managed", "application.sqlite"),
       flueDatabase: posix.join("/managed", "flue.sqlite"),
       whatsapp: posix.join("/managed", "whatsapp"),
+      workspaces: posix.join("/managed", "workspaces"),
       logs: posix.join("/managed", "logs"),
     });
   });

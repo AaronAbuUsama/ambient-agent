@@ -11,15 +11,25 @@ import {
 import type { ChatGptAuthentication } from "./chatgpt-authentication.ts";
 import type { ModelAuthorization } from "./chatgpt-authentication.ts";
 
-export const AMBIENCE_MODEL_ID = "gpt-5.6-luna";
-export const AMBIENCE_MODEL_SPECIFIER = `openai-codex/${AMBIENCE_MODEL_ID}`;
+/**
+ * The one model the managed ChatGPT Codex subscription serves. It belongs to the
+ * credential/provider, not to any single agent — each agent references it through
+ * its own specifier and picks its own `thinkingLevel`, so the Scribe can run cheap
+ * and minimal-thinking on the same credential the Speaker uses.
+ */
+export const LUNA_MODEL_ID = "gpt-5.6-luna";
+const LUNA_MODEL_SPECIFIER = `openai-codex/${LUNA_MODEL_ID}`;
+
+export const SPEAKER_MODEL_ID = LUNA_MODEL_ID;
+export const SPEAKER_MODEL_SPECIFIER = LUNA_MODEL_SPECIFIER;
+export const SCRIBE_MODEL_SPECIFIER = LUNA_MODEL_SPECIFIER;
 
 const PROVIDER_ID = "openai-codex";
 const CODEX_API = "openai-codex-responses";
-const AMBIENCE_CODEX_API = "ambience-openai-codex-responses";
+const SPEAKER_CODEX_API = "speaker-openai-codex-responses";
 const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 const LUNA_MINIMUM_CODEX_VERSION = "0.144.1";
-const RESPONSES_LITE_FETCH = Symbol.for("whatsappd.ambience.responses-lite-fetch");
+const RESPONSES_LITE_FETCH = Symbol.for("whatsappd.speaker.responses-lite-fetch");
 
 type ApiRegistration = Parameters<typeof flueRegisterApiProvider>[0];
 type ApiRegistrar = (provider: ApiRegistration) => void;
@@ -34,12 +44,12 @@ export interface PiSubscriptionConnectorOptions {
 
 export interface PiSubscriptionReceipt {
   authentication: "chatgpt-oauth";
-  model: typeof AMBIENCE_MODEL_SPECIFIER;
+  model: typeof SPEAKER_MODEL_SPECIFIER;
   provider: typeof PROVIDER_ID;
 }
 
 export interface ChatGptReadinessReceipt {
-  readonly model: typeof AMBIENCE_MODEL_SPECIFIER;
+  readonly model: typeof SPEAKER_MODEL_SPECIFIER;
   readonly request: "complete" | "failed";
   readonly reason?: "cancelled" | "timeout" | "credential-rejected" | "request-failed";
 }
@@ -76,7 +86,7 @@ export function prepareLunaResponsesLiteRequest(
   headers: Headers,
   body: unknown,
 ): { headers: Headers; body: unknown } {
-  if (!isRecord(body) || body.model !== AMBIENCE_MODEL_ID) return { headers, body };
+  if (!isRecord(body) || body.model !== LUNA_MODEL_ID) return { headers, body };
 
   const input = Array.isArray(body.input)
     ? body.input.map((item) =>
@@ -159,7 +169,7 @@ function lunaModel(model: Model<Api>): Model<Api> {
 
 function lunaApi(delegate: ProviderStreams): ApiRegistration {
   return {
-    api: AMBIENCE_CODEX_API,
+    api: SPEAKER_CODEX_API,
     stream: (model, context, options) =>
       delegate.stream(lunaModel(model), context, { ...options, transport: "sse" }),
     streamSimple: (model, context, options) =>
@@ -172,8 +182,8 @@ const requestChatGptReadiness = async (authorization: ModelAuthorization, signal
   installLunaResponsesLiteFetch();
   const stream = openAICodexResponsesApi().streamSimple(
     lunaModel({
-      id: AMBIENCE_MODEL_ID,
-      name: AMBIENCE_MODEL_ID,
+      id: LUNA_MODEL_ID,
+      name: LUNA_MODEL_ID,
       api: CODEX_API,
       provider: PROVIDER_ID,
       baseUrl: CODEX_BASE_URL,
@@ -236,7 +246,7 @@ export const runChatGptReadinessCheck = async (
   } catch (cause) {
     throw readinessFailure(cause, options.signal);
   }
-  return { model: AMBIENCE_MODEL_SPECIFIER, request: "complete" };
+  return { model: SPEAKER_MODEL_SPECIFIER, request: "complete" };
 };
 
 export async function connectPiChatGptSubscription(
@@ -249,7 +259,7 @@ export async function connectPiChatGptSubscription(
   const codexApi = options.codexApi ?? openAICodexResponsesApi();
   (options.registerApiProvider ?? flueRegisterApiProvider)(lunaApi(codexApi));
   (options.registerProvider ?? flueRegisterProvider)(PROVIDER_ID, {
-    api: AMBIENCE_CODEX_API,
+    api: SPEAKER_CODEX_API,
     apiKey,
     baseUrl: CODEX_BASE_URL,
     contextWindow: 272_000,
@@ -258,7 +268,7 @@ export async function connectPiChatGptSubscription(
 
   return {
     authentication: "chatgpt-oauth",
-    model: AMBIENCE_MODEL_SPECIFIER,
+    model: SPEAKER_MODEL_SPECIFIER,
     provider: PROVIDER_ID,
   };
 }

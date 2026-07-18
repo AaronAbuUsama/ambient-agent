@@ -8,21 +8,29 @@ import { ensureManagedGitHubWebhookSecret, writeManagedConfiguration } from "../
 const roots: string[] = [];
 afterEach(async () => await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
+const appCredential = (extra: Record<string, unknown> = {}) => ({
+  schemaVersion: 1,
+  kind: "github-app",
+  appId: "123456",
+  installationId: "7891011",
+  privateKey: "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----\n",
+  ...extra,
+});
+
 describe("managed configuration migrations", () => {
-  it("adds an app-owned webhook secret without replacing the GitHub token", async () => {
+  it("adds an app-owned webhook secret without replacing the GitHub App credential", async () => {
     const root = await mkdtemp(join(tmpdir(), "ambient-config-migration-"));
     roots.push(root);
-    const path = join(root, "github.json");
-    await writeFile(path, JSON.stringify({ schemaVersion: 1, kind: "personal-token", token: "original-token" }), {
-      mode: 0o600,
-    });
+    const path = join(root, "github-planner.json");
+    await writeFile(path, JSON.stringify(appCredential()), { mode: 0o600 });
 
     await ensureManagedGitHubWebhookSecret(path);
 
     expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
       schemaVersion: 1,
-      kind: "personal-token",
-      token: "original-token",
+      kind: "github-app",
+      appId: "123456",
+      installationId: "7891011",
       webhookSecret: expect.any(String),
     });
   });
@@ -30,8 +38,8 @@ describe("managed configuration migrations", () => {
   it("leaves the previous credential byte-for-byte usable when migration cannot commit", async () => {
     const root = await mkdtemp(join(tmpdir(), "ambient-config-migration-failure-"));
     roots.push(root);
-    const path = join(root, "github.json");
-    const previous = `${JSON.stringify({ schemaVersion: 1, kind: "personal-token", token: "original-token" })}\n`;
+    const path = join(root, "github-planner.json");
+    const previous = `${JSON.stringify(appCredential())}\n`;
     await writeFile(path, previous, { mode: 0o600 });
 
     await expect(
@@ -46,13 +54,13 @@ describe("managed configuration migrations", () => {
     const root = await mkdtemp(join(tmpdir(), "ambient-config-rollback-"));
     roots.push(root);
     const configPath = join(root, "config.json");
-    const credentialPath = join(root, "github.json");
+    const credentialPath = join(root, "github-planner.json");
     const config = {
       schemaVersion: 1,
       managedChats: ["chat@g.us"],
       model: { provider: "openai-codex", credential: "chatgpt-oauth" },
       github: {
-        kind: "personal-token",
+        kind: "github-app",
         credential: "github",
         defaultRepository: "owner/old",
         allowedRepositories: ["owner/old"],
@@ -60,11 +68,7 @@ describe("managed configuration migrations", () => {
     } as const;
     for (const failedPath of [credentialPath, configPath]) {
       await writeFile(configPath, JSON.stringify(config), { mode: 0o600 });
-      await writeFile(
-        credentialPath,
-        JSON.stringify({ schemaVersion: 1, kind: "personal-token", token: "old-token", webhookSecret: "secret" }),
-        { mode: 0o600 },
-      );
+      await writeFile(credentialPath, JSON.stringify(appCredential({ webhookSecret: "secret" })), { mode: 0o600 });
 
       let injected = false;
       await expect(
@@ -79,7 +83,7 @@ describe("managed configuration migrations", () => {
               allowedRepositories: ["owner/new"],
             },
           },
-          { schemaVersion: 1, kind: "personal-token", token: "new-token", webhookSecret: "secret" },
+          appCredential({ installationId: "2223334", webhookSecret: "secret" }),
           async (path, value) => {
             await writeFile(path, `${JSON.stringify(value)}\n`, { mode: 0o600 });
             if (path === failedPath && !injected) {
@@ -89,7 +93,7 @@ describe("managed configuration migrations", () => {
           },
         ),
       ).rejects.toThrow("injected post-replacement failure");
-      expect(JSON.parse(await readFile(credentialPath, "utf8"))).toMatchObject({ token: "old-token" });
+      expect(JSON.parse(await readFile(credentialPath, "utf8"))).toMatchObject({ installationId: "7891011" });
       expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
         github: { defaultRepository: "owner/old" },
       });

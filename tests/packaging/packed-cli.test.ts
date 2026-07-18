@@ -42,6 +42,32 @@ const environment = {
 };
 const runtimeFixtureSource = fileURLToPath(new URL("../fixtures/packed-runtime.mjs", import.meta.url));
 const runtimeFixture = join(root, "packed-runtime.mjs");
+// Fixture App triples for headless setup — the real GitHub Apps do not exist in a test.
+const githubAppsFile = join(root, "github-apps.json");
+const githubAppsFileContent = JSON.stringify(
+  Object.fromEntries(
+    ["coder", "reviewer", "planner"].map((reference, index) => [
+      reference,
+      {
+        appId: String(100 + index),
+        installationId: String(200 + index),
+        privateKey: `-----BEGIN RSA PRIVATE KEY-----\npacked-${reference}-key\n-----END RSA PRIVATE KEY-----\n`,
+      },
+    ]),
+  ),
+);
+const initArgs = (dataDirectory: string, chatId = "120363000@g.us"): string[] => [
+  "--data-dir",
+  dataDirectory,
+  "init",
+  "--authorize",
+  "--chat",
+  chatId,
+  "--repository",
+  "owner/repo",
+  "--github-apps-file",
+  githubAppsFile,
+];
 const fixtureEnvironment = {
   ...environment,
   GH_TOKEN: "packed-github-secret",
@@ -128,12 +154,12 @@ const waitForCanonicalAgentText = async (databasePath: string, chatId: string, e
     const deadline = Date.now() + 15_000;
     let observed = "";
     while (Date.now() < deadline) {
-      const page = await conversationStreamStore.read(`agents/ambience/${chatId}`, { offset: "-1", limit: 1_000 });
+      const page = await conversationStreamStore.read(`agents/speaker/${chatId}`, { offset: "-1", limit: 1_000 });
       observed = page.batches.flatMap(({ records }) => records.map((record) => JSON.stringify(record))).join("\n");
       if (observed.includes(expected)) return observed;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    throw new Error(`Canonical Ambience history did not contain ${expected}. Observed:\n${observed}`);
+    throw new Error(`Canonical Speaker history did not contain ${expected}. Observed:\n${observed}`);
   } finally {
     await adapter.close?.();
   }
@@ -144,6 +170,7 @@ beforeAll(async () => {
     mkdir(installDirectory, { recursive: true }),
     mkdir(homeDirectory, { recursive: true }),
     copyFile(runtimeFixtureSource, runtimeFixture),
+    writeFile(githubAppsFile, githubAppsFileContent, { mode: 0o600 }),
   ]);
   const packed = await execute("npm", ["pack", "--pack-destination", packDirectory], {
     cwd: process.cwd(),
@@ -221,7 +248,7 @@ describe("packed ambient-agent executable", () => {
     if (process.platform === "win32") return;
     const dataDirectory = join(root, "clean-journey");
     const initialized = await executeAmbientAgent(
-      ["--data-dir", dataDirectory, "init", "--authorize", "--chat", "120363000@g.us", "--repository", "owner/repo"],
+      initArgs(dataDirectory),
       fixtureEnvironment,
     );
     expect(initialized.stdout).toContain("Created secure managed installation");
@@ -286,7 +313,7 @@ describe("packed ambient-agent executable", () => {
       ).toEqual([]);
       upgraded.close();
       // Runtime diagnostics live on stderr (ADR 0016); stdout stays free for command responses.
-      expect(runtime.stderr()).toContain("Ambience WhatsApp online");
+      expect(runtime.stderr()).toContain("Speaker WhatsApp online");
       expect(runtime.stderr()).not.toContain("packed-github-secret");
     } finally {
       await runtime.stop();
@@ -309,7 +336,7 @@ describe("packed ambient-agent executable", () => {
     };
     await mkdir(migrationHome, { recursive: true });
     await executeAmbientAgent(
-      ["--data-dir", legacyData, "init", "--authorize", "--chat", "120363000@g.us", "--repository", "owner/repo"],
+      initArgs(legacyData),
       migrationEnvironment,
     );
 
@@ -323,7 +350,7 @@ describe("packed ambient-agent executable", () => {
     await expect(stat(legacyData)).rejects.toMatchObject({ code: "ENOENT" });
     const adoptedPaths = managedPaths({ dataDirectory: adoptedData });
     expect((await stat(adoptedData)).mode & 0o777).toBe(0o700);
-    expect((await stat(adoptedPaths.githubCredential)).mode & 0o777).toBe(0o600);
+    expect((await stat(adoptedPaths.githubAppCredentials.planner)).mode & 0o777).toBe(0o600);
     const record = new DatabaseSync(adoptedPaths.applicationDatabase, { readOnly: true });
     expect(record.prepare("SELECT source FROM managed_root_migrations").all()).toEqual([{ source: legacyData }]);
     record.close();
@@ -365,7 +392,7 @@ describe("packed ambient-agent executable", () => {
     if (process.platform === "win32") return;
     const dataDirectory = join(root, "occupied-port");
     await executeAmbientAgent(
-      ["--data-dir", dataDirectory, "init", "--authorize", "--chat", "120363000@g.us", "--repository", "owner/repo"],
+      initArgs(dataDirectory),
       fixtureEnvironment,
     );
     const port = await availablePort();
@@ -392,7 +419,7 @@ describe("packed ambient-agent executable", () => {
       expect(failure.code).toBe(1);
       expect(failure.stderr).toContain(`Port ${port} is already in use`);
       expect(failure.stderr).toContain("ambient-agent config --port");
-      expect(failure.stdout + failure.stderr).not.toContain("Ambience WhatsApp online");
+      expect(failure.stdout + failure.stderr).not.toContain("Speaker WhatsApp online");
     } finally {
       await new Promise((resolve) => blocker.close(resolve));
     }
@@ -444,7 +471,7 @@ describe("packed ambient-agent executable", () => {
     await writeFile(join(sourceHome, "unrelated-machine-state"), "must not be copied");
 
     await executeAmbientAgent(
-      ["--data-dir", sourceData, "init", "--authorize", "--chat", chatId, "--repository", "owner/repo"],
+      initArgs(sourceData, chatId),
       fixtureEnvironment,
     );
     const sourcePaths = managedPaths({ dataDirectory: sourceData });
@@ -540,7 +567,7 @@ describe("packed ambient-agent executable", () => {
     expect((await stat(restoredData)).mode & 0o777).toBe(0o700);
     for (const privateFile of [
       restoredPaths.config,
-      restoredPaths.githubCredential,
+      restoredPaths.githubAppCredentials.planner,
       restoredPaths.chatGptOAuthCredential,
       restoredPaths.applicationDatabase,
       restoredPaths.flueDatabase,

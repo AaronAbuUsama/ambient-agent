@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { runCli, type CliOutput } from "../../apps/cli/src/program.ts";
+import { fakeGitHubAppTriples } from "../../packages/test-support/src/managed-installation.ts";
+import type { GitHubAppReference, GitHubAppTriple } from "../../packages/installation/src/schema.ts";
 import { inspectManagedData } from "../../packages/installation/src/installation.ts";
 import { deferWhatsAppRuntimeStart, getManagedRuntimeDependencies } from "../../packages/installation/src/runtime-dependencies.ts";
 import { managedPaths, type ManagedPaths } from "../../packages/installation/src/paths.ts";
@@ -56,8 +58,8 @@ const harness = () => {
   const setupPrompts = {
     selectChat: async (candidates: readonly { readonly jid: string }[]) => candidates[0]!.jid,
     repository: async (discovered?: string) => discovered ?? "owner/repo",
-    githubCredential: async (discovered?: { readonly token: string; readonly source: string }) =>
-      discovered ?? { token: "prompted-github-secret", source: "secure prompt" },
+    githubApps: async () => fakeGitHubAppTriples(),
+    githubApp: async (reference: GitHubAppReference) => fakeGitHubAppTriples()[reference],
     review: async () => true,
     validationError: () => undefined,
   };
@@ -77,8 +79,7 @@ const harness = () => {
       stop: async () => undefined,
     }),
     discoverRepository: async () => undefined,
-    discoverCredential: async () => undefined,
-    verifyGitHub: async (_token: string, repository: string) => repository,
+    verifyGitHub: async (_credential: GitHubAppTriple, repository: string) => repository,
   };
   return {
     output,
@@ -111,8 +112,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -149,8 +148,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -179,8 +176,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       init,
     );
@@ -188,7 +183,7 @@ describe("managed CLI", () => {
     await writeFile(join(paths.data, ".env"), "GITHUB_WEBHOOK_SECRET=dotenv-webhook-secret\nPORT=7777\n");
 
     const managed = managedPaths({ dataDirectory: paths.data });
-    const managedWebhookSecret = JSON.parse(await readFile(managed.githubCredential, "utf8")).webhookSecret as string;
+    const managedWebhookSecret = JSON.parse(await readFile(managed.githubAppCredentials.planner, "utf8")).webhookSecret as string;
     const expectedDirectory = await realpath(paths.data);
     const keys = ["GITHUB_ALLOWED_REPOS", "GITHUB_REPO", "GITHUB_TOKEN", "GITHUB_WEBHOOK_SECRET", "PORT"] as const;
     const previousDirectory = process.cwd();
@@ -216,7 +211,9 @@ describe("managed CLI", () => {
               github: { defaultRepository: "owner/repo", allowedRepositories: ["owner/repo"] },
             },
             githubCredential: {
-              token: "github-secret-token",
+              kind: "github-app",
+              appId: fakeGitHubAppTriples().planner.appId,
+              installationId: fakeGitHubAppTriples().planner.installationId,
               webhookSecret: managedWebhookSecret,
             },
             paths: managed,
@@ -255,8 +252,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -308,8 +303,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -337,8 +330,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -368,8 +359,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       init,
     );
@@ -377,7 +366,7 @@ describe("managed CLI", () => {
     expect(init.stdout()).toContain("Created secure managed installation");
     expect(init.stdout()).toContain("https://auth.example/device");
     expect(init.stdout()).toContain("ABCD-EFGH");
-    expect(init.stdout()).not.toContain("github-secret-token");
+    expect(init.stdout()).not.toContain("fake-planner-key");
 
     const status = harness();
     expect(await runCli(["--data-dir", paths.data, "status", "--json"], status)).toBe(0);
@@ -410,8 +399,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       {
         ...cli,
@@ -459,8 +446,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       cli,
     );
@@ -490,8 +475,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       cli,
     );
@@ -507,6 +490,8 @@ describe("managed CLI", () => {
     const source = join(paths.parent, "legacy-whatsapp");
     await mkdir(source, { mode: 0o700 });
     await writeFile(join(source, "creds.json"), JSON.stringify({ registered: true }), { mode: 0o600 });
+    const appsFile = join(paths.parent, "apps.json");
+    await writeFile(appsFile, JSON.stringify(fakeGitHubAppTriples()), { mode: 0o600 });
 
     const cli = harness();
     const exitCode = await runCli(
@@ -521,8 +506,8 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
+        "--github-apps-file",
+        appsFile,
       ],
       {
         ...cli,
@@ -577,8 +562,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       {
         ...cli,
@@ -620,8 +603,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -651,12 +632,10 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
-    const credentialPath = managedPaths({ dataDirectory: paths.data }).githubCredential;
+    const credentialPath = managedPaths({ dataDirectory: paths.data }).githubAppCredentials.planner;
     const credential = JSON.parse(await readFile(credentialPath, "utf8")) as Record<string, unknown>;
     delete credential.webhookSecret;
     await writeFile(credentialPath, JSON.stringify(credential), { mode: 0o600 });
@@ -693,8 +672,6 @@ describe("managed CLI", () => {
           "120363000@g.us",
           "--repository",
           "owner/repo",
-          "--github-token-file",
-          paths.token,
         ],
         cli,
       ),
@@ -735,7 +712,28 @@ describe("managed CLI", () => {
     await expect(readFile(managed.applicationDatabase)).resolves.toEqual(beforeApplication);
     await expect(readFile(managed.flueDatabase)).resolves.toEqual(beforeFlue);
     await expect(readFile(managed.chatGptOAuthCredential, "utf8")).resolves.toBe(beforeModel);
-    expect(config.stdout()).not.toContain("github-secret-token");
+    expect(config.stdout()).not.toContain("fake-planner-key");
+  });
+
+  it("leaves the coder credential untouched when a github-app rotation is cancelled at review", async () => {
+    const paths = await files();
+    await runCli(
+      ["--data-dir", paths.data, "init", "--chat", "120363000@g.us", "--repository", "owner/repo"],
+      harness(),
+    );
+    const managed = managedPaths({ dataDirectory: paths.data });
+    const coderBefore = await readFile(managed.githubAppCredentials.coder, "utf8");
+
+    const cli = harness();
+    expect(
+      await runCli(["--data-dir", paths.data, "config", "--github-app", "coder"], {
+        ...cli,
+        setupPrompts: { ...cli.setupPrompts, review: async () => false },
+      }),
+    ).not.toBe(0);
+    expect(cli.stderr()).toContain("Configuration cancelled");
+    // The pasted triple must not have been written before the operator confirmed the review.
+    await expect(readFile(managed.githubAppCredentials.coder, "utf8")).resolves.toBe(coderBefore);
   });
 
   it("configures a dedicated canary group as a managed chat", async () => {
@@ -749,8 +747,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -784,8 +780,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -831,8 +825,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -857,8 +849,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -937,12 +927,10 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
-    await writeFile(managedPaths({ dataDirectory: paths.data }).githubCredential, "not json", { mode: 0o600 });
+    await writeFile(managedPaths({ dataDirectory: paths.data }).githubAppCredentials.planner, "not json", { mode: 0o600 });
 
     const cli = harness();
     const uncertainWorkFor = vi.fn();
@@ -967,12 +955,10 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
-    await writeFile(managedPaths({ dataDirectory: paths.data }).githubCredential, "not json", { mode: 0o600 });
+    await writeFile(managedPaths({ dataDirectory: paths.data }).githubAppCredentials.planner, "not json", { mode: 0o600 });
 
     const status = harness();
     expect(
@@ -1003,8 +989,6 @@ describe("managed CLI", () => {
           "120363000@g.us",
           "--repository",
           "owner/repo",
-          "--github-token-file",
-          paths.token,
         ],
         init,
       ),
@@ -1037,8 +1021,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       init,
     );
@@ -1047,7 +1029,7 @@ describe("managed CLI", () => {
       model: "openai-codex/gpt-5.6-luna" as const,
       request: "complete" as const,
     }));
-    const verifyGitHub = vi.fn(async (_token: string, repository: string) => repository);
+    const verifyGitHub = vi.fn(async (_credential: GitHubAppTriple, repository: string) => repository);
 
     expect(
       await runCli(["--data-dir", paths.data, "doctor", "--live", "--json"], {
@@ -1057,7 +1039,11 @@ describe("managed CLI", () => {
       }),
     ).toBe(0);
     expect(readinessCheck).toHaveBeenCalledTimes(1);
-    expect(verifyGitHub).toHaveBeenCalledWith("github-secret-token", "owner/repo", expect.any(AbortSignal));
+    expect(verifyGitHub).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "github-app", appId: fakeGitHubAppTriples().planner.appId }),
+      "owner/repo",
+      expect.any(AbortSignal),
+    );
     expect(JSON.parse(live.stdout())).toMatchObject({
       checks: expect.arrayContaining([
         expect.objectContaining({ name: "github-access", state: "ready", code: "github.ready" }),
@@ -1077,8 +1063,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -1097,7 +1081,7 @@ describe("managed CLI", () => {
         readinessCheck: async () => ({ model: "openai-codex/gpt-5.6-luna", request: "complete" }),
         firstRunServices: {
           ...cli.firstRunServices,
-          verifyGitHub: async (_token: string, repository: string) => repository,
+          verifyGitHub: async (_credential: GitHubAppTriple, repository: string) => repository,
         },
         runtimeHealthFor: async () => ({ state: "healthy", whatsapp: { phase: "online" } }),
         smokeCanaryFor: async (_paths: ManagedPaths, nonce: string) => ({
@@ -1133,8 +1117,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -1166,8 +1148,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -1204,8 +1184,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       init,
     );
@@ -1240,8 +1218,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -1274,8 +1250,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        malformedPaths.token,
       ],
       malformedInit,
     );
@@ -1297,8 +1271,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        unusablePaths.token,
       ],
       unusableInit,
     );
@@ -1334,8 +1306,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -1364,8 +1334,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -1396,8 +1364,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -1426,8 +1392,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -1470,7 +1434,7 @@ describe("managed CLI", () => {
       ...prompted.setupPrompts,
       selectChat: async () => "120363000@g.us",
       repository: async () => "owner/repo",
-      githubCredential: async () => ({ token: "prompted-github-secret", source: "secure prompt" }),
+      githubApps: async () => fakeGitHubAppTriples(),
     };
     expect(await runCli(["--data-dir", paths.data, "init"], { ...prompted, setupPrompts })).toBe(0);
 
@@ -1482,7 +1446,10 @@ describe("managed CLI", () => {
       repository: async (): Promise<string> => {
         throw new Error("repository prompt must not run");
       },
-      githubCredential: async (): Promise<{ token: string; source: string }> => {
+      githubApps: async () => {
+        throw new Error("GitHub prompt must not run");
+      },
+      githubApp: async () => {
         throw new Error("GitHub prompt must not run");
       },
       review: async (): Promise<boolean> => {
@@ -1497,9 +1464,9 @@ describe("managed CLI", () => {
     expect(second.stdout()).toContain("no files changed");
     expect(
       await import("node:fs/promises").then(({ readFile }) =>
-        readFile(managedPaths({ dataDirectory: paths.data }).githubCredential, "utf8"),
+        readFile(managedPaths({ dataDirectory: paths.data }).githubAppCredentials.planner, "utf8"),
       ),
-    ).toContain("prompted-github-secret");
+    ).toContain("fake-planner-key");
   });
 
   it("routes global-only data-directory invocations through the selected installation", async () => {
@@ -1509,7 +1476,7 @@ describe("managed CLI", () => {
       ...prompted.setupPrompts,
       selectChat: async () => "120363000@g.us",
       repository: async () => "owner/repo",
-      githubCredential: async () => ({ token: "prompted-github-secret", source: "secure prompt" }),
+      githubApps: async () => fakeGitHubAppTriples(),
     };
     expect(await runCli(["--data-dir", paths.data], { ...prompted, setupPrompts })).toBe(0);
     expect(prompted.stdout()).toContain("Created secure managed installation");
@@ -1533,9 +1500,13 @@ describe("managed CLI", () => {
         promptsOpened += 1;
         return "owner/repo";
       },
-      githubCredential: async () => {
+      githubApps: async () => {
         promptsOpened += 1;
-        return { token: "secret", source: "prompt" };
+        return fakeGitHubAppTriples();
+      },
+      githubApp: async (reference: GitHubAppReference) => {
+        promptsOpened += 1;
+        return fakeGitHubAppTriples()[reference];
       },
       review: async () => {
         promptsOpened += 1;
@@ -1625,8 +1596,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -1659,15 +1628,13 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
     const managed = managedPaths({ dataDirectory: paths.data });
     await rm(managed.whatsapp, { recursive: true });
     const configBefore = await readFile(managed.config, "utf8");
-    const credentialBefore = await readFile(managed.githubCredential, "utf8");
+    const credentialBefore = await readFile(managed.githubAppCredentials.planner, "utf8");
     const modelBefore = await readFile(managed.chatGptOAuthCredential, "utf8");
     const applicationBefore = await readFile(managed.applicationDatabase);
 
@@ -1703,7 +1670,7 @@ describe("managed CLI", () => {
     expect(repair.stdout()).toContain("Replaced the managed WhatsApp store");
     await expect(readFile(join(managed.whatsapp, "creds.json"), "utf8")).resolves.toContain('"registered":true');
     await expect(readFile(managed.config, "utf8")).resolves.toBe(configBefore);
-    await expect(readFile(managed.githubCredential, "utf8")).resolves.toBe(credentialBefore);
+    await expect(readFile(managed.githubAppCredentials.planner, "utf8")).resolves.toBe(credentialBefore);
     await expect(readFile(managed.chatGptOAuthCredential, "utf8")).resolves.toBe(modelBefore);
     await expect(readFile(managed.applicationDatabase)).resolves.toEqual(applicationBefore);
     await expect(lstat(staged[0]!)).rejects.toMatchObject({ code: "ENOENT" });
@@ -1727,8 +1694,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -1776,8 +1741,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -1802,8 +1765,6 @@ describe("managed CLI", () => {
           "120363000@g.us",
           "--repository",
           "owner/repo",
-          "--github-token-file",
-          paths.token,
         ],
         harness(),
       );
@@ -1831,8 +1792,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );
@@ -1856,8 +1815,6 @@ describe("managed CLI", () => {
         "120363000@g.us",
         "--repository",
         "owner/repo",
-        "--github-token-file",
-        paths.token,
       ],
       harness(),
     );

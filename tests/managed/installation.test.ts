@@ -11,7 +11,7 @@ import {
 } from "../../packages/installation/src/installation.ts";
 import { managedPaths, type ManagedPaths } from "../../packages/installation/src/paths.ts";
 import { createManagedChatGptCredentialStore } from "../../packages/engine/src/model/chatgpt-authentication.ts";
-import { installManagedData } from "../../packages/test-support/src/managed-installation.ts";
+import { fakeGitHubAppTriples, installManagedData } from "../../packages/test-support/src/managed-installation.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -22,7 +22,8 @@ const fixture = async () => {
   const parent = await mkdtemp(join(tmpdir(), "ambient-agent-test-"));
   roots.push(parent);
   const dataDirectory = join(parent, "managed");
-  const githubToken = "github-secret-token";
+  const githubApps = fakeGitHubAppTriples();
+  const githubSecret = githubApps.planner.privateKey;
   const chatGptCredential = {
     type: "oauth" as const,
     access: "chatgpt-access-secret",
@@ -34,7 +35,7 @@ const fixture = async () => {
     const store = createManagedChatGptCredentialStore({ path: paths.chatGptOAuthCredential });
     await store.modify("openai-codex", async () => chatGptCredential);
   };
-  return { parent, dataDirectory, githubToken, chatGptCredential, authenticateChatGpt };
+  return { parent, dataDirectory, githubApps, githubSecret, chatGptCredential, authenticateChatGpt };
 };
 
 describe.skipIf(process.platform === "win32")("managed installation on POSIX", () => {
@@ -56,7 +57,7 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
     }
     for (const path of [
       paths.config,
-      paths.githubCredential,
+      paths.githubAppCredentials.planner,
       paths.chatGptOAuthCredential,
       paths.applicationDatabase,
       paths.flueDatabase,
@@ -67,9 +68,17 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
     const config = await readFile(paths.config, "utf8");
     expect(config).toContain('"credential": "github"');
     expect(config).toContain('"credential": "chatgpt-oauth"');
-    expect(config).not.toContain(input.githubToken);
+    expect(config).not.toContain(input.githubSecret);
     expect(config).not.toContain(input.chatGptCredential.access);
-    expect(await readFile(paths.githubCredential, "utf8")).toContain(input.githubToken);
+    // All three App files land, each 0600, the Planner carrying the runtime webhook secret.
+    for (const path of Object.values(paths.githubAppCredentials)) {
+      expect((await lstat(path)).mode & 0o777).toBe(0o600);
+    }
+    const planner = JSON.parse(await readFile(paths.githubAppCredentials.planner, "utf8"));
+    expect(planner).toMatchObject({ kind: "github-app", appId: input.githubApps.planner.appId });
+    expect(planner.webhookSecret).toEqual(expect.any(String));
+    expect(planner.privateKey).toBe(input.githubSecret.trim());
+    expect(JSON.parse(await readFile(paths.githubAppCredentials.coder, "utf8")).webhookSecret).toBeUndefined();
   });
 
   it("is idempotent and never silently replaces credentials", async () => {
@@ -80,13 +89,13 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
     };
     await installManagedData(base);
     const paths = managedPaths(base);
-    const original = await readFile(paths.githubCredential, "utf8");
+    const original = await readFile(paths.githubAppCredentials.planner, "utf8");
 
-    const second = await installManagedData({ ...base, githubToken: "replacement-secret" });
+    const second = await installManagedData({ ...base, githubApps: fakeGitHubAppTriples(200) });
 
     expect(second.created).toBe(false);
-    expect(await readFile(paths.githubCredential, "utf8")).toBe(original);
-    expect(original).not.toContain("replacement-secret");
+    expect(await readFile(paths.githubAppCredentials.planner, "utf8")).toBe(original);
+    expect(original).not.toContain("fake-planner-key-200");
   });
 
   it("removes staged files when ChatGPT authentication is cancelled", async () => {
@@ -122,7 +131,7 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
         return {
           managedChats: ["120363000@g.us"],
           defaultRepository: "owner/repo",
-          githubToken: base.githubToken,
+          githubApps: base.githubApps,
         };
       },
     });
@@ -225,7 +234,7 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
     });
     const paths = managedPaths(base);
     await rm(paths.whatsapp, { recursive: true });
-    await rm(paths.githubCredential);
+    await rm(paths.githubAppCredentials.planner);
     await rm(paths.chatGptOAuthCredential);
 
     const inspection = await inspectManagedData(base);
@@ -241,14 +250,14 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
       defaultRepository: "owner/repo",
     });
     const paths = managedPaths(base);
-    await writeFile(paths.githubCredential, "not json", { mode: 0o600 });
+    await writeFile(paths.githubAppCredentials.planner, "not json", { mode: 0o600 });
 
     expect((await inspectManagedData(base)).state).toBe("ready");
     const component = await inspectGitHubCredentialComponent(paths);
     expect(component.state).toBe("reauthentication-required");
     expect(component.diagnostics.map((item) => item.code)).toContain("json.invalid");
 
-    await rm(paths.githubCredential);
+    await rm(paths.githubAppCredentials.planner);
     await expect(inspectGitHubCredentialComponent(paths)).resolves.toMatchObject({
       state: "reauthentication-required",
       diagnostics: [{ code: "path.missing-file" }],
@@ -265,7 +274,7 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
     const paths = managedPaths(base);
     await rm(paths.whatsapp, { recursive: true });
     const configBefore = await readFile(paths.config, "utf8");
-    const credentialBefore = await readFile(paths.githubCredential, "utf8");
+    const credentialBefore = await readFile(paths.githubAppCredentials.planner, "utf8");
     const replacement = join(base.parent, "replacement-whatsapp");
     await mkdir(replacement, { mode: 0o700 });
     await writeFile(join(replacement, "creds.json"), JSON.stringify({ registered: true }), { mode: 0o600 });
@@ -275,7 +284,7 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
     await expect(readFile(join(paths.whatsapp, "creds.json"), "utf8")).resolves.toContain('"registered":true');
     await expect(lstat(replacement)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(readFile(paths.config, "utf8")).resolves.toBe(configBefore);
-    await expect(readFile(paths.githubCredential, "utf8")).resolves.toBe(credentialBefore);
+    await expect(readFile(paths.githubAppCredentials.planner, "utf8")).resolves.toBe(credentialBefore);
     expect((await inspectManagedData(base)).state).toBe("ready");
   });
 
@@ -301,14 +310,14 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
       defaultRepository: "owner/repo",
     });
     const paths = managedPaths(base);
-    await chmod(paths.githubCredential, 0o644);
+    await chmod(paths.githubAppCredentials.planner, 0o644);
 
     expect((await inspectManagedData(base)).state).toBe("ready");
     const component = await inspectGitHubCredentialComponent(paths);
     const output = JSON.stringify(component);
     expect(component.state).toBe("reauthentication-required");
     expect(output).toContain("mode 0600");
-    expect(output).not.toContain(base.githubToken);
+    expect(output).not.toContain(base.githubSecret);
     expect(output).not.toContain(base.chatGptCredential.access);
   });
 
@@ -328,7 +337,7 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
 
     const inspection = await inspectManagedData(base);
     expect(inspection.diagnostics.map((item) => item.code)).toContain("credential.reference");
-    expect(JSON.stringify(inspection)).not.toContain(base.githubToken);
+    expect(JSON.stringify(inspection)).not.toContain(base.githubSecret);
   });
 
   it("reports invalid schema field paths without reporting their values", async () => {
@@ -343,8 +352,8 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
     config.managedChats = [];
     await writeFile(paths.config, JSON.stringify(config), { mode: 0o600 });
     await writeFile(
-      paths.githubCredential,
-      JSON.stringify({ schemaVersion: 1, kind: "personal-token", token: 123456789 }),
+      paths.githubAppCredentials.planner,
+      JSON.stringify({ schemaVersion: 1, kind: "github-app", appId: "12345", installationId: "67890", privateKey: 123456789 }),
       { mode: 0o600 },
     );
 
@@ -352,7 +361,7 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
     expect(output).toContain("managedChats");
     expect(output).not.toContain("123456789");
     const component = JSON.stringify(await inspectGitHubCredentialComponent(paths));
-    expect(component).toContain("token");
+    expect(component).toContain("privateKey");
     expect(component).not.toContain("123456789");
   });
 
@@ -366,7 +375,7 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
     const paths = managedPaths(base);
     const secretAsPropertyName = "github_pat_secret_must_not_be_echoed";
     await writeFile(
-      paths.githubCredential,
+      paths.githubAppCredentials.planner,
       JSON.stringify({
         schemaVersion: 1,
         kind: "personal-token",

@@ -4,8 +4,13 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { migrateLegacyManagedData } from "../../packages/installation/src/migration.ts";
+import {
+  migrateLegacyManagedData,
+  migrateManagedGitHubCredential,
+} from "../../packages/installation/src/migration.ts";
+import { managedPaths } from "../../packages/installation/src/paths.ts";
 import { createManagedConfig } from "../../packages/installation/src/schema.ts";
+import { fakeGitHubAppTriples } from "../../packages/test-support/src/managed-installation.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -147,6 +152,74 @@ describe("managed data migration", () => {
     await expect(
       migrateLegacyManagedData({ ...environment(homeDirectory), probeRuntimeHealth: foreign }),
     ).resolves.toMatchObject({ migrated: true });
+  });
+
+  it("walks an existing personal-token install to three GitHub Apps and retires the old file", async () => {
+    const homeDirectory = await home();
+    const root = join(homeDirectory, ".ambient-agent");
+    const paths = managedPaths({ dataDirectory: root });
+    await mkdir(paths.credentials, { recursive: true, mode: 0o700 });
+    // A real pre-153 install: the config.json carries github.kind "personal-token" alongside the
+    // lingering credential file. The App schema now rejects that kind, so the walk must retarget it.
+    await writeFile(
+      paths.config,
+      JSON.stringify({
+        schemaVersion: 1,
+        managedChats: ["120363000@g.us"],
+        model: { provider: "openai-codex", credential: "chatgpt-oauth" },
+        runtime: { port: 3000 },
+        github: {
+          kind: "personal-token",
+          credential: "github",
+          defaultRepository: "owner/repo",
+          allowedRepositories: ["owner/repo"],
+        },
+      }),
+      { mode: 0o600 },
+    );
+    await writeFile(
+      paths.legacyGithubCredential,
+      JSON.stringify({ schemaVersion: 1, kind: "personal-token", token: "retired-pat", webhookSecret: "s" }),
+      { mode: 0o600 },
+    );
+
+    const triples = fakeGitHubAppTriples();
+    let collected = 0;
+    let seededRepository: string | undefined;
+    const result = await migrateManagedGitHubCredential({
+      paths,
+      collectTriples: async (defaultRepository) => {
+        collected += 1;
+        seededRepository = defaultRepository;
+        return triples;
+      },
+    });
+
+    expect(result).toEqual({ migrated: true });
+    expect(collected).toBe(1);
+    // The guided paste is seeded with the config's repository so the per-App checklist is accurate.
+    expect(seededRepository).toBe("owner/repo");
+    // The retired personal-token kind is rewritten so the migrated install validates as github-app.
+    expect(JSON.parse(await readFile(paths.config, "utf8")).github.kind).toBe("github-app");
+    // The retired personal-token file is gone; each App file lands with its numeric identifiers.
+    await expect(lstat(paths.legacyGithubCredential)).rejects.toMatchObject({ code: "ENOENT" });
+    for (const [reference, path] of Object.entries(paths.githubAppCredentials)) {
+      const credential = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+      expect(credential).toMatchObject({
+        kind: "github-app",
+        appId: triples[reference as keyof typeof triples].appId,
+      });
+    }
+    // Only the Planner file carries the runtime webhook secret; it is also the Speaker's identity.
+    expect(JSON.parse(await readFile(paths.githubAppCredentials.planner, "utf8")).webhookSecret).toEqual(
+      expect.any(String),
+    );
+    expect(JSON.parse(await readFile(paths.githubAppCredentials.coder, "utf8")).webhookSecret).toBeUndefined();
+
+    // A second run is a no-op: the personal-token file is already retired.
+    await expect(migrateManagedGitHubCredential({ paths, collectTriples: async () => triples })).resolves.toEqual({
+      migrated: false,
+    });
   });
 
   it("serializes on the setup lock and sweeps stale staging directories", async () => {

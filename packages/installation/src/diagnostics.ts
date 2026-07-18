@@ -102,6 +102,39 @@ const LEGACY_APPLICATION_OPTIONAL_SCHEMA = [
   ["github_issue_operation_examinations", ["operation_id", "examined_at"]],
   // ADR 0015: the one-time managed-root migration records its completed move here.
   ["managed_root_migrations", ["source", "migrated_at"]],
+  // The shared graph (MEMORY-STATE-SPEC §3) lives beside the archive in application.sqlite.
+  [
+    "graph_entities",
+    [
+      "entity_id",
+      "type",
+      "properties_json",
+      "confidence",
+      "source_chat_id",
+      "source_message_id",
+      "source_delivery_id",
+      "created_at",
+      "updated_at",
+    ],
+  ],
+  [
+    "graph_relations",
+    [
+      "relation_id",
+      "from_id",
+      "relation",
+      "to_id",
+      "confidence",
+      "source_chat_id",
+      "source_message_id",
+      "source_delivery_id",
+      "created_at",
+      "updated_at",
+    ],
+  ],
+  ["graph_identities", ["platform", "external_id", "entity_id", "display_name"]],
+  // The delegation run ledger (MEMORY-STATE-SPEC §8) — launch memory beside the archive.
+  ["delegation_launches", ["run_id", "chat_id", "workflow", "launched_at", "settled_at"]],
 ] as const satisfies ReadonlyArray<readonly [string, readonly string[]]>;
 const LEGACY_APPLICATION_SCHEMA = new Map<string, readonly string[]>([
   ...LEGACY_APPLICATION_CORE_SCHEMA,
@@ -248,16 +281,16 @@ const githubCredentialCheck = async (paths: ManagedPaths): Promise<ManagedCheck>
         name: "github-credential",
         state: "ready",
         code: "github.credential-ready",
-        message: "The app-owned GitHub credential file is a valid private credential.",
+        message: "The three GitHub App credential files are valid private credentials.",
       }
     : {
         name: "github-credential",
         state: "reauthentication-required",
         code: "github.reauthentication-required",
-        message: `The app-owned GitHub credential file is unusable: ${component.diagnostics
+        message: `The GitHub App credential files are unusable: ${component.diagnostics
           .map(({ code }) => code)
           .join(", ")}.`,
-        remediation: "Run ambient-agent config --github-token-file <path> with a valid scoped GitHub token.",
+        remediation: "Run ambient-agent config --github-app <coder|reviewer|planner> and paste a fresh App triple.",
       };
 };
 
