@@ -1,7 +1,8 @@
 # Ambient Agent → SaaS: MVP Plan (ratified decisions)
 
 **Status:** ratified brainstorm, ready for `/wayfinder`.
-**Date:** 2026-07-18. **Branch:** `worktree-saas`. **Boilerplate:** `demo-stack/` (in-repo).
+**Date:** 2026-07-18. **Branch:** `saas`. **Control plane:** root `apps/web` + `apps/api`,
+imported from donor commit `00918f0` by PR #189.
 
 Turn the self-hosted WhatsApp+GitHub ambient agent into a multi-tenant SaaS.
 Users sign up, pay (Polar), install our GitHub App on their repos, pair a
@@ -15,9 +16,9 @@ self-hosting a bot.
 
 ```mermaid
 flowchart LR
-  subgraph CP["CONTROL PLANE — demo-stack (NEW, ~80% scaffolded)"]
+  subgraph CP["CONTROL PLANE — root apps/web + apps/api"]
     web["apps/web — Next.js dashboard + marketing"]
-    api["apps/server — Hono + oRPC"]
+    api["apps/api — Hono + oRPC"]
     auth["better-auth + Polar (checkout/portal)"]
     cpdb[("libsql/Turso — users, orgs, subs,\nGitHub install registry, agent_instances + lease")]
     prov["Provisioner (oRPC route)"]
@@ -43,8 +44,8 @@ flowchart LR
   gh["GitHub (3 Apps: Coder/Reviewer/Planner)"] -- "one webhook URL, all installs" --> ghhook
 ```
 
-**Control plane = the SaaS** (demo-stack). **Data plane = the agent runtime**
-(ambient-agent), one process/container per tenant. Both are Hono, both Node —
+**Control plane = the SaaS** (`apps/web` + `apps/api`). **Data plane = the agent runtime**
+(`apps/runtime`), one process/container per tenant. Both are Hono, both Node —
 but they are **separate deployables** that talk only over: libsql (control
 state), the Dokploy API (lifecycle), and a thin HTTP bridge (QR/health/config).
 No code merge.
@@ -85,7 +86,7 @@ the control-plane DB. Cheap to honor, catastrophic to violate.
   better-auth + Drizzle + Polar all support it. Postgres only earns its keep
   with multiple control-plane replicas — not an MVP concern. The boilerplate
   defaulted to PG from a template, not from the workload.
-- **Done:** demo-stack swapped to `@libsql/client` + `drizzle-orm/libsql`
+- **Done:** the root control-plane packages use `@libsql/client` + `drizzle-orm/libsql`
   (dialect `turso`), better-auth `provider: "sqlite"`, runtime → Node.
 - **The count is not "3 databases":** per-tenant data-plane DBs are the
   *isolation model* (one DB per isolated container), not a tech choice. There
@@ -129,7 +130,7 @@ GitHub Apps are structurally web-centric — can't be "kept separate":
   the right tenant's container.
 
 So: install registry (tenant ↔ installationId ↔ `allowedRepositories`) lives in
-the **control-plane libsql**; a **central webhook router** in demo-stack routes
+the **control-plane libsql**; a **central webhook router** in `apps/api` routes
 by `installation.id`. The agent barely changes — it already mints tokens via
 `createAppAuth` (`github-app-client.ts`) and ingests deliveries via
 `handleGitHubDelivery`; it just consumes the installationId and *routed*
@@ -153,7 +154,7 @@ deliveries. Reuse the 3 already-provisioned Apps (creds at
    written into the tenant store before container start (already file-based).
 5. **Consume routed GitHub deliveries** instead of the raw webhook front door.
 
-### Control-plane (demo-stack) net-new
+### Control-plane (`apps/web` + `apps/api`) net-new
 1. **Schema:** `tenant` / `agent_instances` + single-owner **lease** (on top of
    the better-auth + Polar tables already there).
 2. **Provisioner oRPC route:** on Polar `subscription.active` → write tenant

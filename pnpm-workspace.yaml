@@ -9,7 +9,7 @@ catalog:
   vitest: 4.1.10
   vite-plus: 0.2.4
   typescript: ^5.7.2
-  # Shared runtime deps (absorbed from demo-stack; root pins win where they overlap)
+  # Shared control-plane deps (root pins win where they overlap)
   hono: 4.12.30
   dotenv: ^17.4.2
   zod: ^4.4.3

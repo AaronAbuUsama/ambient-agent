@@ -21,7 +21,7 @@ export default function Sidebar() {
         <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-foreground">
           <Zap className="size-4" />
         </div>
-        <span className="truncate font-semibold max-md:hidden">Demo Stack</span>
+        <span className="truncate font-semibold max-md:hidden">Ambient Agent</span>
       </div>
 
       <nav className="flex flex-col gap-1 px-3 max-md:px-2">
