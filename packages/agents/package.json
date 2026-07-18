@@ -14,7 +14,9 @@
     "./capabilities/issue-management/issue-repository.ts": "./src/capabilities/issue-management/issue-repository.ts",
     "./capabilities/issue-management/runtime.ts": "./src/capabilities/issue-management/runtime.ts",
     "./capabilities/whatsapp-participation/whatsapp-port.ts": "./src/capabilities/whatsapp-participation/whatsapp-port.ts",
-    "./capabilities/delegation/ledger.ts": "./src/capabilities/delegation/ledger.ts"
+    "./capabilities/delegation/ledger.ts": "./src/capabilities/delegation/ledger.ts",
+    "./capabilities/coder/workflow.ts": "./src/capabilities/coder/workflow.ts",
+    "./capabilities/coder/runtime.ts": "./src/capabilities/coder/runtime.ts"
   },
   "dependencies": {
     "@flue/runtime": "1.0.0-beta.9",

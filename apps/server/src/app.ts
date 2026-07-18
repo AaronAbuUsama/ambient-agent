@@ -7,8 +7,12 @@ import { createIssueManagementPolicy } from "@ambient-agent/agents/capabilities/
 import { createIssueOperationStore } from "@ambient-agent/engine/github/operation-store.ts";
 import { createGraphStore } from "@ambient-agent/engine/graph/store.ts";
 import { createRunLedger } from "@ambient-agent/agents/capabilities/delegation/ledger.ts";
+import { configureCoderRuntime } from "@ambient-agent/agents/capabilities/coder/runtime.ts";
+import type { CoderGitHub } from "@ambient-agent/agents/capabilities/coder/workflow.ts";
 import { githubAppClient } from "@ambient-agent/installation/github-app-client.ts";
+import { readManagedGitHubAppCredential } from "@ambient-agent/installation/configuration.ts";
 import { createOctokitIssueRepository } from "@ambient-agent/installation/github-issue-repository.ts";
+import { local } from "@flue/runtime/node";
 import {
   getWhatsAppRuntimeStatus,
   startWhatsAppRuntime,
@@ -23,6 +27,27 @@ import {
 import { ambientRuntimeHealth, runtimeInstallationId } from "@ambient-agent/installation/runtime-health.ts";
 import { connectPiChatGptSubscription } from "@ambient-agent/engine/model/pi-subscription.ts";
 
+/**
+ * Bind the Coder's deployment runtime (§8 template rule 1: config-bound, never per-job).
+ * The coder GitHub App does not exist on every install yet; a missing credential file is
+ * expected, so we skip configuration rather than fail the whole runtime's boot.
+ */
+const configureCoderRuntimeIfProvisioned = async (paths: ManagedRuntimeDependencies["paths"]): Promise<void> => {
+  let credential: Awaited<ReturnType<typeof readManagedGitHubAppCredential>>;
+  try {
+    credential = await readManagedGitHubAppCredential(paths.githubAppCredentials.coder);
+  } catch {
+    console.warn("[coder] no coder App credential; start_coder_job is mounted but unprovisioned");
+    return;
+  }
+  configureCoderRuntime({
+    github: githubAppClient(credential) as unknown as CoderGitHub,
+    sandbox: local(),
+    workspacesRoot: paths.workspaces,
+    maxAttempts: 3,
+  });
+};
+
 export const createAmbientAgentApp = async ({
   authentication,
   configuration,
@@ -32,6 +57,11 @@ export const createAmbientAgentApp = async ({
   const subscription = await connectPiChatGptSubscription({ authentication });
   const issueOperations = createIssueOperationStore(paths.applicationDatabase);
   const installationId = runtimeInstallationId(githubCredential.webhookSecret);
+  // The Coder Specialist (#158) runs under its own App identity in a config-bound full
+  // sandbox — `local()` on the single-owner VPS (host-trusted), a remote container in
+  // SaaS. The coder App may not be provisioned yet; if its credential is absent, the
+  // start_coder_job tool stays mounted but a launch fails loudly rather than blocking boot.
+  await configureCoderRuntimeIfProvisioned(paths);
   let whatsappControl: WhatsAppRuntimeControl | undefined;
   const app = composeSpeaker({
     issues: createOctokitIssueRepository(githubAppClient(githubCredential)),
