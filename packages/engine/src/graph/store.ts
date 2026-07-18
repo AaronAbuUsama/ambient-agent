@@ -281,9 +281,9 @@ export const createGraphStore = (databasePath: string, options: GraphStoreOption
           .run(
             JSON.stringify(merged),
             combineConfidence(existing.confidence, observed),
-            provenance.chatId ?? null,
-            provenance.messageId ?? null,
-            provenance.deliveryId ?? null,
+            provenance.chatId ?? existing.provenance.chatId ?? null,
+            provenance.messageId ?? existing.provenance.messageId ?? null,
+            provenance.deliveryId ?? existing.provenance.deliveryId ?? null,
             timestamp,
             existingId,
           );
@@ -337,9 +337,9 @@ export const createGraphStore = (databasePath: string, options: GraphStoreOption
           )
           .run(
             combineConfidence(existing.confidence, observed),
-            provenance.chatId ?? null,
-            provenance.messageId ?? null,
-            provenance.deliveryId ?? null,
+            provenance.chatId ?? existing.source_chat_id ?? null,
+            provenance.messageId ?? existing.source_message_id ?? null,
+            provenance.deliveryId ?? existing.source_delivery_id ?? null,
             timestamp,
             existing.relation_id,
           );

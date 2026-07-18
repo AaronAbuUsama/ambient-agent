@@ -146,7 +146,7 @@ export const toEntityUpsert = (entity: EntityInput): EntityUpsert => {
     case "repository":
       return {
         type: "repository",
-        properties: { repo: entity.repo, number: entity.number, title: entity.title, state: entity.state, cachedAt: entity.cachedAt },
+        properties: { repo: entity.repo, number: entity.number, title: entity.title, state: entity.state, cached_at: entity.cachedAt },
         identity: { platform: "github", externalId: entity.repo },
         ...shared,
       };
@@ -154,21 +154,21 @@ export const toEntityUpsert = (entity: EntityInput): EntityUpsert => {
     case "pull_request":
       return {
         type: entity.type,
-        properties: { repo: entity.repo, number: entity.number, title: entity.title, state: entity.state, cachedAt: entity.cachedAt },
+        properties: { repo: entity.repo, number: entity.number, title: entity.title, state: entity.state, cached_at: entity.cachedAt },
         identity: { platform: "github", externalId: `${entity.repo}#${entity.number}` },
         ...shared,
       };
     case "milestone":
       return {
         type: "milestone",
-        properties: { repo: entity.repo, number: entity.number, title: entity.title, state: entity.state, cachedAt: entity.cachedAt },
+        properties: { repo: entity.repo, number: entity.number, title: entity.title, state: entity.state, cached_at: entity.cachedAt },
         identity: { platform: "github", externalId: `${entity.repo}/milestones/${entity.number}` },
         ...shared,
       };
     case "project":
       return {
         type: "project",
-        properties: { repo: entity.repo, number: entity.number, title: entity.title, state: entity.state, cachedAt: entity.cachedAt },
+        properties: { repo: entity.repo, number: entity.number, title: entity.title, state: entity.state, cached_at: entity.cachedAt },
         identity: { platform: "github", externalId: `${entity.repo}/projects/${entity.number}` },
         ...shared,
       };
