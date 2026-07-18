@@ -15,7 +15,7 @@
  * Everything time-based routes through the Effect `Clock`, so under `TestClock`
  * the whole thing runs in virtual time with zero real sleeps.
  */
-import { Clock, Duration, Effect, HashMap, Option, Queue, Ref, type Scope, Stream } from "effect";
+import { Effect, HashMap, Option, Queue, Ref, type Scope, Stream } from "effect";
 import {
   addressesBot,
   type CoalescerEvent,
@@ -27,6 +27,7 @@ import {
   windowContents,
 } from "./events.ts";
 import { CoalescerConfig, type CoalescerConfigValues } from "./config.ts";
+import { debounceActor } from "./debounce-actor.ts";
 import { EventSource, WindowDispatcher, WindowStore, type WindowStoreService } from "./ports.ts";
 
 type WindowDispatcherService = {
@@ -62,83 +63,35 @@ const fire = (dispatcher: WindowDispatcherService, window: ConversationWindow): 
         .pipe(Effect.catch(continueAfterDispatchError(window)), Effect.catchDefect(continueAfterDispatchError(window)));
 
 /**
- * Build the per-chat actor loop for a given config + window dispatcher. Returns a function
- * that, given a chat's queue, runs its debounce loop forever.
+ * Build the per-chat actor loop for a given config + window dispatcher. Returns a
+ * function that, given a chat's queue, runs its debounce loop forever. The timing
+ * is the shared `debounceActor`; the WhatsApp specifics — updates don't count, an
+ * @-mention/quote-reply of the bot fires immediately, and each settled buffer is
+ * persisted as a durable Window before dispatch — live in the three hooks below.
  */
-const makeChatLoop = (
-  config: CoalescerConfigValues,
-  dispatcher: WindowDispatcherService,
-  store: WindowStoreService,
-) => {
-  const maxWaitMillis = Duration.toMillis(config.maxWait);
-  const debounceMillis = Duration.toMillis(config.debounceWindow);
-  const capacity = Math.max(1, config.maxWindowMessages);
-
-  return (chatId: string, queue: Queue.Dequeue<CoalescerEvent>): Effect.Effect<never> => {
-    // Dispatch the buffered window to Speaker, then go cold for the next burst.
-    const fireAndReset = (events: readonly CoalescerEvent[], reason: FireReason): Effect.Effect<never> => {
-      const draft: ConversationWindowDraft = { chatId, ...windowContents(events), reason };
-      return store.create(draft).pipe(
-        Effect.catch(stopAfterStoreError(chatId)),
-        Effect.catchDefect(stopAfterStoreError(chatId)),
-        Effect.flatMap((window) => fire(dispatcher, window)),
-        Effect.andThen(cold),
-      );
-    };
-
-    // An event landed: buffer it, and either flush now (bot addressed) or keep
-    // waiting. `burstStart` is the clock time of the burst's first event — the
-    // cap is measured from it and carried unchanged through the whole burst.
-    // `messageCount` tracks buffered messages (excluding updates) incrementally,
-    // so capacity is an O(1) check instead of re-partitioning the whole buffer.
-    const onEvent = (
-      buffer: readonly CoalescerEvent[],
-      burstStart: number,
-      messageCount: number,
-      event: CoalescerEvent,
-    ): Effect.Effect<never> => {
-      const next = [...buffer, event];
-      if (isConversationUpdate(event)) return warm(next, burstStart, messageCount);
-      const messages = messageCount + 1;
-      return addressesBot(event, config.botIds)
-        ? fireAndReset(next, reasonOf(event, config.botIds))
-        : messages >= capacity
-          ? fireAndReset(next, "capacity")
-          : warm(next, burstStart, messages);
-    };
-
-    // Cold: no buffered events. Block indefinitely for the burst's first event,
-    // stamping `burstStart` from the clock the instant it arrives.
-    const cold: Effect.Effect<never> = Queue.take(queue).pipe(
-      Effect.flatMap((event) => Clock.currentTimeMillis.pipe(Effect.flatMap((now) => onEvent([], now, 0, event)))),
+const makeChatLoop = (config: CoalescerConfigValues, dispatcher: WindowDispatcherService, store: WindowStoreService) => {
+  const actor = (chatId: string) =>
+    debounceActor<CoalescerEvent, FireReason>(
+      { debounceWindow: config.debounceWindow, maxWait: config.maxWait, cap: config.maxWindowMessages },
+      {
+        counts: (event) => !isConversationUpdate(event),
+        fireNow: (event) =>
+          isConversationUpdate(event) || !addressesBot(event, config.botIds)
+            ? undefined
+            : reasonOf(event, config.botIds),
+        reasons: { debounce: "debounce", maxWait: "maximum-wait", capacity: "capacity" },
+        flush: (events, reason) => {
+          const draft: ConversationWindowDraft = { chatId, ...windowContents(events), reason };
+          return store.create(draft).pipe(
+            Effect.catch(stopAfterStoreError(chatId)),
+            Effect.catchDefect(stopAfterStoreError(chatId)),
+            Effect.flatMap((window) => fire(dispatcher, window)),
+          );
+        },
+      },
     );
 
-    // Warm: a burst is accumulating. Wait for the next event, but give up when the
-    // chat goes quiet (`debounceWindow`) OR the cap elapses (`maxWait` since
-    // `burstStart`), whichever comes first — then fire and start a fresh burst.
-    const warm = (
-      buffer: readonly CoalescerEvent[],
-      burstStart: number,
-      messageCount: number,
-    ): Effect.Effect<never> =>
-      Clock.currentTimeMillis.pipe(
-        Effect.flatMap((now) => {
-          const capLeft = Math.max(0, burstStart + maxWaitMillis - now);
-          const wait = Duration.min(config.debounceWindow, Duration.millis(capLeft));
-          return Queue.take(queue).pipe(
-            Effect.timeoutOption(wait),
-            Effect.flatMap(
-              Option.match({
-                onNone: () => fireAndReset(buffer, capLeft <= debounceMillis ? "maximum-wait" : "debounce"),
-                onSome: (event) => onEvent(buffer, burstStart, messageCount, event),
-              }),
-            ),
-          );
-        }),
-      );
-
-    return cold;
-  };
+  return (chatId: string, queue: Queue.Dequeue<CoalescerEvent>): Effect.Effect<never> => actor(chatId)(queue);
 };
 
 /**
