@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { Octokit } from "@octokit/rest";
 import { describe, expect, it } from "vite-plus/test";
 import * as v from "valibot";
 
@@ -131,7 +132,7 @@ describe("production Issue Management tools", () => {
       }
       return Response.json(current);
     };
-    const repository = createOctokitIssueRepository("test-token", { fetch: requestFetch });
+    const repository = createOctokitIssueRepository(new Octokit({ request: { fetch: requestFetch } }));
 
     await repository.update({
       repository: REPOSITORY,
@@ -152,6 +153,56 @@ describe("production Issue Management tools", () => {
         state: "open",
       }),
     ).toMatchObject({ body: "Visible body" });
+  });
+
+  it("derives the bot login from apps.getAuthenticated and strips markers only from its own comments", async () => {
+    const marker = issueOperationMarker({ id: "comment-op" });
+    const botBody = commentProviderBody("Bot said this", [marker]);
+    const humanBody = commentProviderBody("Human said this", [marker]);
+    let appLookups = 0;
+    const requestFetch: typeof fetch = async (input) => {
+      const url = input instanceof Request ? input.url : input.toString();
+      if (url.endsWith("/app")) {
+        appLookups += 1;
+        return Response.json({ slug: "ambient-planner" });
+      }
+      if (url.includes("/repos/acme/widgets/issues/7/comments")) {
+        return Response.json([
+          {
+            id: 1,
+            html_url: "https://github.com/acme/widgets/issues/7#issuecomment-1",
+            body: botBody,
+            user: { login: "ambient-planner[bot]" },
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            id: 2,
+            html_url: "https://github.com/acme/widgets/issues/7#issuecomment-2",
+            body: humanBody,
+            user: { login: "someone-else" },
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        ]);
+      }
+      return Response.json({
+        number: 7,
+        html_url: "https://github.com/acme/widgets/issues/7",
+        title: "Ownership",
+        body: "Body",
+        state: "open",
+      });
+    };
+    const repository = createOctokitIssueRepository(new Octokit({ request: { fetch: requestFetch } }));
+
+    const { comments } = await repository.discussion({ repository: REPOSITORY, number: 7 });
+
+    // The App's own comment (slug -> ambient-planner[bot]) has its Operation markers stripped;
+    // a comment authored by any other identity is returned verbatim.
+    expect(comments.find((comment) => comment.id === 1)?.body).toBe("Bot said this");
+    expect(comments.find((comment) => comment.id === 2)?.body).toBe(humanBody);
+    expect(appLookups).toBe(1);
   });
 
   it("preserves marker-like user text and rejects reserved syntax in a new public body", () => {

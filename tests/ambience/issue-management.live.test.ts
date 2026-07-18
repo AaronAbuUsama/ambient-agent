@@ -16,7 +16,7 @@ describe.skipIf(!token || !sandbox)("Issue Management sandbox contract", () => {
     const operationId = `sandbox-${randomUUID()}`;
     const title = `[Ambient Agent sandbox] ${operationId}`;
     const operations = createIssueOperationStore(":memory:");
-    const repository = createOctokitIssueRepository(token!);
+    const repository = createOctokitIssueRepository(new Octokit({ auth: token! }));
     const create = createIssueManagementTools({
       repository,
       operations,

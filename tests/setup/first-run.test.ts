@@ -5,7 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { inspectManagedData } from "../../packages/installation/src/installation.ts";
 import type { ManagedPaths } from "../../packages/installation/src/paths.ts";
+import { fakeGitHubAppTriples } from "../../packages/test-support/src/managed-installation.ts";
 import {
+  GUIDED_GITHUB_APP_SOURCE,
   runFirstRunSetup,
   type FirstRunPrompts,
   type FirstRunServices,
@@ -70,10 +72,9 @@ const setup = (events: string[]) => {
       },
     }),
     discoverRepository: async () => "owner/discovered",
-    discoverCredential: async () => ({ token: "github-token-must-not-leak", source: "GitHub CLI" }),
-    verifyGitHub: async (token, repository) => {
+    verifyGitHub: async (credential, repository) => {
       events.push(`github.verify:${repository}`);
-      if (token !== "github-token-must-not-leak") throw new Error("sanitized access failure");
+      if (!credential.privateKey.includes("fake-planner-key")) throw new Error("sanitized access failure");
       if (repository === "owner/denied") throw new Error("sanitized access failure");
       return repository;
     },
@@ -87,10 +88,11 @@ const setup = (events: string[]) => {
       events.push(`prompt.repository:${discovered ?? "none"}`);
       return discovered ?? "owner/manual";
     },
-    githubCredential: async (discovered) => {
-      events.push(`prompt.credential:${discovered?.source ?? "none"}`);
-      return discovered ?? { token: "manual-token", source: "secure prompt" };
+    githubApps: async (repository) => {
+      events.push(`prompt.githubApps:${repository}`);
+      return fakeGitHubAppTriples();
     },
+    githubApp: async (reference) => fakeGitHubAppTriples()[reference],
     review: async (review) => {
       reviews.push(review);
       events.push("prompt.review");
@@ -126,7 +128,7 @@ describe("transactional first-run setup", () => {
       "prompt.chat",
       "whatsapp.stop",
       "prompt.repository:owner/discovered",
-      "prompt.credential:GitHub CLI",
+      "prompt.githubApps:owner/discovered",
       "github.verify:owner/discovered",
       "prompt.review",
     ]);
@@ -137,7 +139,7 @@ describe("transactional first-run setup", () => {
         repository: "owner/discovered",
         chatGptCredentialSource: "fresh device authorization",
         whatsappCredentialSource: "fresh pairing",
-        githubCredentialSource: "GitHub CLI",
+        githubCredentialSource: GUIDED_GITHUB_APP_SOURCE,
       },
     ]);
     const serializedReview = JSON.stringify(reviews);
@@ -365,7 +367,7 @@ describe("transactional first-run setup", () => {
         scripted: {
           chat: "recent@g.us",
           repository: "owner/repository",
-          githubCredential: { token: "scripted-secret", source: "token file" },
+          githubApps: fakeGitHubAppTriples(),
         },
         chatGptCallbacks: { onDeviceCode: () => undefined },
         whatsappCallbacks: {},
@@ -382,7 +384,7 @@ describe("transactional first-run setup", () => {
     const signal = AbortSignal.abort(new DOMException("The operation timed out with secret details.", "TimeoutError"));
     const services: FirstRunServices = {
       ...baseline.services,
-      verifyGitHub: async (_token, _repository, verificationSignal) => {
+      verifyGitHub: async (_credential, _repository, verificationSignal) => {
         verificationSignal?.throwIfAborted();
         return "owner/repository";
       },

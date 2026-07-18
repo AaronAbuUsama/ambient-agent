@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  discoverGitHubCredential,
   discoverOriginRepository,
   normalizeGitHubRepository,
-  verifyGitHubRepositoryAccess,
+  verifyGitHubAppRepositoryAccess,
 } from "../../apps/cli/src/setup/github.ts";
+
+const APP_TRIPLE = {
+  appId: "123456",
+  installationId: "7891011",
+  privateKey: "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----\n",
+};
 
 describe("first-run GitHub discovery", () => {
   it.each([
@@ -35,39 +40,14 @@ describe("first-run GitHub discovery", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("discovers only explicit environment or GitHub CLI credential sources", async () => {
-    await expect(
-      discoverGitHubCredential({
-        environment: { GH_TOKEN: "environment-secret", GITHUB_TOKEN: "fallback-secret" },
-        run: async () => ({ stdout: "cli-secret\n" }),
-      }),
-    ).resolves.toEqual({ token: "environment-secret", source: "environment GH_TOKEN" });
-
-    await expect(
-      discoverGitHubCredential({
-        environment: {},
-        run: async () => ({ stdout: "cli-secret\n" }),
-      }),
-    ).resolves.toEqual({ token: "cli-secret", source: "GitHub CLI" });
-
-    await expect(
-      discoverGitHubCredential({
-        environment: {},
-        run: async () => {
-          throw new Error("gh unavailable");
-        },
-      }),
-    ).resolves.toBeUndefined();
-  });
-
-  it("verifies both credential identity and normalized repository access without leaking secrets", async () => {
-    const getAuthenticated = vi.fn(async () => ({ data: { login: "operator" } }));
+  it("verifies both App identity and normalized repository access without leaking the private key", async () => {
+    const getAuthenticated = vi.fn(async () => ({ data: { slug: "ambient-planner" } }));
     const getRepository = vi.fn(async () => ({ data: { full_name: "owner/repository" } }));
     await expect(
-      verifyGitHubRepositoryAccess({
-        token: "must-not-leak",
+      verifyGitHubAppRepositoryAccess({
+        credential: APP_TRIPLE,
         repository: "https://github.com/owner/repository.git",
-        client: { users: { getAuthenticated }, repos: { get: getRepository } },
+        client: { apps: { getAuthenticated }, repos: { get: getRepository } },
       }),
     ).resolves.toBe("owner/repository");
     expect(getAuthenticated).toHaveBeenCalledWith({ request: { signal: undefined } });
@@ -78,11 +58,11 @@ describe("first-run GitHub discovery", () => {
     });
 
     await expect(
-      verifyGitHubRepositoryAccess({
-        token: "must-not-leak",
+      verifyGitHubAppRepositoryAccess({
+        credential: { ...APP_TRIPLE, privateKey: "-----BEGIN RSA PRIVATE KEY-----\nmust-not-leak\n-----END" },
         repository: "owner/missing",
         client: {
-          users: {
+          apps: {
             getAuthenticated: async () => {
               throw new Error("response contains must-not-leak");
             },
@@ -98,11 +78,11 @@ describe("first-run GitHub discovery", () => {
     const getAuthenticated = vi.fn(async () => undefined);
     const getRepository = vi.fn(async () => undefined);
 
-    await verifyGitHubRepositoryAccess({
-      token: "must-not-leak",
+    await verifyGitHubAppRepositoryAccess({
+      credential: APP_TRIPLE,
       repository: "owner/repository",
       signal,
-      client: { users: { getAuthenticated }, repos: { get: getRepository } },
+      client: { apps: { getAuthenticated }, repos: { get: getRepository } },
     });
 
     expect(getAuthenticated).toHaveBeenCalledWith({ request: { signal } });

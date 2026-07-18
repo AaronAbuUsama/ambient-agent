@@ -3,10 +3,18 @@ import * as v from "valibot";
 
 import {
   ChatGptOAuthCredentialSchema,
-  GitHubCredentialSchema,
+  GitHubAppCredentialSchema,
   ManagedConfigSchema,
   createManagedConfig,
 } from "../../packages/installation/src/schema.ts";
+
+const APP_CREDENTIAL = {
+  schemaVersion: 1,
+  kind: "github-app",
+  appId: "12345",
+  installationId: "67890",
+  privateKey: "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----\n",
+} as const;
 
 describe("managed schemas", () => {
   it("accepts supported managed-chat JIDs and normalizes surrounding whitespace", () => {
@@ -39,21 +47,18 @@ describe("managed schemas", () => {
     ).toBe(true);
   });
 
-  it("rejects whitespace-only credentials and trims valid credential strings", () => {
+  it("rejects a retired personal-token file and requires numeric App identifiers", () => {
+    // A lingering PAT file fails the App schema and surfaces as reauthentication-required.
     expect(
-      v.safeParse(GitHubCredentialSchema, { schemaVersion: 1, kind: "personal-token", token: "   " }).success,
+      v.safeParse(GitHubAppCredentialSchema, { schemaVersion: 1, kind: "personal-token", token: "ghp_x" }).success,
     ).toBe(false);
-    expect(
-      v.safeParse(ChatGptOAuthCredentialSchema, {
-        type: "oauth",
-        access: "   ",
-        refresh: "refresh",
-        expires: 1,
-      }).success,
-    ).toBe(false);
-    expect(v.parse(GitHubCredentialSchema, { schemaVersion: 1, kind: "personal-token", token: " token " }).token).toBe(
-      "token",
+    expect(v.safeParse(GitHubAppCredentialSchema, { ...APP_CREDENTIAL, appId: "not-numeric" }).success).toBe(false);
+    expect(v.safeParse(GitHubAppCredentialSchema, { ...APP_CREDENTIAL, privateKey: "   " }).success).toBe(false);
+    expect(v.safeParse(ChatGptOAuthCredentialSchema, { type: "oauth", access: "   ", refresh: "r", expires: 1 }).success).toBe(
+      false,
     );
+    const parsed = v.parse(GitHubAppCredentialSchema, { ...APP_CREDENTIAL, appId: " 12345 " });
+    expect(parsed).toMatchObject({ kind: "github-app", appId: "12345", installationId: "67890" });
   });
 
   it("uses the application-owned ChatGPT credential reference", () => {

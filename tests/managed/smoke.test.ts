@@ -8,7 +8,12 @@ const paths = {
   root: "/missing",
   config: "/missing/config.json",
   credentials: "/missing/credentials",
-  githubCredential: "/missing/credentials/github.json",
+  githubAppCredentials: {
+    coder: "/missing/credentials/github-coder.json",
+    reviewer: "/missing/credentials/github-reviewer.json",
+    planner: "/missing/credentials/github-planner.json",
+  },
+  legacyGithubCredential: "/missing/credentials/github.json",
   chatGptOAuthCredential: "/missing/credentials/chatgpt-oauth.json",
   legacyPiAuthCredential: "/missing/credentials/pi-auth.json",
   applicationDatabase: "/missing/application.sqlite",
