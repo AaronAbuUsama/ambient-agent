@@ -120,5 +120,38 @@ The Managed Chat identifier is deliberately omitted.
 
 ### `pull_request_review.submitted` -> normalized continuation ingress
 
-This receipt is captured from the ready PR after a real Reviewer App review is
-submitted, so the proof is tied to the implementation's actual PR head.
+The Ambient Reviewer GitHub App submitted a real formal COMMENT review on
+[PR #220](https://github.com/AaronAbuUsama/ambient-agent/pull/220#pullrequestreview-4729260550).
+GitHub recorded the following Planner App delivery:
+
+```json
+{
+  "deliveryId": "3831984735175843840",
+  "guid": "3f781e76-82e8-11f1-8c7d-ccb0b3399168",
+  "event": "pull_request_review",
+  "action": "submitted",
+  "deliveredAt": "2026-07-18T20:35:44.777Z",
+  "status": "OK",
+  "statusCode": 200,
+  "redelivery": false,
+  "repository": "AaronAbuUsama/ambient-agent",
+  "subjectNumber": 220
+}
+```
+
+The same provider GUID settled as `done` in
+`github_ingress_deliveries` at `2026-07-18T20:35:44.729Z`, with no error and
+dispatch ID `65b2912c-bd26-4900-a61c-5c5b1f42c1a7`. The corresponding durable
+Speaker submission (sequence 74) settled without error after its input was
+applied. Redacted SQL predicates confirmed that its payload contains all four
+continuation-ingress identities without printing the payload:
+
+```json
+{
+  "has_normalized_type": true,
+  "normalized_type": "github.pull-request-review.submitted",
+  "has_delivery_guid": true,
+  "has_public_repository": true,
+  "has_pull_number": true
+}
+```
