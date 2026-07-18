@@ -182,6 +182,17 @@ describe("managed CLI", () => {
       refresh: "refresh-secret",
     });
 
+    const tenantRepairWhatsAppFor = () => {
+      const account = tenantWhatsAppFor();
+      return {
+        ...account,
+        authenticate: async () => {
+          await expect(whatsApp.read("pre-key:stale")).resolves.toBeNull();
+          return await account.authenticate();
+        },
+      };
+    };
+
     const status = harness();
     expect(await runCli(["--data-dir", paths.data, "status", "--json"], { ...status, environment })).toBe(0);
     expect(JSON.parse(status.stdout())).toMatchObject({
@@ -197,7 +208,10 @@ describe("managed CLI", () => {
     expect(await runCli(["--data-dir", paths.data, "start"], { ...start, environment, startRuntime })).toBe(0);
     expect(startRuntime).toHaveBeenCalledOnce();
 
-    await whatsApp.clear();
+    await whatsApp.write({
+      creds: JSON.stringify({ registered: false }),
+      "pre-key:stale": "stale-pre-key",
+    });
     const failedRepair = harness();
     expect(
       await runCli(["--data-dir", paths.data, "repair", "whatsapp"], {
@@ -207,7 +221,7 @@ describe("managed CLI", () => {
         firstRunServices: {
           ...failedRepair.firstRunServices,
           whatsappFor: () => ({
-            ...tenantWhatsAppFor(),
+            ...tenantRepairWhatsAppFor(),
             synchronizedChats: async () => [
               { jid: "other@g.us", name: "Wrong Chat", kind: "group" as const, lastActivityAt: 1_000 },
             ],
@@ -216,7 +230,8 @@ describe("managed CLI", () => {
       }),
     ).toBe(1);
     expect(failedRepair.stderr()).toContain("does not see the configured managed chat");
-    await expect(whatsApp.read("creds")).resolves.toBeNull();
+    await expect(whatsApp.read("creds")).resolves.toContain('"registered":false');
+    await expect(whatsApp.read("pre-key:stale")).resolves.toBe("stale-pre-key");
 
     const repair = harness();
     expect(
@@ -224,11 +239,12 @@ describe("managed CLI", () => {
         ...repair,
         environment,
         runtimeHealthFor: async () => ({ state: "stopped", whatsapp: { phase: "stopped" } }),
-        firstRunServices: { ...repair.firstRunServices, whatsappFor: tenantWhatsAppFor },
+        firstRunServices: { ...repair.firstRunServices, whatsappFor: tenantRepairWhatsAppFor },
       }),
     ).toBe(0);
     expect(repair.stdout()).toContain("Updated the WhatsApp session in the tenant credential database");
     await expect(whatsApp.read("creds")).resolves.toContain('"registered":true');
+    await expect(whatsApp.read("pre-key:stale")).resolves.toBeNull();
 
     const auth = harness();
     expect(await runCli(["--data-dir", paths.data, "auth"], { ...auth, environment })).toBe(0);

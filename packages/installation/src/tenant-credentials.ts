@@ -1,4 +1,4 @@
-import { createClient, type Client, type Transaction } from "@libsql/client";
+import { createClient, type Client, type InStatement, type Transaction } from "@libsql/client";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import type { SessionStore } from "whatsappd";
@@ -82,7 +82,10 @@ const initializeClient = (
   const client = createTenantClient(database);
   let ready: Promise<void> | undefined;
   return async () => {
-    ready ??= initializeSchemas(client, schema);
+    ready ??= initializeSchemas(client, schema).catch((cause: unknown) => {
+      ready = undefined;
+      throw cause;
+    });
     await ready;
     return client;
   };
@@ -290,7 +293,10 @@ const serializeCredential = (value: unknown): string => {
 };
 
 type CredentialExecutor = Pick<Client | Transaction, "execute">;
-type CredentialStatements = Parameters<Transaction["batch"]>[0];
+type CredentialMutation =
+  | { readonly type: "unchanged" }
+  | { readonly type: "replace"; readonly serialized: string }
+  | { readonly type: "delete" };
 
 /** A ChatGptCredentialStore whose atomic modify seam is persisted in libSQL. */
 export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDatabase): ChatGptCredentialStore => {
@@ -310,25 +316,48 @@ export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDat
     return validateChatGptOAuthCredential(JSON.parse(serialized));
   };
 
+  const readStoredFresh = async (providerId: string) => {
+    await connect();
+    const reader = createTenantClient(database);
+    try {
+      return await readStored(reader, providerId);
+    } finally {
+      reader.close();
+    }
+  };
+
+  const executeFresh = async (
+    statement: InStatement,
+    signal?: AbortSignal,
+  ) => {
+    await connect();
+    return await retryDatabaseBusy(async () => {
+      const client = createTenantClient(database);
+      try {
+        return await client.execute(statement);
+      } finally {
+        client.close();
+      }
+    }, signal);
+  };
+
   const acquireLease = async (providerId: string, signal?: AbortSignal) => {
-    const client = await connect();
     const ownerToken = randomUUID();
     let retryDelay = 20;
     for (;;) {
       throwIfAborted(signal);
-      const result = await retryDatabaseBusy(
-        async () =>
-          await client.execute({
-            sql: `
-              INSERT INTO model_credential_leases (provider_id, owner_token, expires_at_ms)
-              VALUES (?, ?, CAST(unixepoch('subsec') * 1000 AS INTEGER) + ?)
-              ON CONFLICT(provider_id) DO UPDATE SET
-                owner_token = excluded.owner_token,
-                expires_at_ms = excluded.expires_at_ms
-              WHERE model_credential_leases.expires_at_ms <= CAST(unixepoch('subsec') * 1000 AS INTEGER)
-            `,
-            args: [providerId, ownerToken, LEASE_DURATION_MS],
-          }),
+      const result = await executeFresh(
+        {
+          sql: `
+            INSERT INTO model_credential_leases (provider_id, owner_token, expires_at_ms)
+            VALUES (?, ?, CAST(unixepoch('subsec') * 1000 AS INTEGER) + ?)
+            ON CONFLICT(provider_id) DO UPDATE SET
+              owner_token = excluded.owner_token,
+              expires_at_ms = excluded.expires_at_ms
+            WHERE model_credential_leases.expires_at_ms <= CAST(unixepoch('subsec') * 1000 AS INTEGER)
+          `,
+          args: [providerId, ownerToken, LEASE_DURATION_MS],
+        },
         signal,
       );
       if (result.rowsAffected === 1) break;
@@ -342,16 +371,15 @@ export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDat
       try {
         for (;;) {
           await delay(LEASE_HEARTBEAT_MS, undefined, { signal: heartbeatAbort.signal });
-          const renewed = await retryDatabaseBusy(
-            async () =>
-              await client.execute({
-                sql: `
-                  UPDATE model_credential_leases
-                  SET expires_at_ms = CAST(unixepoch('subsec') * 1000 AS INTEGER) + ?
-                  WHERE provider_id = ? AND owner_token = ?
-                `,
-                args: [LEASE_DURATION_MS, providerId, ownerToken],
-              }),
+          const renewed = await executeFresh(
+            {
+              sql: `
+                UPDATE model_credential_leases
+                SET expires_at_ms = CAST(unixepoch('subsec') * 1000 AS INTEGER) + ?
+                WHERE provider_id = ? AND owner_token = ?
+              `,
+              args: [LEASE_DURATION_MS, providerId, ownerToken],
+            },
             heartbeatAbort.signal,
           );
           if (renewed.rowsAffected !== 1) throw new Error("The managed ChatGPT credential lease was lost.");
@@ -369,38 +397,57 @@ export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDat
     const abandon = async (): Promise<void> => {
       heartbeatAbort.abort();
       await heartbeat;
-      await retryDatabaseBusy(async () => {
-        await client.execute({
-          sql: "DELETE FROM model_credential_leases WHERE provider_id = ? AND owner_token = ?",
-          args: [providerId, ownerToken],
-        });
+      await executeFresh({
+        sql: "DELETE FROM model_credential_leases WHERE provider_id = ? AND owner_token = ?",
+        args: [providerId, ownerToken],
       });
     };
-    const finalize = async (statements: CredentialStatements): Promise<void> => {
+    const finalize = async (mutation: CredentialMutation): Promise<void> => {
       await stopHeartbeat();
-      const transaction = await beginWriteTransaction(client, signal);
-      try {
-        const result = await transaction.execute({
+      if (mutation.type === "replace") {
+        const result = await executeFresh({
           sql: `
-            SELECT expires_at_ms > CAST(unixepoch('subsec') * 1000 AS INTEGER) AS is_valid
-            FROM model_credential_leases
-            WHERE provider_id = ? AND owner_token = ?
+            INSERT INTO model_credentials (provider_id, credential_json)
+            SELECT ?, ?
+            WHERE EXISTS (
+              SELECT 1 FROM model_credential_leases
+              WHERE provider_id = ?
+                AND owner_token = ?
+                AND expires_at_ms > CAST(unixepoch('subsec') * 1000 AS INTEGER)
+            )
+            ON CONFLICT(provider_id) DO UPDATE SET credential_json = excluded.credential_json
           `,
-          args: [providerId, ownerToken],
+          args: [providerId, mutation.serialized, providerId, ownerToken],
         });
-        if (Number(result.rows[0]?.is_valid) !== 1) {
-          throw new Error("The managed ChatGPT credential lease expired before commit.");
+        if (result.rowsAffected !== 1) {
+          throw new Error("The managed ChatGPT credential lease expired before the credential update.");
         }
-        await transaction.batch([
-          ...statements,
-          {
-            sql: "DELETE FROM model_credential_leases WHERE provider_id = ? AND owner_token = ?",
-            args: [providerId, ownerToken],
-          },
-        ]);
-        await transaction.commit();
-      } finally {
-        transaction.close();
+      } else if (mutation.type === "delete") {
+        await executeFresh({
+          sql: `
+            DELETE FROM model_credentials
+            WHERE provider_id = ?
+              AND EXISTS (
+                SELECT 1 FROM model_credential_leases
+                WHERE provider_id = ?
+                  AND owner_token = ?
+                  AND expires_at_ms > CAST(unixepoch('subsec') * 1000 AS INTEGER)
+              )
+          `,
+          args: [providerId, providerId, ownerToken],
+        });
+      }
+      const released = await executeFresh({
+        sql: `
+          DELETE FROM model_credential_leases
+          WHERE provider_id = ?
+            AND owner_token = ?
+            AND expires_at_ms > CAST(unixepoch('subsec') * 1000 AS INTEGER)
+        `,
+        args: [providerId, ownerToken],
+      });
+      if (released.rowsAffected !== 1) {
+        throw new Error("The managed ChatGPT credential lease expired before release.");
       }
     };
     return { abandon, finalize };
@@ -408,13 +455,12 @@ export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDat
 
   const runLeased = async <T>(
     providerId: string,
-    operation: (lease: Awaited<ReturnType<typeof acquireLease>>, client: Client) => Promise<T>,
+    operation: (lease: Awaited<ReturnType<typeof acquireLease>>) => Promise<T>,
     signal?: AbortSignal,
   ): Promise<T> => {
-    const client = await connect();
     const lease = await acquireLease(providerId, signal);
     try {
-      return await operation(lease, client);
+      return await operation(lease);
     } catch (cause) {
       try {
         await lease.abandon();
@@ -429,7 +475,7 @@ export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDat
     async read(providerId, signal) {
       assertChatGptProvider(providerId);
       throwIfAborted(signal);
-      return await readStored(await connect(), providerId);
+      return await readStoredFresh(providerId);
     },
     async modify(providerId, change, signal) {
       assertChatGptProvider(providerId);
@@ -437,24 +483,16 @@ export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDat
         throwIfAborted(signal);
         return await runLeased(
           providerId,
-          async (lease, client) => {
-            const current = await readStored(client, providerId);
+          async (lease) => {
+            const current = await readStoredFresh(providerId);
             const next = await change(current);
             throwIfAborted(signal);
             if (next === undefined) {
-              await lease.finalize([]);
+              await lease.finalize({ type: "unchanged" });
               return current;
             }
             const credential = validateChatGptOAuthCredential(next);
-            await lease.finalize([
-              {
-                sql: `
-                  INSERT INTO model_credentials (provider_id, credential_json) VALUES (?, ?)
-                  ON CONFLICT(provider_id) DO UPDATE SET credential_json = excluded.credential_json
-                `,
-                args: [providerId, serializeCredential(credential)],
-              },
-            ]);
+            await lease.finalize({ type: "replace", serialized: serializeCredential(credential) });
             return credential;
           },
           signal,
@@ -468,16 +506,7 @@ export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDat
         throwIfAborted(signal);
         await runLeased(
           providerId,
-          async (lease) =>
-            await lease.finalize([
-              {
-                sql: `
-                  INSERT INTO model_credentials (provider_id, credential_json) VALUES (?, ?)
-                  ON CONFLICT(provider_id) DO UPDATE SET credential_json = excluded.credential_json
-                `,
-                args: [providerId, serialized],
-              },
-            ]),
+          async (lease) => await lease.finalize({ type: "replace", serialized }),
           signal,
         );
       });
@@ -488,13 +517,7 @@ export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDat
         throwIfAborted(signal);
         await runLeased(
           providerId,
-          async (lease) =>
-            await lease.finalize([
-              {
-                sql: "DELETE FROM model_credentials WHERE provider_id = ?",
-                args: [providerId],
-              },
-            ]),
+          async (lease) => await lease.finalize({ type: "delete" }),
           signal,
         );
       });

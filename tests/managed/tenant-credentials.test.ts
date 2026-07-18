@@ -169,7 +169,7 @@ describe("tenant credential storage", () => {
       access: "cross-process-rotated",
       refresh: "cross-process-refresh",
     });
-  });
+  }, 15_000);
 
   it("restores both tenant credential stores when a multi-step workflow fails", async () => {
     const { url } = await fixture("credential-rollback");

@@ -33,6 +33,7 @@ import {
 } from "@ambient-agent/installation/schema.ts";
 import { managedPaths, type ManagedPaths } from "@ambient-agent/installation/paths.ts";
 import {
+  libsqlStore,
   tenantCredentialDatabaseFromEnvironment,
   type TenantCredentialEnvironment,
   withTenantCredentialRollback,
@@ -544,6 +545,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
         // The staging archive absorbs the pairing sync and is discarded; the application
         // database, credentials, configuration, and unresolved work are never touched.
         const repair = async () => {
+          if (tenantDatabase !== undefined) await libsqlStore(tenantDatabase).clear();
           const archive = createConversationArchive(stagingPaths.applicationDatabase);
           const account = firstRunServices.whatsappFor(stagingPaths, archive);
           try {
