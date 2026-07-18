@@ -194,6 +194,10 @@ export const createSubscriptionEntitlementStore = (database: EntitlementDatabase
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(user_id) DO UPDATE SET
               polar_customer_id = excluded.polar_customer_id,
+              polar_subscription_id = COALESCE(
+                subscription_entitlement.polar_subscription_id,
+                excluded.polar_subscription_id
+              ),
               status = excluded.status,
               last_event_id = excluded.last_event_id,
               updated_at_ms = excluded.updated_at_ms

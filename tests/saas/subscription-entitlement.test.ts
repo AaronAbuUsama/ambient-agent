@@ -25,6 +25,7 @@ const users = [
   "product-change-user",
   "first-product-change-user",
   "unrelated-first-user",
+  "unbound-first-user",
 ];
 const proProductId = "64122dbf-b3c1-4f6e-ac1d-9139b6570aea";
 const scratch = mkdtempSync(join(tmpdir(), "ambient-entitlement-"));
@@ -86,7 +87,7 @@ beforeAll(async () => {
             VALUES ('${userId}', '${userId}', '${userId}@example.com', 1, 0, 0);`,
       )
       .join("\n")}
-    ${["cancel", "resume", "onboarding", "repair", "suspended", "archived"]
+    ${["cancel", "resume", "onboarding", "repair", "suspended", "archived", "unbound-first"]
       .map(
         (name) =>
           `INSERT INTO subscription_entitlement (id, user_id, status, updated_at_ms)
@@ -252,6 +253,22 @@ describe.sequential("subscription entitlement projection", () => {
     );
     expect(await authPackage.subscriptionEntitlements.get("unrelated-first-user")).toMatchObject({
       polarSubscriptionId: "subscription-pro",
+      status: "active",
+    });
+
+    await authPackage.subscriptionEntitlements.reduce(
+      event("unbound-first-user", "subscription.updated", "active", "2026-07-18T14:00:00.000Z", {
+        polarSubscriptionId: "subscription-unrelated-unbound",
+        entitlingProduct: false,
+      }),
+    );
+    await authPackage.subscriptionEntitlements.reduce(
+      event("unbound-first-user", "subscription.active", "active", "2026-07-18T13:00:00.000Z", {
+        polarSubscriptionId: "subscription-pro-unbound",
+      }),
+    );
+    expect(await authPackage.subscriptionEntitlements.get("unbound-first-user")).toMatchObject({
+      polarSubscriptionId: "subscription-pro-unbound",
       status: "active",
     });
   });
