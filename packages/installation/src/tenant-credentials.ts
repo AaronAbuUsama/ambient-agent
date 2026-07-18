@@ -43,6 +43,38 @@ export const tenantCredentialDatabaseFromEnvironment = (
 const createTenantClient = ({ url, authToken }: TenantCredentialDatabase): Client =>
   createClient({ url, timeout: 0, ...(authToken === undefined ? {} : { authToken }) });
 
+const throwIfAborted = (signal?: AbortSignal): void => {
+  if (signal?.aborted) {
+    throw signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
+  }
+};
+
+const isDatabaseBusy = (cause: unknown): boolean =>
+  typeof cause === "object" && cause !== null && Reflect.get(cause, "code") === "SQLITE_BUSY";
+
+const retryDatabaseBusy = async <T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> => {
+  const deadline = Date.now() + 30_000;
+  let retryDelay = 10;
+  for (;;) {
+    throwIfAborted(signal);
+    try {
+      return await operation();
+    } catch (cause) {
+      if (!isDatabaseBusy(cause) || Date.now() >= deadline) throw cause;
+      await delay(retryDelay, undefined, signal === undefined ? undefined : { signal });
+      retryDelay = Math.min(retryDelay * 2, 100);
+    }
+  }
+};
+
+const initializeSchemas = async (client: Client, schemas: string | readonly string[]): Promise<void> => {
+  for (const schema of typeof schemas === "string" ? [schemas] : schemas) {
+    await retryDatabaseBusy(async () => {
+      await client.execute(schema);
+    });
+  }
+};
+
 const initializeClient = (
   database: TenantCredentialDatabase,
   schema: string | readonly string[],
@@ -50,9 +82,7 @@ const initializeClient = (
   const client = createTenantClient(database);
   let ready: Promise<void> | undefined;
   return async () => {
-    ready ??= (typeof schema === "string" ? client.execute(schema) : client.batch([...schema], "write")).then(
-      () => undefined,
-    );
+    ready ??= initializeSchemas(client, schema);
     await ready;
     return client;
   };
@@ -119,29 +149,8 @@ const LEASE_DURATION_MS = 15_000;
 const LEASE_HEARTBEAT_MS = 5_000;
 const localCredentialOperations = new Map<string, Promise<void>>();
 
-const throwIfAborted = (signal?: AbortSignal): void => {
-  if (signal?.aborted) {
-    throw signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
-  }
-};
-
-const isDatabaseBusy = (cause: unknown): boolean =>
-  typeof cause === "object" && cause !== null && Reflect.get(cause, "code") === "SQLITE_BUSY";
-
-const beginWriteTransaction = async (client: Client, signal?: AbortSignal): Promise<Transaction> => {
-  const deadline = Date.now() + 30_000;
-  let retryDelay = 10;
-  for (;;) {
-    throwIfAborted(signal);
-    try {
-      return await client.transaction("write");
-    } catch (cause) {
-      if (!isDatabaseBusy(cause) || Date.now() >= deadline) throw cause;
-      await delay(retryDelay, undefined, signal === undefined ? undefined : { signal });
-      retryDelay = Math.min(retryDelay * 2, 100);
-    }
-  }
-};
+const beginWriteTransaction = async (client: Client, signal?: AbortSignal): Promise<Transaction> =>
+  await retryDatabaseBusy(async () => await client.transaction("write"), signal);
 
 /** Keep the local libSQL driver from synchronously contending with itself. */
 const serializeLocalCredentialOperation = async <T>(databaseUrl: string, operation: () => Promise<T>): Promise<T> => {
@@ -171,7 +180,10 @@ const captureTenantCredentials = async (
 ): Promise<TenantCredentialSnapshot> => {
   const client = createTenantClient(database);
   try {
-    await client.batch(scope === "all" ? [whatsappSchema, modelSchema, modelLeaseSchema] : [whatsappSchema], "write");
+    await initializeSchemas(
+      client,
+      scope === "all" ? [whatsappSchema, modelSchema, modelLeaseSchema] : [whatsappSchema],
+    );
     const results = await client.batch([
       "SELECT key, value FROM whatsapp_auth_state ORDER BY key",
       ...(scope === "all" ? ["SELECT provider_id, credential_json FROM model_credentials ORDER BY provider_id"] : []),
@@ -205,7 +217,10 @@ const restoreTenantCredentials = async (
 ): Promise<void> => {
   const client = createTenantClient(database);
   try {
-    await client.batch(scope === "all" ? [whatsappSchema, modelSchema, modelLeaseSchema] : [whatsappSchema], "write");
+    await initializeSchemas(
+      client,
+      scope === "all" ? [whatsappSchema, modelSchema, modelLeaseSchema] : [whatsappSchema],
+    );
     const transaction = await beginWriteTransaction(client);
     try {
       await transaction.batch([
@@ -301,17 +316,21 @@ export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDat
     let retryDelay = 20;
     for (;;) {
       throwIfAborted(signal);
-      const result = await client.execute({
-        sql: `
-          INSERT INTO model_credential_leases (provider_id, owner_token, expires_at_ms)
-          VALUES (?, ?, CAST(unixepoch('subsec') * 1000 AS INTEGER) + ?)
-          ON CONFLICT(provider_id) DO UPDATE SET
-            owner_token = excluded.owner_token,
-            expires_at_ms = excluded.expires_at_ms
-          WHERE model_credential_leases.expires_at_ms <= CAST(unixepoch('subsec') * 1000 AS INTEGER)
-        `,
-        args: [providerId, ownerToken, LEASE_DURATION_MS],
-      });
+      const result = await retryDatabaseBusy(
+        async () =>
+          await client.execute({
+            sql: `
+              INSERT INTO model_credential_leases (provider_id, owner_token, expires_at_ms)
+              VALUES (?, ?, CAST(unixepoch('subsec') * 1000 AS INTEGER) + ?)
+              ON CONFLICT(provider_id) DO UPDATE SET
+                owner_token = excluded.owner_token,
+                expires_at_ms = excluded.expires_at_ms
+              WHERE model_credential_leases.expires_at_ms <= CAST(unixepoch('subsec') * 1000 AS INTEGER)
+            `,
+            args: [providerId, ownerToken, LEASE_DURATION_MS],
+          }),
+        signal,
+      );
       if (result.rowsAffected === 1) break;
       await delay(retryDelay, undefined, signal === undefined ? undefined : { signal });
       retryDelay = Math.min(retryDelay * 2, 500);
@@ -323,14 +342,18 @@ export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDat
       try {
         for (;;) {
           await delay(LEASE_HEARTBEAT_MS, undefined, { signal: heartbeatAbort.signal });
-          const renewed = await client.execute({
-            sql: `
-              UPDATE model_credential_leases
-              SET expires_at_ms = CAST(unixepoch('subsec') * 1000 AS INTEGER) + ?
-              WHERE provider_id = ? AND owner_token = ?
-            `,
-            args: [LEASE_DURATION_MS, providerId, ownerToken],
-          });
+          const renewed = await retryDatabaseBusy(
+            async () =>
+              await client.execute({
+                sql: `
+                  UPDATE model_credential_leases
+                  SET expires_at_ms = CAST(unixepoch('subsec') * 1000 AS INTEGER) + ?
+                  WHERE provider_id = ? AND owner_token = ?
+                `,
+                args: [LEASE_DURATION_MS, providerId, ownerToken],
+              }),
+            heartbeatAbort.signal,
+          );
           if (renewed.rowsAffected !== 1) throw new Error("The managed ChatGPT credential lease was lost.");
         }
       } catch (cause) {
@@ -346,9 +369,11 @@ export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDat
     const abandon = async (): Promise<void> => {
       heartbeatAbort.abort();
       await heartbeat;
-      await client.execute({
-        sql: "DELETE FROM model_credential_leases WHERE provider_id = ? AND owner_token = ?",
-        args: [providerId, ownerToken],
+      await retryDatabaseBusy(async () => {
+        await client.execute({
+          sql: "DELETE FROM model_credential_leases WHERE provider_id = ? AND owner_token = ?",
+          args: [providerId, ownerToken],
+        });
       });
     };
     const finalize = async (statements: CredentialStatements): Promise<void> => {
