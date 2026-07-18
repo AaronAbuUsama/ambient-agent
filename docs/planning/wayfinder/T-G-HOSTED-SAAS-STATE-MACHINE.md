@@ -201,7 +201,7 @@ account
   → operate health observed
 ```
 
-An operating coworker does not rewind onboarding when a capability degrades. The dashboard shows the named repair path. Subscription loss sets desired mode to `stopped` without deleting tenant credentials. WhatsApp re-pair temporarily re-enters the same setup profile and returns to `operate` after the previously selected Managed Chats are confirmed.
+An operating coworker does not rewind onboarding when a capability degrades. The dashboard shows the named repair path. Subscription loss sets desired mode to `stopped` without deleting tenant credentials. WhatsApp re-pair is modeled as `operate --whatsapp.repair.started--> operate --whatsapp.repair.completed--> operate`: it temporarily uses the same application's setup profile while persisting the repair operation, preserves Managed Chats, and resumes the operate profile after authentication is observed.
 
 ## Whole-diagonal screen contract
 

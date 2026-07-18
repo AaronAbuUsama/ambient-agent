@@ -382,6 +382,7 @@ export const screens = [
       "tenant.status = active | suspended | archived",
       "agent_instance observed health + last observation timestamp",
       "capability status rows and latest durable operation receipts",
+      "whatsapp_repair operation = idle | pairing | verifying | succeeded | failed | uncertain",
       "readiness = derived healthy | degraded | suspended",
     ],
     operations: [
@@ -424,7 +425,18 @@ export const transitions = [
   },
   { from: "operate", event: "subscription.inactive", to: "operate", guard: "render suspended; desired mode stopped; data retained" },
   { from: "operate", event: "capability.degraded", to: "operate", guard: "render named repair card; do not rewind onboarding" },
-  { from: "operate", event: "whatsapp.repair", to: "whatsapp", guard: "repair subflow on the same applicationId, then return to operate" },
+  {
+    from: "operate",
+    event: "whatsapp.repair.started",
+    to: "operate",
+    guard: "persist repair operation; temporarily use setup profile on the same applicationId; preserve Managed Chats",
+  },
+  {
+    from: "operate",
+    event: "whatsapp.repair.completed",
+    to: "operate",
+    guard: "authenticated tenant account observed; clear repair operation; resume operate profile without replaying onboarding",
+  },
 ];
 
 export const decision = {

@@ -35,6 +35,17 @@ assert.deepEqual(runtimeBootProfiles.map(({ mode }) => mode), ["setup", "operate
 assert.equal(transitions[0].from, "account");
 assert(transitions.some(({ from, to, event }) => from === "activation" && to === "operate" && event === "operate.healthy"));
 
+const whatsappRepairTransitions = transitions.filter(({ event }) => event.startsWith("whatsapp.repair."));
+assert.deepEqual(
+  whatsappRepairTransitions.map(({ event }) => event),
+  ["whatsapp.repair.started", "whatsapp.repair.completed"],
+  "repair must model both entry and completion",
+);
+assert(
+  whatsappRepairTransitions.every(({ from, to }) => from === "operate" && to === "operate"),
+  "WhatsApp repair must return to operate without replaying onboarding",
+);
+
 const durableState = JSON.stringify(persistence).toLowerCase();
 assert(!durableState.includes("pairing code"), "pairing code must never be durable state");
 assert(!durableState.includes(" qr"), "QR material must never be durable state");

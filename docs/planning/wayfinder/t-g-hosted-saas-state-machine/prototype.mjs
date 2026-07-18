@@ -134,16 +134,16 @@ const renderMock = (screen) => {
       </div>`,
     operate: `
       <div class="operate-grid">
-        <div class="health-banner"><span class="health-dot"></span><div><span class="mock-kicker">Ambience</span><h2>Healthy and listening</h2></div><span class="status success">Online</span></div>
+        <div class="health-banner"><span class="health-dot"></span><div><span class="mock-kicker">Ambience</span><h2>${simulatedState === "repairing" ? "Repairing WhatsApp in place" : "Healthy and listening"}</h2></div><span class="status ${simulatedState === "repairing" ? "warning" : "success"}">${simulatedState === "repairing" ? "Degraded" : "Online"}</span></div>
         ${[
           ["Runtime", "Healthy", "Revision 4 · observed now"],
-          ["WhatsApp", "Online", "+233 ••• •• 47 · re-pair"],
+          ["WhatsApp", simulatedState === "repairing" ? "Pairing" : "Online", simulatedState === "repairing" ? "Managed Chats preserved · finish re-pair" : "+233 ••• •• 47 · re-pair"],
           ["Managed Chats", "2 chats", "Changes after MVP · #179"],
           ["GitHub", "Connected", "2 repositories · delivery pending #168"],
           ["Model", "Ready", "Tenant credential · rotate"],
           ["Billing", "Pro", "Active · manage subscription"],
         ]
-          .map(([label, value, note]) => `<div class="status-card"><span class="card-icon">${icon(label.toLowerCase())}</span><span><small>${label}</small><b>${value}</b><em>${note}</em></span><button aria-label="Open ${label}">→</button></div>`)
+          .map(([label, value, note]) => `<div class="status-card"><span class="card-icon">${icon(label.toLowerCase())}</span><span><small>${label}</small><b>${value}</b><em>${note}</em></span><button ${label === "WhatsApp" ? "data-repair" : ""} aria-label="${label === "WhatsApp" ? (simulatedState === "repairing" ? "Finish WhatsApp re-pair" : "Repair WhatsApp") : `Open ${label}`}">${label === "WhatsApp" && simulatedState === "repairing" ? "✓" : "→"}</button></div>`)
           .join("")}
       </div>`,
   };
@@ -242,6 +242,17 @@ document.addEventListener("click", (event) => {
   if (target.hasAttribute("data-simulate")) {
     simulatedState = simulatedState === "done" ? "idle" : "done";
     render();
+  }
+  if (target.hasAttribute("data-repair")) {
+    const completed = simulatedState === "repairing";
+    simulatedState = completed ? "done" : "repairing";
+    render();
+    if (completed) {
+      const toast = document.querySelector("#toast");
+      toast.textContent = "WhatsApp repaired. Returned to Operate with Managed Chats preserved.";
+      toast.classList.add("show");
+      setTimeout(() => toast.classList.remove("show"), 4200);
+    }
   }
   if (target.hasAttribute("data-next")) {
     const index = setupScreens.findIndex((screen) => screen.id === currentId);
