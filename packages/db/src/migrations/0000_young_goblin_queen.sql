@@ -157,17 +157,19 @@ CREATE TABLE `github_installation` (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `github_installation_installation_id_unique` ON `github_installation` (`installation_id`);--> statement-breakpoint
+CREATE UNIQUE INDEX `github_installation_identity_unique` ON `github_installation` (`tenant_id`,`role`,`installation_id`);--> statement-breakpoint
 CREATE TABLE `github_repository` (
 	`tenant_id` text NOT NULL,
 	`installation_role` text NOT NULL,
+	`installation_id` integer NOT NULL,
 	`repository_id` integer NOT NULL,
 	`owner` text NOT NULL,
 	`name` text NOT NULL,
 	`selected` integer DEFAULT false NOT NULL,
 	`is_default` integer DEFAULT false NOT NULL,
 	`updated_at_ms` integer DEFAULT (cast(unixepoch('subsecond') * 1000 as integer)) NOT NULL,
-	PRIMARY KEY(`tenant_id`, `installation_role`, `repository_id`),
-	FOREIGN KEY (`tenant_id`,`installation_role`) REFERENCES `github_installation`(`tenant_id`,`role`) ON UPDATE no action ON DELETE cascade,
+	PRIMARY KEY(`tenant_id`, `installation_role`, `installation_id`, `repository_id`),
+	FOREIGN KEY (`tenant_id`,`installation_role`,`installation_id`) REFERENCES `github_installation`(`tenant_id`,`role`,`installation_id`) ON UPDATE no action ON DELETE cascade,
 	CONSTRAINT "github_repository_default_check" CHECK("github_repository"."is_default" = 0 or "github_repository"."selected" = 1)
 );
 --> statement-breakpoint
@@ -306,6 +308,7 @@ CREATE VIEW `tenant_readiness` AS
           join github_repository
             on github_repository.tenant_id = github_installation.tenant_id
             and github_repository.installation_role = github_installation.role
+            and github_repository.installation_id = github_installation.installation_id
           where github_installation.tenant_id = tenant.id
             and github_installation.status = 'installed'
             and github_installation.role in ('coder', 'reviewer', 'planner')

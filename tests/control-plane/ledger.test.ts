@@ -100,12 +100,12 @@ async function seedReadyCapabilities(client: Client, tenantId: string, suffix: s
     });
   }
   const repositoryId = Number(suffix.replaceAll(/\D/g, "")) + 2_000;
-  for (const role of ["coder", "reviewer", "planner"]) {
+  for (const [offset, role] of ["coder", "reviewer", "planner"].entries()) {
     await client.execute({
       sql: `INSERT INTO github_repository (
-        tenant_id, installation_role, repository_id, owner, name, selected, is_default
-      ) VALUES (?1, ?2, ?3, ?4, ?5, 1, 1)`,
-      args: [tenantId, role, repositoryId, `org-${suffix}`, `repo-${suffix}`],
+        tenant_id, installation_role, installation_id, repository_id, owner, name, selected, is_default
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 1)`,
+      args: [tenantId, role, installationId + offset, repositoryId, `org-${suffix}`, `repo-${suffix}`],
     });
   }
   await client.execute({
@@ -162,8 +162,8 @@ describe("control-plane ledger migration", () => {
     await expect(
       client.execute({
         sql: `INSERT INTO github_repository (
-          tenant_id, installation_role, repository_id, owner, name
-        ) VALUES (?1, 'planner', 2001, 'owner', 'repo')`,
+          tenant_id, installation_role, installation_id, repository_id, owner, name
+        ) VALUES (?1, 'planner', 1001, 2001, 'owner', 'repo')`,
         args: [second.tenantId],
       }),
     ).rejects.toThrow(/FOREIGN KEY constraint failed/);
@@ -181,8 +181,8 @@ describe("control-plane ledger migration", () => {
     });
     await client.execute({
       sql: `INSERT INTO github_repository (
-        tenant_id, installation_role, repository_id, owner, name, selected, is_default
-      ) VALUES (?1, 'planner', 2003, 'owner', 'first', 1, 1)`,
+        tenant_id, installation_role, installation_id, repository_id, owner, name, selected, is_default
+      ) VALUES (?1, 'planner', 1003, 2003, 'owner', 'first', 1, 1)`,
       args: [seeded.tenantId],
     });
 
@@ -197,8 +197,8 @@ describe("control-plane ledger migration", () => {
     await expect(
       client.execute({
         sql: `INSERT INTO github_repository (
-          tenant_id, installation_role, repository_id, owner, name, selected, is_default
-        ) VALUES (?1, 'planner', 2004, 'owner', 'second', 1, 1)`,
+          tenant_id, installation_role, installation_id, repository_id, owner, name, selected, is_default
+        ) VALUES (?1, 'planner', 1003, 2004, 'owner', 'second', 1, 1)`,
         args: [seeded.tenantId],
       }),
     ).rejects.toThrow(/UNIQUE constraint failed/);
@@ -313,15 +313,27 @@ describe("control-plane ledger migration", () => {
     };
 
     expect(await readiness()).toBe("healthy");
+    await expect(
+      client.execute({
+        sql: `UPDATE github_installation SET installation_id = 3007
+          WHERE tenant_id = ?1 AND role = 'coder'`,
+        args: [seeded.tenantId],
+      }),
+    ).rejects.toThrow(/FOREIGN KEY constraint failed/);
     await client.execute({
       sql: "DELETE FROM github_repository WHERE tenant_id = ?1 AND installation_role = 'coder'",
+      args: [seeded.tenantId],
+    });
+    await client.execute({
+      sql: `UPDATE github_installation SET installation_id = 3007
+        WHERE tenant_id = ?1 AND role = 'coder'`,
       args: [seeded.tenantId],
     });
     expect(await readiness()).toBe("degraded");
     await client.execute({
       sql: `INSERT INTO github_repository (
-        tenant_id, installation_role, repository_id, owner, name, selected, is_default
-      ) VALUES (?1, 'coder', 2007, 'org-7', 'repo-7', 1, 1)`,
+        tenant_id, installation_role, installation_id, repository_id, owner, name, selected, is_default
+      ) VALUES (?1, 'coder', 3007, 2007, 'org-7', 'repo-7', 1, 1)`,
       args: [seeded.tenantId],
     });
     expect(await readiness()).toBe("healthy");

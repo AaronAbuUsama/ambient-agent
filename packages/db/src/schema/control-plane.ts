@@ -307,6 +307,7 @@ export const githubInstallation = sqliteTable(
   },
   (table) => [
     primaryKey({ columns: [table.tenantId, table.role] }),
+    unique("github_installation_identity_unique").on(table.tenantId, table.role, table.installationId),
     check("github_installation_role_check", sql`${table.role} in ('coder', 'reviewer', 'planner')`),
     check("github_installation_status_check", sql`${table.status} in ('pending', 'installed', 'revoked', 'failed')`),
     check(
@@ -321,6 +322,7 @@ export const githubRepository = sqliteTable(
   {
     tenantId: text("tenant_id").notNull(),
     installationRole: text("installation_role").notNull(),
+    installationId: integer("installation_id").notNull(),
     repositoryId: integer("repository_id").notNull(),
     owner: text("owner").notNull(),
     name: text("name").notNull(),
@@ -329,11 +331,11 @@ export const githubRepository = sqliteTable(
     updatedAtMs: integer("updated_at_ms").default(nowMs).notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.tenantId, table.installationRole, table.repositoryId] }),
+    primaryKey({ columns: [table.tenantId, table.installationRole, table.installationId, table.repositoryId] }),
     foreignKey({
       name: "github_repository_installation_fk",
-      columns: [table.tenantId, table.installationRole],
-      foreignColumns: [githubInstallation.tenantId, githubInstallation.role],
+      columns: [table.tenantId, table.installationRole, table.installationId],
+      foreignColumns: [githubInstallation.tenantId, githubInstallation.role, githubInstallation.installationId],
     }).onDelete("cascade"),
     uniqueIndex("github_repository_one_default_per_role")
       .on(table.tenantId, table.installationRole)
@@ -434,6 +436,7 @@ export const tenantReadiness = sqliteView("tenant_readiness", {
           join github_repository
             on github_repository.tenant_id = github_installation.tenant_id
             and github_repository.installation_role = github_installation.role
+            and github_repository.installation_id = github_installation.installation_id
           where github_installation.tenant_id = tenant.id
             and github_installation.status = 'installed'
             and github_installation.role in ('coder', 'reviewer', 'planner')
