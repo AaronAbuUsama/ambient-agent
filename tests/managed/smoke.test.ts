@@ -19,6 +19,7 @@ const paths = {
   applicationDatabase: "/missing/application.sqlite",
   flueDatabase: "/missing/flue.sqlite",
   whatsapp: "/missing/whatsapp",
+  workspaces: "/missing/workspaces",
   logs: "/missing/logs",
 } satisfies ManagedPaths;
 

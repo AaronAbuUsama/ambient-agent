@@ -1021,7 +1021,7 @@ describe("production Issue Management tools", () => {
       "lookup_graph",
       "record_entity",
       "merge_entities",
-      // The delegation surface (#157): with no Specialists configured yet, just check_jobs.
+      "start_coder_job",
       "check_jobs",
     ]);
     expect(config.tools?.some((tool) => tool.name === "github_delete_issue")).toBe(false);
