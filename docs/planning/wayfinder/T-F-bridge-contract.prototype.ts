@@ -2,11 +2,11 @@
  * T-F · Control-plane ↔ tenant HTTP bridge contract — PROTOTYPE STUB (react to this, don't build it)
  * =================================================================================================
  *
- * The map's ticket #171. A concrete stub of the thin HTTP surface between the control plane
- * (`demo-stack`) and each tenant container. Grounded in the surfaces that already exist:
+ * The map's ticket #171. A concrete stub of the thin HTTP surface between the root control plane
+ * (`apps/api`) and each tenant container. Grounded in the surfaces that already exist:
  *
  *   - The tenant already runs a Hono app; extra routes mount via `composeSpeaker`'s `routes`
- *     seam exactly like `installSmokeRoute` — apps/server/src/app.ts:103-109.
+ *     seam exactly like `installSmokeRoute` — apps/runtime/src/app.ts:103-109.
  *   - `/health` already exists and is UNAUTHENTICATED — probed at http://127.0.0.1:<port>/health
  *     by `probeAmbientRuntimeHealth` (runtime-health.ts:54-88) and (in SaaS) by the Dokploy
  *     healthcheck. Returns { ok, installationId, runtime: { state, whatsapp: { phase } } }

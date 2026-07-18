@@ -15,7 +15,7 @@ model creds — "hire a coworker," not self-host a bot. Two planes, **never merg
 deployables** (`docs/planning/SAAS-MVP-PLAN.md:14,46-50`):
 
 - **Data plane** = `ambient-agent` (this repo), one container per tenant. Mostly unchanged.
-- **Control plane** = the SaaS web app + provisioner. Currently scaffolded as `demo-stack/`.
+- **Control plane** = the root `apps/web` SaaS app + `apps/api` provisioner.
 
 ## The gap you must close (this is the actual ask)
 
@@ -28,13 +28,13 @@ itself** or reconciled the two conflicting web-app visions in the repo:
    / auth (`:134`) and GitHub App install (`:133`).
 2. **`docs/planning/SAAS-MVP-PLAN.md`** (2026-07-18) — the **hosted, multi-tenant control
    plane**: auth (better-auth) + billing (Polar) + provisioning, driving **remote per-tenant
-   containers** via the Dokploy API. This is `demo-stack`.
+   containers** via the Dokploy API. This is the root control plane.
 
 They need the **same screens** (model auth, WhatsApp QR pairing, managed-chat pick, GitHub
 setup, health/operate) but differ in tenancy (local-single vs hosted-multi) and in what they
 drive (local child process vs remote container over an HTTP bridge). **Nobody has decided
-whether the SaaS dashboard reuses/extends the supervisor app or is a fresh build.** demo-stack
-being a from-scratch Next.js+better-auth+Polar scaffold implies "fresh build," but that is
+whether the SaaS dashboard reuses/extends the supervisor app or is a fresh build.** The imported
+Next.js+better-auth+Polar scaffold implies "fresh build," but that is
 unratified and is the load-bearing fork.
 
 ### What "the whole diagonal" means — scope all of this end to end
@@ -78,13 +78,11 @@ not just the six runtime decisions.
     single-owner lease (← T-A, T-B).
   - Aaron has kicked off **T-A/B/E/F in parallel windows** — expect concurrent edits to the
     tracker. Do not resolve those; your job is scoping, not racing them.
-- **`demo-stack/`** — the control-plane scaffold: `apps/web` (Next.js dashboard), `apps/server`
-  (Hono/oRPC), better-auth + Polar. It is a **nested, gitignored (`demo-stack/*`), own-`.git`
-  repo** (1 commit "initial commit", no remote). Aaron is integrating it into the workspace.
-  **"demo-stack" is a boilerplate NAME, not a permanent home** — the plan says it should be
-  *in-repo* (`SAAS-MVP-PLAN.md:4`); the current gitignored-nested-repo state contradicts that
-  and is transitional. Target: a tracked workspace app that is still a **separate deployable**
-  (own build/Dockerfile), never fused into the agent runtime.
+- **`apps/web` + `apps/api`** — the tracked root control-plane scaffold: Next.js, Hono/oRPC,
+  better-auth, and Polar. It was imported from the temporary donor at commit `00918f0` by
+  PR #189; that donor was transitional and is no longer a workspace or product boundary.
+  The control plane remains a **separate deployable** (own build/Dockerfile), never fused into
+  the agent runtime.
 
 ## Ratified — do not relitigate
 
@@ -99,7 +97,7 @@ not just the six runtime decisions.
   `packages/installation/src/paths.ts`; `ingress-runtime.ts` →
   `packages/engine/src/github/ingress-runtime.ts`; `graph/store.ts` →
   `packages/engine/src/graph/store.ts`; `whatsapp-runtime.ts` →
-  `apps/server/src/host/whatsapp-runtime.ts`; `github-app-client.ts` →
+  `apps/runtime/src/host/whatsapp-runtime.ts`; `github-app-client.ts` →
   `packages/installation/src/github-app-client.ts`.
 
 ## Method (wayfinder + how Aaron wants decisions put to him)
@@ -116,8 +114,8 @@ not just the six runtime decisions.
 
 ## Traps the last session hit (don't repeat)
 
-- Do **not** parrot "demo-stack is the right place." Reason about it: it's a transitional
-  boilerplate, and the plan wants it in-repo.
+- Do **not** treat the temporary donor as a product boundary. The root control plane is
+  `apps/web` + `apps/api`.
 - Do **not** answer narrowly (one ticket) when the ask is the whole web-app scope + integration.
 - `WEB-APP-IA.md` is a **different (local, single-tenant) app** — reconcile it with the SaaS
   control plane; do not assume it already is the SaaS dashboard.
@@ -125,7 +123,7 @@ not just the six runtime decisions.
 ## First moves
 
 1. Read: `SAAS-MVP-PLAN.md`, `WEB-APP-IA.md`, `MEMORY-STATE-SPEC.md`, the #165 map body, and
-   skim `demo-stack/apps/web` + `demo-stack/apps/server`.
+   skim `apps/web` + `apps/api`.
 2. Produce the whole-diagonal scope of the control-plane web app + integration seams, and the
    supervisor-app-vs-SaaS-app reconciliation, as concrete options for Aaron.
 3. Expand map #165 with the missing tickets (web-app product scope, app-home/workspace
