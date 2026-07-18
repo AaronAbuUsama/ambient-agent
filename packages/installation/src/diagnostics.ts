@@ -102,6 +102,37 @@ const LEGACY_APPLICATION_OPTIONAL_SCHEMA = [
   ["github_issue_operation_examinations", ["operation_id", "examined_at"]],
   // ADR 0015: the one-time managed-root migration records its completed move here.
   ["managed_root_migrations", ["source", "migrated_at"]],
+  // The shared graph (MEMORY-STATE-SPEC §3) lives beside the archive in application.sqlite.
+  [
+    "graph_entities",
+    [
+      "entity_id",
+      "type",
+      "properties_json",
+      "confidence",
+      "source_chat_id",
+      "source_message_id",
+      "source_delivery_id",
+      "created_at",
+      "updated_at",
+    ],
+  ],
+  [
+    "graph_relations",
+    [
+      "relation_id",
+      "from_id",
+      "relation",
+      "to_id",
+      "confidence",
+      "source_chat_id",
+      "source_message_id",
+      "source_delivery_id",
+      "created_at",
+      "updated_at",
+    ],
+  ],
+  ["graph_identities", ["platform", "external_id", "entity_id", "display_name"]],
 ] as const satisfies ReadonlyArray<readonly [string, readonly string[]]>;
 const LEGACY_APPLICATION_SCHEMA = new Map<string, readonly string[]>([
   ...LEGACY_APPLICATION_CORE_SCHEMA,

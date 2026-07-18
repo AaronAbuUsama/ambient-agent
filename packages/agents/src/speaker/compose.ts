@@ -8,6 +8,8 @@ import {
   configureIssueManagementRuntime,
   type IssueManagementPolicy,
 } from "../capabilities/issue-management/runtime.ts";
+import { configureGraphStore } from "../capabilities/graph/runtime.ts";
+import type { GraphStore } from "@ambient-agent/engine/graph/store.ts";
 import { configureWhatsAppParticipationPort } from "../capabilities/whatsapp-participation/whatsapp-port.ts";
 import type { WhatsAppParticipationPort } from "../capabilities/whatsapp-participation/whatsapp-port.ts";
 import { installGitHubIngressRuntime } from "@ambient-agent/engine/github/ingress-runtime.ts";
@@ -36,6 +38,8 @@ export interface SpeakerAdapters {
   readonly operations: IssueOperationStore;
   readonly policy: IssueManagementPolicy;
   readonly ingress: SpeakerIngressAdapters;
+  /** The shared graph store, wired so later graph consumers reach it via `getGraphStore()`. */
+  readonly graph?: GraphStore;
   readonly participation?: WhatsAppParticipationPort;
   /** Payload for GET /health; defaults to a static `{ ok: true }`. */
   readonly health?: () => Record<string, unknown>;
@@ -54,6 +58,7 @@ export const composeSpeaker = (adapters: SpeakerAdapters): Hono => {
     adapters.ingress.dispatch,
     adapters.operations,
   );
+  if (adapters.graph !== undefined) configureGraphStore(adapters.graph);
   if (adapters.participation !== undefined) configureWhatsAppParticipationPort(adapters.participation);
   const app = new Hono();
   const health = adapters.health ?? (() => ({ ok: true }));
