@@ -269,7 +269,7 @@ export const createGitHubIngress = (options: {
           chatId,
           ambience: null,
           dispatchId: null,
-          reason: "pull request does not close an issue captured by Ambience",
+          reason: "pull request does not close an issue captured by Speaker",
         });
         return { status: "uncorrelated", deliveryId: delivery.deliveryId, repository };
       }

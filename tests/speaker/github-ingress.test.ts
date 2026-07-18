@@ -61,7 +61,7 @@ const pullRequestOpenedDelivery = (
     },
   }) as GitHubWebhookDelivery;
 describe("GitHub ingress delivery ledger", () => {
-  it("routes a PR link event only when it closes an issue captured by Ambience", async () => {
+  it("routes a PR link event only when it closes an issue captured by Speaker", async () => {
     const store = createGitHubIngressStore(":memory:");
     const operations = createIssueOperationStore(":memory:");
     const dispatched: GitHubIngressInput[] = [];
