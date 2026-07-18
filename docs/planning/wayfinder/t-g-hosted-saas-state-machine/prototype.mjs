@@ -129,7 +129,7 @@ const renderMock = (screen) => {
         <span class="mock-kicker">Revision 4 · all gates ready</span>
         <h2>Bring Ambience online</h2>
         <div class="review-grid"><span>Model <b>Ready</b></span><span>WhatsApp <b>Online</b></span><span>Managed Chats <b>2 selected</b></span><span>GitHub <b>2 repositories</b></span><span>Billing <b>Active</b></span><span>Runtime <b>Setup healthy</b></span></div>
-        <button class="primary wide" data-simulate>${simulatedState === "done" ? "Ambience is online ✓" : "Activate Ambience"}</button>
+        <button class="primary wide" data-activate>Activate Ambience</button>
         <p class="fineprint">Writes one complete config, then restarts the same leased tenant application.</p>
       </div>`,
     operate: `
@@ -242,6 +242,13 @@ document.addEventListener("click", (event) => {
   if (target.hasAttribute("data-simulate")) {
     simulatedState = simulatedState === "done" ? "idle" : "done";
     render();
+  }
+  if (target.hasAttribute("data-activate")) {
+    setCurrent("operate");
+    const toast = document.querySelector("#toast");
+    toast.textContent = "Activation healthy. Ambience is online in Operate.";
+    toast.classList.add("show");
+    setTimeout(() => toast.classList.remove("show"), 4200);
   }
   if (target.hasAttribute("data-repair")) {
     const completed = simulatedState === "repairing";
