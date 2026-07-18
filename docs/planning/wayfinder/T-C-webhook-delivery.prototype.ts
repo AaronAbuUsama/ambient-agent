@@ -7,6 +7,7 @@
  */
 
 export interface VerifiedGitHubDelivery {
+  readonly githubAppId: string;
   readonly deliveryId: string;
   readonly eventName: string;
   readonly installationId: string | null;
@@ -55,7 +56,12 @@ export type ClaimResult =
   | { readonly action: "claimed"; readonly record: OutboxDeliveryRecord }
   | { readonly action: "not-claimed"; readonly reason: "acked" | "not-due" | "unrouted" | "leased" };
 
+/** GitHub delivery GUIDs are idempotency identities within one configured GitHub App. */
+export const deliveryOutboxIdentity = (delivery: Pick<VerifiedGitHubDelivery, "githubAppId" | "deliveryId">): string =>
+  `${delivery.githubAppId}:${delivery.deliveryId}`;
+
 const deliveryIdentityMatches = (existing: OutboxDeliveryRecord, incoming: VerifiedGitHubDelivery): boolean =>
+  existing.githubAppId === incoming.githubAppId &&
   existing.eventName === incoming.eventName &&
   existing.installationId === incoming.installationId &&
   existing.payloadSha256 === incoming.payloadSha256;
@@ -68,7 +74,8 @@ export class DeliveryClaimError extends Error {}
 
 /**
  * Models the receiver transaction. The caller computes payloadSha256 from the
- * verified raw body; the unique deliveryId is the database primary key.
+ * verified raw body; (githubAppId, deliveryId) is the database primary key.
+ * `existing` is the row read through that composite identity.
  */
 export const acceptVerifiedDelivery = (
   existing: OutboxDeliveryRecord | undefined,
@@ -76,7 +83,9 @@ export const acceptVerifiedDelivery = (
 ): AcceptResult => {
   if (existing !== undefined) {
     if (!deliveryIdentityMatches(existing, incoming)) {
-      throw new DeliveryIdentityCollisionError(`GitHub delivery GUID ${incoming.deliveryId} changed identity`);
+      throw new DeliveryIdentityCollisionError(
+        `GitHub App delivery ${deliveryOutboxIdentity(incoming)} changed identity`,
+      );
     }
     return { action: "duplicate", record: existing };
   }
@@ -103,7 +112,7 @@ export const acceptVerifiedDelivery = (
 export const routeDelivery = (record: OutboxDeliveryRecord, tenantId: string): OutboxDeliveryRecord => {
   if (record.tenantId !== null && record.tenantId !== tenantId) {
     throw new DeliveryRouteConflictError(
-      `GitHub delivery GUID ${record.deliveryId} is already pinned to tenant ${record.tenantId}`,
+      `GitHub App delivery ${deliveryOutboxIdentity(record)} is already pinned to tenant ${record.tenantId}`,
     );
   }
   return { ...record, tenantId };

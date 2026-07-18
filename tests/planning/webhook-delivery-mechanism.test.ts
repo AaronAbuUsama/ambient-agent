@@ -7,6 +7,7 @@ import {
   acknowledgeDelivery,
   cappedExponentialRetryDelayMs,
   claimDelivery,
+  deliveryOutboxIdentity,
   isDurableTenantAcknowledgement,
   retryDelivery,
   routeDelivery,
@@ -18,6 +19,7 @@ const receivedAt = "2026-07-18T12:00:00.000Z";
 const receivedAtMs = Date.parse(receivedAt);
 
 const delivery = (overrides: Partial<VerifiedGitHubDelivery> = {}): VerifiedGitHubDelivery => ({
+  githubAppId: "coder-app",
   deliveryId: "delivery-guid-1",
   eventName: "issues",
   installationId: "1234",
@@ -50,7 +52,22 @@ describe("T-C durable delivery contract", () => {
     expect(duplicate.record.tenantId).toBe("tenant-a");
   });
 
-  it("fails closed when a GUID is reused with a different source identity", () => {
+  it("scopes the same GitHub event GUID independently for each configured App", () => {
+    const coderDelivery = delivery({ githubAppId: "coder-app" });
+    const reviewerDelivery = delivery({
+      githubAppId: "reviewer-app",
+      installationId: "5678",
+      tenantId: "tenant-b",
+    });
+
+    expect(deliveryOutboxIdentity(coderDelivery)).toBe("coder-app:delivery-guid-1");
+    expect(deliveryOutboxIdentity(reviewerDelivery)).toBe("reviewer-app:delivery-guid-1");
+    expect(deliveryOutboxIdentity(coderDelivery)).not.toBe(deliveryOutboxIdentity(reviewerDelivery));
+    expect(acceptVerifiedDelivery(undefined, coderDelivery).action).toBe("inserted");
+    expect(acceptVerifiedDelivery(undefined, reviewerDelivery).action).toBe("inserted");
+  });
+
+  it("fails closed when a GUID is reused with a different source identity inside one App", () => {
     const original = accepted();
 
     expect(() =>

@@ -12,15 +12,18 @@ Use a **durable control-plane outbox followed by authenticated tenant push**.
 
 The central GitHub receiver verifies the GitHub signature, derives the event name and delivery GUID from the
 verified headers, reads `installation.id` when present, and commits the complete verified envelope plus any resolved
-route to the control-plane Turso database before returning `202 Accepted` to GitHub. A relay claims due rows under an
-expiring lease and pushes the existing `GitHubWebhookDelivery` shape to the tenant's T-F `POST /deliveries` bridge.
+route and configured GitHub App ID to the control-plane Turso database before returning `202 Accepted` to GitHub. A
+relay claims due rows under an expiring lease and pushes the existing `GitHubWebhookDelivery` shape to the tenant's
+T-F `POST /deliveries` bridge.
 The runtime authenticates the
 request with T-F's purpose-bound `x-ambient-agent-bridge` HMAC and passes the envelope through the existing
 `handleGitHubDelivery(delivery)` funnel without adding a second ingestion path.
 
-This is at-least-once transport. The GitHub delivery GUID is the identity in both ledgers. The control-plane outbox
-owns receipt, routing, retry, and tenant acknowledgement; the existing tenant ingress ledger owns application
-interpretation and Flue Admission. A duplicate wake is harmless under [ADR 0014](./0014-window-delivery-is-an-at-least-once-wake.md).
+This is at-least-once transport. The control plane scopes each GitHub delivery GUID to the configured GitHub App that
+received it; the existing per-tenant ledger keeps using the delivery GUID locally. The control-plane outbox owns
+receipt, routing, retry, and tenant acknowledgement; the existing tenant ingress ledger owns application
+interpretation and Flue Admission. A duplicate wake is harmless under
+[ADR 0014](./0014-window-delivery-is-an-at-least-once-wake.md).
 
 This ADR remains proposed until #168 is ratified. It deliberately does not add production routes, migrations, or
 workers before that gate. The executable contract at
@@ -94,7 +97,7 @@ The production migration should encode this logical record in the control-plane 
 
 ```sql
 CREATE TABLE github_delivery_outbox (
-  delivery_guid       TEXT PRIMARY KEY,
+  delivery_guid       TEXT NOT NULL,
   github_app_id       TEXT NOT NULL,
   event_name          TEXT NOT NULL,
   installation_id     TEXT,
@@ -109,12 +112,16 @@ CREATE TABLE github_delivery_outbox (
   last_error          TEXT,
   tenant_result_json  TEXT,
   received_at         TEXT NOT NULL,
-  acknowledged_at     TEXT
+  acknowledged_at     TEXT,
+  PRIMARY KEY (github_app_id, delivery_guid)
 );
 ```
 
-- **Identity:** `delivery_guid` is [`X-GitHub-Delivery`](https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks#use-the-x-github-delivery-header), which GitHub documents as globally unique and stable across
-  redelivery. A repeated GUID with the same `event_name`, nullable `installation_id`, and `payload_sha256` is an acknowledged
+- **Identity:** `delivery_guid` is
+  [`X-GitHub-Delivery`](https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks#use-the-x-github-delivery-header),
+  which is stable across redelivery. Because the SaaS configures three GitHub Apps that can receive the same GitHub
+  event, the control-plane idempotency key is `(github_app_id, delivery_guid)`, not the GUID globally. A repeated
+  App/GUID pair with the same `event_name`, nullable `installation_id`, and `payload_sha256` is an acknowledged
   duplicate. A mismatch is an integrity collision: return an error, alert, and never overwrite the first row.
 - **Payload:** persist the verified JSON body, event name, installation ID, app ID, and SHA-256 digest in the same
   transaction. Never rely on the later GitHub API to reconstruct the event.
@@ -155,7 +162,7 @@ delivery reconciler:
 - every five minutes, for each configured GitHub App, scan recent delivery attempts with an overlap from the last
   durable successful cursor;
 - request redelivery for attempts GitHub reports failed;
-- let the outbox GUID primary key absorb races and repeats; and
+- let the outbox App/GUID primary key absorb races and repeats; and
 - alert if the reconciler has not completed within GitHub's
   [documented three-day redelivery window](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks#about-redelivering-webhooks).
 
@@ -182,7 +189,8 @@ File these after ratification; each is independently reviewable and all link #16
 1. **Control-plane GitHub receiver + durable outbox** — owners: `apps/api`, `packages/api`, `packages/db`. Add raw-body
    GitHub HMAC verification, installation lookup, the outbox migration/store, insert-before-`202`, GUID collision and
    missing/unknown-installation behavior. Proof: local libsql route tests covering commit failure, exact duplicate,
-   collision, missing installation, and delayed installation registration.
+   same-GUID events from different Apps, collision within one App, missing installation, and delayed installation
+   registration.
 2. **Outbox relay + tenant HTTP adapter** — owners: `apps/api`, `packages/api`. Add atomic claim leases, endpoint
    resolution from `agent_instances`, capped-jitter retry, strict acknowledgement parsing, stalled-row diagnostics,
    and an in-memory tenant adapter. Proof: crash-after-claim, crash-after-tenant-ack, downtime/recovery, auth rejection,
@@ -192,8 +200,9 @@ File these after ratification; each is independently reviewable and all link #16
    `deferred` plus `duplicate/received` to retryable responses. Proof: auth/schema tests and one persisted-GUID restart
    test showing terminal duplicate acknowledgement.
 4. **GitHub App failed-delivery reconciler** — owner: `apps/api`. Persist one scan cursor per App, overlap scans,
-   request redelivery for GitHub-reported failures, expose last-success/stalled health, and rely on the outbox GUID for
-   deduplication. Proof: scripted GitHub adapter tests for receiver downtime, repeat scans, and the three-day alert.
+   request redelivery for GitHub-reported failures, expose last-success/stalled health, and rely on the outbox
+   App/GUID for deduplication. Proof: scripted GitHub adapter tests for receiver downtime, repeat scans, and the
+   three-day alert.
 5. **One-tenant live delivery proof** — owner: deployment/proof. With the control plane and runtime on
    `dokploy-network`, stop the tenant, emit a real GitHub event, prove the central receiver returns `202` and the row
    remains pending, restart the tenant, and prove the same GUID reaches `handleGitHubDelivery` once and both ledgers
@@ -210,6 +219,7 @@ Run:
 pnpm exec vitest run tests/planning/webhook-delivery-mechanism.test.ts
 ```
 
-The check proves exact-GUID deduplication, collision refusal, delayed routing, route pinning, exclusive/expiring
-claims, downtime retry without payload loss, strict tenant acknowledgement, crash-after-ack recovery, and capped
-backoff. It does not claim a production database, HTTP route, or live Dokploy proof exists yet.
+The check proves App-scoped GUID deduplication, cross-App separation, collision refusal, delayed routing, route
+pinning, exclusive/expiring claims, downtime retry without payload loss, strict tenant acknowledgement,
+crash-after-ack recovery, and capped backoff. It does not claim a production database, HTTP route, or live Dokploy
+proof exists yet.
