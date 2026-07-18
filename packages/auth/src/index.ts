@@ -12,6 +12,8 @@ import {
   subscriptionLifecycleEvent,
 } from "./subscription-entitlement";
 
+const polarProProductId = "64122dbf-b3c1-4f6e-ac1d-9139b6570aea";
+
 export const subscriptionEntitlements = createSubscriptionEntitlementStore(client);
 
 export function createAuth() {
@@ -43,7 +45,7 @@ export function createAuth() {
           checkout({
             products: [
               {
-                productId: "64122dbf-b3c1-4f6e-ac1d-9139b6570aea",
+                productId: polarProProductId,
                 slug: "pro",
               },
             ],
@@ -54,7 +56,7 @@ export function createAuth() {
           webhooks({
             secret: env.POLAR_WEBHOOK_SECRET,
             onPayload: async (payload) => {
-              const event = subscriptionLifecycleEvent(payload);
+              const event = subscriptionLifecycleEvent(payload, polarProProductId);
               if (event) await subscriptionEntitlements.reduce(event);
             },
           }),
@@ -73,5 +75,8 @@ export const getEntitlementSnapshot = async (userId: string) => {
   }
 
   const customerState = await polarClient.customers.getStateExternal({ externalId: userId });
-  return entitlementSnapshot(projection, customerState.activeSubscriptions.length > 0);
+  return entitlementSnapshot(
+    projection,
+    customerState.activeSubscriptions.some((subscription) => subscription.productId === polarProProductId),
+  );
 };

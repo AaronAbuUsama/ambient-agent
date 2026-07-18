@@ -21,7 +21,12 @@ const users = [
   "archived-user",
   "confirming-user",
   "signed-user",
+  "unrelated-user",
+  "product-change-user",
+  "first-product-change-user",
+  "unrelated-first-user",
 ];
+const proProductId = "64122dbf-b3c1-4f6e-ac1d-9139b6570aea";
 const scratch = mkdtempSync(join(tmpdir(), "ambient-entitlement-"));
 const databasePath = join(scratch, "control.db");
 
@@ -41,6 +46,7 @@ const event = (
   polarSubscriptionId: `subscription-${userId}`,
   subscriptionStatus,
   cancelAtPeriodEnd: false,
+  entitlingProduct: true,
   ...overrides,
 });
 
@@ -163,6 +169,81 @@ describe.sequential("subscription entitlement projection", () => {
       event("trial-user", "subscription.created", "trialing", "2026-07-18T12:00:00.000Z"),
     );
     expect(await authPackage.subscriptionEntitlements.get("trial-user")).toMatchObject({ status: "trialing" });
+  });
+
+  it("ignores other subscriptions but inactivates the projected subscription when its product changes", async () => {
+    await authPackage.subscriptionEntitlements.reduce(
+      event("product-change-user", "subscription.active", "active", "2026-07-18T12:00:00.000Z", {
+        polarSubscriptionId: "subscription-entitled",
+      }),
+    );
+    await authPackage.subscriptionEntitlements.reduce(
+      event("product-change-user", "subscription.updated", "active", "2026-07-18T13:00:00.000Z", {
+        polarSubscriptionId: "subscription-unrelated",
+        entitlingProduct: false,
+      }),
+    );
+    expect(await authPackage.subscriptionEntitlements.get("product-change-user")).toMatchObject({
+      polarSubscriptionId: "subscription-entitled",
+      status: "active",
+    });
+
+    const changedProduct = await authPackage.subscriptionEntitlements.reduce(
+      event("product-change-user", "subscription.updated", "active", "2026-07-18T14:00:00.000Z", {
+        polarSubscriptionId: "subscription-entitled",
+        entitlingProduct: false,
+      }),
+    );
+    expect(entitlementSnapshot(changedProduct)).toMatchObject({
+      status: "inactive",
+      entitled: false,
+      runtimeStopRequested: true,
+    });
+
+    await authPackage.subscriptionEntitlements.reduce(
+      event("product-change-user", "subscription.active", "active", "2026-07-18T16:00:00.000Z", {
+        polarSubscriptionId: "subscription-new-pro",
+      }),
+    );
+    await authPackage.subscriptionEntitlements.reduce(
+      event("product-change-user", "subscription.past_due", "past_due", "2026-07-18T15:00:00.000Z", {
+        polarSubscriptionId: "subscription-entitled",
+      }),
+    );
+    expect(await authPackage.subscriptionEntitlements.get("product-change-user")).toMatchObject({
+      polarSubscriptionId: "subscription-new-pro",
+      status: "active",
+    });
+  });
+
+  it("keeps first-seen product changes ordered without letting unrelated products block Pro", async () => {
+    await authPackage.subscriptionEntitlements.reduce(
+      event("first-product-change-user", "subscription.updated", "active", "2026-07-18T14:00:00.000Z", {
+        entitlingProduct: false,
+      }),
+    );
+    await authPackage.subscriptionEntitlements.reduce(
+      event("first-product-change-user", "subscription.active", "active", "2026-07-18T13:00:00.000Z"),
+    );
+    expect(await authPackage.subscriptionEntitlements.get("first-product-change-user")).toMatchObject({
+      status: "inactive",
+    });
+
+    await authPackage.subscriptionEntitlements.reduce(
+      event("unrelated-first-user", "subscription.updated", "active", "2026-07-18T14:00:00.000Z", {
+        polarSubscriptionId: "subscription-unrelated",
+        entitlingProduct: false,
+      }),
+    );
+    await authPackage.subscriptionEntitlements.reduce(
+      event("unrelated-first-user", "subscription.active", "active", "2026-07-18T13:00:00.000Z", {
+        polarSubscriptionId: "subscription-pro",
+      }),
+    );
+    expect(await authPackage.subscriptionEntitlements.get("unrelated-first-user")).toMatchObject({
+      polarSubscriptionId: "subscription-pro",
+      status: "active",
+    });
   });
 
   it("keeps end-of-period cancellation entitled until revocation", async () => {
@@ -292,7 +373,7 @@ describe("billing API authorization", () => {
     const { polarClient } = await import("../../packages/auth/src/lib/payments");
     const providerState = vi
       .spyOn(polarClient.customers, "getStateExternal")
-      .mockResolvedValue({ activeSubscriptions: [{}] } as never);
+      .mockResolvedValue({ activeSubscriptions: [{ productId: proProductId }] } as never);
 
     try {
       const handler = new RPCHandler(createAppRouter({ getEntitlementSnapshot: authPackage.getEntitlementSnapshot }));
@@ -309,6 +390,32 @@ describe("billing API authorization", () => {
       expect(result.response.status).toBe(200);
       expect(await result.response.text()).toContain('"confirming"');
       expect(providerState).toHaveBeenCalledWith({ externalId: "confirming-user" });
+    } finally {
+      providerState.mockRestore();
+    }
+  });
+
+  it("does not show confirming for an active subscription to another Polar product", async () => {
+    const { polarClient } = await import("../../packages/auth/src/lib/payments");
+    const providerState = vi
+      .spyOn(polarClient.customers, "getStateExternal")
+      .mockResolvedValue({ activeSubscriptions: [{ productId: "product-unrelated" }] } as never);
+
+    try {
+      const handler = new RPCHandler(createAppRouter({ getEntitlementSnapshot: authPackage.getEntitlementSnapshot }));
+      const result = await handler.handle(new Request("http://localhost/rpc/billing/entitlement", { method: "POST" }), {
+        prefix: "/rpc",
+        context: {
+          auth: null,
+          session: { user: { id: "unrelated-confirming-user" } } as never,
+        },
+      });
+
+      expect(result.matched).toBe(true);
+      if (!result.matched) throw new Error("billing entitlement procedure did not match");
+      expect(result.response.status).toBe(200);
+      expect(await result.response.text()).toContain('"inactive"');
+      expect(providerState).toHaveBeenCalledWith({ externalId: "unrelated-confirming-user" });
     } finally {
       providerState.mockRestore();
     }
@@ -354,9 +461,34 @@ describe("billing API authorization", () => {
     expect(await signed.json()).toEqual({ received: true });
     expect(await authPackage.subscriptionEntitlements.get("signed-user")).toMatchObject({ status: "active" });
   });
+
+  it("does not grant a signed lifecycle event for another Polar product", async () => {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const webhookId = "unrelated-product-event";
+    const body = JSON.stringify(subscriptionPayload("unrelated-user", "active", "product-unrelated"));
+    const signature = createHmac("sha256", process.env.POLAR_WEBHOOK_SECRET!)
+      .update(`${webhookId}.${timestamp}.${body}`)
+      .digest("base64");
+    const response = await authPackage.auth.handler(
+      new Request("http://localhost:3000/api/auth/polar/webhooks", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "webhook-id": webhookId,
+          "webhook-timestamp": String(timestamp),
+          "webhook-signature": `v1,${signature}`,
+        },
+        body,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ received: true });
+    expect(await authPackage.subscriptionEntitlements.get("unrelated-user")).toMatchObject({ status: "inactive" });
+  });
 });
 
-const subscriptionPayload = (userId: string, status: string) => {
+const subscriptionPayload = (userId: string, status: string, productId = proProductId) => {
   const now = new Date().toISOString();
   const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1_000).toISOString();
   return {
@@ -381,7 +513,7 @@ const subscriptionPayload = (userId: string, status: string) => {
       ends_at: null,
       ended_at: null,
       customer_id: `customer-${userId}`,
-      product_id: "product-pro",
+      product_id: productId,
       discount_id: null,
       checkout_id: "checkout-test",
       customer_cancellation_reason: null,
@@ -406,7 +538,7 @@ const subscriptionPayload = (userId: string, status: string) => {
         avatar_url: "https://example.com/avatar.png",
       },
       product: {
-        id: "product-pro",
+        id: productId,
         created_at: now,
         modified_at: now,
         trial_interval: null,

@@ -26,6 +26,7 @@ export interface SubscriptionLifecycleEvent {
   readonly polarSubscriptionId: string;
   readonly subscriptionStatus: string;
   readonly cancelAtPeriodEnd: boolean;
+  readonly entitlingProduct: boolean;
 }
 
 export interface EntitlementProjection {
@@ -49,6 +50,7 @@ const subscriptionEventType = (value: string): value is SubscriptionEventType =>
   subscriptionEventTypes.includes(value as SubscriptionEventType);
 
 const statusFor = (event: SubscriptionLifecycleEvent): EntitlementProjection["status"] => {
+  if (!event.entitlingProduct) return "inactive";
   if (event.type === "subscription.revoked" || event.subscriptionStatus === "unpaid") return "canceled";
   if (event.type === "subscription.past_due" || event.subscriptionStatus === "past_due") return "past_due";
   if (event.subscriptionStatus === "trialing") return "trialing";
@@ -73,7 +75,9 @@ const statusRank: Record<EntitlementProjection["status"], number> = {
 export const subscriptionEventCursor = (event: SubscriptionLifecycleEvent): string => {
   const timestamp = event.occurredAt.getTime().toString().padStart(13, "0");
   const status = statusFor(event);
-  return `${timestamp}:${statusRank[status]}:${event.type}:${event.polarSubscriptionId}`;
+  const rank = event.entitlingProduct ? statusRank[status] : statusRank.canceled;
+  const productScope = event.entitlingProduct ? "entitling" : "non_entitling";
+  return `${timestamp}:${rank}:${productScope}:${event.type}:${event.polarSubscriptionId}`;
 };
 
 const requiredString = (value: unknown, column: string): string => {
@@ -101,7 +105,10 @@ const projectionFrom = (row: Record<string, unknown>): EntitlementProjection => 
   updatedAt: new Date(requiredNumber(row.updated_at_ms, "updated_at_ms")),
 });
 
-export const subscriptionLifecycleEvent = (payload: PolarWebhookPayload): SubscriptionLifecycleEvent | null => {
+export const subscriptionLifecycleEvent = (
+  payload: PolarWebhookPayload,
+  allowedProductId: string,
+): SubscriptionLifecycleEvent | null => {
   if (!subscriptionEventType(payload.type)) return null;
 
   const subscription = payload.data as Subscription;
@@ -116,6 +123,7 @@ export const subscriptionLifecycleEvent = (payload: PolarWebhookPayload): Subscr
     polarSubscriptionId: subscription.id,
     subscriptionStatus: subscription.status,
     cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+    entitlingProduct: subscription.productId === allowedProductId,
   };
 };
 
@@ -150,29 +158,57 @@ export const createSubscriptionEntitlementStore = (database: EntitlementDatabase
     const transaction = await database.transaction("write");
 
     try {
-      const reduction = await transaction.execute({
-        sql: `INSERT INTO subscription_entitlement (
-          id, user_id, polar_customer_id, polar_subscription_id, status,
-          last_event_id, updated_at_ms
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-        ON CONFLICT(user_id) DO UPDATE SET
-          polar_customer_id = excluded.polar_customer_id,
-          polar_subscription_id = excluded.polar_subscription_id,
-          status = excluded.status,
-          last_event_id = excluded.last_event_id,
-          updated_at_ms = excluded.updated_at_ms
-        WHERE subscription_entitlement.last_event_id IS NULL
-          OR excluded.last_event_id > subscription_entitlement.last_event_id`,
-        args: [
-          `subscription:${event.userId}`,
-          event.userId,
-          event.polarCustomerId,
-          event.polarSubscriptionId,
-          status,
-          eventCursor,
-          receivedAt,
-        ],
-      });
+      const reduction = event.entitlingProduct
+        ? await transaction.execute({
+            sql: `INSERT INTO subscription_entitlement (
+              id, user_id, polar_customer_id, polar_subscription_id, status,
+              last_event_id, updated_at_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ON CONFLICT(user_id) DO UPDATE SET
+              polar_customer_id = excluded.polar_customer_id,
+              polar_subscription_id = excluded.polar_subscription_id,
+              status = excluded.status,
+              last_event_id = excluded.last_event_id,
+              updated_at_ms = excluded.updated_at_ms
+            WHERE subscription_entitlement.last_event_id IS NULL
+              OR excluded.last_event_id > subscription_entitlement.last_event_id
+              OR (
+                subscription_entitlement.last_event_id LIKE '%:non_entitling:%'
+                AND subscription_entitlement.polar_subscription_id != excluded.polar_subscription_id
+              )`,
+            args: [
+              `subscription:${event.userId}`,
+              event.userId,
+              event.polarCustomerId,
+              event.polarSubscriptionId,
+              status,
+              eventCursor,
+              receivedAt,
+            ],
+          })
+        : await transaction.execute({
+            sql: `INSERT INTO subscription_entitlement (
+              id, user_id, polar_customer_id, polar_subscription_id, status,
+              last_event_id, updated_at_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ON CONFLICT(user_id) DO UPDATE SET
+              polar_customer_id = excluded.polar_customer_id,
+              status = excluded.status,
+              last_event_id = excluded.last_event_id,
+              updated_at_ms = excluded.updated_at_ms
+            WHERE subscription_entitlement.polar_subscription_id = excluded.polar_subscription_id
+              AND (subscription_entitlement.last_event_id IS NULL
+                OR excluded.last_event_id > subscription_entitlement.last_event_id)`,
+            args: [
+              `subscription:${event.userId}`,
+              event.userId,
+              event.polarCustomerId,
+              event.polarSubscriptionId,
+              status,
+              eventCursor,
+              receivedAt,
+            ],
+          });
 
       if (reduction.rowsAffected > 0 && status !== "active" && status !== "trialing") {
         await transaction.execute({
