@@ -11,8 +11,18 @@ import {
 import type { ChatGptAuthentication } from "./chatgpt-authentication.ts";
 import type { ModelAuthorization } from "./chatgpt-authentication.ts";
 
-export const SPEAKER_MODEL_ID = "gpt-5.6-luna";
-export const SPEAKER_MODEL_SPECIFIER = `openai-codex/${SPEAKER_MODEL_ID}`;
+/**
+ * The one model the managed ChatGPT Codex subscription serves. It belongs to the
+ * credential/provider, not to any single agent — each agent references it through
+ * its own specifier and picks its own `thinkingLevel`, so the Scribe can run cheap
+ * and minimal-thinking on the same credential the Speaker uses.
+ */
+export const LUNA_MODEL_ID = "gpt-5.6-luna";
+const LUNA_MODEL_SPECIFIER = `openai-codex/${LUNA_MODEL_ID}`;
+
+export const SPEAKER_MODEL_ID = LUNA_MODEL_ID;
+export const SPEAKER_MODEL_SPECIFIER = LUNA_MODEL_SPECIFIER;
+export const SCRIBE_MODEL_SPECIFIER = LUNA_MODEL_SPECIFIER;
 
 const PROVIDER_ID = "openai-codex";
 const CODEX_API = "openai-codex-responses";
@@ -76,7 +86,7 @@ export function prepareLunaResponsesLiteRequest(
   headers: Headers,
   body: unknown,
 ): { headers: Headers; body: unknown } {
-  if (!isRecord(body) || body.model !== SPEAKER_MODEL_ID) return { headers, body };
+  if (!isRecord(body) || body.model !== LUNA_MODEL_ID) return { headers, body };
 
   const input = Array.isArray(body.input)
     ? body.input.map((item) =>
@@ -172,8 +182,8 @@ const requestChatGptReadiness = async (authorization: ModelAuthorization, signal
   installLunaResponsesLiteFetch();
   const stream = openAICodexResponsesApi().streamSimple(
     lunaModel({
-      id: SPEAKER_MODEL_ID,
-      name: SPEAKER_MODEL_ID,
+      id: LUNA_MODEL_ID,
+      name: LUNA_MODEL_ID,
       api: CODEX_API,
       provider: PROVIDER_ID,
       baseUrl: CODEX_BASE_URL,
