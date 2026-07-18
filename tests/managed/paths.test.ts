@@ -76,6 +76,7 @@ describe("managed data paths", () => {
       applicationDatabase: "D:\\Agent\\application.sqlite",
       flueDatabase: "D:\\Agent\\flue.sqlite",
       whatsapp: "D:\\Agent\\whatsapp",
+      workspaces: "D:\\Agent\\workspaces",
       logs: "D:\\Agent\\logs",
     });
   });
@@ -141,6 +142,7 @@ describe("managed data paths", () => {
       applicationDatabase: posix.join("/managed", "application.sqlite"),
       flueDatabase: posix.join("/managed", "flue.sqlite"),
       whatsapp: posix.join("/managed", "whatsapp"),
+      workspaces: posix.join("/managed", "workspaces"),
       logs: posix.join("/managed", "logs"),
     });
   });

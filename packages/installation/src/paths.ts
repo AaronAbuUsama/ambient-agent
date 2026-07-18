@@ -23,6 +23,8 @@ export interface ManagedPaths {
   readonly applicationDatabase: string;
   readonly flueDatabase: string;
   readonly whatsapp: string;
+  /** Per-issue Specialist workspaces — the Coder extracts a repo tarball here (#158, §8). */
+  readonly workspaces: string;
   readonly logs: string;
 }
 
@@ -89,6 +91,7 @@ export const managedPaths = (options: ManagedPathEnvironment = {}): ManagedPaths
     applicationDatabase: paths.join(root, "application.sqlite"),
     flueDatabase: paths.join(root, "flue.sqlite"),
     whatsapp: paths.join(root, "whatsapp"),
+    workspaces: paths.join(root, "workspaces"),
     logs: paths.join(root, "logs"),
   };
 };
