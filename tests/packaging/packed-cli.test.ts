@@ -255,6 +255,8 @@ describe("packed ambient-agent executable", () => {
     expect(initialized.stdout).toContain("PACK-TEST");
     expect(initialized.stdout).not.toContain("packed-github-secret");
 
+    const port = await availablePort();
+    await executeAmbientAgent(["--data-dir", dataDirectory, "config", "--port", String(port)], fixtureEnvironment);
     const status = await executeAmbientAgent(["--data-dir", dataDirectory, "status", "--json"], fixtureEnvironment);
     expect(JSON.parse(status.stdout)).toMatchObject({
       state: "ready",
@@ -282,8 +284,6 @@ describe("packed ambient-agent executable", () => {
     `);
     predecessor.close();
 
-    const port = await availablePort();
-    await executeAmbientAgent(["--data-dir", dataDirectory, "config", "--port", String(port)], fixtureEnvironment);
     const runtime = await startPackedRuntime(dataDirectory, port);
     try {
       expect(runtime.health).toMatchObject({
@@ -339,6 +339,8 @@ describe("packed ambient-agent executable", () => {
       initArgs(legacyData),
       migrationEnvironment,
     );
+    const migrationPort = await availablePort();
+    await executeAmbientAgent(["--data-dir", legacyData, "config", "--port", String(migrationPort)], migrationEnvironment);
 
     const migrated = await executeAmbientAgent(["status", "--json"], migrationEnvironment);
     expect(migrated.stderr).toContain(`Moved managed data from ${legacyData} to ${adoptedData}.`);
