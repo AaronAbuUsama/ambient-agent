@@ -103,6 +103,17 @@ const migrationRecorded = (applicationDatabase: string, source: string): boolean
  * provisioned one (secret in the Planner App file), so read it leniently from whichever file
  * carries it rather than through the strict App schema.
  */
+/** Read config.json leniently: the pre-cutover `github.kind: "personal-token"` fails the strict
+ * schema, but the walk still needs its repository hint and must retarget the kind afterwards. */
+const readLegacyManagedConfig = async (path: string): Promise<Record<string, unknown> | undefined> => {
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
+    return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const readLegacyWebhookSecret = async (paths: ManagedPaths): Promise<string | undefined> => {
   for (const path of [paths.githubAppCredentials.planner, paths.legacyGithubCredential]) {
     try {
@@ -212,20 +223,29 @@ export const migrateLegacyManagedData = async (
 
 /**
  * One-time token→App cutover (#153): a retired single-PAT `github.json` is present, so walk
- * the operator through provisioning the three GitHub Apps, then retire the PAT file. Detection
- * is presence of the legacy file — a fresh App install never writes it. `collectTriples` is the
- * guided-paste seam (the CLI prints the per-App checklist and prompts; tests supply fixtures).
- * Fail-closed: the three triples are validated before any file is written, and the PAT file is
- * removed only after all three App files land, so a bad paste leaves the old install intact.
+ * the operator through provisioning the three GitHub Apps, retarget the pre-cutover config, then
+ * retire the PAT file. Detection is presence of the legacy file — a fresh App install never writes
+ * it. `collectTriples` is the guided-paste seam (the CLI prints the per-App checklist and prompts,
+ * seeded with the config's repository; tests supply fixtures). Fail-closed: the three triples are
+ * validated before any file is written, and the PAT file is removed only after all three App files
+ * and the retargeted config land, so a bad paste leaves the old install intact. The pre-153
+ * `config.json` carries `github.kind: "personal-token"`, which the App schema now rejects; without
+ * rewriting it the migrated install would still classify "corrupt" at every readiness check.
  */
 export const migrateManagedGitHubCredential = async (input: {
   readonly paths: ManagedPaths;
-  readonly collectTriples: () => Promise<GitHubAppTriples>;
+  readonly collectTriples: (defaultRepository: string) => Promise<GitHubAppTriples>;
   readonly write?: (path: string, value: unknown) => Promise<void>;
 }): Promise<{ readonly migrated: boolean }> => {
   if (!(await exists(input.paths.legacyGithubCredential))) return { migrated: false };
   const write = input.write ?? atomicWriteManagedConfig;
-  const triples = await input.collectTriples();
+  const legacyConfig = await readLegacyManagedConfig(input.paths.config);
+  const legacyGithub =
+    legacyConfig !== undefined && typeof legacyConfig.github === "object" && legacyConfig.github !== null
+      ? (legacyConfig.github as Record<string, unknown>)
+      : undefined;
+  const defaultRepository = typeof legacyGithub?.defaultRepository === "string" ? legacyGithub.defaultRepository : "";
+  const triples = await input.collectTriples(defaultRepository);
   const credentials = GITHUB_APP_REFERENCES.map((reference) => {
     const result = v.safeParse(GitHubAppCredentialSchema, githubAppCredentialFrom(reference, triples));
     if (!result.success) {
@@ -237,6 +257,9 @@ export const migrateManagedGitHubCredential = async (input: {
   });
   for (const { reference, credential } of credentials) {
     await write(input.paths.githubAppCredentials[reference], credential);
+  }
+  if (legacyConfig !== undefined && legacyGithub !== undefined && legacyGithub.kind !== "github-app") {
+    await write(input.paths.config, { ...legacyConfig, github: { ...legacyGithub, kind: "github-app" } });
   }
   await rm(input.paths.legacyGithubCredential, { force: true });
   return { migrated: true };

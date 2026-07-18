@@ -715,6 +715,27 @@ describe("managed CLI", () => {
     expect(config.stdout()).not.toContain("fake-planner-key");
   });
 
+  it("leaves the coder credential untouched when a github-app rotation is cancelled at review", async () => {
+    const paths = await files();
+    await runCli(
+      ["--data-dir", paths.data, "init", "--chat", "120363000@g.us", "--repository", "owner/repo"],
+      harness(),
+    );
+    const managed = managedPaths({ dataDirectory: paths.data });
+    const coderBefore = await readFile(managed.githubAppCredentials.coder, "utf8");
+
+    const cli = harness();
+    expect(
+      await runCli(["--data-dir", paths.data, "config", "--github-app", "coder"], {
+        ...cli,
+        setupPrompts: { ...cli.setupPrompts, review: async () => false },
+      }),
+    ).not.toBe(0);
+    expect(cli.stderr()).toContain("Configuration cancelled");
+    // The pasted triple must not have been written before the operator confirmed the review.
+    await expect(readFile(managed.githubAppCredentials.coder, "utf8")).resolves.toBe(coderBefore);
+  });
+
   it("configures a dedicated canary group as a managed chat", async () => {
     const paths = await files();
     await runCli(

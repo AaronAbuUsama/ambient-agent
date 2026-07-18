@@ -308,20 +308,23 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .option("--port <port>", "foreground runtime HTTP port")
     .option("--github-app <reference>", "rotate one GitHub App (coder|reviewer|planner) by pasting a fresh triple")
     .action(async (options) => {
-      const paths = await readyManagedPaths("reconfigure");
-      const currentConfig = await readManagedConfig(paths.config);
+      const paths = managedPaths({ dataDirectory: program.opts().dataDir });
       const rotateReference = options.githubApp as GitHubAppReference | undefined;
       if (rotateReference !== undefined && !GITHUB_APP_REFERENCES.includes(rotateReference)) {
         throw new Error("The --github-app reference must be one of coder, reviewer, or planner.");
       }
-      // One-time token->App cutover: a lingering personal-token file is walked to three Apps.
+      // One-time token->App cutover: a lingering personal-token install (config + credential) is
+      // walked to three Apps *before* the readiness gate, which would otherwise reject the
+      // pre-cutover config (kind "personal-token") as corrupt and strand the operator.
       const credentialMigration = await migrateManagedGitHubCredential({
         paths,
-        collectTriples: () => setupPrompts.githubApps(currentConfig.github.defaultRepository),
+        collectTriples: (defaultRepository) => setupPrompts.githubApps(defaultRepository),
       });
       if (credentialMigration.migrated) {
         output.stdout("Provisioned three GitHub Apps and retired the personal-token credential.\n");
       }
+      await readyManagedPaths("reconfigure");
+      const currentConfig = await readManagedConfig(paths.config);
       const currentCredential = await readManagedGitHubAppCredential(paths.githubAppCredentials.planner);
       let selected = {
         jid: options.chat ?? currentConfig.managedChats[0]!,
@@ -390,6 +393,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
       );
       // Rotation re-pastes one App's triple; the Planner file also keeps the runtime webhook secret.
       let rotatedPlanner: typeof currentCredential | undefined;
+      let rotatedSpecialist: { readonly path: string; readonly credential: typeof currentCredential } | undefined;
       if (rotateReference !== undefined) {
         if (!interactive) throw new Error("Rotating a GitHub App requires the interactive guided paste.");
         const triple = await setupPrompts.githubApp(rotateReference, repository);
@@ -399,8 +403,15 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
             ? { webhookSecret: currentCredential.webhookSecret }
             : {}),
         };
-        if (rotateReference === "planner") rotatedPlanner = rotated;
-        else await atomicWriteManagedConfig(paths.githubAppCredentials[rotateReference], rotated);
+        if (rotateReference === "planner") {
+          rotatedPlanner = rotated;
+        } else {
+          // Verify the pasted triple authenticates and reaches the repository, then defer the write
+          // until after the review confirmation so a cancel leaves the existing credential untouched
+          // and a typo'd triple is caught here rather than silently at a later Specialist run (#158).
+          await firstRunServices.verifyGitHub(rotated, repository, authenticationSignal());
+          rotatedSpecialist = { path: paths.githubAppCredentials[rotateReference], credential: rotated };
+        }
       }
       // The runtime's own identity is the Planner App, so it proves access to the repository.
       const plannerCredential = rotatedPlanner ?? currentCredential;
@@ -435,6 +446,10 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           all.findIndex((candidate) => candidate.toLowerCase() === repository.toLowerCase()) === index,
       );
       const runtimePort = options.port === undefined ? currentConfig.runtime.port : parseRuntimePort(options.port);
+      // The verified coder/reviewer credential is committed only now that the review passed.
+      if (rotatedSpecialist !== undefined) {
+        await atomicWriteManagedConfig(rotatedSpecialist.path, rotatedSpecialist.credential);
+      }
       await writeManagedConfiguration(
         paths.config,
         paths.githubAppCredentials.planner,

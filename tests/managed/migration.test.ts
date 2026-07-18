@@ -159,6 +159,24 @@ describe("managed data migration", () => {
     const root = join(homeDirectory, ".ambient-agent");
     const paths = managedPaths({ dataDirectory: root });
     await mkdir(paths.credentials, { recursive: true, mode: 0o700 });
+    // A real pre-153 install: the config.json carries github.kind "personal-token" alongside the
+    // lingering credential file. The App schema now rejects that kind, so the walk must retarget it.
+    await writeFile(
+      paths.config,
+      JSON.stringify({
+        schemaVersion: 1,
+        managedChats: ["120363000@g.us"],
+        model: { provider: "openai-codex", credential: "chatgpt-oauth" },
+        runtime: { port: 3000 },
+        github: {
+          kind: "personal-token",
+          credential: "github",
+          defaultRepository: "owner/repo",
+          allowedRepositories: ["owner/repo"],
+        },
+      }),
+      { mode: 0o600 },
+    );
     await writeFile(
       paths.legacyGithubCredential,
       JSON.stringify({ schemaVersion: 1, kind: "personal-token", token: "retired-pat", webhookSecret: "s" }),
@@ -167,16 +185,22 @@ describe("managed data migration", () => {
 
     const triples = fakeGitHubAppTriples();
     let collected = 0;
+    let seededRepository: string | undefined;
     const result = await migrateManagedGitHubCredential({
       paths,
-      collectTriples: async () => {
+      collectTriples: async (defaultRepository) => {
         collected += 1;
+        seededRepository = defaultRepository;
         return triples;
       },
     });
 
     expect(result).toEqual({ migrated: true });
     expect(collected).toBe(1);
+    // The guided paste is seeded with the config's repository so the per-App checklist is accurate.
+    expect(seededRepository).toBe("owner/repo");
+    // The retired personal-token kind is rewritten so the migrated install validates as github-app.
+    expect(JSON.parse(await readFile(paths.config, "utf8")).github.kind).toBe("github-app");
     // The retired personal-token file is gone; each App file lands with its numeric identifiers.
     await expect(lstat(paths.legacyGithubCredential)).rejects.toMatchObject({ code: "ENOENT" });
     for (const [reference, path] of Object.entries(paths.githubAppCredentials)) {
