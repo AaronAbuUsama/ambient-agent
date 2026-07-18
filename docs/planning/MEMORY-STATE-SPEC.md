@@ -14,11 +14,11 @@ skill standard [#137](https://github.com/AaronAbuUsama/ambient-agent/issues/137)
 ontology schema [#140](https://github.com/AaronAbuUsama/ambient-agent/issues/140),
 Scribe design [#141](https://github.com/AaronAbuUsama/ambient-agent/issues/141),
 state injection [#142](https://github.com/AaronAbuUsama/ambient-agent/issues/142),
-Worker contract [#143](https://github.com/AaronAbuUsama/ambient-agent/issues/143),
+Specialist contract [#143](https://github.com/AaronAbuUsama/ambient-agent/issues/143),
 broadcast fan-out [#144](https://github.com/AaronAbuUsama/ambient-agent/issues/144),
 commitment lifecycle [#146](https://github.com/AaronAbuUsama/ambient-agent/issues/146),
 Scribe cadence [#149](https://github.com/AaronAbuUsama/ambient-agent/issues/149).
-Delivery of Worker results defers to [ADR 0001](../adr/0001-workflow-result-delivery.md).
+Delivery of Specialist results defers to [ADR 0001](../adr/0001-workflow-result-delivery.md).
 The ubiquitous-language entries for this arm (The Graph, Scribe, Entity, Relation,
 Confidence, Provenance, Commitment, Cross-platform identity) land in `CONTEXT.md` via
 [PR #148](https://github.com/AaronAbuUsama/ambient-agent/pull/148) — this spec uses
@@ -28,7 +28,7 @@ that vocabulary and does not restate it.
 ([#147](https://github.com/AaronAbuUsama/ambient-agent/issues/147)) is a **suite**
 decision, not a memory & state one — it was ratified in parallel (the standalone
 Reviewer: a PR opens, it runs, posts a verdict under `reviewer[bot]`, owns no loop).
-It consumes the same Worker contract and identity model the Coder does, so nothing
+It consumes the same Specialist contract and identity model the Coder does, so nothing
 here waits on it; where the Reviewer would slot in, this spec points at the Coder
 template ([#136](https://github.com/AaronAbuUsama/ambient-agent/issues/136)) it
 inherits and moves on. Its implementation issue (a sibling of #158) is suite build
@@ -39,7 +39,7 @@ work, out of scope for this spec.
 ## 1. The shape, in one picture
 
 Two agents run **per WhatsApp thread** — the **Speaker** (talks) and the **Scribe**
-(never talks, only writes the graph). Three **Workers** — Coder, Reviewer, Planner —
+(never talks, only writes the graph). Three **Specialists** — Coder, Reviewer, Planner —
 are workflow-wrapped agents launched on demand, each its own GitHub App identity,
 each returning its result as an input. One **shared graph** in `application.sqlite`
 is the only cross-thread, cross-agent memory. GitHub events **broadcast** to every
@@ -74,26 +74,27 @@ flowchart TB
   GRAPH --> SPKB
   SPKA -->|record_entity / merge_entities<br/>confirmed resolutions only| GRAPH
 
-  subgraph workers["Workers (workflow-wrapped, own GitHub App each)"]
+  subgraph specialists["Specialists (workflow-wrapped, own GitHub App each)"]
     CODER["Coder"]
     REV["Reviewer (#147)"]
     PLAN["Planner"]
   end
   SPKA -->|start_coder_job(invoke) → runId| CODER
   CODER -->|acts on GitHub under its App| GH
-  CODER -.->|worker.result via ADR 0001<br/>instrument() durable-gated bridge| FUNNEL
+  CODER -.->|specialist.result via ADR 0001<br/>instrument() durable-gated bridge| FUNNEL
   GRAPH -->|pushed digest + lookup_graph, read-only| CODER
 ```
 
 Key properties the picture encodes:
 
 - **The funnel is the one seam.** WhatsApp windows, broadcast GitHub events, and
-  `worker.result` all arrive at `dispatchSpeaker` (today `dispatchAmbience`,
+  `specialist.result` all arrive at `dispatchSpeaker` (today `dispatchAmbience`,
   `packages/agents/src/ambience/dispatch.ts:19`). Both the digest computation and
   the Scribe fan-out live there, so both agents see the whole input stream by
   construction.
-- **The Scribe never blocks the Speaker.** Its fan-out is detached
-  (`void dispatchScribe(...).catch`) and runs *after* the Speaker's receipt.
+- **The Scribe never blocks the Speaker.** Its fan-out is detached and
+  debounced (`scribeCoalescer.offer({ id, input })`, §4) and runs *after* the
+  Speaker's receipt.
 - **The graph is unwelded from routing.** Broadcast does zero graph queries; the
   graph is purely the knowledge base.
 
@@ -105,7 +106,7 @@ Five named agents in two run modes, connected only by the shared graph.
 
 | Agent | Run mode | Talks? | GitHub identity | Responsibility |
 |---|---|---|---|---|
-| **Speaker** | Continuing per-thread instance (`dispatch`, durable transcript) | Yes | Shares the **Planner** App for inline issue-filing (§7) | Manages one thread and responds. Talk/stay-silent per window. Quick inline actions; launches Workers for real work, never blocks. Replaces "Ambience". |
+| **Speaker** | Continuing per-thread instance (`dispatch`, durable transcript) | Yes | Shares the **Planner** App for inline issue-filing (§7) | Manages one thread and responds. Talk/stay-silent per window. Quick inline actions; launches Specialists for real work, never blocks. Replaces "Ambience". |
 | **Scribe** | Continuing per-thread instance, same input stream, debounced | Never | None | Extracts ontology into the graph. Its only tools write/read the graph. |
 | **Coder** | Workflow-wrapped (`defineWorkflow({ agent })`, fresh context per run) | Via GitHub | Own App (`github-coder.json`) | Long-running implementation → PR. |
 | **Reviewer** | Workflow-wrapped | Via GitHub | Own App (`github-reviewer.json`) | Reviews PRs; its approval counts (§7). Standalone-Reviewer shape ratified in #147. |
@@ -113,7 +114,7 @@ Five named agents in two run modes, connected only by the shared graph.
 
 **Two run modes, grounded in Flue.** *Continuing* agents (Speaker, Scribe) own a
 canonical conversation stream, namespaced by `(agent, id=chatId)`, rebuilt as
-context every dispatch. *Workflow-wrapped* agents (the Workers) get a fresh `runId`
+context every dispatch. *Workflow-wrapped* agents (the Specialists) get a fresh `runId`
 and fresh state per `invoke()`, return a validated result, and end; their long-term
 memory is the graph plus GitHub itself, never an accumulated transcript.
 
@@ -270,7 +271,7 @@ export const dispatchSpeaker = async ({ id, input }) => {
 ```
 
 Fanning out at the funnel (not the WhatsApp window dispatcher) means the Scribe sees
-**windows + GitHub events + `worker.result`** by construction. Failure isolation is
+**windows + GitHub events + `specialist.result`** by construction. Failure isolation is
 structural: the fan-out sits after the Speaker's receipt, is never awaited into the
 receipt path, and its errors are caught — a Scribe failure can never re-run or
 re-deliver the Speaker's turn. **No separate Scribe durability ledger**; once Flue
@@ -295,7 +296,7 @@ dispatch **one** combined extraction input per quiet-period-or-cap.
   knobs, eval/feel-tuned later. **No immediate-fire predicate** — nothing the Scribe
   extracts is urgent.
 - **Durability:** best-effort in-memory buffer, no ledger; a crash drops ≤ one
-  `maxWait`, and the graph self-heals. `worker.result` is batched too, backstopped by
+  `maxWait`, and the graph self-heals. `specialist.result` is batched too, backstopped by
   the redundant `pull-request.opened` webhook path (Seam #1) — no bypass.
 - **Freshness contract:** uniform cadence across extraction kinds; the advisory cache
   (Q3) absorbs the lag; #146 owns any tighter commitment freshness.
@@ -330,7 +331,7 @@ get a handler check before commit.
 - **Earned extraction:** the Scribe writes only what a consumer will read.
   `mentions` **liberal** (free signal); `discusses`/`interested_in` **conservative**
   (they feed proactive speaking, where false positives are spam).
-- **Seam #1 — a finished job becomes a graph fact:** from the `worker.result` window
+- **Seam #1 — a finished job becomes a graph fact:** from the `specialist.result` window
   the Scribe writes the graph-only earned edges **`works_on`** and **`resolves`** —
   *not* the PR's labels/body (GitHub serves those). Upsert + unique edges make it
   idempotent, so the redundant `pull-request.opened` webhook triggering the same
@@ -358,7 +359,7 @@ proactively and richly up front; the pull tool is the fallback for depth.
 ### Both, pull-first (D1)
 
 - **Pull (the floor):** `lookup_graph` — the same read primitive the Scribe has, one
-  shared tool; makes the confirm loop (D5) and Worker depth-read possible.
+  shared tool; makes the confirm loop (D5) and Specialist depth-read possible.
 - **Push (layered on top):** a proactive digest on the input.
 
 ### The digest (D2/D3) — plain code at the funnel, a flat input field
@@ -410,22 +411,22 @@ the existing `say` tool. Invariant in spirit: **Scribe writes observed facts; Sp
 writes only user-confirmed resolutions** — non-overlapping intents, both safe on
 single-file SQLite.
 
-### Workers share the read surface, read-only (D6)
+### Specialists share the read surface, read-only (D6)
 
 `buildGraphDigest` and `lookup_graph` have **three consumers**, one implementation
-each. Workers get the **pushed digest** (seeded from the job's issue/PR/repo +
+each. Specialists get the **pushed digest** (seeded from the job's issue/PR/repo +
 launching thread, called from both the launch tool and the webhook launch path) and
-mount `lookup_graph`. **Workers are read-only** — their discoveries route home as
-graph facts through `worker.result → Scribe` (Seam #1); a Worker write tool would
+mount `lookup_graph`. **Specialists are read-only** — their discoveries route home as
+graph facts through `specialist.result → Scribe` (Seam #1); a Specialist write tool would
 just duplicate that path.
 
-**Three-way split of graph access:** Scribe writes observed (incl. `worker.result`),
+**Three-way split of graph access:** Scribe writes observed (incl. `specialist.result`),
 reads for resolution · Speaker reads (digest + `lookup_graph`), writes confirmed
-resolutions only · Workers read-only.
+resolutions only · Specialists read-only.
 
 > **Record reconciliation — the digest is not a routing primitive.** #142 D6's seam
 > note said `buildGraphDigest` is #144's routing primitive. The
-> [#142 reconciliation comment](https://github.com/AaronAbuUsama/ambient-agent/issues/142#issuecomment)
+> [#142 reconciliation comment](https://github.com/AaronAbuUsama/ambient-agent/issues/142#issuecomment-5007861937)
 > superseded that after #144 landed on broadcast: the digest is purely the Speaker's
 > per-thread read context, not a routing input, and there is no coordinating router.
 > Everything else in #142 stands.
@@ -446,8 +447,8 @@ them.
   thread's Speaker; each judges relevance; silence is valid. This collapses all four
   original sub-questions (granularity, cold-start, caps/dedup, no-match) — everyone
   receives everything once, day one, with zero graph data.
-- **Worker return address (Decision 2):** a job result needs *one* home, so it can't
-  broadcast. With the map deleted, worker-return resolves the repo's home chat
+- **Specialist return address (Decision 2):** a job result needs *one* home, so it can't
+  broadcast. With the map deleted, specialist-return resolves the repo's home chat
   straight from managed config (`configuration.github.defaultRepository →
   managedChats[0]`). The repo→chat mapping survives **only** for this consumer.
 - **Upgrade path (Decision 3), deferred until it hurts:** the Scribe still writes
@@ -470,7 +471,7 @@ we want to lean on.
 It is the only model where the **Reviewer's approval satisfies branch protection** (a
 PR-author identity can never self-approve; `github-actions[bot]`/Copilot approvals
 don't count — #134), it is free and unlimited (vs. machine accounts' per-seat +
-one-free-per-person ToS cap), and each Worker gets an isolated rate-limit bucket.
+one-free-per-person ToS cap), and each Specialist gets an isolated rate-limit bucket.
 
 - **Credential store:** one file per App, `credentials/github-{coder,reviewer,planner}.json`,
   each `{ schemaVersion, kind: "github-app", appId, installationId, privateKey, webhookSecret? }`,
@@ -500,35 +501,57 @@ superseded when the token→App cutover lands.
 
 ---
 
-## 8. The Worker contract (#143) → Coder (#136); delivery via ADR 0001
+## 8. The Specialist contract (#143) → Coder (#136); delivery via ADR 0001
 
-### Launch — per-Worker typed tools from a chat-bound factory
+### Launch — per-Specialist typed tools from a chat-bound factory
 
-The Speaker mounts **one typed tool per Worker** (`start_coder_job`, `start_review`,
+The Speaker mounts **one typed tool per Specialist** (`start_coder_job`, `start_review`,
 `start_planning`) from a chat-bound factory in a **new "delegation" capability**
 (joining `issue-management`, `whatsapp-participation`). Each tool's input schema **is**
-its Worker's workflow input schema (one source of truth); each tool's prose is
+its Specialist's workflow input schema (one source of truth); each tool's prose is
 independently eval-gated. The handler calls `invoke(workflow, { input })` → `{runId}`
 without waiting, records the launch in the **run ledger**, and returns immediately.
-Rejected: one generic `start_worker(kind, input)` (untyped at the boundary).
+Rejected: one generic `start_specialist(kind, input)` (untyped at the boundary).
 
 **Job input** carries: the return address (`chatId`, optional), the work reference,
 instructions, and `graphContext` (the pushed digest, §5).
 
 ### Return — result comes back as an input, via the durable-gated bridge
 
-A completed run returns as a **`worker.result` member of the input union** (alongside
+A completed run returns as a **`specialist.result` member of the input union** (alongside
 `whatsapp.window`, `github.issue.opened`, …) to the launcher-resolved `chatId`:
 Speaker-launched → its own chatId; webhook-launched → the config default (§6
 Decision 2); no route → the job still runs, result rests in the run record.
 
+**Shape — an envelope, not the payload itself.** The member is the same for every
+Specialist, but the transport facts and each Specialist's own output live at *different
+levels*, so `specialist.result` is an **envelope** with the workflow-specific payload
+nested under `result`:
+
+```ts
+specialist.result = {
+  chatId?, runId,
+  status: "ok" | "interrupted",   // TRANSPORT status — the boot-sweep (§ Failure) sets
+                                   // "interrupted" with no Specialist payload at all
+  graphContext?,                  // the flat digest field (§5), rides on the envelope
+  result,                         // WORKFLOW-specific: e.g. the Coder's
+                                  //   { outcome: "opened-pr" | "blocked" | …, prUrl?, summary? }
+};
+```
+
+This is forced, not a preference: the boot-sweep emits an interrupted result *before any
+payload exists*, and the three Specialists (Coder/Reviewer/Planner) return different
+`result` bodies under one shared union member — a flat `specialist.result = CoderResult`
+can represent neither. `graphContext` staying flat on the member honors §5 (it is not
+double-wrapped); only the workflow output nests.
+
 **Mechanism = ADR 0001's single generic `instrument()` interceptor.** It wraps every
 run and, *after* the run is **Durably Terminal**, reads the durable record via
-`getRun()` and dispatches `worker.result` to `input.chatId` — dispatched to
+`getRun()` and dispatches `specialist.result` to `input.chatId` — dispatched to
 `dispatchSpeaker`, so both Speaker and Scribe see it.
 
 > **Why not self-dispatch.** The lifecycle persists `run_end` *after* `run()`
-> returns, so a Worker self-dispatching its result from inside `run()` fires *before*
+> returns, so a Specialist self-dispatching its result from inside `run()` fires *before*
 > durable-terminal — a crash in that window tells the chat "completed" about a run
 > that recovery still shows `active`. ADR 0001 considered and rejected self-dispatch
 > for exactly this; `observe()` is telemetry-only, not transport.
@@ -541,7 +564,7 @@ run and, *after* the run is **Durably Terminal**, reads the durable record via
   `runId`s for this chat and their live status/events via `getRun()` — an on-request
   pull, and the Speaker's memory of what it launched across restarts.
 - **Milestone:** the rare domain-significant subset worth interrupting the thread,
-  re-dispatched as a `worker.milestone` input (ADR 0001's `workflow.progress`). Quiet
+  re-dispatched as a `specialist.milestone` input (ADR 0001's `workflow.progress`). Quiet
   by default.
 
 ### Failure — boot reconciliation
@@ -549,8 +572,8 @@ run and, *after* the run is **Durably Terminal**, reads the durable record via
 Node has no automatic workflow recovery; an interrupted run stays `active` and the
 bridge never fires. So the run ledger is **swept on process startup** (the
 `operation-store.ts:158` move): any launch recorded before this boot and still
-unsettled → dispatch `worker.result` with `status: "interrupted"` so the Speaker can
-tell the thread and offer relaunch. In-run errors the Worker handles and recovers
+unsettled → dispatch `specialist.result` with `status: "interrupted"` so the Speaker can
+tell the thread and offer relaunch. In-run errors the Specialist handles and recovers
 from stay private telemetry.
 
 ### Idempotency — natural keys first (principle C)
@@ -563,7 +586,7 @@ issue store, never extending it. The **run ledger is launch memory, not an
 idempotency key** — a relaunched dead job is a *new* `runId`, so idempotency keys on
 GitHub state.
 
-### The Coder (#136) — first consumer, sets the Worker-capability template
+### The Coder (#136) — first consumer, sets the Specialist-capability template
 
 - **Full sandbox, config-bound.** A Coder needs a real toolchain (install/typecheck/
   test/iterate). The capability is written against Flue's `SandboxFactory`
@@ -582,8 +605,10 @@ GitHub state.
 - **Job input:** `{ repository, issue, instructions?, chatId?, graphContext? }` —
   issue-only for v1.
 - **Definition of done:** green-gate — non-draft PR only when the suite is green; if
-  still red after N attempts, a **draft** PR with `status:"blocked"` and the failure
-  in `summary`. Red work is never presented as done.
+  still red after N attempts, a **draft** PR with `result.outcome:"blocked"` (the
+  Coder's workflow output, nested under the envelope's `result`; distinct from the
+  transport `status`) and the failure in `result.summary`. Red work is never
+  presented as done.
 - **Relaunch after boot-sweep:** **Speaker-asks-the-chat** — the idempotent key makes
   auto-relaunch *safe*, but a Coder job is expensive and outward-facing, so it follows
   confirm-before-repeating-an-outward-action.
@@ -592,7 +617,7 @@ GitHub state.
 **The reusable template #147 inherits:** full sandbox config-bound · Octokit tarball
 in / Git Data API out · deterministic natural keys, no opaque store where a natural
 key exists · app code owns GitHub I/O, model gets workspace + `lookup_graph`, lean
-eval-gated SKILL · idempotent keys make relaunch safe but outward Workers ask.
+eval-gated SKILL · idempotent keys make relaunch safe but outward Specialists ask.
 
 ---
 
@@ -646,7 +671,7 @@ doc `docs/agents/skill-authoring.md`.
 - This is the *product* standard, **not** the workshop `writing-great-skills`.
 
 This standard governs the Scribe extraction SKILL (§4), delegation prose (§8), and
-each Worker's SKILL (§8, #147).
+each Specialist's SKILL (§8, #147).
 
 ---
 
@@ -678,8 +703,8 @@ native dependencies; `A → B` means A blocks B.
 | [#155](https://github.com/AaronAbuUsama/ambient-agent/issues/155) | Scribe agent: funnel fan-out + debounced coalescer | #152 | §4, §9 |
 | [#156](https://github.com/AaronAbuUsama/ambient-agent/issues/156) | State injection: digest + `graphContext` + Speaker read/resolution surface | #152 | §5 |
 | [#154](https://github.com/AaronAbuUsama/ambient-agent/issues/154) | Broadcast ingress: delete the static map | — | §6 |
-| [#157](https://github.com/AaronAbuUsama/ambient-agent/issues/157) | Delegation transport: run ledger, boot sweep, ADR 0001 bridge, `worker.result`/`worker.milestone` | #154 | §8 |
-| [#158](https://github.com/AaronAbuUsama/ambient-agent/issues/158) | Coder workflow: first Worker, sets the template | #157, #153, #156 | §8 |
+| [#157](https://github.com/AaronAbuUsama/ambient-agent/issues/157) | Delegation transport: run ledger, boot sweep, ADR 0001 bridge, `specialist.result`/`specialist.milestone` | #154 | §8 |
+| [#158](https://github.com/AaronAbuUsama/ambient-agent/issues/158) | Coder workflow: first Specialist, sets the template | #157, #153, #156 | §8 |
 | [#150](https://github.com/AaronAbuUsama/ambient-agent/issues/150) | Rename Ambience → Speaker across code | — (land first) | §2 |
 
 Build order: the **graph store** and **credential migration** are the two roots.
