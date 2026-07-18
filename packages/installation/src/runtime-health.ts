@@ -91,8 +91,10 @@ export const probeAmbientRuntimeHealth = async (options: {
     const value = (await response.json()) as Record<string, unknown>;
     const runtime = value.runtime as Record<string, unknown> | undefined;
     const whatsapp = runtime?.whatsapp as Record<string, unknown> | undefined;
+    const runtimeIdMatches =
+      value.runtimeId === options.installationId || value.installationId === options.installationId;
     if (
-      value.runtimeId !== options.installationId ||
+      !runtimeIdMatches ||
       !runtimeStates.has(runtime?.state as AmbientRuntimeState) ||
       !whatsappPhases.has(whatsapp?.phase as never)
     ) {

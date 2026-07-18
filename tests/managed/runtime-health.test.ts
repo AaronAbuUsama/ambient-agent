@@ -48,6 +48,20 @@ describe("managed runtime health", () => {
     ).resolves.toEqual({ state: "starting", whatsapp: { phase: "pairing" } });
   });
 
+  it("keeps the live-runtime guard compatible with legacy installationId health responses", async () => {
+    await expect(
+      probeAmbientRuntimeHealth({
+        port: 4321,
+        installationId: "expected-installation",
+        fetch: async () =>
+          Response.json({
+            installationId: "expected-installation",
+            runtime: { state: "healthy", whatsapp: { phase: "online" } },
+          }),
+      }),
+    ).resolves.toEqual({ state: "healthy", whatsapp: { phase: "online" } });
+  });
+
   it("classifies a failed local connection as stopped without process inference", async () => {
     await expect(
       probeAmbientRuntimeHealth({
