@@ -1,6 +1,10 @@
 import * as v from "valibot";
 
 import { GITHUB_REPOSITORY_PATTERN } from "@ambient-agent/engine/github/repository.ts";
+import {
+  DEFAULT_AGENT_MODEL_PROFILES,
+  MODEL_THINKING_LEVELS,
+} from "@ambient-agent/engine/model/pi-subscription.ts";
 
 const GITHUB_CREDENTIAL_REFERENCE = "github";
 const CHATGPT_OAUTH_CREDENTIAL_REFERENCE = "chatgpt-oauth";
@@ -22,6 +26,21 @@ const ManagedChat = v.pipe(
 );
 const RuntimePort = v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(65_535));
 const CanaryGroup = v.pipe(ManagedChat, v.regex(/@g\.us$/, "Expected a WhatsApp group JID"));
+const ModelId = v.pipe(
+  NonBlankString,
+  v.regex(/^[^/\s]+$/, "Expected an OpenAI model ID without a provider prefix"),
+);
+const AgentModelProfileSchema = v.strictObject({
+  id: ModelId,
+  thinkingLevel: v.picklist(MODEL_THINKING_LEVELS),
+});
+const AgentModelProfilesSchema = v.strictObject({
+  speaker: AgentModelProfileSchema,
+  scribe: AgentModelProfileSchema,
+  planner: AgentModelProfileSchema,
+  coder: AgentModelProfileSchema,
+  verifier: AgentModelProfileSchema,
+});
 
 export const ManagedConfigSchema = v.pipe(
   v.strictObject({
@@ -33,6 +52,7 @@ export const ManagedConfigSchema = v.pipe(
         v.literal(CHATGPT_OAUTH_CREDENTIAL_REFERENCE),
         v.literal(LEGACY_PI_AUTH_CREDENTIAL_REFERENCE),
       ]),
+      profiles: v.optional(AgentModelProfilesSchema, DEFAULT_AGENT_MODEL_PROFILES),
     }),
     runtime: v.optional(v.strictObject({ port: RuntimePort }), { port: 3000 }),
     smoke: v.optional(v.strictObject({ canaryChat: CanaryGroup })),
@@ -97,7 +117,11 @@ export const ChatGptOAuthCredentialSchema = v.looseObject({
 export const createManagedConfig = (managedChats: readonly string[], defaultRepository: string): ManagedConfig => ({
   schemaVersion: 1,
   managedChats: [...managedChats],
-  model: { provider: "openai-codex", credential: CHATGPT_OAUTH_CREDENTIAL_REFERENCE },
+  model: {
+    provider: "openai-codex",
+    credential: CHATGPT_OAUTH_CREDENTIAL_REFERENCE,
+    profiles: DEFAULT_AGENT_MODEL_PROFILES,
+  },
   runtime: { port: 3000 },
   github: {
     kind: "github-app",

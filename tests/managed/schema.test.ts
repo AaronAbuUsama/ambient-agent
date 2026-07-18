@@ -8,6 +8,14 @@ import {
   createManagedConfig,
 } from "../../packages/installation/src/schema.ts";
 
+const EXPECTED_DEFAULT_PROFILES = {
+  speaker: { id: "gpt-5.6-luna", thinkingLevel: "low" },
+  scribe: { id: "gpt-5.6-luna", thinkingLevel: "minimal" },
+  planner: { id: "gpt-5.6-sol", thinkingLevel: "xhigh" },
+  coder: { id: "gpt-5.6-sol", thinkingLevel: "high" },
+  verifier: { id: "gpt-5.6-sol", thinkingLevel: "xhigh" },
+} as const;
+
 const APP_CREDENTIAL = {
   schemaVersion: 1,
   kind: "github-app",
@@ -23,6 +31,7 @@ describe("managed schemas", () => {
     expect(parsed.managedChats).toEqual(["120363000@g.us", "15550000000@s.whatsapp.net"]);
     expect(parsed.github.defaultRepository).toBe("owner/repo");
     expect(parsed.runtime).toEqual({ port: 3000 });
+    expect(parsed.model.profiles).toEqual(EXPECTED_DEFAULT_PROFILES);
   });
 
   it("rejects blank or malformed managed-chat identifiers", () => {
@@ -62,10 +71,67 @@ describe("managed schemas", () => {
   });
 
   it("uses the application-owned ChatGPT credential reference", () => {
-    expect(createManagedConfig(["120363000@g.us"], "owner/repo").model).toEqual({
+    expect(createManagedConfig(["120363000@g.us"], "owner/repo").model).toMatchObject({
       provider: "openai-codex",
       credential: "chatgpt-oauth",
     });
+  });
+
+  it("defaults role model profiles for existing installations and validates overrides", () => {
+    const config = createManagedConfig(["120363000@g.us"], "owner/repo");
+    const { profiles: _profiles, ...legacyModel } = config.model;
+    const legacy = v.parse(ManagedConfigSchema, { ...config, model: legacyModel });
+    expect(legacy.model.profiles).toEqual(EXPECTED_DEFAULT_PROFILES);
+
+    expect(
+      v.parse(ManagedConfigSchema, {
+        ...config,
+        model: {
+          ...config.model,
+          profiles: {
+            ...config.model.profiles,
+            coder: { id: "gpt-5.6-terra", thinkingLevel: "medium" },
+          },
+        },
+      }).model.profiles.coder,
+    ).toEqual({ id: "gpt-5.6-terra", thinkingLevel: "medium" });
+
+    expect(
+      v.safeParse(ManagedConfigSchema, {
+        ...config,
+        model: {
+          ...config.model,
+          profiles: {
+            ...config.model.profiles,
+            verifier: { id: " ", thinkingLevel: "extreme" },
+          },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      v.safeParse(ManagedConfigSchema, {
+        ...config,
+        model: {
+          ...config.model,
+          profiles: {
+            ...config.model.profiles,
+            verifier: { id: "gpt-5.6-sol", thinkingLevel: "max" },
+          },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      v.safeParse(ManagedConfigSchema, {
+        ...config,
+        model: {
+          ...config.model,
+          profiles: {
+            ...config.model.profiles,
+            planner: { id: "anthropic/claude", thinkingLevel: "high" },
+          },
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it("defaults older managed configuration to the discoverable runtime port and validates explicit ports", () => {

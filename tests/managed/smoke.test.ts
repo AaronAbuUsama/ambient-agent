@@ -28,7 +28,11 @@ const readyReport = {
   authentication: { state: "ready" },
   checks: [{ name: "github-access", state: "ready", code: "github.ready", message: "GitHub access verified" }],
   observedRuntime: { state: "healthy", whatsapp: { phase: "online" } },
-  liveCheck: { model: "openai-codex/gpt-5.6-luna", request: "complete" },
+  liveCheck: {
+    model: "openai-codex/gpt-5.6-luna",
+    models: ["openai-codex/gpt-5.6-luna", "openai-codex/gpt-5.6-sol"],
+    request: "complete",
+  },
   uncertainWork: { health: "healthy", externalMutations: 0, total: 0, mutationKinds: {} },
   windowDeliveries: { pending: 0, failed: 0 },
 } satisfies InspectionReport;
