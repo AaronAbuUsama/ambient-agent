@@ -6,6 +6,7 @@ import { dispatchSpeaker } from "@ambient-agent/agents/speaker/dispatch.ts";
 import { createIssueManagementPolicy } from "@ambient-agent/agents/capabilities/issue-management/runtime.ts";
 import { createIssueOperationStore } from "@ambient-agent/engine/github/operation-store.ts";
 import { createGraphStore } from "@ambient-agent/engine/graph/store.ts";
+import { githubAppClient } from "@ambient-agent/installation/github-app-client.ts";
 import { createOctokitIssueRepository } from "@ambient-agent/installation/github-issue-repository.ts";
 import {
   getWhatsAppRuntimeStatus,
@@ -32,7 +33,7 @@ export const createAmbientAgentApp = async ({
   const installationId = runtimeInstallationId(githubCredential.webhookSecret);
   let whatsappControl: WhatsAppRuntimeControl | undefined;
   const app = composeSpeaker({
-    issues: createOctokitIssueRepository(githubCredential.token),
+    issues: createOctokitIssueRepository(githubAppClient(githubCredential)),
     operations: issueOperations,
     policy: createIssueManagementPolicy(
       configuration.github.defaultRepository,

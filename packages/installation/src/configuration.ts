@@ -4,7 +4,12 @@ import { chmod, open, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import * as v from "valibot";
 
-import { GitHubCredentialSchema, ManagedConfigSchema, type GitHubCredential, type ManagedConfig } from "./schema.ts";
+import {
+  GitHubAppCredentialSchema,
+  ManagedConfigSchema,
+  type GitHubAppCredential,
+  type ManagedConfig,
+} from "./schema.ts";
 
 const FILE_MODE = 0o600;
 const MAX_CONFIG_BYTES = 1024 * 1024;
@@ -32,10 +37,10 @@ const readPrivateJson = async <TSchema extends v.BaseSchema<unknown, unknown, v.
 export const readManagedConfig = async (path: string): Promise<ManagedConfig> =>
   await readPrivateJson(path, ManagedConfigSchema);
 
-export const readManagedGitHubCredential = async (path: string): Promise<GitHubCredential> =>
-  await readPrivateJson(path, GitHubCredentialSchema);
+export const readManagedGitHubAppCredential = async (path: string): Promise<GitHubAppCredential> =>
+  await readPrivateJson(path, GitHubAppCredentialSchema);
 
-const atomicWriteManagedConfig = async (path: string, value: unknown): Promise<void> => {
+export const atomicWriteManagedConfig = async (path: string, value: unknown): Promise<void> => {
   const directory = dirname(path);
   const temporary = `${path}.${randomUUID()}.tmp`;
   let handle: Awaited<ReturnType<typeof open>> | undefined;
@@ -68,9 +73,9 @@ export const writeManagedConfiguration = async (
   write: (path: string, value: unknown) => Promise<void> = atomicWriteManagedConfig,
 ): Promise<void> => {
   const validatedConfig = v.parse(ManagedConfigSchema, config);
-  const validatedCredential = v.parse(GitHubCredentialSchema, githubCredential);
+  const validatedCredential = v.parse(GitHubAppCredentialSchema, githubCredential);
   const previousConfig = await readManagedConfig(configPath);
-  const previousCredential = await readManagedGitHubCredential(githubCredentialPath);
+  const previousCredential = await readManagedGitHubAppCredential(githubCredentialPath);
   try {
     await write(githubCredentialPath, validatedCredential);
     await write(configPath, validatedConfig);
@@ -95,7 +100,7 @@ export const ensureManagedGitHubWebhookSecret = async (
   path: string,
   write: (path: string, value: unknown) => Promise<void> = atomicWriteManagedConfig,
 ): Promise<void> => {
-  const credential = await readManagedGitHubCredential(path);
+  const credential = await readManagedGitHubAppCredential(path);
   if (credential.webhookSecret !== undefined) return;
   await write(path, {
     ...credential,

@@ -80,11 +80,13 @@ export const createSession = ({ store }) => {
 const octokitSource = String.raw`
 const ok = async () => ({ data: {} });
 const issues = new Proxy({}, { get: () => ok });
+// App-installation auth: the bot login is derived from apps.getAuthenticated() -> <slug>[bot].
+const apps = { getAuthenticated: async () => ({ data: { slug: "packed" } }) };
 export class Octokit {
   constructor() {
-    this.users = { getAuthenticated: ok };
+    this.apps = apps;
     this.repos = { get: ok };
-    this.rest = { users: this.users, repos: this.repos, issues, search: { issuesAndPullRequests: ok } };
+    this.rest = { apps, users: { getAuthenticated: ok }, repos: this.repos, issues, search: { issuesAndPullRequests: ok } };
   }
   async paginate() { return []; }
 }

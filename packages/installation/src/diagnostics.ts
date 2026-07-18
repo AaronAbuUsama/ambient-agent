@@ -279,16 +279,16 @@ const githubCredentialCheck = async (paths: ManagedPaths): Promise<ManagedCheck>
         name: "github-credential",
         state: "ready",
         code: "github.credential-ready",
-        message: "The app-owned GitHub credential file is a valid private credential.",
+        message: "The three GitHub App credential files are valid private credentials.",
       }
     : {
         name: "github-credential",
         state: "reauthentication-required",
         code: "github.reauthentication-required",
-        message: `The app-owned GitHub credential file is unusable: ${component.diagnostics
+        message: `The GitHub App credential files are unusable: ${component.diagnostics
           .map(({ code }) => code)
           .join(", ")}.`,
-        remediation: "Run ambient-agent config --github-token-file <path> with a valid scoped GitHub token.",
+        remediation: "Run ambient-agent config --github-app <coder|reviewer|planner> and paste a fresh App triple.",
       };
 };
 

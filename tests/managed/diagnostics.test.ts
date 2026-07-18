@@ -22,10 +22,18 @@ describe("managed service diagnostics", () => {
     await Promise.all([
       writeFile(paths.applicationDatabase, ""),
       writeFile(paths.flueDatabase, ""),
-      writeFile(
-        paths.githubCredential,
-        JSON.stringify({ schemaVersion: 1, kind: "personal-token", token: "github-secret" }),
-        { mode: 0o600 },
+      ...Object.values(paths.githubAppCredentials).map((path) =>
+        writeFile(
+          path,
+          JSON.stringify({
+            schemaVersion: 1,
+            kind: "github-app",
+            appId: "123456",
+            installationId: "7891011",
+            privateKey: "-----BEGIN RSA PRIVATE KEY-----\ngithub-secret\n-----END RSA PRIVATE KEY-----\n",
+          }),
+          { mode: 0o600 },
+        ),
       ),
       writeFile(
         join(paths.whatsapp, "creds.json"),
@@ -48,7 +56,7 @@ describe("managed service diagnostics", () => {
     await Promise.all([
       writeFile(paths.applicationDatabase, ""),
       writeFile(paths.flueDatabase, ""),
-      writeFile(paths.githubCredential, "not json with private-token-material", { mode: 0o600 }),
+      writeFile(paths.githubAppCredentials.planner, "not json with private-token-material", { mode: 0o600 }),
       writeFile(join(paths.whatsapp, "creds.json"), JSON.stringify({ registered: true })),
     ]);
 

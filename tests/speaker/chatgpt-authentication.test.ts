@@ -221,7 +221,7 @@ describe("ChatGPT authentication", () => {
         managedChats: ["120363000@g.us"],
         model: { provider: "openai-codex", credential: "pi-auth" },
         github: {
-          kind: "personal-token",
+          kind: "github-app",
           credential: "github",
           defaultRepository: "owner/repo",
           allowedRepositories: ["owner/repo"],

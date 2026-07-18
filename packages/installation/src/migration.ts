@@ -1,9 +1,13 @@
-import { chmod, copyFile, lstat, mkdir, open, readdir, rename, rm } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, open, readdir, readFile, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { readManagedConfig, readManagedGitHubCredential } from "./configuration.ts";
-import { acquireSetupLock, releaseSetupLock } from "./installation.ts";
+import * as v from "valibot";
+
+import { atomicWriteManagedConfig, readManagedConfig } from "./configuration.ts";
+import { acquireSetupLock, githubAppCredentialFrom, releaseSetupLock } from "./installation.ts";
+import { GITHUB_APP_REFERENCES, GitHubAppCredentialSchema, type GitHubAppTriples } from "./schema.ts";
+import { type ManagedPaths } from "./paths.ts";
 import {
   managedPaths,
   resolveLegacyManagedDataDirectory,
@@ -93,6 +97,24 @@ const migrationRecorded = (applicationDatabase: string, source: string): boolean
  * moved tree through open file descriptors. An unreadable legacy config or a
  * port holder that is not verifiably ours cannot block the migration.
  */
+/**
+ * The webhook secret is the runtime's health-probe correlation. This platform-path migration
+ * (ADR 0015) can be moving a pre-App install (secret in the retired `github.json`) or a
+ * provisioned one (secret in the Planner App file), so read it leniently from whichever file
+ * carries it rather than through the strict App schema.
+ */
+const readLegacyWebhookSecret = async (paths: ManagedPaths): Promise<string | undefined> => {
+  for (const path of [paths.githubAppCredentials.planner, paths.legacyGithubCredential]) {
+    try {
+      const parsed = JSON.parse(await readFile(path, "utf8")) as { webhookSecret?: unknown };
+      if (typeof parsed.webhookSecret === "string" && parsed.webhookSecret.length > 0) return parsed.webhookSecret;
+    } catch {
+      // Try the next candidate file.
+    }
+  }
+  return undefined;
+};
+
 const assertLegacyRuntimeStopped = async (
   legacy: string,
   probe: typeof probeAmbientRuntimeHealth,
@@ -101,11 +123,11 @@ const assertLegacyRuntimeStopped = async (
   try {
     const legacyPaths = managedPaths({ dataDirectory: legacy });
     const config = await readManagedConfig(legacyPaths.config);
-    const credential = await readManagedGitHubCredential(legacyPaths.githubCredential);
-    if (credential.webhookSecret === undefined) return;
+    const webhookSecret = await readLegacyWebhookSecret(legacyPaths);
+    if (webhookSecret === undefined) return;
     const health = await probe({
       port: config.runtime.port,
-      installationId: runtimeInstallationId(credential.webhookSecret),
+      installationId: runtimeInstallationId(webhookSecret),
       timeoutMillis: 750,
     });
     state = health.state;
@@ -186,4 +208,36 @@ export const migrateLegacyManagedData = async (
   } finally {
     await releaseSetupLock(lock);
   }
+};
+
+/**
+ * One-time token→App cutover (#153): a retired single-PAT `github.json` is present, so walk
+ * the operator through provisioning the three GitHub Apps, then retire the PAT file. Detection
+ * is presence of the legacy file — a fresh App install never writes it. `collectTriples` is the
+ * guided-paste seam (the CLI prints the per-App checklist and prompts; tests supply fixtures).
+ * Fail-closed: the three triples are validated before any file is written, and the PAT file is
+ * removed only after all three App files land, so a bad paste leaves the old install intact.
+ */
+export const migrateManagedGitHubCredential = async (input: {
+  readonly paths: ManagedPaths;
+  readonly collectTriples: () => Promise<GitHubAppTriples>;
+  readonly write?: (path: string, value: unknown) => Promise<void>;
+}): Promise<{ readonly migrated: boolean }> => {
+  if (!(await exists(input.paths.legacyGithubCredential))) return { migrated: false };
+  const write = input.write ?? atomicWriteManagedConfig;
+  const triples = await input.collectTriples();
+  const credentials = GITHUB_APP_REFERENCES.map((reference) => {
+    const result = v.safeParse(GitHubAppCredentialSchema, githubAppCredentialFrom(reference, triples));
+    if (!result.success) {
+      throw new Error(
+        `The ${reference} GitHub App credential is incomplete; provide a numeric App ID, Installation ID, and private key.`,
+      );
+    }
+    return { reference, credential: result.output } as const;
+  });
+  for (const { reference, credential } of credentials) {
+    await write(input.paths.githubAppCredentials[reference], credential);
+  }
+  await rm(input.paths.legacyGithubCredential, { force: true });
+  return { migrated: true };
 };

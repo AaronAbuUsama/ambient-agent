@@ -134,12 +134,20 @@ export const createSuccessfulPromiseCache = <T>(load: () => Promise<T>): (() => 
   };
 };
 
-type OctokitRequestOptions = NonNullable<ConstructorParameters<typeof Octokit>[0]>["request"];
-
-export const createOctokitIssueRepository = (token: string, request?: OctokitRequestOptions): IssueRepository => {
-  const octokit = new Octokit({ auth: token, userAgent: "ambient-agent-issue-management", request });
+/**
+ * Receives an already-authenticated Octokit (App-installation auth via
+ * {@link githubAppClient}, a PAT, or a fake in tests). The provider author is the App's
+ * `<slug>[bot]` login, derived at runtime from `apps.getAuthenticated()`; comment-ownership
+ * checks compare against it, so the same identity that wrote a comment is the only one that
+ * edits or trusts it.
+ */
+export const createOctokitIssueRepository = (octokit: Octokit): IssueRepository => {
   const providerAuthor = createSuccessfulPromiseCache(async () =>
-    octokit.rest.users.getAuthenticated().then((response) => response.data.login),
+    octokit.rest.apps.getAuthenticated().then((response) => {
+      const slug = response.data?.slug;
+      if (slug === undefined) throw new Error("GitHub did not return the authenticated App slug.");
+      return `${slug}[bot]`;
+    }),
   );
 
   const readIssue = async (repository: RepositoryRef, number: number, signal?: AbortSignal): Promise<Issue> => {
