@@ -89,6 +89,7 @@ const harness = () => {
     interactive: true,
     setupPrompts,
     firstRunServices,
+    runtimeHealthFor: async () => ({ state: "stopped" as const, whatsapp: { phase: "stopped" as const } }),
   };
 };
 
