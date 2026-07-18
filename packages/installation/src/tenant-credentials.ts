@@ -1,4 +1,5 @@
 import { createClient, type Client, type Transaction } from "@libsql/client";
+import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import type { SessionStore } from "whatsappd";
 
@@ -42,11 +43,16 @@ export const tenantCredentialDatabaseFromEnvironment = (
 const createTenantClient = ({ url, authToken }: TenantCredentialDatabase): Client =>
   createClient({ url, timeout: 0, ...(authToken === undefined ? {} : { authToken }) });
 
-const initializeClient = (database: TenantCredentialDatabase, schema: string): (() => Promise<Client>) => {
+const initializeClient = (
+  database: TenantCredentialDatabase,
+  schema: string | readonly string[],
+): (() => Promise<Client>) => {
   const client = createTenantClient(database);
   let ready: Promise<void> | undefined;
   return async () => {
-    ready ??= client.execute(schema).then(() => undefined);
+    ready ??= (typeof schema === "string" ? client.execute(schema) : client.batch([...schema], "write")).then(
+      () => undefined,
+    );
     await ready;
     return client;
   };
@@ -101,7 +107,16 @@ const modelSchema = `
     credential_json TEXT NOT NULL
   )
 `;
+const modelLeaseSchema = `
+  CREATE TABLE IF NOT EXISTS model_credential_leases (
+    provider_id TEXT PRIMARY KEY NOT NULL,
+    owner_token TEXT NOT NULL,
+    expires_at_ms INTEGER NOT NULL
+  )
+`;
 const MAX_CREDENTIAL_BYTES = 1024 * 1024;
+const LEASE_DURATION_MS = 15_000;
+const LEASE_HEARTBEAT_MS = 5_000;
 const localCredentialOperations = new Map<string, Promise<void>>();
 
 const throwIfAborted = (signal?: AbortSignal): void => {
@@ -128,10 +143,7 @@ const beginWriteTransaction = async (client: Client, signal?: AbortSignal): Prom
   }
 };
 
-/**
- * Keep the local libSQL driver from synchronously contending with itself. The
- * database write transaction remains the cross-process/remote integrity lock.
- */
+/** Keep the local libSQL driver from synchronously contending with itself. */
 const serializeLocalCredentialOperation = async <T>(databaseUrl: string, operation: () => Promise<T>): Promise<T> => {
   const predecessor = localCredentialOperations.get(databaseUrl) ?? Promise.resolve();
   const current = predecessor.then(operation);
@@ -159,7 +171,7 @@ const captureTenantCredentials = async (
 ): Promise<TenantCredentialSnapshot> => {
   const client = createTenantClient(database);
   try {
-    await client.batch(scope === "all" ? [whatsappSchema, modelSchema] : [whatsappSchema], "write");
+    await client.batch(scope === "all" ? [whatsappSchema, modelSchema, modelLeaseSchema] : [whatsappSchema], "write");
     const results = await client.batch([
       "SELECT key, value FROM whatsapp_auth_state ORDER BY key",
       ...(scope === "all" ? ["SELECT provider_id, credential_json FROM model_credentials ORDER BY provider_id"] : []),
@@ -193,7 +205,7 @@ const restoreTenantCredentials = async (
 ): Promise<void> => {
   const client = createTenantClient(database);
   try {
-    await client.batch(scope === "all" ? [whatsappSchema, modelSchema] : [whatsappSchema], "write");
+    await client.batch(scope === "all" ? [whatsappSchema, modelSchema, modelLeaseSchema] : [whatsappSchema], "write");
     const transaction = await beginWriteTransaction(client);
     try {
       await transaction.batch([
@@ -263,10 +275,11 @@ const serializeCredential = (value: unknown): string => {
 };
 
 type CredentialExecutor = Pick<Client | Transaction, "execute">;
+type CredentialStatements = Parameters<Transaction["batch"]>[0];
 
 /** A ChatGptCredentialStore whose atomic modify seam is persisted in libSQL. */
 export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDatabase): ChatGptCredentialStore => {
-  const connect = initializeClient(database, modelSchema);
+  const connect = initializeClient(database, [modelSchema, modelLeaseSchema]);
 
   const readStored = async (executor: CredentialExecutor, providerId: string) => {
     const result = await executor.execute({
@@ -282,6 +295,111 @@ export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDat
     return validateChatGptOAuthCredential(JSON.parse(serialized));
   };
 
+  const acquireLease = async (providerId: string, signal?: AbortSignal) => {
+    const client = await connect();
+    const ownerToken = randomUUID();
+    let retryDelay = 20;
+    for (;;) {
+      throwIfAborted(signal);
+      const result = await client.execute({
+        sql: `
+          INSERT INTO model_credential_leases (provider_id, owner_token, expires_at_ms)
+          VALUES (?, ?, CAST(unixepoch('subsec') * 1000 AS INTEGER) + ?)
+          ON CONFLICT(provider_id) DO UPDATE SET
+            owner_token = excluded.owner_token,
+            expires_at_ms = excluded.expires_at_ms
+          WHERE model_credential_leases.expires_at_ms <= CAST(unixepoch('subsec') * 1000 AS INTEGER)
+        `,
+        args: [providerId, ownerToken, LEASE_DURATION_MS],
+      });
+      if (result.rowsAffected === 1) break;
+      await delay(retryDelay, undefined, signal === undefined ? undefined : { signal });
+      retryDelay = Math.min(retryDelay * 2, 500);
+    }
+
+    const heartbeatAbort = new AbortController();
+    let heartbeatFailure: unknown;
+    const heartbeat = (async () => {
+      try {
+        for (;;) {
+          await delay(LEASE_HEARTBEAT_MS, undefined, { signal: heartbeatAbort.signal });
+          const renewed = await client.execute({
+            sql: `
+              UPDATE model_credential_leases
+              SET expires_at_ms = CAST(unixepoch('subsec') * 1000 AS INTEGER) + ?
+              WHERE provider_id = ? AND owner_token = ?
+            `,
+            args: [LEASE_DURATION_MS, providerId, ownerToken],
+          });
+          if (renewed.rowsAffected !== 1) throw new Error("The managed ChatGPT credential lease was lost.");
+        }
+      } catch (cause) {
+        if (!heartbeatAbort.signal.aborted) heartbeatFailure = cause;
+      }
+    })();
+
+    const stopHeartbeat = async (): Promise<void> => {
+      heartbeatAbort.abort();
+      await heartbeat;
+      if (heartbeatFailure !== undefined) throw heartbeatFailure;
+    };
+    const abandon = async (): Promise<void> => {
+      heartbeatAbort.abort();
+      await heartbeat;
+      await client.execute({
+        sql: "DELETE FROM model_credential_leases WHERE provider_id = ? AND owner_token = ?",
+        args: [providerId, ownerToken],
+      });
+    };
+    const finalize = async (statements: CredentialStatements): Promise<void> => {
+      await stopHeartbeat();
+      const transaction = await beginWriteTransaction(client, signal);
+      try {
+        const result = await transaction.execute({
+          sql: `
+            SELECT expires_at_ms > CAST(unixepoch('subsec') * 1000 AS INTEGER) AS is_valid
+            FROM model_credential_leases
+            WHERE provider_id = ? AND owner_token = ?
+          `,
+          args: [providerId, ownerToken],
+        });
+        if (Number(result.rows[0]?.is_valid) !== 1) {
+          throw new Error("The managed ChatGPT credential lease expired before commit.");
+        }
+        await transaction.batch([
+          ...statements,
+          {
+            sql: "DELETE FROM model_credential_leases WHERE provider_id = ? AND owner_token = ?",
+            args: [providerId, ownerToken],
+          },
+        ]);
+        await transaction.commit();
+      } finally {
+        transaction.close();
+      }
+    };
+    return { abandon, finalize };
+  };
+
+  const runLeased = async <T>(
+    providerId: string,
+    operation: (lease: Awaited<ReturnType<typeof acquireLease>>, client: Client) => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> => {
+    const client = await connect();
+    const lease = await acquireLease(providerId, signal);
+    try {
+      return await operation(lease, client);
+    } catch (cause) {
+      try {
+        await lease.abandon();
+      } catch (cleanupCause) {
+        throw new AggregateError([cause, cleanupCause], "Managed ChatGPT credential lease cleanup failed.");
+      }
+      throw cause;
+    }
+  };
+
   const store: ChatGptCredentialStore = {
     async read(providerId, signal) {
       assertChatGptProvider(providerId);
@@ -292,27 +410,30 @@ export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDat
       assertChatGptProvider(providerId);
       return await serializeLocalCredentialOperation(database.url, async () => {
         throwIfAborted(signal);
-        const transaction = await beginWriteTransaction(await connect(), signal);
-        try {
-          const current = await readStored(transaction, providerId);
-          const next = await change(current);
-          throwIfAborted(signal);
-          // No replacement means no write. Let close() roll the reserved write
-          // transaction back instead of issuing a needless commit.
-          if (next === undefined) return current;
-          const credential = validateChatGptOAuthCredential(next);
-          await transaction.execute({
-            sql: `
-              INSERT INTO model_credentials (provider_id, credential_json) VALUES (?, ?)
-              ON CONFLICT(provider_id) DO UPDATE SET credential_json = excluded.credential_json
-            `,
-            args: [providerId, serializeCredential(credential)],
-          });
-          await transaction.commit();
-          return credential;
-        } finally {
-          transaction.close();
-        }
+        return await runLeased(
+          providerId,
+          async (lease, client) => {
+            const current = await readStored(client, providerId);
+            const next = await change(current);
+            throwIfAborted(signal);
+            if (next === undefined) {
+              await lease.finalize([]);
+              return current;
+            }
+            const credential = validateChatGptOAuthCredential(next);
+            await lease.finalize([
+              {
+                sql: `
+                  INSERT INTO model_credentials (provider_id, credential_json) VALUES (?, ?)
+                  ON CONFLICT(provider_id) DO UPDATE SET credential_json = excluded.credential_json
+                `,
+                args: [providerId, serializeCredential(credential)],
+              },
+            ]);
+            return credential;
+          },
+          signal,
+        );
       });
     },
     async replace(providerId, next, signal) {
@@ -320,35 +441,37 @@ export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDat
       const serialized = serializeCredential(next);
       await serializeLocalCredentialOperation(database.url, async () => {
         throwIfAborted(signal);
-        const transaction = await beginWriteTransaction(await connect(), signal);
-        try {
-          await transaction.execute({
-            sql: `
-              INSERT INTO model_credentials (provider_id, credential_json) VALUES (?, ?)
-              ON CONFLICT(provider_id) DO UPDATE SET credential_json = excluded.credential_json
-            `,
-            args: [providerId, serialized],
-          });
-          await transaction.commit();
-        } finally {
-          transaction.close();
-        }
+        await runLeased(
+          providerId,
+          async (lease) =>
+            await lease.finalize([
+              {
+                sql: `
+                  INSERT INTO model_credentials (provider_id, credential_json) VALUES (?, ?)
+                  ON CONFLICT(provider_id) DO UPDATE SET credential_json = excluded.credential_json
+                `,
+                args: [providerId, serialized],
+              },
+            ]),
+          signal,
+        );
       });
     },
     async delete(providerId, signal) {
       assertChatGptProvider(providerId);
       await serializeLocalCredentialOperation(database.url, async () => {
         throwIfAborted(signal);
-        const transaction = await beginWriteTransaction(await connect(), signal);
-        try {
-          await transaction.execute({
-            sql: "DELETE FROM model_credentials WHERE provider_id = ?",
-            args: [providerId],
-          });
-          await transaction.commit();
-        } finally {
-          transaction.close();
-        }
+        await runLeased(
+          providerId,
+          async (lease) =>
+            await lease.finalize([
+              {
+                sql: "DELETE FROM model_credentials WHERE provider_id = ?",
+                args: [providerId],
+              },
+            ]),
+          signal,
+        );
       });
     },
   };

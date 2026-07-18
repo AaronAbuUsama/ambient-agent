@@ -105,6 +105,43 @@ describe("tenant credential storage", () => {
     await expect(createLibsqlChatGptCredentialStore({ url }).read("openai-codex")).resolves.toEqual(rotated);
   });
 
+  it("keeps the database writable while provider I/O runs during credential modification", async () => {
+    const { url } = await fixture("model-provider-io");
+    const models = createLibsqlChatGptCredentialStore({ url });
+    await models.replace("openai-codex", credential({ expires: 1 }));
+
+    let signalProviderStarted!: () => void;
+    const providerStarted = new Promise<void>((resolve) => {
+      signalProviderStarted = resolve;
+    });
+    let releaseProvider!: () => void;
+    const providerReleased = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const modification = models.modify("openai-codex", async () => {
+      signalProviderStarted();
+      await providerReleased;
+      return credential({ access: "slow-provider-rotation", expires: 3_000 });
+    });
+
+    await providerStarted;
+    const unrelatedWrite = libsqlStore({ url }).write({ "provider-io-probe": "written" });
+    try {
+      await expect(
+        Promise.race([
+          unrelatedWrite.then(() => "written"),
+          new Promise<string>((resolve) => setTimeout(() => resolve("timed-out"), 1_000)),
+        ]),
+      ).resolves.toBe("written");
+    } finally {
+      releaseProvider();
+      await Promise.all([modification, unrelatedWrite]);
+    }
+
+    await expect(libsqlStore({ url }).read("provider-io-probe")).resolves.toBe("written");
+    await expect(models.read("openai-codex")).resolves.toMatchObject({ access: "slow-provider-rotation" });
+  });
+
   it("serializes model credential rotation across independent processes", async () => {
     const { url } = await fixture("cross-process-model-libsql");
     await createLibsqlChatGptCredentialStore({ url }).replace("openai-codex", credential({ expires: 1 }));
