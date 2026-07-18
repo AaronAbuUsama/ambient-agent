@@ -1,0 +1,495 @@
+# T-D: Provisioner and single-owner lease
+
+**Status:** recommendation ready for Aaron's ratification
+
+**Scope:** map [#165](https://github.com/AaronAbuUsama/ambient-agent/issues/165), grilling ticket [#169](https://github.com/AaronAbuUsama/ambient-agent/issues/169)
+
+**Decision requested:** ratify Option A below; do not build Options B or C.
+
+## Recommendation
+
+Use one control-plane SQLite/libsql lease row per tenant credentials store, one
+unique stable Dokploy application per credentials store, and a monotonically
+increasing fencing token. A provisioner invocation owns the lease; the tenant
+container does not. Lease expiry permits a new reconcile but does not stop a
+healthy container. Every reconcile targets the same Dokploy `applicationId`,
+whose Swarm service is pinned to one replica.
+
+This is the first Ponytail rung that holds: the control DB already exists,
+SQLite already supplies atomic compare-and-swap, and Dokploy already supplies a
+unique application name plus a single-replica service. No queue, coordinator,
+leader-election service, or new dependency is required.
+
+The safety property is **at most one** live container using a credentials store
+at every instant. When `desired_state = 'running'`, reconciliation adds the
+liveness property: eventually exactly one is live. Literal “exactly one at
+every instant” is neither possible nor desirable during stop, deploy, or crash
+recovery; the credential-wiping failure is the at-most-one violation.
+
+## The problem in the imported code
+
+The SaaS import gives T-D the right seams, but no tenant or lifecycle model yet:
+
+```ts
+// packages/api/src/routers/index.ts:5-15
+export const appRouter = {
+  healthCheck: publicProcedure.handler(() => "OK"),
+  privateData: protectedProcedure.handler(({ context }) => ({
+    message: "This is private",
+    user: context.session?.user,
+  })),
+};
+```
+
+```ts
+// packages/db/src/index.ts:7-14
+export function createDb() {
+  const client = createClient({
+    url: env.DATABASE_URL,
+    authToken: env.DATABASE_AUTH_TOKEN,
+  });
+  return drizzle({ client, schema });
+}
+```
+
+```ts
+// packages/db/src/schema/index.ts:1-2
+export * from "./auth";
+export {};
+```
+
+The API composes the router once at `apps/api/src/index.ts:29-68`, and the
+request context authenticates through Better Auth at
+`packages/api/src/context.ts:8-16`. Polar checkout/portal are already mounted in
+`packages/auth/src/index.ts:32-50`, but the `webhooks()` plugin and
+`onSubscriptionActive` callback are not. The current DB has only Better Auth
+tables (`packages/db/src/schema/auth.ts:4-105`).
+
+The ratified invariant is in `docs/planning/SAAS-MVP-PLAN.md:76-80`; the
+provisioner/schema seam is at `:156-161`. T-B fixes the physical topology:
+
+- the lease, tenant, and agent state live in the one control-plane Turso DB;
+- each tenant gets one Turso DB for WhatsApp and model credentials;
+- `application.sqlite` and `flue.sqlite` remain local to the tenant runtime.
+
+### What this touches
+
+```diff
+ packages/db/src/schema/index.ts
++export * from "./provisioning";
+
++packages/db/src/schema/provisioning.ts
++tenant + agent_instance + provisioner_lease
+
+ packages/api/src/routers/index.ts
++provision: protectedProcedure.input(...).handler(reconcileTenant)
+
++packages/api/src/provisioning/reconcile.ts
++one idempotent reconcile function used by oRPC and Polar
+
+ packages/auth/src/index.ts
+-import { polar, checkout, portal } from "@polar-sh/better-auth";
++import { polar, checkout, portal, webhooks } from "@polar-sh/better-auth";
++webhooks({ secret: env.POLAR_WEBHOOK_SECRET,
++  onSubscriptionActive: ({ data }) => requestTenantReconcile(data) })
+
+ packages/env/src/server.ts
++POLAR_WEBHOOK_SECRET, DOKPLOY_API_URL, DOKPLOY_API_KEY,
++DOKPLOY_ENVIRONMENT_ID, DOKPLOY_SERVER_ID, TURSO_ORG, TURSO_PLATFORM_TOKEN,
++TENANT_SECRET_ENCRYPTION_KEY
+```
+
+Both entry points call the same service function in-process. The verified Polar
+endpoint remains `/api/auth/polar/webhooks`; the webhook does **not** make a
+loopback HTTP call to oRPC. The user oRPC mutation requests/retries the same
+reconcile and is scoped by `context.session.user.id`.
+
+The blast radius is the control API and control DB only. `apps/runtime` receives
+the already-ratified boot inputs (`TENANT_DB_URL`, `TENANT_DB_TOKEN`, and
+`config.json`/equivalent Dokploy file mount) but does not implement lease logic.
+
+## Concrete options
+
+### Option A — control-DB lease + stable Dokploy application (recommended)
+
+```ts
+const provision = protectedProcedure
+  .input(z.object({ tenantId: z.string().min(1) }))
+  .handler(({ input, context }) => requestTenantReconcile(input.tenantId, context.session.user.id));
+
+onSubscriptionActive: ({ data }) => requestTenantReconcileByPolarCustomer(data.customer.externalId);
+```
+
+```ts
+const ownerId = crypto.randomUUID(); // unique per reconcile invocation
+const lease = await acquireLease(credsStoreKey, ownerId, 30_000);
+if (!lease) return { status: "lease_busy" };
+try {
+  return await reconcileTenant(tenantId, lease);
+} finally {
+  await releaseLease(lease); // CAS; harmless after takeover
+}
+```
+
+All remote work uses the one deterministic app name
+`ambient-<base32(tenant.id)>` and then the stored `applicationId`. The Swarm
+service is pinned to the configured MVP worker as well as `replicas=1`; loss of
+that worker therefore gives zero replicas, never a replacement running beside a
+partitioned old task. A crashed
+`application.create` call is recovered by `environment.one`: find the single
+application with the deterministic display `name`, then persist its ID. Dokploy
+itself rejects duplicate `appName` values.
+
+### Option B — keep a DB transaction open across Turso and Dokploy calls
+
+```ts
+await db.transaction(async (tx) => {
+  const tenant = await tx.select(...);
+  await turso.createDatabase(...);      // network call inside DB transaction
+  await dokploy.start(...);             // another network call
+  await tx.update(agentInstance).set(...);
+});
+```
+
+Rejected. SQLite write locks would be held across slow, failure-prone network
+calls, and rollback cannot undo either remote effect. It has worse recovery and
+still provides no external fencing.
+
+### Option C — create a new Dokploy application for every ownership epoch
+
+```ts
+const application = await dokploy.create({
+  name: tenant.id,
+  appName: `ambient-${tenant.id}-${lease.fencingToken}`,
+});
+await dokploy.start({ applicationId: application.applicationId });
+```
+
+Rejected. The fencing token deliberately produces multiple valid remote apps.
+A delayed old app can overlap the new app against the same credentials store —
+the exact `440 connection_replaced` failure this design must make impossible.
+
+### Six-factor rubric
+
+Scores are 1 (poor) to 5 (strong). “Blast radius” scores higher when smaller.
+
+| Option                   | Floor-first | Reversible | Blast radius | Correctness / integrity | Parallelizable | Existing fit |  Total |
+| ------------------------ | ----------: | ---------: | -----------: | ----------------------: | -------------: | -----------: | -----: |
+| A. DB lease + stable app |           5 |          5 |            5 |                       5 |              4 |            5 | **29** |
+| B. Long DB transaction   |           2 |          3 |            2 |                       2 |              1 |            2 |     12 |
+| C. App per fence         |           3 |          2 |            1 |                       1 |              4 |            2 |     13 |
+
+Option A ships the real safety floor now, is removable without changing tenant
+data, confines coordination to three control tables, and matches the imported
+libsql/oRPC seams. Different tenants reconcile in parallel; only invocations for
+the same credentials store serialize.
+
+## Authoritative control schema
+
+The runnable SQL form is in
+`packages/db/prototypes/provisioning-lease.ts`. The eventual Drizzle migration
+must preserve these constraints exactly:
+
+```sql
+CREATE TABLE tenant (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  polar_subscription_id TEXT NOT NULL UNIQUE,
+  tenant_db_name TEXT NOT NULL UNIQUE,
+  tenant_db_url TEXT NOT NULL UNIQUE,
+  tenant_db_token_ciphertext TEXT NOT NULL,
+  config_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(config_json)),
+  config_version INTEGER NOT NULL DEFAULT 1 CHECK (config_version > 0),
+  desired_state TEXT NOT NULL DEFAULT 'stopped'
+    CHECK (desired_state IN ('stopped', 'running', 'deleted'))
+);
+
+CREATE TABLE agent_instance (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL UNIQUE REFERENCES tenant(id) ON DELETE CASCADE,
+  creds_store_key TEXT NOT NULL UNIQUE
+    REFERENCES tenant(tenant_db_name) ON DELETE RESTRICT,
+  dokploy_application_id TEXT UNIQUE,
+  dokploy_app_name TEXT NOT NULL UNIQUE,
+  applied_config_version INTEGER NOT NULL DEFAULT 0,
+  phase TEXT NOT NULL DEFAULT 'pending_input' CHECK (phase IN (
+    'pending_input', 'provisioning', 'starting', 'running', 'stopping',
+    'stopped', 'retryable_error', 'blocked_invariant'
+  )),
+  last_error_code TEXT,
+  updated_at_ms INTEGER NOT NULL
+);
+
+CREATE TABLE provisioner_lease (
+  creds_store_key TEXT PRIMARY KEY
+    REFERENCES agent_instance(creds_store_key) ON DELETE CASCADE,
+  owner_id TEXT,
+  fencing_token INTEGER NOT NULL DEFAULT 0 CHECK (fencing_token >= 0),
+  expires_at_ms INTEGER,
+  acquired_at_ms INTEGER,
+  renewed_at_ms INTEGER,
+  CHECK (
+    (owner_id IS NULL AND expires_at_ms IS NULL) OR
+    (owner_id IS NOT NULL AND expires_at_ms IS NOT NULL)
+  )
+);
+```
+
+`tenant_db_token_ciphertext` is envelope-encrypted before persistence with an
+AES-256-GCM key supplied outside the repository. The tenant runtime receives
+only its own scoped token. Logs, errors, and `config_json` must never contain
+the raw token or model credential.
+
+These uniqueness constraints are the safety spine:
+
+1. `tenant.tenant_db_name UNIQUE` — one physical credential-store identity.
+2. `agent_instance.tenant_id UNIQUE` — one agent instance per MVP tenant.
+3. `agent_instance.creds_store_key UNIQUE` — a credential store cannot be bound
+   to a second agent row.
+4. `dokploy_app_name UNIQUE` — one deterministic remote identity locally.
+5. `dokploy_application_id UNIQUE` — one stored Dokploy service identity.
+6. `provisioner_lease.creds_store_key PRIMARY KEY` — one ownership cell.
+
+## Lease protocol
+
+All time comparisons use Turso/SQLite time, not provisioner host time. TTL is 30
+seconds, renewal is every 10 seconds and immediately before a remote mutation,
+and every remote request has an 8-second client timeout. A timed-out remote
+mutation is treated as “outcome unknown” and resolved by observation, never by
+blindly creating a second resource.
+
+### Acquire
+
+```sql
+INSERT INTO provisioner_lease (
+  creds_store_key, owner_id, fencing_token,
+  expires_at_ms, acquired_at_ms, renewed_at_ms
+) VALUES (
+  ?1, ?2, 1,
+  cast(unixepoch('subsecond') * 1000 as integer) + ?3,
+  cast(unixepoch('subsecond') * 1000 as integer),
+  cast(unixepoch('subsecond') * 1000 as integer)
+)
+ON CONFLICT (creds_store_key) DO UPDATE SET
+  owner_id = excluded.owner_id,
+  fencing_token = CASE
+    WHEN provisioner_lease.owner_id = excluded.owner_id
+      AND provisioner_lease.expires_at_ms > excluded.renewed_at_ms
+      THEN provisioner_lease.fencing_token
+    ELSE provisioner_lease.fencing_token + 1
+  END,
+  expires_at_ms = excluded.expires_at_ms,
+  acquired_at_ms = CASE
+    WHEN provisioner_lease.owner_id = excluded.owner_id
+      AND provisioner_lease.expires_at_ms > excluded.renewed_at_ms
+      THEN provisioner_lease.acquired_at_ms
+    ELSE excluded.acquired_at_ms
+  END,
+  renewed_at_ms = excluded.renewed_at_ms
+WHERE provisioner_lease.owner_id IS NULL
+   OR provisioner_lease.owner_id = excluded.owner_id
+   OR provisioner_lease.expires_at_ms <= excluded.renewed_at_ms
+RETURNING owner_id, fencing_token, expires_at_ms;
+```
+
+No returned row means `lease_busy`. `owner_id` is a fresh UUID per reconcile
+invocation, so two concurrent callbacks in one API process still serialize.
+Re-entry by the same invocation keeps its token; takeover increments it.
+
+### Renew
+
+```sql
+UPDATE provisioner_lease
+SET expires_at_ms = cast(unixepoch('subsecond') * 1000 as integer) + ?4,
+    renewed_at_ms = cast(unixepoch('subsecond') * 1000 as integer)
+WHERE creds_store_key = ?1
+  AND owner_id = ?2
+  AND fencing_token = ?3
+  AND expires_at_ms > cast(unixepoch('subsecond') * 1000 as integer)
+RETURNING owner_id, fencing_token, expires_at_ms;
+```
+
+No returned row means `lease_lost`: stop issuing side effects immediately.
+
+### Release
+
+```sql
+UPDATE provisioner_lease
+SET owner_id = NULL,
+    expires_at_ms = NULL,
+    renewed_at_ms = cast(unixepoch('subsecond') * 1000 as integer)
+WHERE creds_store_key = ?1
+  AND owner_id = ?2
+  AND fencing_token = ?3
+RETURNING fencing_token;
+```
+
+The row is retained so the fencing token never resets. A late release cannot
+clear a successor's lease because both owner and token must match.
+
+### Fenced state write
+
+Every control-state update uses the same owner/token predicate plus
+`expires_at_ms > db_now`. A stale owner therefore cannot report `running`, bind
+an `applicationId`, or advance `applied_config_version`. Dokploy does not accept
+our fence token; safety at that boundary comes from always addressing the one
+stable application whose service is fixed at one replica.
+
+## Idempotent reconcile
+
+The Polar callback first upserts subscription/tenant intent by
+`polar_subscription_id`; duplicate webhook deliveries therefore coalesce. It
+then calls the same reconcile service as the protected oRPC mutation.
+
+For one acquired lease:
+
+1. Re-read `tenant` + `agent_instance`. If subscription is not active, set
+   `desired_state='stopped'`. If required config or captured model credential is
+   absent, set `pending_input` and do not create/start anything.
+2. Ensure the per-tenant Turso DB by deterministic name. “Already exists” is
+   observation, not failure. Mint a scoped token if no decryptable token is
+   recorded; write the encrypted token and URL using a fenced DB update. The
+   runtime writes WhatsApp auth state at pairing; the control plane seeds only
+   the already-captured model credential.
+3. Ensure the Dokploy application. Compute the deterministic display name and
+   `appName`. If `dokploy_application_id` exists, verify it with
+   `GET /api/application.one`. If it is null, query
+   `GET /api/environment.one`, adopt the sole deterministic-name match, or call
+   `POST /api/application.create { name, appName, environmentId }`. After an
+   unknown create outcome, repeat the environment lookup. Zero matches permits
+   retry; more than one is `blocked_invariant` and fail-closed.
+4. Configure the stopped application: Docker image/build settings, exactly one
+   replica, a placement constraint for the configured MVP worker,
+   `dokploy-network`, health check, tenant DB URL/token env, bridge secret, and
+   `config.json` file mount. `config_version` is included in the boot
+   environment. Configuration and credential writes finish before any
+   start/deploy call. Multi-node failover remains disabled: availability loss is
+   preferable to two network-partitioned tasks sharing WhatsApp credentials.
+5. If this is the first deployment, deploy only after step 4. If a live app
+   needs a config/image change, call `application.stop`, observe zero running
+   tasks, apply config, then deploy/start. Never use start-first rolling update
+   or create a replacement app against the same credentials store.
+6. Renew/assert the lease, then call
+   `POST /api/application.start { applicationId }`. Repeating start targets the
+   same single-replica Swarm service. Poll `application.one` plus `/health` and
+   record `running` and `applied_config_version` with a fenced update.
+7. For desired stop/delete, renew, call `application.stop`, observe zero tasks,
+   record `stopped`, then release. Deletion of the app or tenant DB is a
+   separate destructive workflow and is not implied by subscription churn.
+
+No startup sweep needs a new queue: API boot and every relevant read/mutation
+can query `agent_instance` rows in `provisioning|starting|retryable_error` or
+with desired/observed mismatch and call reconcile. A simple periodic retry may
+be added only when the build proves event-driven retries insufficient.
+
+## Crash and restart table
+
+| Crash point                                   | Durable observation on retry                         | Recovery                                                                                |
+| --------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Before acquire                                | No owned lease                                       | Another invocation acquires                                                             |
+| After tenant DB create, before local write    | Deterministic Turso DB exists                        | Get it by name, mint/store scoped token                                                 |
+| After token mint, before local write          | DB exists, token outcome unknown                     | Mint a replacement scoped token; store only the new encrypted token                     |
+| After Dokploy create, before ID write         | Unique deterministic app exists in `environment.one` | Adopt its `applicationId`                                                               |
+| After config write, before version write      | Remote config may already equal desired version      | Reapply same config, then fenced version write                                          |
+| After deploy/start, before `running` write    | Stable application may already be live               | Observe, repeat idempotent start, fenced state write                                    |
+| Owner stalls past expiry                      | Old fence cannot mutate control state                | New owner increments token and reconciles same app                                      |
+| Stop outcome unknown                          | Stable application may be at 0 or 1                  | Observe and repeat stop; never create another app                                       |
+| Duplicate remote-name matches or replicas > 1 | Safety cannot be proven                              | Stop all known matches, mark `blocked_invariant`, require operator proof before pairing |
+
+Lease expiry never deletes credentials, stops a healthy container, or creates a
+new Dokploy application. It only transfers permission to reconcile.
+
+## Failure states and API result
+
+| State/result                             | Meaning                                                    | Retry                                          |
+| ---------------------------------------- | ---------------------------------------------------------- | ---------------------------------------------- |
+| `pending_input`                          | Active subscription lacks config/model credential          | User action, no container start                |
+| `lease_busy`                             | Another invocation owns the unexpired row                  | Return 202/current state; do not spin          |
+| `provisioning` / `starting` / `stopping` | Normal durable intermediate phase                          | Reconcile is idempotent after crash            |
+| `retryable_error`                        | Turso/Dokploy timeout, 429, or 5xx; outcome observed first | Bounded backoff, same stable identities        |
+| `lease_lost`                             | Renew/fenced write returned no row                         | Stop this invocation immediately               |
+| `blocked_invariant`                      | Duplicate identity, >1 replica, secret/config ambiguity    | Fail closed; stop known apps; human inspection |
+| `running` / `stopped`                    | Desired state was observed and fenced into control DB      | No retry unless intent/version changes         |
+
+Secrets are redacted from all failure payloads. A `409/CONFLICT` from deterministic
+Dokploy creation is converted into recovery lookup, not surfaced as a terminal
+error.
+
+## Runnable proof
+
+The committed self-check exercises acquisition contention, renewal, expiry
+takeover, monotonic fencing, stale-owner rejection, release CAS, fenced state
+writes, and the unique credentials-store binding:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm exec tsx packages/db/prototypes/provisioning-lease.ts
+pnpm typecheck
+pnpm lint
+pnpm test
+```
+
+Expected focused output:
+
+```text
+provisioning lease self-check: ok
+```
+
+### Human-only Dokploy proof gate
+
+On Aaron's logged-in Dokploy instance, first confirm the MVP is single-node or
+that the tenant template has an immutable placement constraint to one worker.
+Before the production build calls this done, create one throwaway deterministic
+application with the final tenant template and prove the external assumptions:
+
+```bash
+curl -fsS -H "x-api-key: $DOKPLOY_API_KEY" \
+  "$DOKPLOY_API_URL/api/environment.one?environmentId=$DOKPLOY_ENVIRONMENT_ID" \
+  | jq --arg name "$DOKPLOY_TEST_NAME" \
+      '[.applications[] | select(.name == $name)] | {count:length, ids:map(.applicationId)}'
+
+curl -fsS -X POST -H "x-api-key: $DOKPLOY_API_KEY" \
+  -H 'content-type: application/json' \
+  "$DOKPLOY_API_URL/api/application.start" \
+  -d "{\"applicationId\":\"$DOKPLOY_TEST_APPLICATION_ID\"}"
+# repeat the identical start call, then prove one running Swarm task
+
+curl -fsS -X POST -H "x-api-key: $DOKPLOY_API_KEY" \
+  -H 'content-type: application/json' \
+  "$DOKPLOY_API_URL/api/application.stop" \
+  -d "{\"applicationId\":\"$DOKPLOY_TEST_APPLICATION_ID\"}"
+# repeat the identical stop call, then prove zero running Swarm tasks
+```
+
+Also kill the provisioner after remote create but before the local ID write and
+show that `environment.one` recovers exactly one `applicationId`. This is
+instance/runtime proof, not another product decision.
+
+## Ratification gate
+
+Aaron: ratify **Option A**, specifically these two semantics:
+
+1. the lease owns **reconciliation**, so lease expiry does not kill a healthy
+   tenant container; and
+2. the unique stable Dokploy application plus `replicas=1` is the external
+   at-most-one fence, while the Turso row serializes owners and fences local
+   state.
+
+After that ratification, the artifact graduates into build tickets for the
+control schema, Polar/oRPC reconcile service, Dokploy/Turso clients, boot retry,
+and the one logged-in-instance proof above.
+
+## Verified external basis
+
+- [Dokploy application API](https://docs.dokploy.com/docs/api/application):
+  caller-supplied `appName`; create/one/start/stop/deploy endpoints.
+- [Dokploy environment API](https://docs.dokploy.com/docs/api/environment):
+  `environment.one` recovery lookup.
+- [Dokploy source at `df3965a`](https://github.com/Dokploy/dokploy/blob/df3965a5816700d61c39fd1a13241b5766d7b24e/packages/server/src/db/schema/application.ts#L79-L88):
+  `applicationId` primary key and `appName` unique constraint.
+- [Dokploy create service at `df3965a`](https://github.com/Dokploy/dokploy/blob/df3965a5816700d61c39fd1a13241b5766d7b24e/packages/server/src/services/application.ts#L56-L91):
+  deterministic app-name validation and conflict.
+- [Dokploy lifecycle source at `df3965a`](https://github.com/Dokploy/dokploy/blob/df3965a5816700d61c39fd1a13241b5766d7b24e/packages/server/src/utils/docker/utils.ts#L111-L125):
+  stop scales to zero; [start scales to one](https://github.com/Dokploy/dokploy/blob/df3965a5816700d61c39fd1a13241b5766d7b24e/packages/server/src/utils/docker/utils.ts#L363-L378).
+- [Polar Better Auth adapter](https://polar.sh/docs/integrate/sdk/adapters/better-auth):
+  signed `/api/auth/polar/webhooks` handler and `onSubscriptionActive` callback.
