@@ -15,6 +15,7 @@
     "./capabilities/issue-management/runtime.ts": "./src/capabilities/issue-management/runtime.ts",
     "./capabilities/whatsapp-participation/whatsapp-port.ts": "./src/capabilities/whatsapp-participation/whatsapp-port.ts",
     "./capabilities/delegation/ledger.ts": "./src/capabilities/delegation/ledger.ts",
+    "./capabilities/delegation/bridge.ts": "./src/capabilities/delegation/bridge.ts",
     "./capabilities/coder/workflow.ts": "./src/capabilities/coder/workflow.ts",
     "./capabilities/coder/runtime.ts": "./src/capabilities/coder/runtime.ts"
   },

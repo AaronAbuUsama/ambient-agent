@@ -19,6 +19,7 @@ import {
   upsertPullRequest,
 } from "./github.ts";
 import {
+  coderPullRequestBody,
   coderResult,
   diffSnapshots,
   gitignoreMatcher,
@@ -180,7 +181,7 @@ const run = async ({
       branch,
       base,
       title: `Coder: ${issue.title} (#${input.issue})`,
-      body: `${testsPassed ? "Implements" : "DRAFT — blocked on a red suite for"} #${input.issue}.\n\n${summary}`,
+      body: coderPullRequestBody(input.issue, testsPassed, summary),
       draft: !testsPassed,
     });
 

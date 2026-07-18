@@ -126,6 +126,14 @@ export const coderResult = (input: {
 };
 
 /**
+ * The PR body. Both variants carry the `Closes #N` closing keyword so the ingress backstop
+ * (`linkedIssueNumbers`: closes/fixes/resolves) correlates the Coder's own `pull_request.opened`
+ * webhook, and a merge auto-closes the issue. The draft variant keeps its blocked explanation.
+ */
+export const coderPullRequestBody = (issue: number, testsPassed: boolean, summary: string): string =>
+  `${testsPassed ? "" : "DRAFT — blocked on a red suite. "}Closes #${issue}.\n\n${summary}`;
+
+/**
  * Render the pushed graph digest (§8, seeded at launch) into a compact prompt block the
  * Coder gets alongside the issue body — background memory of what the shared graph knows
  * about this work. Empty/undefined → "" so the prompt stays clean when no graph is wired.

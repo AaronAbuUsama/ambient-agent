@@ -14,7 +14,7 @@ import { configureWhatsAppParticipationPort } from "../capabilities/whatsapp-par
 import type { WhatsAppParticipationPort } from "../capabilities/whatsapp-participation/whatsapp-port.ts";
 import { configureDelegationRuntime, type DispatchSpecialist } from "../capabilities/delegation/runtime.ts";
 import type { RunLedger } from "../capabilities/delegation/ledger.ts";
-import { installDelegationBridge, sweepUnsettledLaunches } from "../capabilities/delegation/bridge.ts";
+import { installDelegationBridge } from "../capabilities/delegation/bridge.ts";
 import { installGitHubIngressRuntime } from "@ambient-agent/engine/github/ingress-runtime.ts";
 import type { GitHubIngressStore } from "@ambient-agent/engine/github/ingress-store.ts";
 import type { GitHubIngressSettings } from "@ambient-agent/engine/github/ingress.ts";
@@ -46,8 +46,11 @@ export interface SpeakerAdapters {
   readonly participation?: WhatsAppParticipationPort;
   /**
    * Delegation transport (#157): the run ledger + the funnel that delivers a Specialist
-   * result to a chat's Speaker. When present, the ADR 0001 bridge is installed and the
-   * boot sweep runs (any launch a crash left unsettled → an `interrupted` result).
+   * result to a chat's Speaker. When present, the ADR 0001 bridge is installed here. The
+   * boot sweep (crash-unsettled launches → `interrupted` results) is NOT run here: it
+   * dispatches to the Speaker, whose `say` needs the WhatsApp participation port, which
+   * production wires only later inside `runWhatsAppSession`. The host runs the sweep after
+   * that wiring (see `sweepUnsettledLaunches` on `afterParticipationReady` in app.ts).
    */
   readonly delegation?: { readonly ledger: RunLedger; readonly dispatch: DispatchSpecialist };
   /** Payload for GET /health; defaults to a static `{ ok: true }`. */
@@ -72,11 +75,9 @@ export const composeSpeaker = (adapters: SpeakerAdapters): Hono => {
   if (adapters.delegation !== undefined) {
     configureDelegationRuntime(adapters.delegation);
     installDelegationBridge();
-    // Detached like the Scribe funnel: reconciliation is best-effort and self-heals on
-    // the next boot; it must not block the composition root from returning the app.
-    void sweepUnsettledLaunches(adapters.delegation).catch((cause) => {
-      console.error("[delegation] boot sweep failed", cause);
-    });
+    // The boot sweep is deferred to the host, after the participation port is wired — see
+    // the delegation adapter's doc above. It settles crash-unsettled launches into
+    // `interrupted` results the Speaker can voice, and voicing needs the port.
   }
   const app = new Hono();
   const health = adapters.health ?? (() => ({ ok: true }));

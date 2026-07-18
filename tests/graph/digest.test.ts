@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { createGraphStore, type GraphStore } from "../../packages/engine/src/graph/store.ts";
 import { computeGraphDigest } from "../../packages/engine/src/graph/digest.ts";
@@ -192,5 +192,24 @@ describe("attachGraphContext — the funnel field", () => {
     configureGraphStore(createGraphStore(":memory:"));
     const enriched = attachGraphContext(window());
     expect(enriched.graphContext).toBeUndefined();
+  });
+
+  it("falls back to the un-enriched input (and logs) when a graph read throws — the dispatch still succeeds", () => {
+    const boom = new Error("SQLITE_BUSY");
+    configureGraphStore({
+      resolveIdentity: () => {
+        throw boom;
+      },
+    } as unknown as GraphStore);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const input = window();
+      const enriched = attachGraphContext(input);
+      expect(enriched).toBe(input); // raw input passed straight through — never rejects the dispatch
+      expect(enriched.graphContext).toBeUndefined();
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("digest enrichment failed"), boom);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });

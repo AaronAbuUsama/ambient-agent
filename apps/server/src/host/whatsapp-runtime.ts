@@ -118,6 +118,12 @@ export interface WhatsAppSessionRuntimeOptions {
   readonly dispatch?: DispatchSpeaker;
   readonly coalescer?: Partial<CoalescerConfigValues>;
   readonly botLid?: string;
+  /**
+   * Invoked once, synchronously, right after the WhatsApp participation port is wired —
+   * the seam the delegation boot sweep hangs on, so its `interrupted` notifications can
+   * actually be voiced (the Speaker's `say` needs the port). Errors are the callback's own.
+   */
+  readonly afterParticipationReady?: () => void;
 }
 
 /** Shared production/test seam: one full-fidelity whatsappd session -> retained Coalescer -> Speaker dispatch. */
@@ -142,6 +148,7 @@ export const runWhatsAppSession = (
     readThread: (chatId, limit) => options.history.readThread(chatId, limit),
     search: (chatId, query, limit) => options.history.search(chatId, query, limit),
   });
+  options.afterParticipationReady?.();
   const botIds = botIdsOf(session, options.botLid);
   return Coalescer.run.pipe(
     Effect.provide(
@@ -203,6 +210,8 @@ export interface WhatsAppRuntimeOptions {
   readonly dispatch?: DispatchSpeaker;
   readonly coalescer?: Partial<CoalescerConfigValues>;
   readonly observeActivity?: (observer: SpeakerObserver) => () => void;
+  /** Run once after the participation port is wired — e.g. the delegation boot sweep. */
+  readonly afterParticipationReady?: () => void;
 }
 
 export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppRuntimeControl => {
@@ -266,6 +275,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
       botLid: options.botLid,
       ...(options.dispatch === undefined ? {} : { dispatch: options.dispatch }),
       ...(options.coalescer === undefined ? {} : { coalescer: options.coalescer }),
+      ...(options.afterParticipationReady === undefined ? {} : { afterParticipationReady: options.afterParticipationReady }),
     });
   });
 

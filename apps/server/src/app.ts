@@ -7,6 +7,7 @@ import { createIssueManagementPolicy } from "@ambient-agent/agents/capabilities/
 import { createIssueOperationStore } from "@ambient-agent/engine/github/operation-store.ts";
 import { createGraphStore } from "@ambient-agent/engine/graph/store.ts";
 import { createRunLedger } from "@ambient-agent/agents/capabilities/delegation/ledger.ts";
+import { sweepUnsettledLaunches } from "@ambient-agent/agents/capabilities/delegation/bridge.ts";
 import { configureCoderRuntime } from "@ambient-agent/agents/capabilities/coder/runtime.ts";
 import type { CoderGitHub } from "@ambient-agent/agents/capabilities/coder/workflow.ts";
 import { githubAppClient } from "@ambient-agent/installation/github-app-client.ts";
@@ -63,6 +64,12 @@ export const createAmbientAgentApp = async ({
   // start_coder_job tool stays mounted but a launch fails loudly rather than blocking boot.
   await configureCoderRuntimeIfProvisioned(paths);
   let whatsappControl: WhatsAppRuntimeControl | undefined;
+  // A SpeakerInput is a SpeakerInput, so the funnel delivers a specialist result to both
+  // Speaker and Scribe. Held out here so the boot sweep can reuse it after the port is wired.
+  const delegation = {
+    ledger: createRunLedger(paths.applicationDatabase),
+    dispatch: (request: Parameters<typeof dispatchSpeaker>[0]) => dispatchSpeaker(request),
+  };
   const app = composeSpeaker({
     issues: createOctokitIssueRepository(githubAppClient(githubCredential)),
     operations: issueOperations,
@@ -81,11 +88,7 @@ export const createAmbientAgentApp = async ({
       dispatch: async (chatId, input) => await dispatchSpeaker({ id: chatId, input }),
     },
     graph: createGraphStore(paths.applicationDatabase),
-    delegation: {
-      ledger: createRunLedger(paths.applicationDatabase),
-      // A SpecialistInput is a SpeakerInput, so the funnel delivers it to both Speaker and Scribe.
-      dispatch: (request) => dispatchSpeaker(request),
-    },
+    delegation,
     // The WhatsApp participation port is wired later by runWhatsAppSession, once the
     // live socket exists.
     health: () => {
@@ -115,6 +118,14 @@ export const createAmbientAgentApp = async ({
       storeDirectory: paths.whatsapp,
       applicationDatabase: paths.applicationDatabase,
       managedChats: configuration.managedChats,
+      // The ADR 0001 boot sweep, deferred to here: once per boot, after the participation
+      // port is wired (so the Speaker can voice each `interrupted` notification), detached,
+      // errors caught. Any launch a crash left unsettled self-heals into a chat message.
+      afterParticipationReady: () => {
+        void sweepUnsettledLaunches(delegation).catch((cause) => {
+          console.error("[delegation] boot sweep failed", cause);
+        });
+      },
       ...(configuration.smoke === undefined ? {} : { canaryChat: configuration.smoke.canaryChat }),
     });
     whatsappControl = whatsapp;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  coderPullRequestBody,
   coderResult,
   diffSnapshots,
   gitignoreMatcher,
@@ -9,6 +10,25 @@ import {
   renderGraphContext,
 } from "../../packages/agents/src/capabilities/coder/workspace.ts";
 import type { GraphDigest } from "@ambient-agent/engine/graph/digest.ts";
+
+describe("coderPullRequestBody", () => {
+  // The ingress `linkedIssueNumbers` closing-keyword regex (closes/fixes/resolves + #N).
+  const closesKeyword = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)(?::\s*|\s+)#([1-9]\d*)\b/i;
+
+  it("carries `Closes #N` in the green variant so a merge auto-closes the issue", () => {
+    const body = coderPullRequestBody(42, true, "the suite is green");
+    expect(body).toContain("Closes #42");
+    expect(closesKeyword.exec(body)?.[1]).toBe("42");
+    expect(body).not.toContain("DRAFT");
+  });
+
+  it("carries `Closes #N` in the draft variant while keeping the blocked explanation", () => {
+    const body = coderPullRequestBody(42, false, "last failure");
+    expect(body).toContain("Closes #42");
+    expect(closesKeyword.exec(body)?.[1]).toBe("42");
+    expect(body).toContain("DRAFT");
+  });
+});
 
 describe("parseHashListing", () => {
   it("reads sha256sum-style lines and strips the leading ./", () => {

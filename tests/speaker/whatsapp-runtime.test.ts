@@ -234,6 +234,51 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
     archive.close();
   });
 
+  it("runs afterParticipationReady only after the participation port is wired (the boot-sweep seam)", async () => {
+    const { archive, storeDirectory } = temporaryArchive();
+    const fake = fakeSession();
+    const gate = makeManagedChatGate([CHAT]);
+    const inbox = createManagedChatInbox(archive, { allowed: gate.allowed });
+    const account = createWhatsAppAccount({
+      storeDirectory,
+      archive: inbox.recorder,
+      sessionFactory: () => fake.session,
+    });
+    await account.authenticate({});
+
+    // The callback stands in for the delegation boot sweep: it voices through the Speaker's
+    // port. A successful send landing in THIS session's `fake.sent` proves the port was wired
+    // to this session before the callback ran — the exact ordering the bug got wrong.
+    let sweepSay: Promise<unknown> | undefined;
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* Effect.forkScoped(
+            runWhatsAppSession(account.session(), {
+              gate,
+              history: archive,
+              inbox,
+              dispatch: async (request) => {
+                void request;
+                return { dispatchId: "dispatch-sweep-31", acceptedAt: "2026-07-18T00:00:00.000Z" };
+              },
+              afterParticipationReady: () => {
+                sweepSay = Promise.resolve(createSayTool(CHAT).run({ input: { text: "boot sweep can speak" } }));
+              },
+            }),
+          );
+          yield* Effect.sleep(Duration.millis(900));
+        }),
+      ),
+    );
+
+    expect(sweepSay).toBeDefined();
+    await expect(sweepSay).resolves.toMatchObject({ delivery: "sent" });
+    expect(fake.sent).toContainEqual({ chatId: CHAT, content: { text: "boot sweep can speak" } });
+    await account.stop();
+    archive.close();
+  });
+
   it("uses one managed session for gated ingress, history, Speaker dispatch, and explicit say", async () => {
     const { archive, storeDirectory } = temporaryArchive();
     const fake = fakeSession();
