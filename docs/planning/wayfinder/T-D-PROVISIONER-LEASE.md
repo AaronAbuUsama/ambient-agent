@@ -15,7 +15,10 @@ container does not. Lease expiry permits a new reconcile but does not stop a
 healthy container. Every reconcile targets the same Dokploy `applicationId`,
 whose Swarm service is pinned to one replica. Dokploy auto-deploy is disabled,
 and both Swarm update and rollback order are explicitly `stop-first`, so no
-platform-triggered replacement can overlap the old task.
+platform-triggered replacement can overlap the old task. Because Dokploy cannot
+enforce the control-DB fence on a request already in flight, an uncertain remote
+config write enters a durable fail-closed state; no successor may configure,
+deploy, or start until an operator proves Dokploy is quiescent.
 
 This is the first Ponytail rung that holds: the control DB already exists,
 SQLite already supplies atomic compare-and-swap, and Dokploy already supplies a
@@ -272,12 +275,31 @@ CREATE TABLE agent_instance (
   dokploy_application_id TEXT UNIQUE,
   dokploy_app_name TEXT UNIQUE,
   applied_config_version INTEGER NOT NULL DEFAULT 0,
+  remote_config_operation_id TEXT UNIQUE,
+  remote_config_owner_id TEXT,
+  remote_config_fencing_token INTEGER,
+  remote_config_target_version INTEGER,
+  remote_config_state TEXT NOT NULL DEFAULT 'idle' CHECK (
+    remote_config_state IN ('idle', 'pending', 'confirmed', 'blocked_unknown')
+  ),
   phase TEXT NOT NULL DEFAULT 'pending_input' CHECK (phase IN (
     'pending_input', 'provisioning', 'starting', 'running', 'stopping',
     'stopped', 'retryable_error', 'blocked_invariant'
   )),
   last_error_code TEXT,
-  updated_at_ms INTEGER NOT NULL
+  updated_at_ms INTEGER NOT NULL,
+  CHECK (
+    (remote_config_state = 'idle'
+      AND remote_config_operation_id IS NULL
+      AND remote_config_owner_id IS NULL
+      AND remote_config_fencing_token IS NULL
+      AND remote_config_target_version IS NULL) OR
+    (remote_config_state != 'idle'
+      AND remote_config_operation_id IS NOT NULL
+      AND remote_config_owner_id IS NOT NULL
+      AND remote_config_fencing_token > 0
+      AND remote_config_target_version > 0)
+  )
 );
 
 CREATE TABLE provisioner_lease (
@@ -350,15 +372,21 @@ These uniqueness constraints are the safety spine:
    bind and becomes the stable service identity.
 6. `dokploy_app_name UNIQUE` — Dokploy's generated service name cannot be bound
    to another agent row.
-7. `provisioner_lease.creds_store_key PRIMARY KEY` — one ownership cell.
+7. `remote_config_operation_id UNIQUE` — one durable identity for the only
+   remote config write that may be pending for an agent.
+8. `provisioner_lease.creds_store_key PRIMARY KEY` — one ownership cell.
 
 ## Lease protocol
 
 All time comparisons use Turso/SQLite time, not provisioner host time. TTL is 30
 seconds, renewal is every 10 seconds and immediately before a remote mutation,
-and every remote request has an 8-second client timeout. A timed-out remote
-mutation is treated as “outcome unknown” and resolved by observation, never by
-blindly creating a second resource.
+and every remote request has an 8-second client timeout. A timed-out create or
+bare lifecycle start/stop against already-confirmed config is treated as
+“outcome unknown” and resolved by observing the same stable service, never by
+blindly creating a second resource. A config/image/token write—and its associated
+deploy/start before confirmation—is different: a late server-side commit could
+overwrite a successor, so uncertainty enters the durable blocked protocol below
+instead of automatic retry.
 
 ### Acquire
 
@@ -469,6 +497,130 @@ No row means the invocation lost the lease or another shell is already bound.
 It must not write env/file mounts, deploy, or start its candidate. Repeating the
 bind for the same ID is idempotent.
 
+### Remote configuration pending fence
+
+Dokploy does not accept `fencing_token`, so a request sent before lease expiry
+can commit after a new owner acquires. Observation alone cannot distinguish a
+request that will never commit from one that will commit late. Option A therefore
+records a unique operation before the first remote config mutation. Every token,
+image, mount, or runtime-config change increments `tenant.config_version`; no
+new operation may begin while one is `pending` or `blocked_unknown`.
+
+```sql
+UPDATE agent_instance
+SET remote_config_operation_id = ?4,
+    remote_config_owner_id = ?2,
+    remote_config_fencing_token = ?3,
+    remote_config_target_version = ?5,
+    remote_config_state = 'pending',
+    updated_at_ms = cast(unixepoch('subsecond') * 1000 as integer)
+WHERE creds_store_key = ?1
+  AND remote_config_state IN ('idle', 'confirmed')
+  AND ?5 > applied_config_version
+  AND EXISTS (
+    SELECT 1 FROM provisioner_lease
+    WHERE provisioner_lease.creds_store_key = agent_instance.creds_store_key
+      AND owner_id = ?2
+      AND fencing_token = ?3
+      AND expires_at_ms > cast(unixepoch('subsecond') * 1000 as integer)
+  )
+RETURNING remote_config_operation_id;
+```
+
+The operation stores the initiating `owner_id` and `fencing_token`. Those fields
+are immutable until confirmation or operator acknowledgement. The confirmation
+CAS requires both, so a successor can mark the old operation blocked but cannot
+continue or confirm it even when the operation ID and desired version are known.
+
+After every Dokploy config call returns successfully, the owner reads back the
+complete desired manifest: image/build identity, env including tenant token and
+`config_version`, mounts, placement, replica count, network, health check,
+`autoDeploy`, and update/rollback policy. The operation remains `pending` while
+that same owner/token performs any required deploy/start and observes the final
+service manifest plus health (or the complete manifest at zero tasks for a
+stopped tenant). Only that final exact observation lets it confirm the version:
+
+```sql
+UPDATE agent_instance
+SET remote_config_state = 'confirmed',
+    applied_config_version = remote_config_target_version,
+    updated_at_ms = cast(unixepoch('subsecond') * 1000 as integer)
+WHERE creds_store_key = ?1
+  AND remote_config_operation_id = ?4
+  AND remote_config_owner_id = ?2
+  AND remote_config_fencing_token = ?3
+  AND remote_config_state = 'pending'
+  AND EXISTS (
+    SELECT 1 FROM provisioner_lease
+    WHERE provisioner_lease.creds_store_key = agent_instance.creds_store_key
+      AND owner_id = ?2
+      AND fencing_token = ?3
+      AND expires_at_ms > cast(unixepoch('subsecond') * 1000 as integer)
+  )
+RETURNING applied_config_version;
+```
+
+If any config/deploy/start request times out, its connection drops, or the
+process crashes before confirmation, the durable `pending` row survives lease
+expiry. A successor may acquire only to request stop, observe the current task
+count, and change that exact operation to `blocked_unknown`; it must not issue
+another config, deploy, start, or credential rotation. Even an observed zero is
+provisional until operator quiescence because an older start may still arrive:
+
+```sql
+UPDATE agent_instance
+SET remote_config_state = 'blocked_unknown',
+    phase = 'blocked_invariant',
+    last_error_code = 'dokploy_config_outcome_unknown'
+WHERE creds_store_key = ?1
+  AND remote_config_operation_id = ?4
+  AND remote_config_state = 'pending'
+  AND EXISTS (
+    SELECT 1 FROM provisioner_lease
+    WHERE provisioner_lease.creds_store_key = agent_instance.creds_store_key
+      AND owner_id = ?2
+      AND fencing_token = ?3
+      AND expires_at_ms > cast(unixepoch('subsecond') * 1000 as integer)
+  )
+RETURNING remote_config_state;
+```
+
+Clearing the block is deliberately operator-gated. The operator must use
+Dokploy request/audit evidence or restart/drain Dokploy to prove the old request
+cannot still commit, stop and verify the application at zero tasks again, and
+restore the last confirmed manifest. Only then may the current lease owner
+acknowledge the exact operation and begin a fresh higher-version write:
+
+```sql
+UPDATE agent_instance
+SET remote_config_operation_id = NULL,
+    remote_config_owner_id = NULL,
+    remote_config_fencing_token = NULL,
+    remote_config_target_version = NULL,
+    remote_config_state = 'idle',
+    phase = 'stopped',
+    last_error_code = NULL
+WHERE creds_store_key = ?1
+  AND remote_config_operation_id = ?4
+  AND remote_config_state = 'blocked_unknown'
+  AND EXISTS (
+    SELECT 1 FROM provisioner_lease
+    WHERE provisioner_lease.creds_store_key = agent_instance.creds_store_key
+      AND owner_id = ?2
+      AND fencing_token = ?3
+      AND expires_at_ms > cast(unixepoch('subsecond') * 1000 as integer)
+  )
+RETURNING remote_config_state;
+```
+
+This sacrifices availability only on a genuinely unknowable external write. It
+adds no coordinator or queue and never claims the local fence can cancel a
+remote request. The acknowledgement SQL is not reachable from the Polar webhook,
+user oRPC mutation, startup sweep, or normal reconciler. A privileged operator
+command requires an authenticated operator identity plus a non-empty Dokploy
+quiescence evidence note and emits an audit record containing the operation ID,
+actor, time, and resolution before executing the CAS.
+
 ## Idempotent reconcile
 
 Every Polar subscription callback first upserts subscription/tenant intent by
@@ -508,59 +660,72 @@ For one acquired lease:
    `config.json` file mount. Set `autoDeploy=false`; do not create a Git provider
    webhook or preview deployment. Set both `updateConfigSwarm` and
    `rollbackConfigSwarm` to `{ Parallelism: 1, Order: "stop-first" }` and read
-   them back before proceeding. `config_version` is included in the boot
-   environment. Configuration and credential writes finish before any
-   start/deploy call. Multi-node failover remains disabled: availability loss is
+   them back before proceeding. Before the first remote write, win the
+   `remote_config_operation_id` CAS above. `config_version` is included in the
+   boot environment, and every credential/image/config change increments it.
+   After all calls return, read back the complete prepared manifest but keep the
+   operation `pending` through any deploy/start. A timeout, disconnect, crash, or
+   non-matching read-back enters `blocked_unknown`; no automatic remote mutation
+   or start follows. Multi-node failover remains disabled: availability loss is
    preferable to two network-partitioned tasks sharing WhatsApp credentials.
 5. If this is the first deployment, deploy only after step 4. If a live app
    needs a config/image change, call `application.stop`, observe zero running
-   tasks, apply config, then deploy/start. Never use start-first rolling update
-   or create a replacement app against the same credentials store.
+   tasks, apply config, then deploy/start only while the same lease and pending
+   operation remain valid. Never use start-first rolling update or create a
+   replacement app against the same credentials store. A successor is never
+   allowed to continue another owner's pending operation.
 6. Renew/assert the lease, then call
    `POST /api/application.start { applicationId }`. Repeating start targets the
-   same single-replica Swarm service. Poll `application.one` plus `/health` and
-   record `running` and `applied_config_version` with a fenced update.
+   same single-replica Swarm service. Poll `application.one` plus `/health`, read
+   back the final runtime manifest/version, then confirm the remote operation and
+   record `running` with fenced updates. Confirmation records
+   `applied_config_version`; losing the lease first leaves the operation pending
+   for fail-closed takeover.
 7. For desired stop/delete, renew, call `application.stop`, observe zero tasks,
    record `stopped`, then release. Deletion of the app or tenant DB is a
    separate destructive workflow and is not implied by subscription churn.
 
 No startup sweep needs a new queue: API boot and every relevant read/mutation
 can query `agent_instance` rows in `provisioning|starting|retryable_error` or
-with desired/observed mismatch and call reconcile. A simple periodic retry may
-be added only when the build proves event-driven retries insufficient.
+with desired/observed mismatch and call reconcile. A `pending` remote config
+operation found after takeover is stopped and changed to `blocked_unknown`, not
+retried. A simple periodic retry may be added only when the build proves
+event-driven retries insufficient; it never clears this block.
 
 ## Crash and restart table
 
-| Crash point                                                | Durable observation on retry                     | Recovery                                                                                |
-| ---------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| Before acquire                                             | No owned lease                                   | Another invocation acquires                                                             |
-| After tenant DB create, before local write                 | Deterministic Turso DB exists                    | Get it by name, mint/store scoped token                                                 |
-| After token mint, before local write                       | DB exists, token outcome unknown                 | Mint a replacement scoped token; store only the new encrypted token                     |
-| After Dokploy create, before ID bind                       | One or more marked shells may exist              | Fenced CAS binds one; losers never receive credentials or start                         |
-| After config write, before version write                   | Remote config may already equal desired version  | Reapply same config, then fenced version write                                          |
-| After deploy/start, before `running` write                 | Stable application may already be live           | Observe, repeat idempotent start, fenced state write                                    |
-| Owner stalls past expiry                                   | Old fence cannot mutate control state            | New owner increments token and reconciles same app                                      |
-| Stop outcome unknown                                       | Stable application may be at 0 or 1              | Observe and repeat stop; never create another app                                       |
-| Unbound marked shells                                      | Credentialless and undeployed                    | Stop/delete visible losers; a delayed loser is swept later                              |
-| Bound app missing or replicas > 1                          | Safety cannot be proven                          | Stop all known matches, mark `blocked_invariant`, require operator proof before pairing |
-| Dokploy auto-deploy enabled or update order not stop-first | An uncontrolled rolling update may overlap tasks | Stop app, repair and read back policy, remain `blocked_invariant` until proven          |
-| Control DB reports `foreign_keys != 1`                     | Cascades and referential checks are inactive     | Fail API startup; do not accept auth, webhook, or reconcile traffic                     |
+| Crash point                                                | Durable observation on retry                     | Recovery                                                                                  |
+| ---------------------------------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| Before acquire                                             | No owned lease                                   | Another invocation acquires                                                               |
+| After tenant DB create, before local write                 | Deterministic Turso DB exists                    | Get it by name, mint/store scoped token                                                   |
+| After token mint, before local write                       | DB exists, token outcome unknown                 | Mint a replacement scoped token; store only the new encrypted token                       |
+| After Dokploy create, before ID bind                       | One or more marked shells may exist              | Fenced CAS binds one; losers never receive credentials or start                           |
+| After config intent, before exact confirmation             | Durable remote operation remains `pending`       | Request stop, mark blocked; operator quiesces and re-verifies zero                        |
+| Config/deploy/start times out but commits late             | DB still names the uncertain operation/version   | Successor cannot supersede it; operator proves quiescence before explicit acknowledgement |
+| After config confirmation, before `running` write          | Desired manifest/version was already observed    | Observe the same stable service, then fenced phase write                                  |
+| Owner stalls past expiry                                   | Old fence cannot mutate control state            | New owner increments token and reconciles same app                                        |
+| Stop outcome unknown                                       | Stable application may be at 0 or 1              | Observe and repeat stop; never create another app                                         |
+| Unbound marked shells                                      | Credentialless and undeployed                    | Stop/delete visible losers; a delayed loser is swept later                                |
+| Bound app missing or replicas > 1                          | Safety cannot be proven                          | Stop all known matches, mark `blocked_invariant`, require operator proof before pairing   |
+| Dokploy auto-deploy enabled or update order not stop-first | An uncontrolled rolling update may overlap tasks | Stop app, repair and read back policy, remain `blocked_invariant` until proven            |
+| Control DB reports `foreign_keys != 1`                     | Cascades and referential checks are inactive     | Fail API startup; do not accept auth, webhook, or reconcile traffic                       |
 
 Lease expiry never deletes credentials, stops a healthy container, or creates a
 new Dokploy application. It only transfers permission to reconcile.
 
 ## Failure states and API result
 
-| State/result                             | Meaning                                                                         | Retry                                              |
-| ---------------------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `pending_input`                          | Active subscription lacks config/model credential                               | User action, no container start                    |
-| `lease_busy`                             | Another invocation owns the unexpired row                                       | Return 202/current state; do not spin              |
-| `provisioning` / `starting` / `stopping` | Normal durable intermediate phase                                               | Reconcile is idempotent after crash                |
-| `retryable_error`                        | Turso/Dokploy timeout, 429, or 5xx; outcome observed first                      | Bounded backoff, same stable identities            |
-| `lease_lost`                             | Renew/fenced write returned no row                                              | Stop this invocation immediately                   |
-| `blocked_invariant`                      | Bound-ID mismatch, >1 replica, unsafe deploy policy, or secret/config ambiguity | Fail closed; stop known apps; human inspection     |
-| `control_db_foreign_keys_disabled`       | Startup pragma assertion returned anything but `1`                              | Fatal startup error; fix connection initialization |
-| `running` / `stopped`                    | Desired state was observed and fenced into control DB                           | No retry unless intent/version changes             |
+| State/result                             | Meaning                                                                         | Retry                                                                                      |
+| ---------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `pending_input`                          | Active subscription lacks config/model credential                               | User action, no container start                                                            |
+| `lease_busy`                             | Another invocation owns the unexpired row                                       | Return 202/current state; do not spin                                                      |
+| `provisioning` / `starting` / `stopping` | Normal durable intermediate phase                                               | Reconcile is idempotent after crash                                                        |
+| `retryable_error`                        | Turso/Dokploy timeout, 429, or 5xx; outcome observed first                      | Bounded backoff, same stable identities                                                    |
+| `lease_lost`                             | Renew/fenced write returned no row                                              | Stop this invocation immediately                                                           |
+| `blocked_invariant`                      | Bound-ID mismatch, >1 replica, unsafe deploy policy, or secret/config ambiguity | Fail closed; stop known apps; human inspection                                             |
+| `dokploy_config_outcome_unknown`         | A pending config/deploy/start was not exactly confirmed before timeout/crash    | Block all progress; operator quiesces Dokploy, stops to zero, then explicitly acknowledges |
+| `control_db_foreign_keys_disabled`       | Startup pragma assertion returned anything but `1`                              | Fatal startup error; fix connection initialization                                         |
+| `running` / `stopped`                    | Desired state was observed and fenced into control DB                           | No retry unless intent/version changes                                                     |
 
 Secrets are redacted from all failure payloads. A `409/CONFLICT` during Dokploy
 creation triggers a marked-shell lookup; it is not treated as proof that a
@@ -572,7 +737,9 @@ The committed self-check exercises acquisition contention, renewal, expiry
 takeover, monotonic fencing, stale-owner rejection, release CAS, fenced
 application binding/state writes, nullable pre-provisioning fields, the unique
 credentials-store binding, the foreign-key pragma assertion, and deletion
-cascades:
+cascades. It also proves a successor cannot begin or confirm a newer remote
+config while an earlier operation is pending/blocked, and that a stale owner
+cannot acknowledge the operator gate:
 
 ```bash
 pnpm install --frozen-lockfile
@@ -592,8 +759,9 @@ provisioning lease self-check: ok
 
 On Aaron's logged-in Dokploy instance, first confirm the MVP is single-node or
 that the tenant template has an immutable placement constraint to one worker.
-Before the production build calls this done, create one throwaway deterministic
-application with the final tenant template and prove the external assumptions:
+Before the production build calls this done, create one throwaway
+creation-token-marked application with the final tenant template and prove the
+external assumptions:
 
 ```bash
 curl -fsS -H "x-api-key: $DOKPLOY_API_KEY" \
@@ -623,18 +791,27 @@ Also kill the provisioner after remote create but before the local ID bind, then
 show that exactly one candidate wins the bind, only the winner receives
 `TENANT_DB_TOKEN`, and every losing shell has zero running tasks. Confirm that
 `application.create` alone never deploys or starts a service. This is
-instance/runtime proof, not another product decision.
+instance/runtime proof, not another product decision. Separately, kill the
+provisioner after sending a config update but before confirmation. Prove the
+successor stops the app, preserves the pending operation ID, and refuses newer
+config/deploy/start until an operator drains or restarts Dokploy, restores the
+last confirmed manifest, and acknowledges that exact operation. Do not use a
+real tenant token or WhatsApp pairing data for this fault injection.
 
 ## Ratification gate
 
-Aaron: ratify **Option A**, specifically these two semantics:
+Aaron: ratify **Option A**, specifically these three semantics:
 
 1. the lease owns **reconciliation**, so lease expiry does not kill a healthy
    tenant container; and
 2. the one **fenced-bound** Dokploy `applicationId` plus worker placement and
    `replicas=1`, `autoDeploy=false`, and stop-first update/rollback policy is the
    external at-most-one fence; unbound retry shells never receive credentials
-   or start.
+   or start; and
+3. because Dokploy cannot consume the DB fence, an uncertain config/image/token
+   write blocks all automatic progress and requires explicit operator proof of
+   remote quiescence plus a fresh zero-task observation before another config or
+   start.
 
 After that ratification, the artifact graduates into build tickets for the
 control schema, Polar/oRPC reconcile service, Dokploy/Turso clients, boot retry,

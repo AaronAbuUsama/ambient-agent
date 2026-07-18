@@ -34,13 +34,33 @@ CREATE TABLE agent_instance (
   dokploy_application_id TEXT UNIQUE,
   dokploy_app_name TEXT UNIQUE,
   applied_config_version INTEGER NOT NULL DEFAULT 0,
+  remote_config_operation_id TEXT UNIQUE,
+  remote_config_owner_id TEXT,
+  remote_config_fencing_token INTEGER,
+  remote_config_target_version INTEGER,
+  remote_config_state TEXT NOT NULL DEFAULT 'idle'
+    CHECK (remote_config_state IN (
+      'idle', 'pending', 'confirmed', 'blocked_unknown'
+    )),
   phase TEXT NOT NULL DEFAULT 'pending_input'
     CHECK (phase IN (
       'pending_input', 'provisioning', 'starting', 'running', 'stopping',
       'stopped', 'retryable_error', 'blocked_invariant'
     )),
   last_error_code TEXT,
-  updated_at_ms INTEGER NOT NULL DEFAULT (${nowMs})
+  updated_at_ms INTEGER NOT NULL DEFAULT (${nowMs}),
+  CHECK (
+    (remote_config_state = 'idle'
+      AND remote_config_operation_id IS NULL
+      AND remote_config_owner_id IS NULL
+      AND remote_config_fencing_token IS NULL
+      AND remote_config_target_version IS NULL) OR
+    (remote_config_state != 'idle'
+      AND remote_config_operation_id IS NOT NULL
+      AND remote_config_owner_id IS NOT NULL
+      AND remote_config_fencing_token > 0
+      AND remote_config_target_version > 0)
+  )
 );
 
 CREATE TABLE provisioner_lease (
@@ -156,6 +176,93 @@ WHERE creds_store_key = ?1
 RETURNING dokploy_application_id;
 `;
 
+const beginRemoteConfigSql = `
+UPDATE agent_instance
+SET remote_config_operation_id = ?4,
+    remote_config_owner_id = ?2,
+    remote_config_fencing_token = ?3,
+    remote_config_target_version = ?5,
+    remote_config_state = 'pending',
+    updated_at_ms = (${nowMs})
+WHERE creds_store_key = ?1
+  AND remote_config_state IN ('idle', 'confirmed')
+  AND ?5 > applied_config_version
+  AND EXISTS (
+    SELECT 1
+    FROM provisioner_lease
+    WHERE provisioner_lease.creds_store_key = agent_instance.creds_store_key
+      AND provisioner_lease.owner_id = ?2
+      AND provisioner_lease.fencing_token = ?3
+      AND provisioner_lease.expires_at_ms > (${nowMs})
+  )
+RETURNING remote_config_operation_id;
+`;
+
+const confirmRemoteConfigSql = `
+UPDATE agent_instance
+SET remote_config_state = 'confirmed',
+    applied_config_version = remote_config_target_version,
+    updated_at_ms = (${nowMs})
+WHERE creds_store_key = ?1
+  AND remote_config_operation_id = ?4
+  AND remote_config_owner_id = ?2
+  AND remote_config_fencing_token = ?3
+  AND remote_config_state = 'pending'
+  AND EXISTS (
+    SELECT 1
+    FROM provisioner_lease
+    WHERE provisioner_lease.creds_store_key = agent_instance.creds_store_key
+      AND provisioner_lease.owner_id = ?2
+      AND provisioner_lease.fencing_token = ?3
+      AND provisioner_lease.expires_at_ms > (${nowMs})
+  )
+RETURNING applied_config_version;
+`;
+
+const blockRemoteConfigSql = `
+UPDATE agent_instance
+SET remote_config_state = 'blocked_unknown',
+    phase = 'blocked_invariant',
+    last_error_code = 'dokploy_config_outcome_unknown',
+    updated_at_ms = (${nowMs})
+WHERE creds_store_key = ?1
+  AND remote_config_operation_id = ?4
+  AND remote_config_state = 'pending'
+  AND EXISTS (
+    SELECT 1
+    FROM provisioner_lease
+    WHERE provisioner_lease.creds_store_key = agent_instance.creds_store_key
+      AND provisioner_lease.owner_id = ?2
+      AND provisioner_lease.fencing_token = ?3
+      AND provisioner_lease.expires_at_ms > (${nowMs})
+  )
+RETURNING remote_config_state;
+`;
+
+const acknowledgeRemoteQuiescedSql = `
+UPDATE agent_instance
+SET remote_config_operation_id = NULL,
+    remote_config_owner_id = NULL,
+    remote_config_fencing_token = NULL,
+    remote_config_target_version = NULL,
+    remote_config_state = 'idle',
+    phase = 'stopped',
+    last_error_code = NULL,
+    updated_at_ms = (${nowMs})
+WHERE creds_store_key = ?1
+  AND remote_config_operation_id = ?4
+  AND remote_config_state = 'blocked_unknown'
+  AND EXISTS (
+    SELECT 1
+    FROM provisioner_lease
+    WHERE provisioner_lease.creds_store_key = agent_instance.creds_store_key
+      AND provisioner_lease.owner_id = ?2
+      AND provisioner_lease.fencing_token = ?3
+      AND provisioner_lease.expires_at_ms > (${nowMs})
+  )
+RETURNING remote_config_state;
+`;
+
 type Lease = {
   ownerId: string;
   fencingToken: number;
@@ -223,6 +330,44 @@ async function bindApplication(
   return result.rows.length === 1;
 }
 
+async function beginRemoteConfig(
+  db: Client,
+  lease: Lease,
+  credsStoreKey: string,
+  operationId: string,
+  targetVersion: number,
+) {
+  const result = await db.execute({
+    sql: beginRemoteConfigSql,
+    args: [credsStoreKey, lease.ownerId, lease.fencingToken, operationId, targetVersion],
+  });
+  return result.rows.length === 1;
+}
+
+async function confirmRemoteConfig(db: Client, lease: Lease, credsStoreKey: string, operationId: string) {
+  const result = await db.execute({
+    sql: confirmRemoteConfigSql,
+    args: [credsStoreKey, lease.ownerId, lease.fencingToken, operationId],
+  });
+  return result.rows.length === 1;
+}
+
+async function blockRemoteConfig(db: Client, lease: Lease, credsStoreKey: string, operationId: string) {
+  const result = await db.execute({
+    sql: blockRemoteConfigSql,
+    args: [credsStoreKey, lease.ownerId, lease.fencingToken, operationId],
+  });
+  return result.rows.length === 1;
+}
+
+async function acknowledgeRemoteQuiesced(db: Client, lease: Lease, credsStoreKey: string, operationId: string) {
+  const result = await db.execute({
+    sql: acknowledgeRemoteQuiescedSql,
+    args: [credsStoreKey, lease.ownerId, lease.fencingToken, operationId],
+  });
+  return result.rows.length === 1;
+}
+
 async function selfCheck() {
   const db = createClient({ url: "file::memory:" });
   const key = "tenant-db-tenant-a";
@@ -283,6 +428,34 @@ async function selfCheck() {
     assert.equal(await bindApplication(db, first, key, "app-stale", "generated-stale"), false);
     assert.equal(await bindApplication(db, third, key, "app-winner", "generated-winner"), true);
     assert.equal(await bindApplication(db, third, key, "app-loser", "generated-loser"), false);
+    assert.equal(await beginRemoteConfig(db, third, key, "remote-op-a", 1), true);
+
+    await db.execute({
+      sql: `UPDATE provisioner_lease
+        SET expires_at_ms = (${nowMs}) - 1
+        WHERE creds_store_key = ?1`,
+      args: [key],
+    });
+    const fourth = await acquire(db, key, "reconcile-d", 30_000);
+    assert(fourth);
+    assert.equal(fourth.fencingToken, 4);
+    assert.equal(await confirmRemoteConfig(db, third, key, "remote-op-a"), false);
+    assert.equal(
+      await confirmRemoteConfig(db, fourth, key, "remote-op-a"),
+      false,
+      "a successor cannot confirm another owner's remote config write",
+    );
+    assert.equal(
+      await beginRemoteConfig(db, fourth, key, "remote-op-b", 1),
+      false,
+      "a successor cannot supersede an in-flight remote config write",
+    );
+    assert.equal(await blockRemoteConfig(db, fourth, key, "remote-op-a"), true);
+    assert.equal(await acknowledgeRemoteQuiesced(db, third, key, "remote-op-a"), false);
+    assert.equal(await beginRemoteConfig(db, fourth, key, "remote-op-b", 1), false);
+    assert.equal(await acknowledgeRemoteQuiesced(db, fourth, key, "remote-op-a"), true);
+    assert.equal(await beginRemoteConfig(db, fourth, key, "remote-op-b", 1), true);
+    assert.equal(await confirmRemoteConfig(db, fourth, key, "remote-op-b"), true);
 
     await db.execute({
       sql: `INSERT INTO tenant (
