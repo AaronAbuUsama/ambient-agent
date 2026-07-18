@@ -108,13 +108,14 @@ provisioner/schema seam is at `:156-161`. T-B fixes the physical topology:
 +export function createAuth(db: ControlDb) { ... }
 -import { polar, checkout, portal } from "@polar-sh/better-auth";
 +import { polar, checkout, portal, webhooks } from "@polar-sh/better-auth";
-+webhooks({ secret: env.POLAR_WEBHOOK_SECRET,
-+  onSubscriptionCreated: syncSubscription,
-+  onSubscriptionUpdated: syncSubscription,
-+  onSubscriptionActive: syncSubscription,
-+  onSubscriptionCanceled: syncSubscription,
-+  onSubscriptionRevoked: syncSubscription,
-+  onSubscriptionUncanceled: syncSubscription })
++polar({ client: polarClient, use: [checkout(...), portal(),
++  webhooks({ secret: env.POLAR_WEBHOOK_SECRET,
++    onSubscriptionCreated: syncSubscription,
++    onSubscriptionUpdated: syncSubscription,
++    onSubscriptionActive: syncSubscription,
++    onSubscriptionCanceled: syncSubscription,
++    onSubscriptionRevoked: syncSubscription,
++    onSubscriptionUncanceled: syncSubscription })] })
 
  apps/api/src/index.ts
 +const db = await openControlDb();
@@ -151,13 +152,20 @@ const syncSubscription = ({ data }: SubscriptionPayload) =>
     entitled: data.status === "active",
   });
 
-webhooks({
+const subscriptionWebhooks = webhooks({
+  secret: env.POLAR_WEBHOOK_SECRET,
   onSubscriptionCreated: syncSubscription,
   onSubscriptionUpdated: syncSubscription,
   onSubscriptionActive: syncSubscription,
   onSubscriptionCanceled: syncSubscription,
   onSubscriptionRevoked: syncSubscription,
   onSubscriptionUncanceled: syncSubscription,
+});
+
+polar({
+  client: polarClient,
+  createCustomerOnSignUp: true,
+  use: [checkout({ ...checkoutConfig }), portal(), subscriptionWebhooks],
 });
 ```
 
