@@ -17,8 +17,9 @@ whose Swarm service is pinned to one replica.
 
 This is the first Ponytail rung that holds: the control DB already exists,
 SQLite already supplies atomic compare-and-swap, and Dokploy already supplies a
-unique application name plus a single-replica service. No queue, coordinator,
-leader-election service, or new dependency is required.
+unique generated application name plus a single-replica service. The control DB
+fences which generated application ID may receive secrets and start. No queue,
+coordinator, leader-election service, or new dependency is required.
 
 The safety property is **at most one** live container using a credentials store
 at every instant. When `desired_state = 'running'`, reconciliation adds the
@@ -131,14 +132,19 @@ try {
 }
 ```
 
-All remote work uses the one deterministic app name
-`ambient-<base32(tenant.id)>` and then the stored `applicationId`. The Swarm
+Before remote creation, the control DB persists a deterministic display name
+and a random `dokploy_creation_token`. Create passes both as `name` and a scoped
+`description` marker. Dokploy appends a random suffix to the requested
+`appName`, so retries may produce more than one remote **shell**. A fenced CAS
+binds exactly one returned `applicationId`; only that bound ID may receive the
+tenant token/config or be deployed/started. Visible losing shells are
+stopped/deleted before configuration, and a late shell is credentialless and
+undeployed, so it cannot join the WhatsApp session.
+
+After binding, that `applicationId` is stable for the tenant lifetime. Its Swarm
 service is pinned to the configured MVP worker as well as `replicas=1`; loss of
 that worker therefore gives zero replicas, never a replacement running beside a
-partitioned old task. A crashed
-`application.create` call is recovered by `environment.one`: find the single
-application with the deterministic display `name`, then persist its ID. Dokploy
-itself rejects duplicate `appName` values.
+partitioned old task.
 
 ### Option B — keep a DB transaction open across Turso and Dokploy calls
 
@@ -196,8 +202,8 @@ CREATE TABLE tenant (
   user_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
   polar_subscription_id TEXT NOT NULL UNIQUE,
   tenant_db_name TEXT NOT NULL UNIQUE,
-  tenant_db_url TEXT NOT NULL UNIQUE,
-  tenant_db_token_ciphertext TEXT NOT NULL,
+  tenant_db_url TEXT UNIQUE,
+  tenant_db_token_ciphertext TEXT,
   config_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(config_json)),
   config_version INTEGER NOT NULL DEFAULT 1 CHECK (config_version > 0),
   desired_state TEXT NOT NULL DEFAULT 'stopped'
@@ -208,9 +214,11 @@ CREATE TABLE agent_instance (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL UNIQUE REFERENCES tenant(id) ON DELETE CASCADE,
   creds_store_key TEXT NOT NULL UNIQUE
-    REFERENCES tenant(tenant_db_name) ON DELETE RESTRICT,
+    REFERENCES tenant(tenant_db_name) ON DELETE CASCADE,
+  dokploy_display_name TEXT NOT NULL UNIQUE,
+  dokploy_creation_token TEXT NOT NULL UNIQUE,
   dokploy_application_id TEXT UNIQUE,
-  dokploy_app_name TEXT NOT NULL UNIQUE,
+  dokploy_app_name TEXT UNIQUE,
   applied_config_version INTEGER NOT NULL DEFAULT 0,
   phase TEXT NOT NULL DEFAULT 'pending_input' CHECK (phase IN (
     'pending_input', 'provisioning', 'starting', 'running', 'stopping',
@@ -235,10 +243,12 @@ CREATE TABLE provisioner_lease (
 );
 ```
 
-`tenant_db_token_ciphertext` is envelope-encrypted before persistence with an
-AES-256-GCM key supplied outside the repository. The tenant runtime receives
-only its own scoped token. Logs, errors, and `config_json` must never contain
-the raw token or model credential.
+`tenant_db_url` and `tenant_db_token_ciphertext` are nullable while an active
+subscription waits in `pending_input` or before the per-tenant DB is created;
+SQLite still enforces uniqueness for every non-null URL. The token is
+envelope-encrypted before persistence with an AES-256-GCM key supplied outside
+the repository. The tenant runtime receives only its own scoped token. Logs,
+errors, and `config_json` must never contain the raw token or model credential.
 
 These uniqueness constraints are the safety spine:
 
@@ -246,9 +256,13 @@ These uniqueness constraints are the safety spine:
 2. `agent_instance.tenant_id UNIQUE` — one agent instance per MVP tenant.
 3. `agent_instance.creds_store_key UNIQUE` — a credential store cannot be bound
    to a second agent row.
-4. `dokploy_app_name UNIQUE` — one deterministic remote identity locally.
-5. `dokploy_application_id UNIQUE` — one stored Dokploy service identity.
-6. `provisioner_lease.creds_store_key PRIMARY KEY` — one ownership cell.
+4. `dokploy_creation_token UNIQUE` — retry shells are scoped to one persisted
+   creation attempt marker.
+5. `dokploy_application_id UNIQUE` — exactly one remote shell wins the fenced
+   bind and becomes the stable service identity.
+6. `dokploy_app_name UNIQUE` — Dokploy's generated service name cannot be bound
+   to another agent row.
+7. `provisioner_lease.creds_store_key PRIMARY KEY` — one ownership cell.
 
 ## Lease protocol
 
@@ -335,6 +349,38 @@ an `applicationId`, or advance `applied_config_version`. Dokploy does not accept
 our fence token; safety at that boundary comes from always addressing the one
 stable application whose service is fixed at one replica.
 
+### Application bind CAS
+
+Remote creation never carries tenant credentials. After a create response or a
+marked-shell lookup, the current owner must win this bind before it may configure
+or start the application:
+
+```sql
+UPDATE agent_instance
+SET dokploy_application_id = ?4,
+    dokploy_app_name = ?5,
+    updated_at_ms = cast(unixepoch('subsecond') * 1000 as integer)
+WHERE creds_store_key = ?1
+  AND (
+    dokploy_application_id IS NULL OR
+    (dokploy_application_id = ?4 AND dokploy_app_name = ?5)
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM provisioner_lease
+    WHERE provisioner_lease.creds_store_key = agent_instance.creds_store_key
+      AND provisioner_lease.owner_id = ?2
+      AND provisioner_lease.fencing_token = ?3
+      AND provisioner_lease.expires_at_ms >
+        cast(unixepoch('subsecond') * 1000 as integer)
+  )
+RETURNING dokploy_application_id;
+```
+
+No row means the invocation lost the lease or another shell is already bound.
+It must not write env/file mounts, deploy, or start its candidate. Repeating the
+bind for the same ID is idempotent.
+
 ## Idempotent reconcile
 
 The Polar callback first upserts subscription/tenant intent by
@@ -351,13 +397,17 @@ For one acquired lease:
    recorded; write the encrypted token and URL using a fenced DB update. The
    runtime writes WhatsApp auth state at pairing; the control plane seeds only
    the already-captured model credential.
-3. Ensure the Dokploy application. Compute the deterministic display name and
-   `appName`. If `dokploy_application_id` exists, verify it with
-   `GET /api/application.one`. If it is null, query
-   `GET /api/environment.one`, adopt the sole deterministic-name match, or call
-   `POST /api/application.create { name, appName, environmentId }`. After an
-   unknown create outcome, repeat the environment lookup. Zero matches permits
-   retry; more than one is `blocked_invariant` and fail-closed.
+3. Ensure the Dokploy application. If `dokploy_application_id` exists, verify
+   it with `GET /api/application.one` and never replace it automatically. If it
+   is null, query `GET /api/environment.one` and filter applications by the
+   persisted display name **and** exact creation-token description. Dokploy
+   randomizes the supplied `appName`, so one or more marked, credentialless
+   shells may exist after timeouts. Select one deterministically, fetch its
+   generated `appName` with `application.one`, and win the fenced bind above.
+   If none exists, call `POST /api/application.create` with `name`, `appName`,
+   `description`, `environmentId`, and `serverId`, then bind the response.
+   Stop/delete visible losing marked shells before continuing; a cleanup failure
+   blocks configuration/start but does not endanger credentials.
 4. Configure the stopped application: Docker image/build settings, exactly one
    replica, a placement constraint for the configured MVP worker,
    `dokploy-network`, health check, tenant DB URL/token env, bridge secret, and
@@ -384,17 +434,18 @@ be added only when the build proves event-driven retries insufficient.
 
 ## Crash and restart table
 
-| Crash point                                   | Durable observation on retry                         | Recovery                                                                                |
-| --------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Before acquire                                | No owned lease                                       | Another invocation acquires                                                             |
-| After tenant DB create, before local write    | Deterministic Turso DB exists                        | Get it by name, mint/store scoped token                                                 |
-| After token mint, before local write          | DB exists, token outcome unknown                     | Mint a replacement scoped token; store only the new encrypted token                     |
-| After Dokploy create, before ID write         | Unique deterministic app exists in `environment.one` | Adopt its `applicationId`                                                               |
-| After config write, before version write      | Remote config may already equal desired version      | Reapply same config, then fenced version write                                          |
-| After deploy/start, before `running` write    | Stable application may already be live               | Observe, repeat idempotent start, fenced state write                                    |
-| Owner stalls past expiry                      | Old fence cannot mutate control state                | New owner increments token and reconciles same app                                      |
-| Stop outcome unknown                          | Stable application may be at 0 or 1                  | Observe and repeat stop; never create another app                                       |
-| Duplicate remote-name matches or replicas > 1 | Safety cannot be proven                              | Stop all known matches, mark `blocked_invariant`, require operator proof before pairing |
+| Crash point                                | Durable observation on retry                    | Recovery                                                                                |
+| ------------------------------------------ | ----------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Before acquire                             | No owned lease                                  | Another invocation acquires                                                             |
+| After tenant DB create, before local write | Deterministic Turso DB exists                   | Get it by name, mint/store scoped token                                                 |
+| After token mint, before local write       | DB exists, token outcome unknown                | Mint a replacement scoped token; store only the new encrypted token                     |
+| After Dokploy create, before ID bind       | One or more marked shells may exist             | Fenced CAS binds one; losers never receive credentials or start                         |
+| After config write, before version write   | Remote config may already equal desired version | Reapply same config, then fenced version write                                          |
+| After deploy/start, before `running` write | Stable application may already be live          | Observe, repeat idempotent start, fenced state write                                    |
+| Owner stalls past expiry                   | Old fence cannot mutate control state           | New owner increments token and reconciles same app                                      |
+| Stop outcome unknown                       | Stable application may be at 0 or 1             | Observe and repeat stop; never create another app                                       |
+| Unbound marked shells                      | Credentialless and undeployed                   | Stop/delete visible losers; a delayed loser is swept later                              |
+| Bound app missing or replicas > 1          | Safety cannot be proven                         | Stop all known matches, mark `blocked_invariant`, require operator proof before pairing |
 
 Lease expiry never deletes credentials, stops a healthy container, or creates a
 new Dokploy application. It only transfers permission to reconcile.
@@ -408,18 +459,19 @@ new Dokploy application. It only transfers permission to reconcile.
 | `provisioning` / `starting` / `stopping` | Normal durable intermediate phase                          | Reconcile is idempotent after crash            |
 | `retryable_error`                        | Turso/Dokploy timeout, 429, or 5xx; outcome observed first | Bounded backoff, same stable identities        |
 | `lease_lost`                             | Renew/fenced write returned no row                         | Stop this invocation immediately               |
-| `blocked_invariant`                      | Duplicate identity, >1 replica, secret/config ambiguity    | Fail closed; stop known apps; human inspection |
+| `blocked_invariant`                      | Bound-ID mismatch, >1 replica, secret/config ambiguity     | Fail closed; stop known apps; human inspection |
 | `running` / `stopped`                    | Desired state was observed and fenced into control DB      | No retry unless intent/version changes         |
 
-Secrets are redacted from all failure payloads. A `409/CONFLICT` from deterministic
-Dokploy creation is converted into recovery lookup, not surfaced as a terminal
-error.
+Secrets are redacted from all failure payloads. A `409/CONFLICT` during Dokploy
+creation triggers a marked-shell lookup; it is not treated as proof that a
+particular retry created or owns the conflicting application.
 
 ## Runnable proof
 
 The committed self-check exercises acquisition contention, renewal, expiry
-takeover, monotonic fencing, stale-owner rejection, release CAS, fenced state
-writes, and the unique credentials-store binding:
+takeover, monotonic fencing, stale-owner rejection, release CAS, fenced
+application binding/state writes, nullable pre-provisioning fields, the unique
+credentials-store binding, and deletion cascades:
 
 ```bash
 pnpm install --frozen-lockfile
@@ -461,8 +513,10 @@ curl -fsS -X POST -H "x-api-key: $DOKPLOY_API_KEY" \
 # repeat the identical stop call, then prove zero running Swarm tasks
 ```
 
-Also kill the provisioner after remote create but before the local ID write and
-show that `environment.one` recovers exactly one `applicationId`. This is
+Also kill the provisioner after remote create but before the local ID bind, then
+show that exactly one candidate wins the bind, only the winner receives
+`TENANT_DB_TOKEN`, and every losing shell has zero running tasks. Confirm that
+`application.create` alone never deploys or starts a service. This is
 instance/runtime proof, not another product decision.
 
 ## Ratification gate
@@ -471,9 +525,9 @@ Aaron: ratify **Option A**, specifically these two semantics:
 
 1. the lease owns **reconciliation**, so lease expiry does not kill a healthy
    tenant container; and
-2. the unique stable Dokploy application plus `replicas=1` is the external
-   at-most-one fence, while the Turso row serializes owners and fences local
-   state.
+2. the one **fenced-bound** Dokploy `applicationId` plus worker placement and
+   `replicas=1` is the external at-most-one fence; unbound retry shells never
+   receive credentials or start.
 
 After that ratification, the artifact graduates into build tickets for the
 control schema, Polar/oRPC reconcile service, Dokploy/Turso clients, boot retry,
@@ -482,13 +536,15 @@ and the one logged-in-instance proof above.
 ## Verified external basis
 
 - [Dokploy application API](https://docs.dokploy.com/docs/api/application):
-  caller-supplied `appName`; create/one/start/stop/deploy endpoints.
+  create/one/start/stop/deploy endpoints and caller-supplied app-name base.
 - [Dokploy environment API](https://docs.dokploy.com/docs/api/environment):
   `environment.one` recovery lookup.
 - [Dokploy source at `df3965a`](https://github.com/Dokploy/dokploy/blob/df3965a5816700d61c39fd1a13241b5766d7b24e/packages/server/src/db/schema/application.ts#L79-L88):
   `applicationId` primary key and `appName` unique constraint.
 - [Dokploy create service at `df3965a`](https://github.com/Dokploy/dokploy/blob/df3965a5816700d61c39fd1a13241b5766d7b24e/packages/server/src/services/application.ts#L56-L91):
-  deterministic app-name validation and conflict.
+  create only inserts the application record; it does not deploy/start it.
+- [Dokploy app-name builder at `df3965a`](https://github.com/Dokploy/dokploy/blob/df3965a5816700d61c39fd1a13241b5766d7b24e/packages/server/src/db/schema/utils.ts#L67-L71):
+  a random six-character suffix is appended even when `appName` is supplied.
 - [Dokploy lifecycle source at `df3965a`](https://github.com/Dokploy/dokploy/blob/df3965a5816700d61c39fd1a13241b5766d7b24e/packages/server/src/utils/docker/utils.ts#L111-L125):
   stop scales to zero; [start scales to one](https://github.com/Dokploy/dokploy/blob/df3965a5816700d61c39fd1a13241b5766d7b24e/packages/server/src/utils/docker/utils.ts#L363-L378).
 - [Polar Better Auth adapter](https://polar.sh/docs/integrate/sdk/adapters/better-auth):

@@ -18,8 +18,8 @@ CREATE TABLE tenant (
   user_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
   polar_subscription_id TEXT NOT NULL UNIQUE,
   tenant_db_name TEXT NOT NULL UNIQUE,
-  tenant_db_url TEXT NOT NULL UNIQUE,
-  tenant_db_token_ciphertext TEXT NOT NULL,
+  tenant_db_url TEXT UNIQUE,
+  tenant_db_token_ciphertext TEXT,
   config_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(config_json)),
   config_version INTEGER NOT NULL DEFAULT 1 CHECK (config_version > 0),
   desired_state TEXT NOT NULL DEFAULT 'stopped'
@@ -30,9 +30,11 @@ CREATE TABLE agent_instance (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL UNIQUE REFERENCES tenant(id) ON DELETE CASCADE,
   creds_store_key TEXT NOT NULL UNIQUE
-    REFERENCES tenant(tenant_db_name) ON DELETE RESTRICT,
+    REFERENCES tenant(tenant_db_name) ON DELETE CASCADE,
+  dokploy_display_name TEXT NOT NULL UNIQUE,
+  dokploy_creation_token TEXT NOT NULL UNIQUE,
   dokploy_application_id TEXT UNIQUE,
-  dokploy_app_name TEXT NOT NULL UNIQUE,
+  dokploy_app_name TEXT UNIQUE,
   applied_config_version INTEGER NOT NULL DEFAULT 0,
   phase TEXT NOT NULL DEFAULT 'pending_input'
     CHECK (phase IN (
@@ -135,6 +137,27 @@ WHERE creds_store_key = ?1
 RETURNING phase;
 `;
 
+const bindApplicationSql = `
+UPDATE agent_instance
+SET dokploy_application_id = ?4,
+    dokploy_app_name = ?5,
+    updated_at_ms = (${nowMs})
+WHERE creds_store_key = ?1
+  AND (
+    dokploy_application_id IS NULL OR
+    (dokploy_application_id = ?4 AND dokploy_app_name = ?5)
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM provisioner_lease
+    WHERE provisioner_lease.creds_store_key = agent_instance.creds_store_key
+      AND provisioner_lease.owner_id = ?2
+      AND provisioner_lease.fencing_token = ?3
+      AND provisioner_lease.expires_at_ms > (${nowMs})
+  )
+RETURNING dokploy_application_id;
+`;
+
 type Lease = {
   ownerId: string;
   fencingToken: number;
@@ -188,6 +211,20 @@ async function writePhase(
   return result.rows.length === 1;
 }
 
+async function bindApplication(
+  db: Client,
+  lease: Lease,
+  credsStoreKey: string,
+  applicationId: string,
+  appName: string,
+) {
+  const result = await db.execute({
+    sql: bindApplicationSql,
+    args: [credsStoreKey, lease.ownerId, lease.fencingToken, applicationId, appName],
+  });
+  return result.rows.length === 1;
+}
+
 async function selfCheck() {
   const db = createClient({ url: "file::memory:" });
   const key = "tenant-db-tenant-a";
@@ -204,9 +241,10 @@ async function selfCheck() {
     });
     await db.execute({
       sql: `INSERT INTO agent_instance (
-        id, tenant_id, creds_store_key, dokploy_app_name
-      ) VALUES (?1, ?2, ?3, ?4)`,
-      args: ["agent-a", "tenant-a", key, "ambient-tenant-a"],
+        id, tenant_id, creds_store_key, dokploy_display_name,
+        dokploy_creation_token
+      ) VALUES (?1, ?2, ?3, ?4, ?5)`,
+      args: ["agent-a", "tenant-a", key, "Ambient tenant tenant-a", "create-tenant-a"],
     });
 
     const first = await acquire(db, key, "reconcile-a", 30_000);
@@ -235,25 +273,42 @@ async function selfCheck() {
     assert.equal(await release(db, takeover, key), true);
 
     const third = await acquire(db, key, "reconcile-c", 30_000);
-    assert.equal(third?.fencingToken, 3, "fencing tokens never reset after release");
+    assert(third);
+    assert.equal(third.fencingToken, 3, "fencing tokens never reset after release");
+    assert.equal(await bindApplication(db, first, key, "app-stale", "generated-stale"), false);
+    assert.equal(await bindApplication(db, third, key, "app-winner", "generated-winner"), true);
+    assert.equal(await bindApplication(db, third, key, "app-loser", "generated-loser"), false);
 
     await db.execute({
       sql: `INSERT INTO tenant (
-        id, user_id, polar_subscription_id, tenant_db_name, tenant_db_url,
-        tenant_db_token_ciphertext
-      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
-      args: ["tenant-b", "user-a", "sub-b", "tenant-db-tenant-b", "libsql://tenant-b", "ciphertext-b"],
+        id, user_id, polar_subscription_id, tenant_db_name
+      ) VALUES (?1, ?2, ?3, ?4)`,
+      args: ["tenant-b", "user-a", "sub-b", "tenant-db-tenant-b"],
     });
+    const pending = await db.execute({
+      sql: `SELECT tenant_db_url, tenant_db_token_ciphertext
+        FROM tenant WHERE id = ?1`,
+      args: ["tenant-b"],
+    });
+    assert.equal(pending.rows[0]?.tenant_db_url, null);
+    assert.equal(pending.rows[0]?.tenant_db_token_ciphertext, null);
     await assert.rejects(
       db.execute({
         sql: `INSERT INTO agent_instance (
-          id, tenant_id, creds_store_key, dokploy_app_name
-        ) VALUES (?1, ?2, ?3, ?4)`,
-        args: ["agent-b", "tenant-b", key, "ambient-tenant-b"],
+          id, tenant_id, creds_store_key, dokploy_display_name,
+          dokploy_creation_token
+        ) VALUES (?1, ?2, ?3, ?4, ?5)`,
+        args: ["agent-b", "tenant-b", key, "Ambient tenant tenant-b", "create-tenant-b"],
       }),
       /UNIQUE constraint failed/,
       "one creds store cannot be bound to a second agent instance",
     );
+
+    await db.execute({ sql: "DELETE FROM user WHERE id = ?1", args: ["user-a"] });
+    for (const table of ["tenant", "agent_instance", "provisioner_lease"]) {
+      const count = await db.execute(`SELECT count(*) AS count FROM ${table}`);
+      assert.equal(Number(count.rows[0]?.count), 0, `${table} cascades on user deletion`);
+    }
 
     console.log("provisioning lease self-check: ok");
   } finally {
