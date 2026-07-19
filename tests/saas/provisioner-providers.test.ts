@@ -118,6 +118,11 @@ describe("tenant provisioner provider adapters", () => {
         if (mount) Object.assign(mount, body);
         return json(mount);
       }
+      if (url.pathname.endsWith("/mounts.remove")) {
+        const index = mounts.findIndex((candidate) => candidate.mountId === body?.mountId);
+        if (index >= 0) mounts.splice(index, 1);
+        return json(true);
+      }
       if (url.pathname.endsWith("/application.start")) {
         replicas = "1/1";
         return json(true);
@@ -153,7 +158,7 @@ describe("tenant provisioner provider adapters", () => {
     const manifest: DokployManifest = {
       applicationId: "app-1",
       dockerImage: "ghcr.io/ambient/runtime:sha-one",
-      command: "node dist/cli/setup.js",
+      command: "node dist/cli/main.js --data-dir /root/.ambient-agent start --log-format json",
       environment: {
         TENANT_DB_URL: "libsql://tenant-db-one.turso.io",
         TENANT_DB_TOKEN: "tenant-token-one",
@@ -163,11 +168,36 @@ describe("tenant provisioner provider adapters", () => {
         AMBIENT_AGENT_RUNTIME_BRIDGE_SECRET: "bridge-one",
         PORT: "3000",
       },
-      configJson: "{}",
       dataVolumeName: "ambient-one-data",
       dataMountPath: "/root/.ambient-agent",
-      configFileName: "config.json",
-      configMountPath: "/root/.ambient-agent/config.json",
+      managedFileMountPaths: [
+        "/root/.ambient-agent/config.json",
+        "/root/.ambient-agent/credentials/github-coder.json",
+        "/root/.ambient-agent/credentials/github-reviewer.json",
+        "/root/.ambient-agent/credentials/github-planner.json",
+      ],
+      fileMounts: [
+        {
+          filePath: "config.json",
+          mountPath: "/root/.ambient-agent/config.json",
+          content: "{}",
+        },
+        {
+          filePath: "github-coder.json",
+          mountPath: "/root/.ambient-agent/credentials/github-coder.json",
+          content: "{\"role\":\"coder\"}",
+        },
+        {
+          filePath: "github-reviewer.json",
+          mountPath: "/root/.ambient-agent/credentials/github-reviewer.json",
+          content: "{\"role\":\"reviewer\"}",
+        },
+        {
+          filePath: "github-planner.json",
+          mountPath: "/root/.ambient-agent/credentials/github-planner.json",
+          content: "{\"role\":\"planner\"}",
+        },
+      ],
       replicas: 1,
       autoDeploy: false,
       placementSwarm: { Constraints: ["node.hostname==worker-one"] },
@@ -187,6 +217,29 @@ describe("tenant provisioner provider adapters", () => {
     expect(await dokploy.inspectApplication("app-1")).toMatchObject({ applicationId: "app-1" });
     await dokploy.prepareApplication(manifest, beforeMutation);
     expect(await dokploy.manifestMatches(manifest)).toBe(true);
+    mounts.push({
+      mountId: "mount-duplicate-coder",
+      type: "file",
+      mountPath: "/root/.ambient-agent/credentials/github-coder.json",
+      filePath: "github-coder-copy.json",
+      content: "duplicate",
+    });
+    await dokploy.prepareApplication(manifest, beforeMutation);
+    expect(await dokploy.manifestMatches(manifest)).toBe(true);
+    mounts.push({
+      mountId: "mount-wrong-type-planner",
+      type: "volume",
+      mountPath: "/root/.ambient-agent/credentials/github-planner.json",
+      volumeName: "wrong-type",
+    });
+    const setupManifest: DokployManifest = {
+      ...manifest,
+      command: "node dist/cli/setup.js",
+      fileMounts: manifest.fileMounts.slice(0, 1),
+    };
+    await dokploy.prepareApplication(setupManifest, beforeMutation);
+    expect(await dokploy.manifestMatches(setupManifest)).toBe(true);
+    expect(mounts.filter((mount) => String(mount.mountPath).includes("/credentials/github-"))).toEqual([]);
     await dokploy.startApplication("app-1", beforeMutation);
     await dokploy.startApplication("app-1", beforeMutation);
     expect(await dokploy.waitForTaskCount("ambient-one-random", 1)).toBe(1);
@@ -201,7 +254,7 @@ describe("tenant provisioner provider adapters", () => {
     await dokploy.stopApplication("app-1", beforeMutation);
     expect(await dokploy.waitForTaskCount("ambient-one-random", 0)).toBe(0);
 
-    expect(mutations).toBe(9);
+    expect(mutations).toBe(23);
     const update = calls.find((call) => call.path.endsWith("/application.update"));
     expect(update?.body).toMatchObject({
       replicas: 1,

@@ -33,17 +33,6 @@ app.use(
 
 app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
-if (process.env.GITHUB_APPS_JSON) {
-  installHostedGitHub({
-    app,
-    client,
-    appsJson: process.env.GITHUB_APPS_JSON,
-    ...(process.env.GITHUB_RUNTIME_DELIVERY_SECRETS_JSON
-      ? { runtimeSecretsJson: process.env.GITHUB_RUNTIME_DELIVERY_SECRETS_JSON }
-      : {}),
-  });
-}
-
 export const hostedTenantProvisioner = createHostedTenantProvisioner({ client });
 export const hostedTenantProvisionerLoop = hostedTenantProvisioner
   ? startTenantProvisionerReconciliation(hostedTenantProvisioner, {
@@ -51,6 +40,23 @@ export const hostedTenantProvisionerLoop = hostedTenantProvisioner
       onError: () => console.error("[tenant-provisioner] reconciliation sweep failed"),
     })
   : null;
+
+if (process.env.GITHUB_APPS_JSON) {
+  installHostedGitHub({
+    app,
+    client,
+    appsJson: process.env.GITHUB_APPS_JSON,
+    ...(hostedTenantProvisioner === null && process.env.GITHUB_RUNTIME_DELIVERY_SECRETS_JSON
+      ? { runtimeSecretsJson: process.env.GITHUB_RUNTIME_DELIVERY_SECRETS_JSON }
+      : {}),
+    ...(hostedTenantProvisioner === null
+      ? {}
+      : {
+          runtimeSecretForTenant: hostedTenantProvisioner.runtimeBridgeSecretForTenant,
+          runtimeIdForTenant: hostedTenantProvisioner.runtimeIdForTenant,
+        }),
+  });
+}
 
 export const apiHandler = new OpenAPIHandler(appRouter, {
   plugins: [

@@ -28,7 +28,7 @@ const pairingSchema: z.ZodType<BridgePairing> = z.discriminatedUnion("status", [
     code: z.string().optional(),
     expiresAt: z.number(),
   }),
-  z.object({ status: z.literal("paired") }),
+  z.object({ status: z.literal("paired"), accountJid: z.string().min(1) }),
   z.object({ status: z.literal("not_pairing") }),
 ]);
 

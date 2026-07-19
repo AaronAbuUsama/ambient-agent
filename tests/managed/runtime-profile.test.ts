@@ -121,7 +121,35 @@ it("keeps pairing material in the authenticated bridge instead of runtime output
   expect(write).not.toHaveBeenCalled();
   expect(writeError).not.toHaveBeenCalled();
   finishAuthentication({ jid: "15550000202@s.whatsapp.net" });
-  await vi.waitFor(() => expect(runtime.status()).toMatchObject({ phase: "online" }));
+  await vi.waitFor(() =>
+    expect(runtime.status()).toEqual({
+      phase: "online",
+      accountJid: "15550000202@s.whatsapp.net",
+    }),
+  );
+  const app = createAmbientAgentSetupApp(
+    {
+      mode: "setup",
+      runtimeId: "runtime-202",
+      bridgeSecret: "bridge-secret-202",
+      port: 3202,
+      paths: managedPaths({ dataDirectory: "/private/tenant-202" }),
+      credentialEnvironment: {
+        TENANT_DB_URL: "libsql://tenant-202.example",
+        TENANT_DB_TOKEN: "tenant-token-202",
+      },
+    },
+    { startWhatsApp: () => runtime },
+  );
+  const paired = await app.request("/pairing", {
+    headers: {
+      [BRIDGE_AUTH_HEADER]: runtimeBridgeAuthorization("bridge-secret-202", "pairing-read"),
+    },
+  });
+  await expect(paired.json()).resolves.toEqual({
+    status: "paired",
+    accountJid: "15550000202@s.whatsapp.net",
+  });
   await runtime.stop();
   expect(archive.close).toHaveBeenCalledTimes(1);
 });

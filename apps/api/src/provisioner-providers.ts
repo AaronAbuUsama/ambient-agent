@@ -336,17 +336,26 @@ export const createDokployProvider = (options: {
         },
         beforeMutation,
       );
-      await upsertMount(
-        manifest.applicationId,
-        mounts,
-        {
-          type: "file",
-          mountPath: manifest.configMountPath,
-          filePath: manifest.configFileName,
-          content: manifest.configJson,
-        },
-        beforeMutation,
-      );
+      for (const file of manifest.fileMounts) {
+        await upsertMount(
+          manifest.applicationId,
+          mounts,
+          { type: "file", ...file },
+          beforeMutation,
+        );
+      }
+      const desiredFileMountPaths = new Set(manifest.fileMounts.map((file) => file.mountPath));
+      for (const mountPath of manifest.managedFileMountPaths) {
+        const mountsAtPath = mounts.filter((mount) => mount.mountPath === mountPath);
+        const staleMounts = desiredFileMountPaths.has(mountPath)
+          ? mountsAtPath.slice(1)
+          : mountsAtPath;
+        for (const mount of staleMounts) {
+          await beforeMutation();
+          await post("/mounts.remove", { mountId: mount.mountId });
+          mounts.splice(mounts.indexOf(mount), 1);
+        }
+      }
     },
     manifestMatches: async (manifest) => {
       const [applicationValue, mounts] = await Promise.all([
@@ -355,7 +364,17 @@ export const createDokployProvider = (options: {
       ]);
       const application = applicationSchema.parse(applicationValue);
       const volume = mounts.find((mount) => mount.mountPath === manifest.dataMountPath);
-      const config = mounts.find((mount) => mount.mountPath === manifest.configMountPath);
+      const managedFilesMatch = manifest.managedFileMountPaths.every((mountPath) => {
+        const expected = manifest.fileMounts.find((file) => file.mountPath === mountPath);
+        const actual = mounts.filter((mount) => mount.mountPath === mountPath);
+        if (expected === undefined) return actual.length === 0;
+        return (
+          actual.length === 1 &&
+          actual[0]?.type === "file" &&
+          actual[0].filePath === expected.filePath &&
+          actual[0].content === expected.content
+        );
+      });
       return (
         application.dockerImage === manifest.dockerImage &&
         application.sourceType === "docker" &&
@@ -370,9 +389,7 @@ export const createDokployProvider = (options: {
         sameEnvironment(application.env, manifest.environment) &&
         volume?.type === "volume" &&
         volume.volumeName === manifest.dataVolumeName &&
-        config?.type === "file" &&
-        config.filePath === manifest.configFileName &&
-        config.content === manifest.configJson
+        managedFilesMatch
       );
     },
     deployApplication: async (applicationId, beforeMutation) => {

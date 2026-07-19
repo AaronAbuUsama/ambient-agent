@@ -16,6 +16,7 @@ import {
   type ProvisioningTarget,
 } from "@ambient-agent/db/provisioner-control";
 import { acquireLease, releaseLease, renewLease, type ProvisionerLease } from "@ambient-agent/db/control-db";
+import { GITHUB_APP_REFERENCES } from "@ambient-agent/installation/schema.ts";
 
 export interface TenantDatabaseProvider {
   ensureDatabase(
@@ -37,11 +38,14 @@ export interface DokployManifest {
   readonly dockerImage: string;
   readonly command: string;
   readonly environment: Readonly<Record<string, string>>;
-  readonly configJson: string;
   readonly dataVolumeName: string;
   readonly dataMountPath: string;
-  readonly configFileName: string;
-  readonly configMountPath: string;
+  readonly managedFileMountPaths: readonly string[];
+  readonly fileMounts: readonly {
+    readonly filePath: string;
+    readonly mountPath: string;
+    readonly content: string;
+  }[];
   readonly replicas: 1;
   readonly autoDeploy: false;
   readonly placementSwarm: { readonly Constraints: readonly [string] };
@@ -85,6 +89,10 @@ export interface TenantSecretCodec {
   runtimeId(tenantId: string): string;
 }
 
+export type TenantRuntimeCredentialFiles = Readonly<
+  Record<"coder" | "reviewer" | "planner", string>
+>;
+
 export interface TenantProvisionerConfiguration {
   readonly runtimeImage: string;
   readonly workerHostname: string;
@@ -98,7 +106,9 @@ export interface TenantProvisionerOptions {
   readonly turso: TenantDatabaseProvider;
   readonly dokploy: DokployProvider;
   readonly secrets: TenantSecretCodec;
-  readonly operateRuntimeIdForTenant: (tenantId: string) => string | null;
+  readonly runtimeCredentialFilesForTenant: (
+    tenantId: string,
+  ) => Promise<TenantRuntimeCredentialFiles | null>;
   readonly configuration: TenantProvisionerConfiguration;
   readonly createId?: () => string;
 }
@@ -170,11 +180,19 @@ const manifestFor = (
   application: DokployApplication,
   token: string,
   runtimeId: string,
+  runtimeCredentialFiles: TenantRuntimeCredentialFiles | null,
   secrets: TenantSecretCodec,
   configuration: TenantProvisionerConfiguration,
 ): DokployManifest => {
   const setup = target.desiredMode === "setup";
   const dataDirectory = configuration.dataDirectory.replace(/\/+$/u, "");
+  const configMountPath = `${dataDirectory}/config.json`;
+  const credentialMountPaths = Object.fromEntries(
+    GITHUB_APP_REFERENCES.map((role) => [
+      role,
+      `${dataDirectory}/credentials/github-${role}.json`,
+    ]),
+  ) as Readonly<Record<(typeof GITHUB_APP_REFERENCES)[number], string>>;
   return {
     applicationId: application.applicationId,
     dockerImage: configuration.runtimeImage,
@@ -191,11 +209,19 @@ const manifestFor = (
       HOME: posix.dirname(dataDirectory),
       PORT: String(configuration.port),
     },
-    configJson: target.configJson,
     dataVolumeName: volumeNameFor(target),
     dataMountPath: dataDirectory,
-    configFileName: "config.json",
-    configMountPath: `${dataDirectory}/config.json`,
+    managedFileMountPaths: [configMountPath, ...Object.values(credentialMountPaths)],
+    fileMounts: [
+      { filePath: "config.json", mountPath: configMountPath, content: target.configJson },
+      ...(runtimeCredentialFiles === null
+        ? []
+        : GITHUB_APP_REFERENCES.map((role) => ({
+            filePath: `github-${role}.json`,
+            mountPath: credentialMountPaths[role],
+            content: runtimeCredentialFiles[role],
+          }))),
+    ],
     replicas: 1,
     autoDeploy: false,
     placementSwarm: { Constraints: [`node.hostname==${configuration.workerHostname}`] },
@@ -465,18 +491,24 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
       if (target.appliedConfigVersion > target.configVersion) {
         return await recordInvariant(application, "tenant_config_version_regressed");
       }
-      const expectedRuntimeId =
-        target.desiredMode === "setup"
-          ? options.secrets.runtimeId(target.tenantId)
-          : options.operateRuntimeIdForTenant(target.tenantId);
-      if (expectedRuntimeId === null) {
-        return await recordInvariant(application, "tenant_operate_runtime_identity_missing");
+      let runtimeCredentialFiles: TenantRuntimeCredentialFiles | null = null;
+      if (target.desiredMode === "operate") {
+        try {
+          runtimeCredentialFiles = await options.runtimeCredentialFilesForTenant(target.tenantId);
+        } catch {
+          return await recordInvariant(application, "tenant_github_credentials_unavailable");
+        }
+        if (runtimeCredentialFiles === null) {
+          return await recordInvariant(application, "tenant_github_credentials_missing");
+        }
       }
+      const expectedRuntimeId = options.secrets.runtimeId(target.tenantId);
       const manifest = manifestFor(
         target,
         application,
         token,
         expectedRuntimeId,
+        runtimeCredentialFiles,
         options.secrets,
         options.configuration,
       );

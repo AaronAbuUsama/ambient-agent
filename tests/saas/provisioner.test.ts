@@ -214,8 +214,13 @@ const provisionerFor = (
   client: Client,
   turso: FakeTurso,
   dokploy: FakeDokploy,
-  operateRuntimeIdForTenant: (tenantId: string) => string | null = (tenantId) =>
-    `operate-runtime:${tenantId}`,
+  runtimeCredentialFilesForTenant: (
+    tenantId: string,
+  ) => Promise<Readonly<Record<"coder" | "reviewer" | "planner", string>> | null> = async (tenantId) => ({
+    coder: JSON.stringify({ role: "coder", tenantId }),
+    reviewer: JSON.stringify({ role: "reviewer", tenantId }),
+    planner: JSON.stringify({ role: "planner", tenantId, webhookSecret: secrets.bridgeSecret(tenantId) }),
+  }),
 ) => {
   let id = 0;
   return createTenantProvisioner({
@@ -223,7 +228,7 @@ const provisionerFor = (
     turso,
     dokploy,
     secrets,
-    operateRuntimeIdForTenant,
+    runtimeCredentialFilesForTenant,
     configuration: {
       runtimeImage: "ghcr.io/ambient-agent/runtime:sha-test",
       workerHostname: "worker-one",
@@ -352,18 +357,28 @@ describe("tenant provisioner", () => {
     expect(await provisioner.reconcilePendingTenants()).toEqual([
       expect.objectContaining({ tenantId, status: "running", taskCount: 1 }),
     ]);
-    expect(dokploy.healthRuntimeIds.at(-1)).toBe(`operate-runtime:${tenantId}`);
+    expect(dokploy.healthRuntimeIds.at(-1)).toBe(`runtime:${tenantId}`);
     expect([...dokploy.manifests.values()][0]?.environment.AMBIENT_AGENT_RUNTIME_ID).toBe(
-      `operate-runtime:${tenantId}`,
+      `runtime:${tenantId}`,
+    );
+    expect([...dokploy.manifests.values()][0]?.fileMounts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ mountPath: "/root/.ambient-agent/credentials/github-coder.json" }),
+        expect.objectContaining({ mountPath: "/root/.ambient-agent/credentials/github-reviewer.json" }),
+        expect.objectContaining({
+          mountPath: "/root/.ambient-agent/credentials/github-planner.json",
+          content: expect.stringContaining(`bridge:${tenantId}`),
+        }),
+      ]),
     );
   });
 
-  test("stops before Operate when the delivery runtime identity is unavailable", async () => {
+  test("stops before Operate when tenant GitHub credential files are unavailable", async () => {
     const client = await migrate();
     const tenantId = await seed(client, "operate-identity");
     const turso = new FakeTurso();
     const dokploy = new FakeDokploy();
-    const provisioner = provisionerFor(client, turso, dokploy, () => null);
+    const provisioner = provisionerFor(client, turso, dokploy, async () => null);
 
     expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({ status: "running" });
     await client.execute({
@@ -377,7 +392,7 @@ describe("tenant provisioner", () => {
 
     expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({
       status: "blocked",
-      errorCode: "tenant_operate_runtime_identity_missing",
+      errorCode: "tenant_github_credentials_missing",
     });
     expect([...dokploy.taskCounts.values()]).toEqual([0]);
   });
@@ -674,7 +689,9 @@ describe("tenant provisioner", () => {
       expect(manifest.environment.TENANT_DB_TOKEN).toContain(ownName);
       const otherName = ownName.endsWith("one") ? "tenant-db-two" : "tenant-db-one";
       expect(manifest.environment.TENANT_DB_TOKEN).not.toContain(otherName);
-      expect(manifest.configJson).not.toContain("scoped-token:");
+      expect(manifest.fileMounts.find((file) => file.filePath === "config.json")?.content).not.toContain(
+        "scoped-token:",
+      );
     }
   });
 });

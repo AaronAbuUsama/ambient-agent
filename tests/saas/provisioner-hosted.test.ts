@@ -2,12 +2,13 @@ import { Buffer } from "node:buffer";
 
 import type { Client } from "@libsql/client";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { runtimeInstallationId } from "../../packages/installation/src/runtime-health";
 
 import {
   createHostedTenantProvisioner,
   startTenantProvisionerReconciliation,
 } from "../../apps/api/src/provisioner-hosted";
+import { createTenantSecretCodec } from "../../apps/api/src/provisioner-providers";
+import { runtimeInstallationId } from "../../packages/installation/src/runtime-health";
 
 afterEach(() => vi.useRealTimers());
 
@@ -25,9 +26,19 @@ describe("hosted tenant provisioner composition", () => {
     ).toThrow(/DOKPLOY_API_KEY/u);
   });
 
-  test("builds the in-process reconciler only from a complete environment", () => {
+  test("builds tenant-bound runtime secrets and GitHub credential files from the hosted contracts", async () => {
+    const encryptionKey = Buffer.alloc(32, 9).toString("base64");
+    const client = {
+      execute: vi.fn(async () => ({
+        rows: [
+          { role: "coder", installation_id: 101 },
+          { role: "reviewer", installation_id: 102 },
+          { role: "planner", installation_id: 103 },
+        ],
+      })),
+    } as unknown as Client;
     const provisioner = createHostedTenantProvisioner({
-      client: {} as Client,
+      client,
       environment: {
         DOKPLOY_API_URL: "https://dokploy.example",
         DOKPLOY_API_KEY: "dokploy-secret",
@@ -37,9 +48,26 @@ describe("hosted tenant provisioner composition", () => {
         TENANT_RUNTIME_IMAGE: "ghcr.io/ambient/runtime:sha-one",
         TURSO_ORG: "ambient-org",
         TURSO_PLATFORM_TOKEN: "turso-secret",
-        TENANT_SECRET_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString("base64"),
-        GITHUB_RUNTIME_DELIVERY_SECRETS_JSON: JSON.stringify({
-          "tenant-one": "operate-runtime-secret",
+        TENANT_SECRET_ENCRYPTION_KEY: encryptionKey,
+        GITHUB_APPS_JSON: JSON.stringify({
+          coder: {
+            appId: "11",
+            slug: "ambient-coder",
+            privateKey: "coder-private-key",
+            webhookSecret: "coder-webhook-secret",
+          },
+          reviewer: {
+            appId: "12",
+            slug: "ambient-reviewer",
+            privateKey: "reviewer-private-key",
+            webhookSecret: "reviewer-webhook-secret",
+          },
+          planner: {
+            appId: "13",
+            slug: "ambient-planner",
+            privateKey: "planner-private-key",
+            webhookSecret: "global-github-webhook-secret-must-not-reach-the-runtime",
+          },
         }),
       },
     });
@@ -49,14 +77,34 @@ describe("hosted tenant provisioner composition", () => {
       reconcilePendingTenants: expect.any(Function),
       acknowledgeQuiescence: expect.any(Function),
       reconciliationIntervalMs: 5_000,
-      operateRuntimeIdForTenant: expect.any(Function),
+      decryptTenantToken: expect.any(Function),
+      runtimeCredentialFilesForTenant: expect.any(Function),
       runtimeBridgeSecretForTenant: expect.any(Function),
       runtimeIdForTenant: expect.any(Function),
     });
-    expect(provisioner?.operateRuntimeIdForTenant("tenant-one")).toBe(
-      runtimeInstallationId("operate-runtime-secret"),
+    const encrypted = createTenantSecretCodec(encryptionKey).encrypt("private-tenant-token");
+    expect(provisioner!.decryptTenantToken(encrypted)).toBe("private-tenant-token");
+    const files = await provisioner!.runtimeCredentialFilesForTenant("tenant-one");
+    expect(Object.keys(files ?? {})).toEqual(["coder", "reviewer", "planner"]);
+    expect(JSON.parse(files!.coder)).toEqual({
+      schemaVersion: 1,
+      kind: "github-app",
+      appId: "11",
+      installationId: "101",
+      privateKey: "coder-private-key",
+    });
+    expect(JSON.parse(files!.planner)).toEqual({
+      schemaVersion: 1,
+      kind: "github-app",
+      appId: "13",
+      installationId: "103",
+      privateKey: "planner-private-key",
+      webhookSecret: provisioner!.runtimeBridgeSecretForTenant("tenant-one"),
+    });
+    expect(files!.planner).not.toContain("global-github-webhook-secret-must-not-reach-the-runtime");
+    expect(provisioner!.runtimeIdForTenant("tenant-one")).toBe(
+      runtimeInstallationId(provisioner!.runtimeBridgeSecretForTenant("tenant-one")),
     );
-    expect(provisioner?.operateRuntimeIdForTenant("tenant-two")).toBeNull();
   });
 
   test("keeps sweeping later transitions without overlapping a slow sweep", async () => {

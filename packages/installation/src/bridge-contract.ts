@@ -15,7 +15,7 @@ export interface BridgeHealth {
 
 export type BridgePairing =
   | ({ readonly status: "pairing" } & PairingProgress)
-  | { readonly status: "paired" }
+  | { readonly status: "paired"; readonly accountJid: string }
   | { readonly status: "not_pairing" };
 
 export type BridgeChats = readonly ChatCandidate[];
@@ -53,5 +53,8 @@ export const bridgePairing = (status: WhatsAppRuntimeStatus): BridgePairing => {
   if (status.phase === "pairing" && status.pairing !== undefined) {
     return { status: "pairing", ...status.pairing };
   }
-  return status.phase === "online" ? { status: "paired" } : { status: "not_pairing" };
+  const accountJid = status.accountJid?.trim();
+  return status.phase === "online" && accountJid
+    ? { status: "paired", accountJid }
+    : { status: "not_pairing" };
 };
