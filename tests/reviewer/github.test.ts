@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { findReviewForHead, reviewEvent, reviewerLogin, validInlineLocations, type ReviewerGitHub } from "../../packages/agents/src/capabilities/reviewer/github.ts";
+import { reviewerExerciseCommand, singleSubmission } from "../../packages/agents/src/capabilities/reviewer/workflow.ts";
 
 describe("Reviewer GitHub contract", () => {
   it("maps verdicts and never approves a red repository exercise", () => {
@@ -29,5 +30,16 @@ describe("Reviewer GitHub contract", () => {
     const locations = validInlineLocations([{ filename: "src/a.ts", patch: "@@ -2,2 +2,3 @@\n same\n-old\n+new\n+more" }]);
     expect([...locations]).toEqual(["src/a.ts:2", "src/a.ts:3", "src/a.ts:4"]);
     expect(locations.has("src/a.ts:1")).toBe(false);
+  });
+
+  it("does not fail a pnpm repository merely because typecheck is absent", () => {
+    expect(reviewerExerciseCommand()).toContain("pnpm run --if-present typecheck");
+  });
+
+  it("submits at most once when the model invokes the effect repeatedly", async () => {
+    const submit = singleSubmission<string>();
+    const effect = vi.fn(async () => "formal-review");
+    await expect(Promise.all([submit(effect), submit(effect)])).resolves.toEqual(["formal-review", "formal-review"]);
+    expect(effect).toHaveBeenCalledTimes(1);
   });
 });

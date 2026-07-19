@@ -10,6 +10,21 @@ import { reviewFindingSchema, reviewerJobInputSchema, reviewerResultSchema, type
 
 const SHELL_TIMEOUT_MS = 20 * 60 * 1000;
 
+export const singleSubmission = <T>(): ((effect: () => Promise<T>) => Promise<T>) => {
+  let submission: Promise<T> | undefined;
+  return (effect) => submission ??= effect();
+};
+
+export const reviewerExerciseCommand = (): string => [
+  "if [ -f pnpm-lock.yaml ]; then corepack pnpm install --frozen-lockfile && corepack pnpm run --if-present typecheck && corepack pnpm test",
+  "elif [ -f package-lock.json ]; then npm ci && npm run typecheck --if-present && npm test",
+  "elif [ -f yarn.lock ]; then corepack yarn install --immutable && corepack yarn run typecheck && corepack yarn test",
+  "elif [ -f pyproject.toml ]; then python -m pip install . && python -m pytest",
+  "elif [ -f go.mod ]; then go test ./...",
+  "elif [ -f Cargo.toml ]; then cargo test",
+  "else echo 'No supported repository exercise contract found' >&2; exit 2; fi",
+].join("\n");
+
 const reviewerAgent = defineAgent(() => ({
   // #208 has one policy profile for verification/review work; Reviewer reuses it.
   ...resolveAgentModelProfile("verifier"),
@@ -19,16 +34,7 @@ const reviewerAgent = defineAgent(() => ({
 }));
 
 const runChecks = async (harness: FlueHarness, cwd: string): Promise<{ passed: boolean; output: string }> => {
-  const command = [
-    "if [ -f pnpm-lock.yaml ]; then corepack pnpm install --frozen-lockfile && corepack pnpm run typecheck && corepack pnpm test",
-    "elif [ -f package-lock.json ]; then npm ci && npm run typecheck --if-present && npm test",
-    "elif [ -f yarn.lock ]; then corepack yarn install --immutable && corepack yarn run typecheck && corepack yarn test",
-    "elif [ -f pyproject.toml ]; then python -m pip install . && python -m pytest",
-    "elif [ -f go.mod ]; then go test ./...",
-    "elif [ -f Cargo.toml ]; then cargo test",
-    "else echo 'No supported repository exercise contract found' >&2; exit 2; fi",
-  ].join("\n");
-  const result = await harness.shell(command, { cwd, timeoutMs: SHELL_TIMEOUT_MS });
+  const result = await harness.shell(reviewerExerciseCommand(), { cwd, timeoutMs: SHELL_TIMEOUT_MS });
   return { passed: result.exitCode === 0, output: `${result.stdout}\n${result.stderr}`.slice(-12_000) };
 };
 
@@ -59,6 +65,7 @@ const run = async ({ harness, input, log }: { harness: FlueHarness; input: Revie
     const files = await listChangedFiles(github, repo, pr.number);
     const inlineLocations = validInlineLocations(files);
     let submitted: ReviewerResult | undefined;
+    const submitOnce = singleSubmission<ReviewerResult>();
     const submitReview = defineTool({
       name: "submit_review",
       description: "Submit the one formal review for this exact pull-request head.",
@@ -69,38 +76,40 @@ const run = async ({ harness, input, log }: { harness: FlueHarness; input: Revie
       }),
       output: reviewerResultSchema,
       run: async ({ input: decision }) => {
-        const live = await github.pulls.get({ owner: repo.owner, repo: repo.repo, pull_number: pr.number });
-        if (live.data.head.sha !== pr.head.sha) {
-          submitted = { status: "blocked", prNumber: pr.number, headSha: live.data.head.sha, summary: "Review not submitted because the pull-request head changed during review." };
+        return await submitOnce(async () => {
+          const live = await github.pulls.get({ owner: repo.owner, repo: repo.repo, pull_number: pr.number });
+          if (live.data.head.sha !== pr.head.sha) {
+            submitted = { status: "blocked", prNumber: pr.number, headSha: live.data.head.sha, summary: "Review not submitted because the pull-request head changed during review." };
+            return submitted;
+          }
+          const event = reviewEvent(decision.verdict as ReviewVerdict, checks.passed);
+          const inline = decision.findings.filter((finding) => inlineLocations.has(`${finding.path}:${finding.line}`));
+          const summaryOnly = decision.findings.filter((finding) => !inlineLocations.has(`${finding.path}:${finding.line}`));
+          const body = [
+            checks.passed ? decision.summary : `${decision.summary}\n\nRepository exercise failed; approval is unavailable until it is green.`,
+            summaryOnly.length === 0
+              ? ""
+              : `Findings without a valid diff line:\n${summaryOnly.map((finding) => `- ${finding.path}:${finding.line} — ${finding.body}`).join("\n")}`,
+          ].filter(Boolean).join("\n\n");
+          const review = await github.pulls.createReview({
+            owner: repo.owner,
+            repo: repo.repo,
+            pull_number: pr.number,
+            commit_id: pr.head.sha,
+            event,
+            body,
+            ...(inline.length === 0 ? {} : { comments: inline.map((finding) => ({ ...finding, side: "RIGHT" as const })) }),
+          });
+          submitted = {
+            status: event === "APPROVE" ? "approved" : event === "COMMENT" ? "commented" : "changes-requested",
+            reviewUrl: review.data.html_url,
+            prNumber: pr.number,
+            headSha: pr.head.sha,
+            verdict: event,
+            summary: body,
+          };
           return submitted;
-        }
-        const event = reviewEvent(decision.verdict as ReviewVerdict, checks.passed);
-        const inline = decision.findings.filter((finding) => inlineLocations.has(`${finding.path}:${finding.line}`));
-        const summaryOnly = decision.findings.filter((finding) => !inlineLocations.has(`${finding.path}:${finding.line}`));
-        const body = [
-          checks.passed ? decision.summary : `${decision.summary}\n\nRepository exercise failed; approval is unavailable until it is green.`,
-          summaryOnly.length === 0
-            ? ""
-            : `Findings without a valid diff line:\n${summaryOnly.map((finding) => `- ${finding.path}:${finding.line} — ${finding.body}`).join("\n")}`,
-        ].filter(Boolean).join("\n\n");
-        const review = await github.pulls.createReview({
-          owner: repo.owner,
-          repo: repo.repo,
-          pull_number: pr.number,
-          commit_id: pr.head.sha,
-          event,
-          body,
-          ...(inline.length === 0 ? {} : { comments: inline.map((finding) => ({ ...finding, side: "RIGHT" as const })) }),
         });
-        submitted = {
-          status: event === "APPROVE" ? "approved" : event === "COMMENT" ? "commented" : "changes-requested",
-          reviewUrl: review.data.html_url,
-          prNumber: pr.number,
-          headSha: pr.head.sha,
-          verdict: event,
-          summary: body,
-        };
-        return submitted;
       },
     });
     log.info("reviewer.judging-diff", { repository: input.repository, pullRequest: pr.number, headSha: pr.head.sha });

@@ -120,6 +120,42 @@ describe("GitHub ingress delivery ledger", () => {
       }
     },
   );
+
+  it("continues opened-PR Speaker ingress when Reviewer admission fails", async () => {
+    const store = createGitHubIngressStore(":memory:");
+    const operations = createIssueOperationStore(":memory:");
+    const dispatched: GitHubIngressInput[] = [];
+    try {
+      operations.begin({
+        operationId: "capture-29",
+        kind: "create-issue",
+        repository: "acme/widgets",
+        startedAt: "2026-07-16T00:00:00.000Z",
+      });
+      operations.complete("capture-29", 29, "2026-07-16T00:00:01.000Z");
+      const ingress = createGitHubIngress({
+        store,
+        operations,
+        managedChats: ["chat-29@g.us"],
+        dispatch: async (_chatId, input) => {
+          dispatched.push(input);
+          return { dispatchId: "speaker-pr-42", acceptedAt: "2026-07-16T00:00:02.000Z" };
+        },
+        review: {
+          repositories: ["acme/widgets"],
+          launch: async () => { throw new Error("reviewer temporarily unavailable"); },
+        },
+        logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+      });
+
+      await expect(ingress(pullRequestOpenedDelivery("reviewer-down"))).resolves.toMatchObject({ status: "done" });
+      expect(dispatched).toHaveLength(1);
+      expect(store.get("reviewer-down")).toMatchObject({ status: "done" });
+    } finally {
+      operations.close();
+      store.close();
+    }
+  });
   it("broadcasts a supported event to every managed thread exactly once", async () => {
     const store = createGitHubIngressStore(":memory:");
     const dispatched: { readonly chatId: string; readonly input: GitHubIngressInput }[] = [];

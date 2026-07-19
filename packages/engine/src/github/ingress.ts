@@ -251,13 +251,13 @@ export const createGitHubIngress = (options: {
 
     const payload = parsed.output;
     const repository = repositoryKey(payload.repository.owner.login, payload.repository.name);
+    let reviewLaunchError: string | undefined;
     const launchReview = async (pullRequest: number, expectedHeadSha: string) => {
       if (options.review === undefined) return undefined;
       try {
         return await options.review.launch({ repository, pullRequest, expectedHeadSha });
       } catch (cause) {
-        const error = errorMessage(cause);
-        options.store.settle(delivery.deliveryId, { status: "failed", repository, error, settledAt: now().toISOString() });
+        reviewLaunchError = errorMessage(cause);
         return null;
       }
     };
@@ -271,7 +271,10 @@ export const createGitHubIngress = (options: {
       options.review?.repositories.some((candidate) => candidate.toLowerCase() === repository)
     ) {
       const admitted = await launchReview(payload.pull_request.number, payload.pull_request.head.sha);
-      if (admitted === null) return { status: "failed", record: options.store.get(delivery.deliveryId)! };
+      if (admitted === null) {
+        options.store.settle(delivery.deliveryId, { status: "failed", repository, error: reviewLaunchError!, settledAt: now().toISOString() });
+        return { status: "failed", record: options.store.get(delivery.deliveryId)! };
+      }
       if (admitted !== undefined) {
         options.store.settle(delivery.deliveryId, {
           status: "done",
@@ -363,7 +366,14 @@ export const createGitHubIngress = (options: {
         options.review?.repositories.some((candidate) => candidate.toLowerCase() === repository)
       ) {
         const admitted = await launchReview(payload.pull_request.number, payload.pull_request.head.sha);
-        if (admitted === null) return { status: "failed", record: options.store.get(delivery.deliveryId)! };
+        if (admitted === null) {
+          logger.warn({
+            event: "github.ingress.review-launch-failed",
+            deliveryId: delivery.deliveryId,
+            repository,
+            reason: reviewLaunchError!,
+          });
+        }
       }
       if (correlation.completedIssueNumbers.length === 0) {
         options.store.settle(delivery.deliveryId, {
