@@ -32,6 +32,11 @@ describe("Reviewer GitHub contract", () => {
     expect(locations.has("src/a.ts:1")).toBe(false);
   });
 
+  it("does not count no-newline diff metadata as a right-side line", () => {
+    const locations = validInlineLocations([{ filename: "src/a.ts", patch: "@@ -1 +1,2 @@\n-old\n\\ No newline at end of file\n+new\n+next" }]);
+    expect([...locations]).toEqual(["src/a.ts:1", "src/a.ts:2"]);
+  });
+
   it("does not fail a pnpm repository merely because typecheck is absent", () => {
     expect(reviewerExerciseCommand()).toContain("pnpm run --if-present typecheck");
   });
@@ -45,6 +50,12 @@ describe("Reviewer GitHub contract", () => {
     const effect = vi.fn(async () => "formal-review");
     await expect(Promise.all([submit(effect), submit(effect)])).resolves.toEqual(["formal-review", "formal-review"]);
     expect(effect).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a submit retry after the first attempt rejects", async () => {
+    const submit = singleSubmission<string>();
+    await expect(submit(async () => { throw new Error("transient"); })).rejects.toThrow("transient");
+    await expect(submit(async () => "formal-review")).resolves.toBe("formal-review");
   });
 
   it("serializes concurrent workflow submissions for one Reviewer App and PR head", async () => {

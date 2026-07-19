@@ -88,6 +88,8 @@ export const validInlineLocations = (files: readonly { filename: string; patch?:
       const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/u.exec(row);
       if (hunk !== null) {
         line = Number(hunk[1]);
+      } else if (row.startsWith("\\")) {
+        continue;
       } else if (line > 0 && (row.startsWith("+") || row.startsWith(" "))) {
         locations.add(`${file.filename}:${line}`);
         line += 1;

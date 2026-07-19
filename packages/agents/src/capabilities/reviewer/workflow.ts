@@ -13,7 +13,15 @@ const reviewerSubmissions = new Map<string, Promise<ReviewerResult>>();
 
 export const singleSubmission = <T>(): ((effect: () => Promise<T>) => Promise<T>) => {
   let submission: Promise<T> | undefined;
-  return (effect) => submission ??= effect();
+  return (effect) => {
+    if (submission !== undefined) return submission;
+    const attempt = effect().catch((cause) => {
+      if (submission === attempt) submission = undefined;
+      throw cause;
+    });
+    submission = attempt;
+    return attempt;
+  };
 };
 
 export const serializeReviewerSubmission = (
