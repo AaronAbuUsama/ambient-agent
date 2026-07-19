@@ -275,6 +275,14 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
               ? scribeBackfills.retry(chatId)
               : { admitted: false as const };
         if (admission.admitted) {
+          // Empty archives need no detached Flue run. Capture the same durable
+          // snapshot and cross the snapshot/tail boundary synchronously; the
+          // second handoff still refuses to go live if a row arrived meanwhile.
+          scribeBackfills.captureSnapshot(chatId);
+          if (scribeBackfills.nextPage(chatId) === undefined) {
+            scribeBackfills.handoff(chatId);
+            if (scribeBackfills.handoff(chatId)) continue;
+          }
           const { runId } = yield* Effect.promise(() => invoke(scribeBackfill, { input: { chatId } }));
           scribeBackfills.setRunId(chatId, runId);
         }

@@ -17,6 +17,20 @@ const arrival = (chatId: string, id: string, occurredAt: number): ConversationEv
 });
 
 describe("Scribe backfill", () => {
+  it("hands an empty snapshot directly to live without a workflow run", () => {
+    const root = mkdtempSync(join(tmpdir(), "scribe-backfill-")); roots.push(root);
+    const path = join(root, "application.sqlite");
+    const archive = createConversationArchive(path); archive.close();
+    const store = createScribeBackfillStore(path, () => 1);
+    expect(store.admit("chat", "run-1")).toEqual({ admitted: true, runId: "run-1" });
+    store.captureSnapshot("chat");
+    expect(store.nextPage("chat")).toBeUndefined();
+    expect(store.handoff("chat")).toBe(false);
+    expect(store.handoff("chat")).toBe(true);
+    expect(store.get("chat")).toMatchObject({ mode: "live", phase: "tail", afterSequence: 0 });
+    store.close();
+  });
+
   it("paginates raw rows, skips receipt-only prompts, and hands off once", () => {
     const root = mkdtempSync(join(tmpdir(), "scribe-backfill-")); roots.push(root);
     const path = join(root, "application.sqlite");
