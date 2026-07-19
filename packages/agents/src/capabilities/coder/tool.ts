@@ -22,6 +22,7 @@ export interface OpenPullRequestContext {
   readonly branch: string;
   readonly base: string;
   readonly seedBranchHead: string;
+  readonly seedBranchExisted: boolean;
   readonly issue: number;
   readonly issueTitle: string;
   readonly before: WorkspaceSnapshot;
@@ -72,7 +73,8 @@ export const createOpenPullRequestTool = (ctx: OpenPullRequestContext): ToolDefi
         throw new Error("Workspace changed after the final Verifier observation; start a new verified run before publishing.");
       }
       const diff = diffSnapshots(ctx.before, after);
-      if (isEmptyDiff(diff)) {
+      const empty = isEmptyDiff(diff);
+      if (empty && !ctx.seedBranchExisted) {
         return {
           opened: false,
           message:
@@ -84,14 +86,16 @@ export const createOpenPullRequestTool = (ctx: OpenPullRequestContext): ToolDefi
       if (head.sha !== ctx.seedBranchHead) {
         throw new Error("Coder branch moved after this run was seeded; start a new verified run before publishing.");
       }
-      await commitChanges(ctx.github, ctx.repo, {
-        branch: ctx.branch,
-        headSha: head.sha,
-        message: `Coder: issue #${ctx.issue} — ${ctx.issueTitle}`.slice(0, 72),
-        files: diff.changed.map((path) => ({ path })),
-        deletions: diff.deleted,
-        read: ctx.readFile,
-      });
+      if (!empty) {
+        await commitChanges(ctx.github, ctx.repo, {
+          branch: ctx.branch,
+          headSha: head.sha,
+          message: `Coder: issue #${ctx.issue} — ${ctx.issueTitle}`.slice(0, 72),
+          files: diff.changed.map((path) => ({ path })),
+          deletions: diff.deleted,
+          read: ctx.readFile,
+        });
+      }
       // Handler plumbing (never templating): guarantee the load-bearing `Closes #N` so a
       // merged PR auto-closes its issue and the ingress backstop correlates the webhook.
       const body = ensureClosesIssue(input.body, ctx.issue);

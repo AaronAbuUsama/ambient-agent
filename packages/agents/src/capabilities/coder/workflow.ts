@@ -261,7 +261,8 @@ const run = async ({ harness, input, log }: {
     const issue = await fetchIssue(github, repo, input.issue);
     const base = await fetchDefaultBranch(github, repo);
     const baseSha = (await github.git.getRef({ owner: repo.owner, repo: repo.repo, ref: `heads/${base}` })).data.object.sha;
-    const seedBranchHead = (await getBranchHead(github, repo, branch)) ?? baseSha;
+    const existingBranchHead = await getBranchHead(github, repo, branch);
+    const seedBranchHead = existingBranchHead ?? baseSha;
     const tarball = await downloadTarball(github, repo, seedBranchHead);
     const repoDir = `${workspacesRoot}/issue-${input.issue}`;
     const tmpDir = coderTmpDir(workspacesRoot);
@@ -309,6 +310,7 @@ const run = async ({ harness, input, log }: {
         branch,
         base,
         seedBranchHead,
+        seedBranchExisted: existingBranchHead !== undefined,
         issue: input.issue,
         issueTitle: issue.title,
         before,

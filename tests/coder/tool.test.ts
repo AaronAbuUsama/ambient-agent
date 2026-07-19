@@ -41,7 +41,7 @@ const makeGitHub = (opts: { branchExists: boolean; branchHead?: string; openPr?:
 const buildTool = (
   gh: CoderGitHub,
   record: { pr?: OpenPrRecord },
-  options: { snapshotAfter?: () => Promise<ReturnType<typeof parseHashListing>>; verified?: ReturnType<typeof parseHashListing>; requiredDraft?: boolean; seedBranchHead?: string } = {},
+  options: { snapshotAfter?: () => Promise<ReturnType<typeof parseHashListing>>; verified?: ReturnType<typeof parseHashListing>; requiredDraft?: boolean; seedBranchHead?: string; seedBranchExisted?: boolean } = {},
 ) =>
   createOpenPullRequestTool({
     github: gh,
@@ -49,6 +49,7 @@ const buildTool = (
     branch: "agent/coder/issue-42",
     base: "main",
     seedBranchHead: options.seedBranchHead ?? "seed-head",
+    seedBranchExisted: options.seedBranchExisted ?? false,
     issue: 42,
     issueTitle: "Do the thing",
     before,
@@ -158,6 +159,25 @@ describe("open_pull_request handler — the model's one safe write (#172)", () =
     expect(record.pr).toBeUndefined();
     expect(getRef).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it("no new diff on a reused branch still refreshes the PR and its draft lifecycle", async () => {
+    const record: { pr?: OpenPrRecord } = {};
+    const { gh, update, graphql } = makeGitHub({
+      branchExists: true,
+      openPr: { number: 9, node_id: "PR_9", html_url: "https://x/pr/9", draft: true },
+    });
+
+    const result = await buildTool(gh, record, {
+      verified: before,
+      snapshotAfter: async () => before,
+      seedBranchExisted: true,
+    }).run({ input: { title: "verified", body: "current evidence", draft: false } });
+
+    expect(result).toMatchObject({ opened: true, number: 9, draft: false });
+    expect(gh.git.createCommit).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ pull_number: 9, title: "verified" }));
+    expect(graphql).toHaveBeenCalledWith(expect.stringContaining("markPullRequestReadyForReview"), { pullRequestId: "PR_9" });
   });
 
   it("rejects publication when the workspace changed after the final Verifier observation", async () => {
