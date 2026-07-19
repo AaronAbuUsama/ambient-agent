@@ -1290,6 +1290,18 @@ export const createCoworkerService = (options: {
     }
     active?.controller.abort();
     const controller = new AbortController();
+    const settleFailedModelAuth = async () => {
+      await options.client.execute({
+        sql: `UPDATE model_connection
+                 SET status = CASE
+                       WHEN credential_version > 0 AND verified_at_ms IS NOT NULL THEN 'ready'
+                       ELSE 'invalid'
+                     END,
+                     updated_at_ms = ?3
+               WHERE tenant_id = ?1 AND status = 'validating' AND updated_at_ms = ?2`,
+        args: [tenant.id, claimTimestamp, now()],
+      });
+    };
     let attempt: Awaited<ReturnType<CoworkerModelSource["beginAuth"]>>;
     try {
       attempt = await options.model.beginAuth({
@@ -1298,12 +1310,7 @@ export const createCoworkerService = (options: {
         signal: controller.signal,
       });
     } catch (cause) {
-      await options.client.execute({
-        sql: `UPDATE model_connection
-                 SET status = 'invalid', updated_at_ms = ?3
-               WHERE tenant_id = ?1 AND status = 'validating' AND updated_at_ms = ?2`,
-        args: [tenant.id, claimTimestamp, now()],
-      });
+      await settleFailedModelAuth();
       throw cause;
     }
     modelAttempts.set(tenant.id, {
@@ -1326,12 +1333,7 @@ export const createCoworkerService = (options: {
         },
         async () => {
           if (modelAttempts.get(tenant.id)?.operationIdentity !== input.operationIdentity) return;
-          await options.client.execute({
-            sql: `UPDATE model_connection
-                     SET status = 'invalid', updated_at_ms = ?3
-                   WHERE tenant_id = ?1 AND status = 'validating' AND updated_at_ms = ?2`,
-            args: [tenant.id, claimTimestamp, now()],
-          });
+          await settleFailedModelAuth();
           modelAttempts.delete(tenant.id);
         },
       )

@@ -361,6 +361,39 @@ describe("hosted coworker journey", () => {
     });
   });
 
+  test("preserves a ready model credential when its replacement authorization fails", async () => {
+    const client = await migrate();
+    const userId = await seedUser(client, "model-replacement-failure");
+    const service = createCoworkerService({
+      client,
+      now: () => now,
+      model: {
+        beginAuth: async () => ({
+          challenge: {
+            verificationUrl: "https://model.example.test/device",
+            userCode: "REPLACEMENT",
+            expiresAt: now + 60_000,
+          },
+          completion: Promise.reject(new Error("device code expired")),
+        }),
+        verify: async () => true,
+      },
+    });
+    await service.create(userId, { displayName: "Replacement", operationIdentity: "create-replacement" });
+    await client.execute({
+      sql: `UPDATE model_connection
+               SET status = 'ready', credential_version = 1, verified_at_ms = ?2
+             WHERE tenant_id = (SELECT id FROM tenant WHERE user_id = ?1)`,
+      args: [userId, now],
+    });
+
+    await service.beginModelAuth(userId, { operationIdentity: "replacement-failure" });
+
+    await vi.waitFor(async () => {
+      expect((await service.snapshot(userId)).capabilities.model.state).toBe("healthy");
+    });
+  });
+
   test("claims model authorization across service replicas before starting tenant auth", async () => {
     const client = await migrate();
     const userId = await seedUser(client, "model-replica");
