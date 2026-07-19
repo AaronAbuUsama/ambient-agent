@@ -117,7 +117,10 @@ class LeaseLostError extends Error {
 class ProvisioningInvariantError extends Error {
   override readonly name = "ProvisioningInvariantError";
 
-  constructor(readonly code: string) {
+  constructor(
+    readonly code: string,
+    readonly application: DokployApplication | null = null,
+  ) {
     super(code);
   }
 }
@@ -289,7 +292,7 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
           !applicationMatchesTarget(bound, target) ||
           (target.dokployAppName !== null && bound.appName !== target.dokployAppName)
         ) {
-          throw new ProvisioningInvariantError("dokploy_bound_application_mismatch");
+          throw new ProvisioningInvariantError("dokploy_bound_application_mismatch", bound);
         }
         await cleanupLosers(marked, bound);
         return bound;
@@ -347,6 +350,14 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
           await stopAndObserve(application);
         } catch (error) {
           if (error instanceof LeaseLostError) throw error;
+          const quiescenceErrorCode = "dokploy_quiescence_not_observed";
+          await observe("uncertain", "retryable_error", quiescenceErrorCode);
+          return {
+            tenantId,
+            status: "retryable_error",
+            applicationId: application.applicationId,
+            errorCode: quiescenceErrorCode,
+          };
         }
       }
       await observe("uncertain", "blocked_invariant", errorCode);
@@ -360,13 +371,7 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
       if (target.remoteConfigState === "pending" && target.remoteConfigOperationId) {
         if (target.dokployApplicationId) {
           application = await options.dokploy.inspectApplication(target.dokployApplicationId);
-          if (application) {
-            try {
-              await stopAndObserve(application);
-            } catch (error) {
-              if (error instanceof LeaseLostError) throw error;
-            }
-          }
+          if (application) await stopAndObserve(application);
         }
         if (
           !(await blockRemoteConfig(
@@ -526,7 +531,7 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
       if (error instanceof LeaseLostError) return { tenantId, status: "lease_lost" };
       if (error instanceof ProvisioningInvariantError) {
         try {
-          return await recordInvariant(application, error.code);
+          return await recordInvariant(error.application ?? application, error.code);
         } catch (writeError) {
           if (writeError instanceof LeaseLostError) return { tenantId, status: "lease_lost" };
           throw writeError;
@@ -554,20 +559,35 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
     readonly actorId: string;
     readonly evidenceNote: string;
   }): Promise<boolean> => {
-    const target = await readProvisioningTarget(options.client, input.tenantId);
-    if (!target) return false;
+    const initialTarget = await readProvisioningTarget(options.client, input.tenantId);
+    if (!initialTarget) return false;
+    if (
+      initialTarget.remoteConfigState !== "blocked_unknown" ||
+      initialTarget.remoteConfigOperationId !== input.operationId
+    ) {
+      return false;
+    }
+    const leaseKey = initialTarget.credsStoreKey;
     let lease: ProvisionerLease | null = await acquireLease(
       options.client,
-      target.credsStoreKey,
+      leaseKey,
       `operator:${createId()}`,
     );
     if (!lease) return false;
     const renew = async (): Promise<void> => {
-      const renewed = await renewLease(options.client, target.credsStoreKey, lease!);
+      const renewed = await renewLease(options.client, leaseKey, lease!);
       if (!renewed) throw new LeaseLostError("lease_lost");
       lease = renewed;
     };
     try {
+      const target = await readProvisioningTarget(options.client, input.tenantId);
+      if (
+        !target ||
+        target.remoteConfigState !== "blocked_unknown" ||
+        target.remoteConfigOperationId !== input.operationId
+      ) {
+        return false;
+      }
       const marked = (await options.dokploy.listApplications()).filter((application) =>
         applicationMatchesTarget(application, target),
       );
@@ -599,7 +619,7 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
         auditId: `operator-audit:${createId()}`,
       });
     } finally {
-      await releaseLease(options.client, target.credsStoreKey, lease);
+      await releaseLease(options.client, leaseKey, lease);
     }
   };
 

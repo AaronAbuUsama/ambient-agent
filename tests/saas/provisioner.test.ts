@@ -100,6 +100,7 @@ class FakeDokploy implements DokployProvider {
   failCreateAfterInsert = false;
   failPrepare = false;
   failStartAfterScale = false;
+  failStopBeforeScale = false;
   nextApplication = 1;
 
   async listApplications() {
@@ -176,6 +177,7 @@ class FakeDokploy implements DokployProvider {
 
   async stopApplication(applicationId: string, beforeMutation: () => Promise<void>) {
     await beforeMutation();
+    if (this.failStopBeforeScale) throw new Error("simulated stop failure before scale");
     const application = this.applications.get(applicationId);
     if (application) this.taskCounts.set(application.appName, 0);
     this.calls.push(`stop:${applicationId}`);
@@ -330,6 +332,80 @@ describe("tenant provisioner", () => {
     expect([...dokploy.taskCounts.values()]).toEqual([0]);
   });
 
+  test("keeps a takeover pending until zero tasks are observed", async () => {
+    const client = await migrate();
+    const tenantId = await seed(client, "takeover");
+    const turso = new FakeTurso();
+    const dokploy = new FakeDokploy();
+    const provisioner = provisionerFor(client, turso, dokploy);
+
+    expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({ status: "running" });
+    await client.execute({
+      sql: `UPDATE agent_instance
+        SET remote_config_operation_id = 'remote-op-takeover',
+            remote_config_owner_id = 'expired-owner',
+            remote_config_fencing_token = 1,
+            remote_config_target_version = 2,
+            remote_config_state = 'pending'
+        WHERE tenant_id = ?1`,
+      args: [tenantId],
+    });
+    dokploy.failStopBeforeScale = true;
+
+    expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({
+      status: "retryable_error",
+      errorCode: "dokploy_zero_tasks_not_observed",
+    });
+    let state = await client.execute({
+      sql: "SELECT remote_config_state FROM agent_instance WHERE tenant_id = ?1",
+      args: [tenantId],
+    });
+    expect(state.rows[0]?.remote_config_state).toBe("pending");
+    expect([...dokploy.taskCounts.values()]).toEqual([1]);
+
+    dokploy.failStopBeforeScale = false;
+    expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({
+      status: "blocked",
+      errorCode: "dokploy_config_outcome_unknown",
+    });
+    state = await client.execute({
+      sql: "SELECT remote_config_state FROM agent_instance WHERE tenant_id = ?1",
+      args: [tenantId],
+    });
+    expect(state.rows[0]?.remote_config_state).toBe("blocked_unknown");
+    expect([...dokploy.taskCounts.values()]).toEqual([0]);
+  });
+
+  test("stops a drifted bound application before recording an identity block", async () => {
+    const client = await migrate();
+    const tenantId = await seed(client, "drift");
+    const turso = new FakeTurso();
+    const dokploy = new FakeDokploy();
+    const provisioner = provisionerFor(client, turso, dokploy);
+
+    expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({ status: "running" });
+    const application = [...dokploy.applications.values()][0];
+    if (!application) throw new Error("bound application missing");
+    dokploy.applications.set(application.applicationId, {
+      ...application,
+      description: "operator-mutated-marker",
+    });
+    dokploy.failStopBeforeScale = true;
+
+    expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({
+      status: "retryable_error",
+      errorCode: "dokploy_quiescence_not_observed",
+    });
+    expect(dokploy.taskCounts.get(application.appName)).toBe(1);
+    dokploy.failStopBeforeScale = false;
+
+    expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({
+      status: "blocked",
+      errorCode: "dokploy_bound_application_mismatch",
+    });
+    expect(dokploy.taskCounts.get(application.appName)).toBe(0);
+  });
+
   test("fails an uncertain config mutation closed until exact operator acknowledgement", async () => {
     const client = await migrate();
     const tenantId = await seed(client, "unknown", 2);
@@ -368,7 +444,9 @@ describe("tenant provisioner", () => {
       }),
     ).toBe(false);
     dokploy.applications.set(application.applicationId, application);
+    dokploy.taskCounts.set(application.appName, 1);
 
+    const stopCallsBeforeWrongAck = dokploy.calls.filter((call) => call.startsWith("stop:")).length;
     expect(
       await provisioner.acknowledgeQuiescence({
         tenantId,
@@ -377,6 +455,10 @@ describe("tenant provisioner", () => {
         evidenceNote: "Dokploy was drained and the bound service was observed at zero tasks.",
       }),
     ).toBe(false);
+    expect(dokploy.calls.filter((call) => call.startsWith("stop:"))).toHaveLength(
+      stopCallsBeforeWrongAck,
+    );
+    expect(dokploy.taskCounts.get(application.appName)).toBe(1);
     expect(
       await provisioner.acknowledgeQuiescence({
         tenantId,
@@ -385,6 +467,7 @@ describe("tenant provisioner", () => {
         evidenceNote: "Dokploy was drained and the bound service was observed at zero tasks.",
       }),
     ).toBe(true);
+    expect(dokploy.taskCounts.get(application.appName)).toBe(0);
   });
 
   test("keeps each Turso token inside only its tenant manifest", async () => {
