@@ -231,6 +231,13 @@ describe("control-plane ledger migration", () => {
       ) VALUES ('operation-4', ?1, 'provision_setup', 'provision-4')`,
       args: [seeded.tenantId],
     });
+    await client.execute({
+      sql: `INSERT INTO github_delivery_outbox (
+        github_app_id, delivery_guid, event_name, installation_role, installation_id, tenant_id,
+        payload_json, payload_sha256, next_attempt_at_ms, received_at_ms
+      ) VALUES ('planner-app', 'delivery-4', 'issues', 'planner', 1006, ?1, '{}', 'payload-4', 1, 1)`,
+      args: [seeded.tenantId],
+    });
 
     await client.execute({ sql: "DELETE FROM user WHERE id = ?1", args: [seeded.userId] });
 

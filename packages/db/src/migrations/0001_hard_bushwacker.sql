@@ -17,7 +17,7 @@ CREATE TABLE `github_delivery_outbox` (
 	`received_at_ms` integer NOT NULL,
 	`acknowledged_at_ms` integer,
 	PRIMARY KEY(`github_app_id`, `delivery_guid`),
-	FOREIGN KEY (`tenant_id`) REFERENCES `tenant`(`id`) ON UPDATE no action ON DELETE set null,
+	FOREIGN KEY (`tenant_id`) REFERENCES `tenant`(`id`) ON UPDATE no action ON DELETE cascade,
 	CONSTRAINT "github_delivery_outbox_state_check" CHECK("github_delivery_outbox"."state" in ('pending', 'acked')),
 	CONSTRAINT "github_delivery_outbox_role_check" CHECK("github_delivery_outbox"."installation_role" in ('coder', 'reviewer', 'planner')),
 	CONSTRAINT "github_delivery_outbox_attempt_count_check" CHECK("github_delivery_outbox"."attempt_count" >= 0),

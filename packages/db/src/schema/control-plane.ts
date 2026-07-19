@@ -384,7 +384,7 @@ export const githubDeliveryOutbox = sqliteTable(
     eventName: text("event_name").notNull(),
     installationRole: text("installation_role", { enum: ["coder", "reviewer", "planner"] }).notNull(),
     installationId: integer("installation_id"),
-    tenantId: text("tenant_id").references(() => tenant.id, { onDelete: "set null" }),
+    tenantId: text("tenant_id").references(() => tenant.id, { onDelete: "cascade" }),
     payloadJson: text("payload_json").notNull(),
     payloadSha256: text("payload_sha256").notNull(),
     state: text("state", { enum: ["pending", "acked"] })
