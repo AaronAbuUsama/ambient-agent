@@ -138,7 +138,15 @@ export const createWhatsAppAccount = (options: CreateWhatsAppAccountOptions): Ma
   const mutationEchoTtlMs = 60_000;
   let initialSyncObserved = false;
   let initialArchiveReady = false;
+  let onlineObserved = false;
   let archiveQueue = Promise.resolve();
+
+  const settleInitialArchive = (): void => {
+    if (!onlineObserved || !initialSyncObserved || initialArchiveReady) return;
+    initialArchiveReady = true;
+    for (const settle of archiveReadyWaiters) settle();
+    archiveReadyWaiters.clear();
+  };
 
   const prunePendingMutationEchoes = (observedAt: number): void => {
     for (const [fingerprint, pending] of pendingMutationEchoes) {
@@ -197,15 +205,13 @@ export const createWhatsAppAccount = (options: CreateWhatsAppAccountOptions): Ma
       for (const settle of initialSyncWaiters) settle();
       initialSyncWaiters.clear();
       for (const subscriber of syncSubscribers) await subscriber(batch);
+      settleInitialArchive();
     });
   });
   const unsubscribeArchiveReady = typeof session.onStatus === "function" ? session.onStatus((status) => {
-    if (status.phase !== "online" || initialArchiveReady) return;
-    void archiveQueue.then(() => {
-      initialArchiveReady = true;
-      for (const settle of archiveReadyWaiters) settle();
-      archiveReadyWaiters.clear();
-    });
+    if (status.phase !== "online") return;
+    onlineObserved = true;
+    void archiveQueue.then(settleInitialArchive);
   }) : () => undefined;
 
   const waitForInitialSync = async (signal?: AbortSignal): Promise<void> => {
