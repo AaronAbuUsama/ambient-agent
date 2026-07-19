@@ -59,12 +59,11 @@ Plus Turso platform: org, group, and platform token (per-tenant DB creation).
 
 ## Known gaps accepted for tonight
 
-- **Hosted Reviewer cannot run (B3)**: the control plane never writes
-  `runtime.reviewerSandbox` and hard-codes `reviewRepositories: []`
-  (`packages/installation/src/schema.ts:144`); deeper still, the reviewer sandbox shells
-  out to `docker run`, which a tenant container cannot do without a socket mount.
-  Issue filing and the Coder pipeline work; PR review needs a design decision
-  (host-level reviewer service vs. socket-mounted sandbox vs. sandboxless first cut).
+- **Hosted Reviewer cannot run (B3)**: the isolation half is answered — both agent shells
+  now run in per-job E2B sandboxes (ADR 0021), so no tenant container needs a Docker
+  socket, and `E2B_API_KEY` in the runtime env is what turns the Coder and Reviewer on.
+  What remains is that the control plane still hard-codes `reviewRepositories: []`, so a
+  hosted tenant admits no pull request for review.
 - **Recovery lever**: a tenant blocked by the provisioner requires
   `acknowledgeQuiescence`, which no HTTP route exposes yet; recovery is a manual DB/API
   poke. The probe patience fix (C3) makes this much rarer.

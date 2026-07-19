@@ -12,8 +12,12 @@ export interface ManagedRuntimeDependencies {
   readonly paths: ManagedPaths;
   readonly deployment?: RuntimeDeploymentIdentity;
   readonly bridge?: TenantRuntimeOperateBridge;
-  /** Deployment-supplied isolated Reviewer sandbox. Never substitute the host-local sandbox. */
-  readonly reviewerSandbox?: SandboxFactory;
+  /**
+   * The isolated per-job sandbox both agent shells run in (ADR 0021) — E2B in every
+   * deployment. Absent when the provider is unconfigured, which disables the Coder and
+   * the Reviewer rather than falling back to a host-local shell.
+   */
+  readonly agentSandbox?: SandboxFactory;
 }
 
 export interface TenantRuntimeEnvironment extends TenantCredentialEnvironment {

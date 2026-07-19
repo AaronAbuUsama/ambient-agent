@@ -9,6 +9,7 @@
     "./chatgpt-authentication.ts": "./src/chatgpt-authentication.ts",
     "./configuration.ts": "./src/configuration.ts",
     "./diagnostics.ts": "./src/diagnostics.ts",
+    "./e2b-sandbox.ts": "./src/e2b-sandbox.ts",
     "./github-app-client.ts": "./src/github-app-client.ts",
     "./github-app-setup.ts": "./src/github-app-setup.ts",
     "./github-issue-repository.ts": "./src/github-issue-repository.ts",
@@ -19,7 +20,6 @@
     "./qr.ts": "./src/qr.ts",
     "./runtime-dependencies.ts": "./src/runtime-dependencies.ts",
     "./runtime-health.ts": "./src/runtime-health.ts",
-    "./reviewer-docker-sandbox.ts": "./src/reviewer-docker-sandbox.ts",
     "./specialist-return.ts": "./src/specialist-return.ts",
     "./tenant-credentials.ts": "./src/tenant-credentials.ts",
     "./uncertain-work.ts": "./src/uncertain-work.ts",
@@ -30,6 +30,7 @@
     "@libsql/client": "0.17.4",
     "@octokit/auth-app": "^8.0.0",
     "@octokit/rest": "^22.0.0",
+    "e2b": "2.35.0",
     "pino": "^10.3.1",
     "valibot": "1.4.2",
     "whatsappd": "^0.2.1"

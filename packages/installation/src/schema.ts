@@ -25,7 +25,6 @@ const ManagedChat = v.pipe(
   v.regex(/^[^@\s]+@(g\.us|s\.whatsapp\.net)$/, "Expected a WhatsApp group or direct-chat JID"),
 );
 const RuntimePort = v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(65_535));
-const ContainerImage = v.pipe(NonBlankString, v.regex(/^[^\s]+$/u, "Expected one Docker image reference"));
 const CanaryGroup = v.pipe(ManagedChat, v.regex(/@g\.us$/, "Expected a WhatsApp group JID"));
 const ModelId = v.pipe(
   NonBlankString,
@@ -57,7 +56,6 @@ export const ManagedConfigSchema = v.pipe(
     }),
     runtime: v.optional(v.strictObject({
       port: RuntimePort,
-      reviewerSandbox: v.optional(v.strictObject({ kind: v.literal("docker"), image: ContainerImage })),
     }), { port: 3000 }),
     smoke: v.optional(v.strictObject({ canaryChat: CanaryGroup })),
     github: v.strictObject({
