@@ -18,5 +18,14 @@ export interface ScribeBatchInput {
 
 export const scribeBatchInput = (inputs: readonly SpeakerInput[]): ScribeBatchInput => ({
   type: "scribe.batch",
-  inputs,
+  inputs: inputs.map((input) => {
+    if (input.type !== "whatsapp.window" || input.eventOrder === undefined) return input;
+    const byId = new Map([...input.messages, ...input.updates].map((event) => [event.id, event]));
+    const ordered = input.eventOrder.map((id) => byId.get(id)).filter((event) => event !== undefined);
+    return {
+      ...input,
+      messages: ordered.filter((event): event is (typeof input.messages)[number] => !("kind" in event)),
+      updates: ordered.filter((event): event is (typeof input.updates)[number] => "kind" in event),
+    };
+  }),
 });

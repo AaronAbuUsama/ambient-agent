@@ -10,6 +10,12 @@ import { speakerActivity } from "./activity-reporter.ts";
 import { scribeCoalescer } from "../scribe/coalescer.ts";
 import { attachGraphContext } from "../capabilities/graph/digest.ts";
 import { whatsappWindowInput, type SpeakerInput } from "@ambient-agent/engine/inputs.ts";
+import type { ScribeBackfillStore } from "@ambient-agent/engine/intake/scribe-backfill.ts";
+
+let scribeBackfills: Pick<ScribeBackfillStore, "liveSlice"> | undefined;
+export const configureScribeBackfillGate = (store: Pick<ScribeBackfillStore, "liveSlice">): void => {
+  scribeBackfills = store;
+};
 
 export interface SpeakerDispatchRequest {
   readonly id: string;
@@ -24,7 +30,8 @@ export const dispatchSpeaker = async ({ id, input }: SpeakerDispatchRequest): Pr
   const enriched = attachGraphContext(input);
   const receipt = await dispatch(speaker, { id, input: enriched });
   speakerActivity.accepted(receipt, enriched);
-  scribeCoalescer.offer({ id, input }); // Scribe — debounced + detached; failures never touch the Speaker (#155)
+  const scribeInput = input.type === "whatsapp.window" ? (scribeBackfills?.liveSlice(input) ?? (scribeBackfills === undefined ? input : undefined)) : input;
+  if (scribeInput !== undefined) scribeCoalescer.offer({ id, input: scribeInput });
   return receipt;
 };
 

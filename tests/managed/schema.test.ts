@@ -10,7 +10,7 @@ import {
 
 const EXPECTED_DEFAULT_PROFILES = {
   speaker: { id: "gpt-5.6-luna", thinkingLevel: "low" },
-  scribe: { id: "gpt-5.6-luna", thinkingLevel: "minimal" },
+  scribe: { id: "gpt-5.6-luna", thinkingLevel: "medium" },
   planner: { id: "gpt-5.6-sol", thinkingLevel: "xhigh" },
   coder: { id: "gpt-5.6-sol", thinkingLevel: "high" },
   verifier: { id: "gpt-5.6-sol", thinkingLevel: "xhigh" },

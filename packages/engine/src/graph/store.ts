@@ -234,6 +234,9 @@ export const createGraphStore = (databasePath: string, options: GraphStoreOption
   const selectRelation = database.prepare(
     "SELECT * FROM graph_relations WHERE from_id = ? AND relation = ? AND to_id = ?",
   );
+  const selectExactKeyless = database.prepare(
+    "SELECT * FROM graph_entities WHERE type = ? AND json_extract(properties_json, ?) = ? ORDER BY created_at, entity_id LIMIT 1",
+  );
 
   const transaction = <T>(work: () => T): T => {
     database.exec("BEGIN IMMEDIATE");
@@ -261,12 +264,16 @@ export const createGraphStore = (databasePath: string, options: GraphStoreOption
       const observed = input.confidence ?? 1;
       const properties = stripUndefined(input.properties);
       const provenance = input.provenance ?? {};
+      const exactKey = input.type === "topic" ? "label" : input.type === "commitment" || input.type === "goal" ? "description" : undefined;
+      const exactValue = exactKey === undefined ? undefined : properties[exactKey];
       const existingId =
         input.identity !== undefined
           ? resolveIdentityId(input.identity.platform, input.identity.externalId)
           : input.id !== undefined && getEntity(input.id) !== undefined
             ? input.id
-            : undefined;
+            : typeof exactValue === "string"
+              ? (selectExactKeyless.get(input.type, `$.${exactKey}`, exactValue) as unknown as EntityRow | undefined)?.entity_id
+              : undefined;
 
       if (existingId !== undefined) {
         const existing = getEntity(existingId)!;

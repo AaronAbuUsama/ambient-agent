@@ -27,6 +27,7 @@
     "./intake/conversation-event.ts": "./src/intake/conversation-event.ts",
     "./intake/database-versions.ts": "./src/intake/database-versions.ts",
     "./intake/managed-chat-inbox.ts": "./src/intake/managed-chat-inbox.ts",
+    "./intake/scribe-backfill.ts": "./src/intake/scribe-backfill.ts",
     "./logging/logging.ts": "./src/logging/logging.ts",
     "./model/chatgpt-authentication.ts": "./src/model/chatgpt-authentication.ts",
     "./model/pi-subscription.ts": "./src/model/pi-subscription.ts",

@@ -278,7 +278,7 @@ describe("connectPiChatGptSubscription", () => {
     });
     expect(resolveAgentModelProfile("scribe")).toEqual({
       model: "openai-codex/gpt-5.6-luna",
-      thinkingLevel: "minimal",
+      thinkingLevel: "medium",
     });
     expect(resolveAgentModelProfile("planner")).toEqual({
       model: "openai-codex/gpt-5.6-sol",

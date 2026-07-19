@@ -63,6 +63,8 @@ export interface ConversationWindow {
   readonly chatId: string;
   readonly messages: readonly IncomingMessage[];
   readonly updates: readonly ConversationUpdate[];
+  /** Decoded event ids in archive order; historical backfill supplies this when chronology differs from split arrays. */
+  readonly eventOrder?: readonly string[];
   readonly reason: FireReason;
 }
 
