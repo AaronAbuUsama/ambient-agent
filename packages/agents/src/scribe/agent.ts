@@ -1,8 +1,15 @@
-import { defineAgent } from "@flue/runtime";
+import { defineAgent, type AgentRouteHandler } from "@flue/runtime";
 
 import graphExtraction from "../capabilities/graph-extraction/SKILL.md" with { type: "skill" };
 import { createGraphTools } from "../capabilities/graph/tools.ts";
-import { SCRIBE_MODEL_SPECIFIER } from "@ambient-agent/engine/model/pi-subscription.ts";
+import { resolveAgentModelProfile } from "@ambient-agent/engine/model/pi-subscription.ts";
+import { acceptsScribeDirectToken } from "./direct-access.ts";
+
+/** Private loopback SDK seam used by the durable backfill workflow. */
+export const route: AgentRouteHandler = async (context, next) => {
+  if (!acceptsScribeDirectToken(context.req.header("authorization"))) return context.notFound();
+  await next();
+};
 
 export const description =
   "A silent per-thread agent that extracts the shared graph ontology from a chat's inputs; it never speaks and has no external identity.";
@@ -11,8 +18,7 @@ export const description =
 // minimal-thinking, latency-free, so it can go heavier if extraction quality demands.
 // Only the four ontology tools — no Say, no whatsapp-participation, no issue-management.
 export default defineAgent(() => ({
-  model: SCRIBE_MODEL_SPECIFIER,
-  thinkingLevel: "minimal",
+  ...resolveAgentModelProfile("scribe"),
   skills: [graphExtraction],
   tools: createGraphTools(),
   instructions: [

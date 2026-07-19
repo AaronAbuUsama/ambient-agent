@@ -1,6 +1,10 @@
 import * as v from "valibot";
 
 import { GITHUB_REPOSITORY_PATTERN } from "@ambient-agent/engine/github/repository.ts";
+import {
+  DEFAULT_AGENT_MODEL_PROFILES,
+  MODEL_THINKING_LEVELS,
+} from "@ambient-agent/engine/model/pi-subscription.ts";
 
 const GITHUB_CREDENTIAL_REFERENCE = "github";
 const CHATGPT_OAUTH_CREDENTIAL_REFERENCE = "chatgpt-oauth";
@@ -21,7 +25,23 @@ const ManagedChat = v.pipe(
   v.regex(/^[^@\s]+@(g\.us|s\.whatsapp\.net)$/, "Expected a WhatsApp group or direct-chat JID"),
 );
 const RuntimePort = v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(65_535));
+const ContainerImage = v.pipe(NonBlankString, v.regex(/^[^\s]+$/u, "Expected one Docker image reference"));
 const CanaryGroup = v.pipe(ManagedChat, v.regex(/@g\.us$/, "Expected a WhatsApp group JID"));
+const ModelId = v.pipe(
+  NonBlankString,
+  v.regex(/^[^/\s]+$/, "Expected an OpenAI model ID without a provider prefix"),
+);
+const AgentModelProfileSchema = v.strictObject({
+  id: ModelId,
+  thinkingLevel: v.picklist(MODEL_THINKING_LEVELS),
+});
+const AgentModelProfilesSchema = v.strictObject({
+  speaker: AgentModelProfileSchema,
+  scribe: AgentModelProfileSchema,
+  planner: AgentModelProfileSchema,
+  coder: AgentModelProfileSchema,
+  verifier: AgentModelProfileSchema,
+});
 
 export const ManagedConfigSchema = v.pipe(
   v.strictObject({
@@ -33,14 +53,19 @@ export const ManagedConfigSchema = v.pipe(
         v.literal(CHATGPT_OAUTH_CREDENTIAL_REFERENCE),
         v.literal(LEGACY_PI_AUTH_CREDENTIAL_REFERENCE),
       ]),
+      profiles: v.optional(AgentModelProfilesSchema, DEFAULT_AGENT_MODEL_PROFILES),
     }),
-    runtime: v.optional(v.strictObject({ port: RuntimePort }), { port: 3000 }),
+    runtime: v.optional(v.strictObject({
+      port: RuntimePort,
+      reviewerSandbox: v.optional(v.strictObject({ kind: v.literal("docker"), image: ContainerImage })),
+    }), { port: 3000 }),
     smoke: v.optional(v.strictObject({ canaryChat: CanaryGroup })),
     github: v.strictObject({
       kind: v.literal("github-app"),
       credential: v.literal(GITHUB_CREDENTIAL_REFERENCE),
       defaultRepository: Repository,
       allowedRepositories: v.pipe(v.array(Repository), v.nonEmpty()),
+      reviewRepositories: v.optional(v.array(Repository), []),
     }),
   }),
   v.check(
@@ -49,6 +74,12 @@ export const ManagedConfigSchema = v.pipe(
         (repository) => repository.toLowerCase() === config.github.defaultRepository.toLowerCase(),
       ),
     "The default GitHub repository must be included in allowedRepositories",
+  ),
+  v.check(
+    (config) => config.github.reviewRepositories.every((repository) =>
+      config.github.allowedRepositories.some((allowed) => allowed.toLowerCase() === repository.toLowerCase()),
+    ),
+    "Every review repository must be included in allowedRepositories",
   ),
   v.check(
     (config) =>
@@ -97,12 +128,19 @@ export const ChatGptOAuthCredentialSchema = v.looseObject({
 export const createManagedConfig = (managedChats: readonly string[], defaultRepository: string): ManagedConfig => ({
   schemaVersion: 1,
   managedChats: [...managedChats],
-  model: { provider: "openai-codex", credential: CHATGPT_OAUTH_CREDENTIAL_REFERENCE },
+  model: {
+    provider: "openai-codex",
+    credential: CHATGPT_OAUTH_CREDENTIAL_REFERENCE,
+    profiles: DEFAULT_AGENT_MODEL_PROFILES,
+  },
   runtime: { port: 3000 },
   github: {
     kind: "github-app",
     credential: GITHUB_CREDENTIAL_REFERENCE,
     defaultRepository,
     allowedRepositories: [defaultRepository],
+    // Safe packaged default: automatic review stays off until a deployment binds an
+    // isolated Reviewer sandbox and explicitly opts repositories in.
+    reviewRepositories: [],
   },
 });

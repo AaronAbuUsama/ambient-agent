@@ -65,6 +65,8 @@ export interface WhatsAppAccountSetup {
 
 export interface ManagedWhatsAppAccount extends WhatsAppAccountSetup {
   session(): WhatsAppSession;
+  /** Resolves only after provider sync completion and every queued archive batch write. */
+  initialArchiveReady?(signal?: AbortSignal): Promise<void>;
   /** Send the live smoke stimulus, then admit that exact provider-acknowledged message as the canary input. */
   sendSmokeCanary?(chatId: string, text: string): Promise<{ readonly messageId: string }>;
   stop(): Promise<void>;
@@ -143,9 +145,20 @@ export const createWhatsAppAccount = (options: CreateWhatsAppAccountOptions): Ma
   const updateSubscribers = new Set<(update: Update) => void | Promise<void>>();
   const syncSubscribers = new Set<(batch: ConversationSyncBatch) => void | Promise<void>>();
   const initialSyncWaiters = new Set<(error?: WhatsAppAccountError) => void>();
+  const archiveReadyWaiters = new Set<(error?: WhatsAppAccountError) => void>();
   const pendingMutationEchoes = new Map<string, Array<{ readonly expiresAt: number; readonly scope: string }>>();
   const mutationEchoTtlMs = 60_000;
   let initialSyncObserved = false;
+  let initialArchiveReady = false;
+  let onlineObserved = false;
+  let archiveQueue = Promise.resolve();
+
+  const settleInitialArchive = (): void => {
+    if (!onlineObserved || !initialSyncObserved || initialArchiveReady) return;
+    initialArchiveReady = true;
+    for (const settle of archiveReadyWaiters) settle();
+    archiveReadyWaiters.clear();
+  };
 
   const prunePendingMutationEchoes = (observedAt: number): void => {
     for (const [fingerprint, pending] of pendingMutationEchoes) {
@@ -197,13 +210,21 @@ export const createWhatsAppAccount = (options: CreateWhatsAppAccountOptions): Ma
     }
     for (const subscriber of updateSubscribers) await subscriber(update);
   });
-  const unsubscribeSync = session.onConversationSync(async (batch) => {
-    mergeSync(batch);
-    initialSyncObserved = true;
-    for (const settle of initialSyncWaiters) settle();
-    initialSyncWaiters.clear();
-    for (const subscriber of syncSubscribers) await subscriber(batch);
+  const unsubscribeSync = session.onConversationSync((batch) => {
+    archiveQueue = archiveQueue.then(async () => {
+      mergeSync(batch);
+      initialSyncObserved = true;
+      for (const settle of initialSyncWaiters) settle();
+      initialSyncWaiters.clear();
+      for (const subscriber of syncSubscribers) await subscriber(batch);
+      settleInitialArchive();
+    });
   });
+  const unsubscribeArchiveReady = typeof session.onStatus === "function" ? session.onStatus((status) => {
+    if (status.phase !== "online") return;
+    onlineObserved = true;
+    void archiveQueue.then(settleInitialArchive);
+  }) : () => undefined;
 
   const waitForInitialSync = async (signal?: AbortSignal): Promise<void> => {
     if (initialSyncObserved) return;
@@ -231,6 +252,24 @@ export const createWhatsAppAccount = (options: CreateWhatsAppAccountOptions): Ma
       };
       initialSyncWaiters.add(settle);
       if (initialSyncObserved) settle();
+      else if (waitSignal.aborted) onAbort();
+      else waitSignal.addEventListener("abort", onAbort, { once: true });
+    });
+  };
+  const waitForInitialArchive = async (signal?: AbortSignal): Promise<void> => {
+    if (initialArchiveReady) return;
+    const timeout = AbortSignal.timeout(options.syncTimeoutMillis ?? 60_000);
+    const waitSignal = signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
+    await new Promise<void>((resolve, reject) => {
+      const settle = (error?: WhatsAppAccountError): void => {
+        archiveReadyWaiters.delete(settle);
+        waitSignal.removeEventListener("abort", onAbort);
+        if (error === undefined) resolve();
+        else reject(error);
+      };
+      const onAbort = () => settle(new WhatsAppAccountError(abortCode(waitSignal), "WhatsApp initial archive did not become ready.", { cause: waitSignal.reason }));
+      archiveReadyWaiters.add(settle);
+      if (initialArchiveReady) settle();
       else if (waitSignal.aborted) onAbort();
       else waitSignal.addEventListener("abort", onAbort, { once: true });
     });
@@ -368,6 +407,7 @@ export const createWhatsAppAccount = (options: CreateWhatsAppAccountOptions): Ma
       }
       return managedSession;
     },
+    initialArchiveReady: waitForInitialArchive,
     sendSmokeCanary: async (chatId, text) => {
       if (authenticated === undefined) {
         throw new WhatsAppAccountError("not_authenticated", "Authenticate WhatsApp before sending a smoke canary.");
@@ -398,6 +438,9 @@ export const createWhatsAppAccount = (options: CreateWhatsAppAccountOptions): Ma
         settle(new WhatsAppAccountError("cancelled", "WhatsApp stopped before conversation sync completed."));
       }
       initialSyncWaiters.clear();
+      for (const settle of archiveReadyWaiters) settle(new WhatsAppAccountError("cancelled", "WhatsApp stopped before the initial archive became ready."));
+      archiveReadyWaiters.clear();
+      unsubscribeArchiveReady();
       unsubscribeSync();
       unsubscribeUpdate();
       unsubscribeMessage();

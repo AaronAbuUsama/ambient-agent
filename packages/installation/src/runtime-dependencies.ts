@@ -2,6 +2,7 @@ import type { ChatGptAuthentication } from "@ambient-agent/engine/model/chatgpt-
 import { managedPaths, type ManagedPaths } from "./paths.ts";
 import type { GitHubAppCredential, ManagedConfig } from "./schema.ts";
 import { tenantCredentialDatabaseFromEnvironment, type TenantCredentialEnvironment } from "./tenant-credentials.ts";
+import type { SandboxFactory } from "@flue/runtime";
 
 export interface ManagedRuntimeDependencies {
   readonly authentication: ChatGptAuthentication;
@@ -11,6 +12,8 @@ export interface ManagedRuntimeDependencies {
   readonly paths: ManagedPaths;
   readonly deployment?: RuntimeDeploymentIdentity;
   readonly bridge?: TenantRuntimeOperateBridge;
+  /** Deployment-supplied isolated Reviewer sandbox. Never substitute the host-local sandbox. */
+  readonly reviewerSandbox?: SandboxFactory;
 }
 
 export interface TenantRuntimeEnvironment extends TenantCredentialEnvironment {

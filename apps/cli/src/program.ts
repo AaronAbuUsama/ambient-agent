@@ -62,6 +62,7 @@ import {
 import { runFirstRunSetup, type FirstRunServices, type SetupReview } from "./setup/first-run.ts";
 import { createWhatsAppAccount } from "@ambient-agent/installation/whatsapp-account.ts";
 import { createConversationArchive, migrateConversationArchiveSchema } from "@ambient-agent/engine/intake/conversation-archive.ts";
+import { createScribeBackfillStore } from "@ambient-agent/engine/intake/scribe-backfill.ts";
 import { createDeviceCodeCallbacks, createWhatsAppCallbacks, defaultSetupPrompts, type SetupPrompts } from "./prompts.ts";
 import {
   parseRuntimePort,
@@ -489,7 +490,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           ...currentConfig,
           managedChats,
           ...(canaryChat === undefined ? {} : { smoke: { canaryChat } }),
-          runtime: { port: runtimePort },
+          runtime: { ...currentConfig.runtime, port: runtimePort },
           github: {
             ...currentConfig.github,
             defaultRepository: verifiedRepository,
@@ -584,6 +585,31 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
         } finally {
           await releaseSetupLock(lock);
         }
+      }
+    });
+
+  program
+    .command("scribe-backfill")
+    .description("inspect or retry one managed chat's Scribe backfill")
+    .argument("[chat-id]", "managed WhatsApp chat JID")
+    .option("--retry", "move a failed or disabled backfill back to catching_up")
+    .action(async (chatId, options) => {
+      const paths = await readyManagedPaths("inspect Scribe backfill state in");
+      const store = createScribeBackfillStore(paths.applicationDatabase);
+      try {
+        if (chatId === undefined) {
+          output.stdout(`${JSON.stringify(store.states(), null, 2)}\n`);
+          return;
+        }
+        if (options.retry) {
+          const result = store.retry(chatId);
+          if (!result.admitted) throw new Error(`Scribe backfill ${chatId} is not failed or disabled.`);
+          output.stdout(`Scribe backfill ${chatId} will resume when the runtime starts.\n`);
+        } else {
+          output.stdout(`${JSON.stringify(store.get(chatId) ?? null, null, 2)}\n`);
+        }
+      } finally {
+        store.close();
       }
     });
 

@@ -93,6 +93,7 @@ const harness = () => {
     interactive: true,
     setupPrompts,
     firstRunServices,
+    runtimeHealthFor: async () => ({ state: "stopped" as const, whatsapp: { phase: "stopped" as const } }),
   };
 };
 
@@ -864,6 +865,10 @@ describe("managed CLI", () => {
       JSON.stringify({
         ...existingConfig,
         managedChats: ["120363000@g.us", "15551234567@s.whatsapp.net"],
+        runtime: {
+          port: 3000,
+          reviewerSandbox: { kind: "docker", image: "node:22-bookworm" },
+        },
         github: {
           ...(existingConfig.github as Record<string, unknown>),
           allowedRepositories: ["owner/repo", "owner/other"],
@@ -885,7 +890,10 @@ describe("managed CLI", () => {
         defaultRepository: "Owner/Next",
         allowedRepositories: ["owner/repo", "owner/other", "Owner/Next"],
       },
-      runtime: { port: 4321 },
+      runtime: {
+        port: 4321,
+        reviewerSandbox: { kind: "docker", image: "node:22-bookworm" },
+      },
     });
     await expect(readFile(managed.applicationDatabase)).resolves.toEqual(beforeApplication);
     await expect(readFile(managed.flueDatabase)).resolves.toEqual(beforeFlue);
@@ -1205,6 +1213,7 @@ describe("managed CLI", () => {
     const live = harness();
     const readinessCheck = vi.fn(async () => ({
       model: "openai-codex/gpt-5.6-luna" as const,
+      models: ["openai-codex/gpt-5.6-luna", "openai-codex/gpt-5.6-sol"] as const,
       request: "complete" as const,
     }));
     const verifyGitHub = vi.fn(async (_credential: GitHubAppTriple, repository: string) => repository);
@@ -1256,7 +1265,11 @@ describe("managed CLI", () => {
     expect(
       await runCli(["--data-dir", paths.data, "smoke"], {
         ...cli,
-        readinessCheck: async () => ({ model: "openai-codex/gpt-5.6-luna", request: "complete" }),
+        readinessCheck: async () => ({
+          model: "openai-codex/gpt-5.6-luna",
+          models: ["openai-codex/gpt-5.6-luna", "openai-codex/gpt-5.6-sol"],
+          request: "complete",
+        }),
         firstRunServices: {
           ...cli.firstRunServices,
           verifyGitHub: async (_credential: GitHubAppTriple, repository: string) => repository,
@@ -1333,7 +1346,11 @@ describe("managed CLI", () => {
     expect(
       await runCli(["--data-dir", paths.data, "doctor", "--live", "--json"], {
         ...live,
-        readinessCheck: async () => ({ model: "openai-codex/gpt-5.6-luna", request: "complete" }),
+        readinessCheck: async () => ({
+          model: "openai-codex/gpt-5.6-luna",
+          models: ["openai-codex/gpt-5.6-luna", "openai-codex/gpt-5.6-sol"],
+          request: "complete",
+        }),
         firstRunServices: {
           ...live.firstRunServices,
           verifyGitHub: async () => {

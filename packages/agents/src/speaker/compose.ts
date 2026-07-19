@@ -23,6 +23,7 @@ import type { GitHubIngressInput } from "@ambient-agent/engine/inputs.ts";
 export interface SpeakerIngressAdapters {
   readonly settings: GitHubIngressSettings;
   readonly dispatch: (chatId: string, input: GitHubIngressInput) => Promise<DispatchReceipt>;
+  readonly review?: Parameters<typeof installGitHubIngressRuntime>[3];
 }
 
 /**
@@ -69,6 +70,7 @@ export const composeSpeaker = (adapters: SpeakerAdapters): Hono => {
     adapters.ingress.settings,
     adapters.ingress.dispatch,
     adapters.operations,
+    adapters.ingress.review,
   );
   if (adapters.graph !== undefined) configureGraphStore(adapters.graph);
   if (adapters.participation !== undefined) configureWhatsAppParticipationPort(adapters.participation);

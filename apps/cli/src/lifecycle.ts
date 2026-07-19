@@ -9,6 +9,7 @@ import {
   runtimeDeploymentIdentityFromEnvironment,
   startDeferredWhatsAppRuntime,
 } from "@ambient-agent/installation/runtime-dependencies.ts";
+import { reviewerDockerSandbox } from "@ambient-agent/installation/reviewer-docker-sandbox.ts";
 import type { ManagedPaths } from "@ambient-agent/installation/paths.ts";
 import type { ChatGptAuthentication } from "@ambient-agent/engine/model/chatgpt-authentication.ts";
 
@@ -61,6 +62,13 @@ export const startGeneratedRuntime = async (
     paths,
     ...(deployment === undefined ? {} : { deployment }),
     ...(bridge === undefined ? {} : { bridge }),
+    ...(configuration.runtime.reviewerSandbox === undefined ? {} : {
+      reviewerSandbox: reviewerDockerSandbox({
+        root: paths.workspaces,
+        cwd: paths.workspaces,
+        image: configuration.runtime.reviewerSandbox.image,
+      }),
+    }),
   });
   process.chdir(paths.root);
   const serverEntry = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "server.mjs"));

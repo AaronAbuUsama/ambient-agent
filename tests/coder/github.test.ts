@@ -82,16 +82,18 @@ describe("ensureBranch — idempotent per-issue natural key (check-then-act)", (
 });
 
 describe("upsertPullRequest — one open PR per head→base", () => {
-  it("reuses the open PR rather than opening a second (push-more-commits)", async () => {
-    const list = vi.fn(async () => ({ data: [{ number: 9, html_url: "https://x/pr/9", draft: false }] }));
+  it("reuses the open PR and patches its title/body with the model's fresh values (#172 update-if-open)", async () => {
+    const list = vi.fn(async () => ({ data: [{ number: 9, node_id: "PR_9", html_url: "https://x/pr/9", draft: true }] }));
     const create = vi.fn();
-    const gh = { pulls: { list, create } } as unknown as CoderGitHub;
+    const update = vi.fn(async () => ({ data: {} }));
+    const graphql = vi.fn(async () => ({}));
+    const gh = { graphql, pulls: { list, create, update } } as unknown as CoderGitHub;
 
     const pr = await upsertPullRequest(gh, REPO, {
       branch: "agent/coder/issue-42",
       base: "main",
-      title: "t",
-      body: "b",
+      title: "fresh title",
+      body: "fresh body",
       draft: false,
     });
 
@@ -103,13 +105,44 @@ describe("upsertPullRequest — one open PR per head→base", () => {
       base: "main",
       state: "open",
     });
+    expect(update).toHaveBeenCalledWith({
+      owner: "acme",
+      repo: "widgets",
+      pull_number: 9,
+      title: "fresh title",
+      body: "fresh body",
+    });
+    expect(graphql).toHaveBeenCalledWith(expect.stringContaining("markPullRequestReadyForReview"), { pullRequestId: "PR_9" });
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it("transitions a reused ready PR back to draft after exhausted verification", async () => {
+    const graphql = vi.fn(async () => ({}));
+    const gh = {
+      graphql,
+      pulls: {
+        list: vi.fn(async () => ({ data: [{ number: 9, node_id: "PR_9", html_url: "https://x/pr/9", draft: false }] })),
+        create: vi.fn(),
+        update: vi.fn(async () => ({ data: {} })),
+      },
+    } as unknown as CoderGitHub;
+
+    const pr = await upsertPullRequest(gh, REPO, {
+      branch: "agent/coder/issue-42",
+      base: "main",
+      title: "t",
+      body: "b",
+      draft: true,
+    });
+
+    expect(pr.draft).toBe(true);
+    expect(graphql).toHaveBeenCalledWith(expect.stringContaining("convertPullRequestToDraft"), { pullRequestId: "PR_9" });
   });
 
   it("opens a draft PR when none is open and the suite is red", async () => {
     const list = vi.fn(async () => ({ data: [] }));
     const create = vi.fn(async () => ({ data: { number: 10, html_url: "https://x/pr/10" } }));
-    const gh = { pulls: { list, create } } as unknown as CoderGitHub;
+    const gh = { graphql: vi.fn(), pulls: { list, create } } as unknown as CoderGitHub;
 
     const pr = await upsertPullRequest(gh, REPO, {
       branch: "agent/coder/issue-42",

@@ -22,6 +22,7 @@ export const installGitHubIngressRuntime = (
   settings: GitHubIngressSettings,
   dispatch: (chatId: string, input: GitHubIngressInput) => Promise<DispatchReceipt>,
   operations: IssueOperationStore,
+  review?: Parameters<typeof createGitHubIngress>[0]["review"],
 ): GitHubIngressStore => {
   const store = createGitHubIngressStore(settings.databasePath);
   ingressHandler.set(
@@ -30,6 +31,7 @@ export const installGitHubIngressRuntime = (
       managedChats: settings.managedChats,
       dispatch,
       operations,
+      review,
     }),
   );
   return store;

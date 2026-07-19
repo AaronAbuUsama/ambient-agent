@@ -148,10 +148,22 @@ const startPackedRuntime = async (
 };
 
 const waitForCanonicalAgentText = async (databasePath: string, chatId: string, expected: string): Promise<string> => {
-  const adapter = sqlite(databasePath);
+  const deadline = Date.now() + 15_000;
+  let adapter: ReturnType<typeof sqlite> | undefined;
   try {
-    const { conversationStreamStore } = await adapter.connect();
-    const deadline = Date.now() + 15_000;
+    let conversationStreamStore: Awaited<ReturnType<ReturnType<typeof sqlite>["connect"]>>["conversationStreamStore"] | undefined;
+    while (conversationStreamStore === undefined && Date.now() < deadline) {
+      adapter = sqlite(databasePath);
+      try {
+        ({ conversationStreamStore } = await adapter.connect());
+      } catch (cause) {
+        await adapter.close?.();
+        adapter = undefined;
+        if (!(cause instanceof Error && cause.message.includes("database is locked"))) throw cause;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    if (conversationStreamStore === undefined) throw new Error("Flue database remained locked during runtime readiness.");
     let observed = "";
     while (Date.now() < deadline) {
       const page = await conversationStreamStore.read(`agents/speaker/${chatId}`, { offset: "-1", limit: 1_000 });
@@ -161,7 +173,7 @@ const waitForCanonicalAgentText = async (databasePath: string, chatId: string, e
     }
     throw new Error(`Canonical Speaker history did not contain ${expected}. Observed:\n${observed}`);
   } finally {
-    await adapter.close?.();
+    await adapter?.close?.();
   }
 };
 beforeAll(async () => {
@@ -191,10 +203,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await rm(root, { recursive: true, force: true });
-});
+}, 30_000);
 
 describe("packed ambient-agent executable", () => {
-  it("is a normal executable Node npm bin produced by Vite+", async () => {
+  it("is a normal executable Node npm bin produced by Vite+", { timeout: 15_000 }, async () => {
     const installedManifest = JSON.parse(
       await readFile(join(installDirectory, "node_modules", "ambient-agent", "package.json"), "utf8"),
     ) as { readonly bin?: unknown; readonly version: string };
@@ -255,6 +267,8 @@ describe("packed ambient-agent executable", () => {
     expect(initialized.stdout).toContain("PACK-TEST");
     expect(initialized.stdout).not.toContain("packed-github-secret");
 
+    const port = await availablePort();
+    await executeAmbientAgent(["--data-dir", dataDirectory, "config", "--port", String(port)], fixtureEnvironment);
     const status = await executeAmbientAgent(["--data-dir", dataDirectory, "status", "--json"], fixtureEnvironment);
     expect(JSON.parse(status.stdout)).toMatchObject({
       state: "ready",
@@ -282,8 +296,6 @@ describe("packed ambient-agent executable", () => {
     `);
     predecessor.close();
 
-    const port = await availablePort();
-    await executeAmbientAgent(["--data-dir", dataDirectory, "config", "--port", String(port)], fixtureEnvironment);
     const runtime = await startPackedRuntime(dataDirectory, port);
     try {
       expect(runtime.health).toMatchObject({
@@ -339,6 +351,8 @@ describe("packed ambient-agent executable", () => {
       initArgs(legacyData),
       migrationEnvironment,
     );
+    const migrationPort = await availablePort();
+    await executeAmbientAgent(["--data-dir", legacyData, "config", "--port", String(migrationPort)], migrationEnvironment);
 
     const migrated = await executeAmbientAgent(["status", "--json"], migrationEnvironment);
     expect(migrated.stderr).toContain(`Moved managed data from ${legacyData} to ${adoptedData}.`);

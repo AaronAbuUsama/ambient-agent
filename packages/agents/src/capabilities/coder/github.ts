@@ -8,6 +8,7 @@ import type { GitHubRepositoryRef } from "@ambient-agent/engine/github/repositor
  * the whole GitHub surface — no `git` CLI anywhere (§8 template rule 2).
  */
 export interface CoderGitHub {
+  graphql<T>(query: string, variables: Record<string, unknown>): Promise<T>;
   readonly repos: {
     get(input: { owner: string; repo: string }): Promise<{ data: { default_branch: string } }>;
     downloadTarballArchive(input: { owner: string; repo: string; ref: string }): Promise<{ data: unknown }>;
@@ -61,7 +62,7 @@ export interface CoderGitHub {
       head: string;
       base: string;
       state: "open";
-    }): Promise<{ data: ReadonlyArray<{ number: number; html_url: string; draft?: boolean }> }>;
+    }): Promise<{ data: ReadonlyArray<{ number: number; node_id?: string; html_url: string; draft?: boolean }> }>;
     create(input: {
       owner: string;
       repo: string;
@@ -70,7 +71,14 @@ export interface CoderGitHub {
       base: string;
       body: string;
       draft: boolean;
-    }): Promise<{ data: { number: number; html_url: string } }>;
+    }): Promise<{ data: { number: number; node_id?: string; html_url: string } }>;
+    update(input: {
+      owner: string;
+      repo: string;
+      pull_number: number;
+      title: string;
+      body: string;
+    }): Promise<{ data: unknown }>;
   };
 }
 
@@ -210,10 +218,11 @@ export const commitChanges = async (
 };
 
 /**
- * Idempotent PR (§8 principle 3): one open PR per `head→base`. Lists open PRs for the
- * head first; if one exists the new commits already rode the branch, so reuse it
- * (`created:false`) rather than opening a second. Green-gate is the caller's: a red
- * run passes `draft:true` (only reached when no PR is open yet).
+ * Idempotent PR (§8 principle 3): one open PR per `head→base`, "update if open" (#172).
+ * Lists open PRs for the head first; if one exists the new commits already rode the branch,
+ * so reuse it (`created:false`) and PATCH its title + body with the model's fresh values
+ * rather than opening a second or discarding them. The real draft lifecycle converges
+ * through GitHub's GraphQL mutations; prose never stands in for ready/draft state.
  */
 export const upsertPullRequest = async (
   gh: CoderGitHub,
@@ -230,7 +239,24 @@ export const upsertPullRequest = async (
   });
   const existing = open[0];
   if (existing !== undefined) {
-    return { number: existing.number, url: existing.html_url, created: false, draft: existing.draft ?? false };
+    await gh.pulls.update({
+      owner: repo.owner,
+      repo: repo.repo,
+      pull_number: existing.number,
+      title: input.title,
+      body: input.body,
+    });
+    const currentDraft = existing.draft ?? false;
+    if (currentDraft !== input.draft) {
+      if (existing.node_id === undefined) throw new Error("Existing Coder pull request is missing its GraphQL node id.");
+      await gh.graphql(
+        input.draft
+          ? "mutation ConvertPullRequestToDraft($pullRequestId: ID!) { convertPullRequestToDraft(input: { pullRequestId: $pullRequestId }) { pullRequest { isDraft } } }"
+          : "mutation MarkPullRequestReadyForReview($pullRequestId: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) { pullRequest { isDraft } } }",
+        { pullRequestId: existing.node_id },
+      );
+    }
+    return { number: existing.number, url: existing.html_url, created: false, draft: input.draft };
   }
   const { data } = await gh.pulls.create({
     owner: repo.owner,

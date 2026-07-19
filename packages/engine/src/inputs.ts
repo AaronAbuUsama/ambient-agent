@@ -71,6 +71,7 @@ const whatsappWindowInputSchema = v.object({
       }),
     ]),
   ),
+  eventOrder: v.optional(v.array(nonEmptyString)),
   graphContext,
 });
 
@@ -134,7 +135,50 @@ export const githubPullRequestOpenedInputSchema = v.object({
 });
 
 export type GitHubPullRequestOpenedInput = v.InferOutput<typeof githubPullRequestOpenedInputSchema>;
-export type GitHubIngressInput = GitHubIssueOpenedInput | GitHubPullRequestOpenedInput;
+
+export const githubPullRequestReviewSubmittedInputSchema = v.object({
+  type: v.literal("github.pull-request-review.submitted"),
+  chatId: nonEmptyString,
+  deliveryId: nonEmptyString,
+  installationId: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
+  repository: v.object({
+    owner: nonEmptyString,
+    repo: nonEmptyString,
+    id: v.pipe(v.number(), v.integer(), v.minValue(1)),
+    url: nonEmptyString,
+  }),
+  pullRequest: v.object({
+    number: v.pipe(v.number(), v.integer(), v.minValue(1)),
+    url: nonEmptyString,
+    title: nonEmptyString,
+    state: v.union([v.literal("open"), v.literal("closed")]),
+    draft: v.boolean(),
+  }),
+  review: v.object({
+    id: v.pipe(v.number(), v.integer(), v.minValue(1)),
+    url: nonEmptyString,
+    state: v.union([
+      v.literal("commented"),
+      v.literal("changes_requested"),
+      v.literal("approved"),
+      v.literal("dismissed"),
+    ]),
+  }),
+  sender: v.object({
+    login: nonEmptyString,
+    id: v.pipe(v.number(), v.integer(), v.minValue(1)),
+    type: nonEmptyString,
+  }),
+  graphContext,
+});
+
+export type GitHubPullRequestReviewSubmittedInput = v.InferOutput<
+  typeof githubPullRequestReviewSubmittedInputSchema
+>;
+export type GitHubIngressInput =
+  | GitHubIssueOpenedInput
+  | GitHubPullRequestOpenedInput
+  | GitHubPullRequestReviewSubmittedInput;
 
 /**
  * A finished Specialist run returning as an input (MEMORY-STATE-SPEC §8, ADR 0001).
@@ -183,6 +227,7 @@ export const whatsappWindowInput = (window: ConversationWindow): WhatsAppWindowI
     reason: window.reason,
     messages: window.messages,
     updates: window.updates,
+    ...(window.eventOrder === undefined ? {} : { eventOrder: window.eventOrder }),
   });
 
 /**
@@ -213,7 +258,9 @@ export const speakerDigestSeeds = (input: SpeakerInput): DigestSeeds => {
     externalIds.add(`${repo}#${input.issue.number}`);
   } else {
     externalIds.add(`${repo}#${input.pullRequest.number}`);
-    for (const issue of input.issues) externalIds.add(`${repo}#${issue.number}`);
+    if (input.type === "github.pull-request.opened") {
+      for (const issue of input.issues) externalIds.add(`${repo}#${issue.number}`);
+    }
   }
   return {
     chatId: input.chatId,

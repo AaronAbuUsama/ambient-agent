@@ -19,13 +19,14 @@
     "./qr.ts": "./src/qr.ts",
     "./runtime-dependencies.ts": "./src/runtime-dependencies.ts",
     "./runtime-health.ts": "./src/runtime-health.ts",
+    "./reviewer-docker-sandbox.ts": "./src/reviewer-docker-sandbox.ts",
     "./specialist-return.ts": "./src/specialist-return.ts",
     "./tenant-credentials.ts": "./src/tenant-credentials.ts",
     "./uncertain-work.ts": "./src/uncertain-work.ts",
     "./whatsapp-account.ts": "./src/whatsapp-account.ts"
   },
   "dependencies": {
-    "@flue/runtime": "1.0.0-beta.9",
+    "@flue/runtime": "file:../../vendor/flue-runtime",
     "@libsql/client": "0.17.4",
     "@octokit/auth-app": "^8.0.0",
     "@octokit/rest": "^22.0.0",

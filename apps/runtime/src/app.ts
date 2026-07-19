@@ -9,11 +9,16 @@ import { createGraphStore } from "@ambient-agent/engine/graph/store.ts";
 import { createRunLedger } from "@ambient-agent/agents/capabilities/delegation/ledger.ts";
 import { sweepUnsettledLaunches } from "@ambient-agent/agents/capabilities/delegation/bridge.ts";
 import { configureCoderRuntime } from "@ambient-agent/agents/capabilities/coder/runtime.ts";
+import { configureReviewerRuntime } from "@ambient-agent/agents/capabilities/reviewer/runtime.ts";
+import { reviewerSlug, type ReviewerGitHub } from "@ambient-agent/agents/capabilities/reviewer/github.ts";
+import { reviewer } from "@ambient-agent/agents/capabilities/reviewer/workflow.ts";
+import { coderTmpDir } from "@ambient-agent/agents/capabilities/coder/workspace.ts";
 import type { CoderGitHub } from "@ambient-agent/agents/capabilities/coder/workflow.ts";
 import { githubAppClient } from "@ambient-agent/installation/github-app-client.ts";
 import { readManagedGitHubAppCredential } from "@ambient-agent/installation/configuration.ts";
 import { createOctokitIssueRepository } from "@ambient-agent/installation/github-issue-repository.ts";
 import { local } from "@flue/runtime/node";
+import { invoke } from "@flue/runtime";
 import {
   getWhatsAppRuntimeStatus,
   startWhatsAppRuntime,
@@ -29,7 +34,10 @@ import {
 } from "@ambient-agent/installation/runtime-dependencies.ts";
 import { bridgeHealth } from "@ambient-agent/installation/bridge-contract.ts";
 import { runtimeInstallationId } from "@ambient-agent/installation/runtime-health.ts";
-import { connectPiChatGptSubscription } from "@ambient-agent/engine/model/pi-subscription.ts";
+import {
+  configureAgentModelProfiles,
+  connectPiChatGptSubscription,
+} from "@ambient-agent/engine/model/pi-subscription.ts";
 
 /**
  * Bind the Coder's deployment runtime (§8 template rule 1: config-bound, never per-job).
@@ -44,12 +52,38 @@ const configureCoderRuntimeIfProvisioned = async (paths: ManagedRuntimeDependenc
     console.warn("[coder] no coder App credential; start_coder_job is mounted but unprovisioned");
     return;
   }
+  // Workspace-local TMPDIR (#172): the model's shell tools run the repo's tests, and a
+  // hardened host may mount /tmp noexec — point TMPDIR at the workspaces tree so an install
+  // or test that shells a temp binary still runs. The conductor `mkdir`s it per run.
   configureCoderRuntime({
     github: githubAppClient(credential) as unknown as CoderGitHub,
-    sandbox: local(),
+    sandbox: local({ env: { TMPDIR: coderTmpDir(paths.workspaces) } }),
     workspacesRoot: paths.workspaces,
-    maxAttempts: 3,
   });
+};
+
+const configureReviewerRuntimeIfProvisioned = async (
+  paths: ManagedRuntimeDependencies["paths"],
+  sandbox: ManagedRuntimeDependencies["reviewerSandbox"],
+): Promise<{ github: ReviewerGitHub; appSlug: string } | undefined> => {
+  if (sandbox === undefined) {
+    console.warn("[reviewer] no isolated sandbox binding; automatic PR review is disabled");
+    return undefined;
+  }
+  try {
+    const credential = await readManagedGitHubAppCredential(paths.githubAppCredentials.reviewer);
+    const github = githubAppClient(credential) as unknown as ReviewerGitHub;
+    const appSlug = await reviewerSlug(github);
+    configureReviewerRuntime({
+      github,
+      sandbox,
+      workspacesRoot: paths.workspaces,
+    });
+    return { github, appSlug };
+  } catch {
+    console.warn("[reviewer] no reviewer App credential; automatic PR review is unprovisioned");
+    return undefined;
+  }
 };
 
 export const createAmbientAgentApp = async ({
@@ -59,8 +93,13 @@ export const createAmbientAgentApp = async ({
   deployment,
   githubCredential,
   paths,
+  reviewerSandbox,
 }: ManagedRuntimeDependencies): Promise<Hono> => {
-  const subscription = await connectPiChatGptSubscription({ authentication });
+  configureAgentModelProfiles(configuration.model.profiles);
+  const subscription = await connectPiChatGptSubscription({
+    authentication,
+    profiles: configuration.model.profiles,
+  });
   const issueOperations = createIssueOperationStore(paths.applicationDatabase);
   const runtimeId = bridge?.runtimeId ?? runtimeInstallationId(githubCredential.webhookSecret);
   // The Coder Specialist (#158) runs under its own App identity in a config-bound full
@@ -68,6 +107,7 @@ export const createAmbientAgentApp = async ({
   // SaaS. The coder App may not be provisioned yet; if its credential is absent, the
   // start_coder_job tool stays mounted but a launch fails loudly rather than blocking boot.
   await configureCoderRuntimeIfProvisioned(paths);
+  const reviewerProvisioned = await configureReviewerRuntimeIfProvisioned(paths, reviewerSandbox);
   let whatsappControl: WhatsAppRuntimeControl | undefined;
   // A SpeakerInput is a SpeakerInput, so the funnel delivers a specialist result to both
   // Speaker and Scribe. Held out here so the boot sweep can reuse it after the port is wired.
@@ -91,6 +131,25 @@ export const createAmbientAgentApp = async ({
         managedChats: configuration.managedChats,
       },
       dispatch: async (chatId, input) => await dispatchSpeaker({ id: chatId, input }),
+      ...(reviewerProvisioned ? {
+        review: {
+          repositories: configuration.github.reviewRepositories,
+          launch: async (input) => {
+            const admitted = await invoke(reviewer, { input });
+            delegation.ledger.record({ runId: admitted.runId, workflow: "reviewer", launchedAt: new Date().toISOString() });
+            return admitted;
+          },
+          command: {
+            appSlug: reviewerProvisioned.appSlug,
+            permission: async (input) =>
+              (await reviewerProvisioned.github.repos.getCollaboratorPermissionLevel(input)).data.permission,
+            pullRequest: async ({ owner, repo, pullRequest }) => {
+              const { data } = await reviewerProvisioned.github.pulls.get({ owner, repo, pull_number: pullRequest });
+              return { state: data.state, draft: data.draft ?? false, headSha: data.head.sha };
+            },
+          },
+        },
+      } : {}),
     },
     graph: createGraphStore(paths.applicationDatabase),
     delegation,

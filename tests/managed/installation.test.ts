@@ -348,8 +348,12 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
       defaultRepository: "owner/repo",
     });
     const paths = managedPaths(base);
-    const config = JSON.parse(await readFile(paths.config, "utf8")) as { managedChats: string[] };
+    const config = JSON.parse(await readFile(paths.config, "utf8")) as {
+      managedChats: string[];
+      model: { profiles: { coder: { thinkingLevel: string } } };
+    };
     config.managedChats = [];
+    config.model.profiles.coder.thinkingLevel = "extreme";
     await writeFile(paths.config, JSON.stringify(config), { mode: 0o600 });
     await writeFile(
       paths.githubAppCredentials.planner,
@@ -359,6 +363,8 @@ describe.skipIf(process.platform === "win32")("managed installation on POSIX", (
 
     const output = JSON.stringify(await inspectManagedData(base));
     expect(output).toContain("managedChats");
+    expect(output).toContain("model.profiles.coder.thinkingLevel");
+    expect(output).not.toContain("extreme");
     expect(output).not.toContain("123456789");
     const component = JSON.stringify(await inspectGitHubCredentialComponent(paths));
     expect(component).toContain("privateKey");

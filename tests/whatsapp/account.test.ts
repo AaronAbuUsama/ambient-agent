@@ -192,21 +192,28 @@ describe("managed WhatsApp account", () => {
 
     await account.authenticate({});
     let settled = false;
+    let archiveReady = false;
     const candidates = account.synchronizedChats().finally(() => {
       settled = true;
     });
+    const ready = account.initialArchiveReady!().finally(() => {
+      archiveReady = true;
+    });
     await Promise.resolve();
     expect(settled).toBe(false);
+    expect(archiveReady).toBe(false);
     for (const listener of syncListeners) {
       await listener({
         chats: [{ id: "late-sync@g.us", subject: "Late Sync", isGroup: true, lastMessageAt: 4_000 }],
         contacts: [],
-        messages: [],
+        messages: [message({ id: "late-history", chatId: "late-sync@g.us", timestamp: 4_000 })],
       });
     }
     await expect(candidates).resolves.toEqual([
       { jid: "late-sync@g.us", name: "Late Sync", kind: "group", lastActivityAt: 4_000 },
     ]);
+    await expect(ready).resolves.toBeUndefined();
+    expect(archive.readThread("late-sync@g.us").map(({ id }) => id)).toEqual(["late-history"]);
 
     await account.stop();
     archive.close();

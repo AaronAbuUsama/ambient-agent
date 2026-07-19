@@ -7,13 +7,12 @@ import { createWhatsAppParticipationTools } from "../capabilities/whatsapp-parti
 import { createSpeakerGraphTools } from "../capabilities/graph/tools.ts";
 import { createDelegationTools } from "../capabilities/delegation/tools.ts";
 import { coderSpecialistSpec } from "../capabilities/coder/workflow.ts";
-import { SPEAKER_MODEL_SPECIFIER } from "@ambient-agent/engine/model/pi-subscription.ts";
+import { resolveAgentModelProfile } from "@ambient-agent/engine/model/pi-subscription.ts";
 
 export const description = "A continuing private ambient agent instance identified by its managed WhatsApp chatId.";
 
 export default defineAgent(({ id }) => ({
-  model: SPEAKER_MODEL_SPECIFIER,
-  thinkingLevel: "low",
+  ...resolveAgentModelProfile("speaker"),
   skills: [whatsappParticipation, issueManagement],
   tools: [
     ...createWhatsAppParticipationTools(id),
