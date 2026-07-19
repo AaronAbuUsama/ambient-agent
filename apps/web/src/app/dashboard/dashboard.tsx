@@ -264,6 +264,10 @@ export default function Dashboard({
 
   return (
     <div className="flex flex-col gap-5">
+      <div aria-atomic="true" aria-live="polite" className="sr-only">
+        {modelChallenge ? "A model authorization challenge is ready." : ""}
+        {pairing ? "A WhatsApp repair challenge is ready." : ""}
+      </div>
       {data.readiness === "suspended" ? (
         <Alert status="warning">
           <Alert.Content>
@@ -510,7 +514,7 @@ export default function Dashboard({
                 ))}
             </RadioGroup>
           </Card.Content>
-          <Card.Footer className="flex gap-2">
+          <Card.Footer className="flex flex-wrap gap-2">
             <Button isPending={busy === "github-save"} onPress={() => run("github-save", saveRepositories)}>
               Save repositories
             </Button>
@@ -536,7 +540,7 @@ export default function Dashboard({
           <Card.Content>
             <span className="font-mono text-xl font-semibold tracking-widest">{modelChallenge.userCode}</span>
           </Card.Content>
-          <Card.Footer className="flex gap-3">
+          <Card.Footer className="flex flex-wrap gap-3">
             <Button onPress={() => window.open(modelChallenge.verificationUrl, "_blank", "noopener,noreferrer")}>
               Open verification <ExternalLink className="size-4" />
             </Button>
@@ -564,7 +568,7 @@ export default function Dashboard({
                 <span className="font-mono text-xl font-semibold tracking-widest">{pairing.code}</span>
               ) : pairingQr ? (
                 <div
-                  className="w-fit max-w-full overflow-auto rounded-xl bg-white p-4 text-black"
+                  className="w-fit max-w-full overflow-auto rounded-xl bg-black p-4 text-white"
                   aria-label="Short-lived WhatsApp repair QR code"
                   role="img"
                 >

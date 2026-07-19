@@ -335,7 +335,7 @@ export default function Onboarding() {
               </div>
               <Chip color={data.entitlement.entitled ? "success" : "default"}>{data.entitlement.status}</Chip>
             </Card.Content>
-            <Card.Footer className="flex gap-3">
+            <Card.Footer className="flex flex-wrap gap-3">
               <Button
                 isPending={busy}
                 onPress={() => run(async () => void (await authClient.checkout({ slug: "pro" })))}
@@ -366,7 +366,7 @@ export default function Onboarding() {
                 <FieldError>Use between 2 and 48 characters.</FieldError>
               </TextField>
             </Card.Content>
-            <Card.Footer>
+            <Card.Footer className="flex flex-wrap gap-3">
               <Button
                 isDisabled={displayName.trim().length < 2}
                 isPending={busy}
@@ -393,7 +393,7 @@ export default function Onboarding() {
               <Spinner size="sm" />
               <span className="text-sm text-muted">Provisioning is reconciled from its durable operation receipt.</span>
             </Card.Content>
-            <Card.Footer className="flex gap-3">
+            <Card.Footer className="flex flex-wrap gap-3">
               <Button
                 isDisabled={Boolean(unsettledOperation("provision_setup"))}
                 isPending={busy}
@@ -429,7 +429,7 @@ export default function Onboarding() {
               <Card.Title>Tenant-owned model authorization</Card.Title>
               <Card.Description>{data.capabilities.model.detail}</Card.Description>
             </Card.Header>
-            <Card.Content>
+            <Card.Content aria-live="polite">
               {modelChallenge ? (
                 <Alert status="accent">
                   <Alert.Content>
@@ -487,7 +487,7 @@ export default function Onboarding() {
               <Card.Title>WhatsApp pairing</Card.Title>
               <Card.Description>{data.capabilities.whatsapp.detail}</Card.Description>
             </Card.Header>
-            <Card.Content>
+            <Card.Content aria-live="polite">
               {pairing?.status === "pairing" ? (
                 pairing.method === "pairing_code" ? (
                   <Alert status="accent">
@@ -500,7 +500,7 @@ export default function Onboarding() {
                   </Alert>
                 ) : pairingQr ? (
                   <div
-                    className="w-fit max-w-full overflow-auto rounded-xl bg-white p-4 text-black"
+                    className="w-fit max-w-full overflow-auto rounded-xl bg-black p-4 text-white"
                     aria-label="Short-lived WhatsApp pairing QR code"
                     role="img"
                   >
@@ -524,7 +524,7 @@ export default function Onboarding() {
                 </p>
               )}
             </Card.Content>
-            <Card.Footer className="flex gap-3">
+            <Card.Footer className="flex flex-wrap gap-3">
               <Button
                 isPending={busy}
                 onPress={() => run(async () => setPairing(await client.coworker.whatsapp.pairing()))}
@@ -575,7 +575,7 @@ export default function Onboarding() {
                 </Fieldset>
               )}
             </Card.Content>
-            <Card.Footer className="flex gap-3">
+            <Card.Footer className="flex flex-wrap gap-3">
               <Button isPending={busy} variant="secondary" onPress={loadChats}>
                 Load chats
               </Button>
@@ -728,7 +728,7 @@ export default function Onboarding() {
                 </div>
               ))}
             </Card.Content>
-            <Card.Footer>
+            <Card.Footer className="flex flex-wrap gap-3">
               <Button
                 isDisabled={Boolean(unsettledOperation("activate")) || !data.configurationRevision}
                 isPending={busy}

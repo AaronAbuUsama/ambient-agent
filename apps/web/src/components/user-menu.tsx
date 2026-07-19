@@ -37,6 +37,7 @@ export default function UserMenu() {
   return (
     <Dropdown>
       <Button
+        aria-label="Account menu"
         className="h-auto w-full justify-start gap-2.5 px-2 py-1.5 max-md:justify-center max-md:px-1"
         variant="ghost"
       >
