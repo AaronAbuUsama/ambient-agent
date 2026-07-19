@@ -11,6 +11,7 @@ import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
+import { createHostedCoworkerModelSource, createHostedCoworkerService } from "./coworker-hosted";
 import { installHostedGitHub } from "./github-hosted";
 import {
   createHostedTenantProvisioner,
@@ -18,7 +19,26 @@ import {
 } from "./provisioner-hosted";
 
 const app = new Hono();
-const appRouter = createAppRouter({ getEntitlementSnapshot });
+export const hostedTenantProvisioner = createHostedTenantProvisioner({ client });
+const appRouter = createAppRouter({
+  getEntitlementSnapshot,
+  coworker: createHostedCoworkerService({
+    client,
+    ...(hostedTenantProvisioner
+      ? {
+          runtimeSecretForTenant: hostedTenantProvisioner.runtimeBridgeSecretForTenant,
+          expectedRuntimeIdForTenant: hostedTenantProvisioner.runtimeIdForTenant,
+          model: createHostedCoworkerModelSource({
+            client,
+            decryptTenantToken: hostedTenantProvisioner.decryptTenantToken,
+          }),
+          lifecycle: hostedTenantProvisioner,
+        }
+      : process.env.GITHUB_RUNTIME_DELIVERY_SECRETS_JSON
+        ? { runtimeSecretsJson: process.env.GITHUB_RUNTIME_DELIVERY_SECRETS_JSON }
+        : {}),
+  }),
+});
 
 app.use(logger());
 app.use(
@@ -33,7 +53,6 @@ app.use(
 
 app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
-export const hostedTenantProvisioner = createHostedTenantProvisioner({ client });
 export const hostedTenantProvisionerLoop = hostedTenantProvisioner
   ? startTenantProvisionerReconciliation(hostedTenantProvisioner, {
       intervalMs: hostedTenantProvisioner.reconciliationIntervalMs,
@@ -109,10 +128,11 @@ app.get("/", (c) => {
 
 import { serve } from "@hono/node-server";
 
+const port = Number(process.env.PORT ?? 3000);
 serve(
   {
     fetch: app.fetch,
-    port: 3000,
+    port,
   },
   (info) => {
     console.log(`Server is running on http://localhost:${info.port}`);

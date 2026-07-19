@@ -143,6 +143,9 @@ importers:
       '@flue/sdk':
         specifier: 1.0.0-beta.9
         version: 1.0.0-beta.9
+      '@orpc/client':
+        specifier: 'catalog:'
+        version: 1.14.8(@opentelemetry/api@1.9.0)
       '@orpc/server':
         specifier: 'catalog:'
         version: 1.14.8(@opentelemetry/api@1.9.0)(ws@8.21.0)
@@ -182,6 +185,9 @@ importers:
       '@ambient-agent/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@ambient-agent/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
       '@ambient-agent/env':
         specifier: workspace:*
         version: link:../../packages/env
@@ -336,6 +342,9 @@ importers:
       next-themes:
         specifier: 'catalog:'
         version: 0.4.6(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      qrcode-terminal:
+        specifier: 0.12.0
+        version: 0.12.0
       react:
         specifier: 'catalog:'
         version: 19.2.7
