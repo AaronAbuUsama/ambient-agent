@@ -339,13 +339,28 @@ describe("hosted GitHub callback and repository registry", () => {
     await databaseClient.batch([
       {
         sql: `INSERT INTO github_installation (tenant_id, role, installation_id, status, account_login)
-              VALUES (?1, 'coder', 730, 'installed', 'acme')`,
+              VALUES (?1, 'planner', 730, 'installed', 'acme')`,
         args: [owner.tenantId],
       },
       {
         sql: `INSERT INTO github_repository
                 (tenant_id, installation_role, installation_id, repository_id, owner, name, selected, is_default)
-              VALUES (?1, 'coder', 730, 731, 'acme', 'repo', 1, 1)`,
+              VALUES (?1, 'planner', 730, 731, 'acme', 'repo', 1, 1)`,
+        args: [owner.tenantId],
+      },
+      {
+        sql: `UPDATE tenant
+                 SET config_json = json_set(
+                       config_json,
+                       '$.github',
+                       json_object(
+                         'kind', 'github-app',
+                         'credential', 'github',
+                         'defaultRepository', 'acme/repo',
+                         'allowedRepositories', json('["acme/repo"]')
+                       )
+                     )
+               WHERE id = ?1`,
         args: [owner.tenantId],
       },
       { sql: "INSERT INTO delivery_route (tenant_id, status) VALUES (?1, 'ready')", args: [owner.tenantId] },
@@ -362,16 +377,18 @@ describe("hosted GitHub callback and repository registry", () => {
       repositories_removed: [{ id: 731 }],
     });
     await service.receiveWebhook({
-      role: "coder",
-      signature: signature(apps.coder.webhookSecret, body),
+      role: "planner",
+      signature: signature(apps.planner.webhookSecret, body),
       deliveryGuid: "repository-removed-guid",
       eventName: "installation_repositories",
       body,
     });
 
     expect((await databaseClient.execute("SELECT config_version FROM tenant")).rows[0]?.config_version).toBe(2);
+    expect((await databaseClient.execute("SELECT json_type(config_json, '$.github') AS kind FROM tenant")).rows[0]?.kind)
+      .toBeNull();
     expect((await databaseClient.execute("SELECT status FROM delivery_route")).rows[0]?.status).toBe("degraded");
-    expect(await store.repositories(owner.tenantId, owner.userId, "coder")).toEqual([]);
+    expect(await store.repositories(owner.tenantId, owner.userId, "planner")).toEqual([]);
   });
 });
 

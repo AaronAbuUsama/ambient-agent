@@ -231,9 +231,14 @@ const advanceTenantConfigurationWith = async (
   } else {
     await transaction.execute({
       sql: `UPDATE tenant
-               SET config_version = config_version + 1, updated_at_ms = ?2
+               SET config_json = CASE
+                     WHEN ?3 = 'planner' THEN json_remove(config_json, '$.github')
+                     ELSE config_json
+                   END,
+                   config_version = config_version + 1,
+                   updated_at_ms = ?2
              WHERE id = ?1`,
-      args: [input.tenantId, input.nowMs],
+      args: [input.tenantId, input.nowMs, input.role],
     });
   }
   await transaction.execute({

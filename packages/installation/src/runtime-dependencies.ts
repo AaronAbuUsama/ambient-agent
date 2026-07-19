@@ -10,6 +10,7 @@ export interface ManagedRuntimeDependencies {
   readonly githubCredential: GitHubAppCredential & { readonly webhookSecret: string };
   readonly paths: ManagedPaths;
   readonly deployment?: RuntimeDeploymentIdentity;
+  readonly bridge?: TenantRuntimeOperateBridge;
 }
 
 export interface TenantRuntimeEnvironment extends TenantCredentialEnvironment {
@@ -20,14 +21,16 @@ export interface TenantRuntimeEnvironment extends TenantCredentialEnvironment {
   readonly PORT?: string;
 }
 
-export type RuntimeDeploymentIdentity =
-  | { readonly configVersion: number; readonly mode: "setup" }
-  | {
-      readonly configVersion: number;
-      readonly mode: "operate";
-      readonly runtimeId: string;
-      readonly bridgeSecret: string;
-    };
+export interface RuntimeDeploymentIdentity {
+  readonly configVersion: number;
+  readonly mode: "setup" | "operate";
+}
+
+export interface TenantRuntimeOperateBridge {
+  readonly runtimeId: string;
+  readonly bridgeSecret: string;
+  readonly configVersion: number;
+}
 
 export interface TenantRuntimeSetupBoot {
   readonly mode: "setup";
@@ -81,14 +84,6 @@ export const runtimeDeploymentIdentityFromEnvironment = (
   const mode = environment.AMBIENT_AGENT_RUNTIME_PROFILE?.trim();
   const versionValue = environment.AMBIENT_AGENT_CONFIG_VERSION?.trim();
   if (!mode && !versionValue) return undefined;
-  if (
-    mode === "operate" &&
-    !versionValue &&
-    !environment.AMBIENT_AGENT_RUNTIME_ID?.trim() &&
-    !environment.AMBIENT_AGENT_RUNTIME_BRIDGE_SECRET?.trim()
-  ) {
-    throw new Error("The hosted operate runtime requires its bridge identity and config version.");
-  }
   if (mode !== "setup" && mode !== "operate") {
     throw new Error("AMBIENT_AGENT_RUNTIME_PROFILE must be setup or operate.");
   }
@@ -96,17 +91,39 @@ export const runtimeDeploymentIdentityFromEnvironment = (
   if (!Number.isSafeInteger(configVersion) || configVersion < 1) {
     throw new Error("AMBIENT_AGENT_CONFIG_VERSION must be a positive integer.");
   }
-  return mode === "setup"
-    ? { configVersion, mode }
-    : {
-        configVersion,
-        mode,
-        runtimeId: requiredRuntimeValue("AMBIENT_AGENT_RUNTIME_ID", environment.AMBIENT_AGENT_RUNTIME_ID),
-        bridgeSecret: requiredRuntimeValue(
-          "AMBIENT_AGENT_RUNTIME_BRIDGE_SECRET",
-          environment.AMBIENT_AGENT_RUNTIME_BRIDGE_SECRET,
-        ),
-      };
+  return { configVersion, mode };
+};
+
+export const resolveTenantRuntimeOperateBridge = (
+  environment: TenantRuntimeEnvironment = process.env,
+): TenantRuntimeOperateBridge | undefined => {
+  const configured = [
+    environment.AMBIENT_AGENT_RUNTIME_ID,
+    environment.AMBIENT_AGENT_RUNTIME_BRIDGE_SECRET,
+    environment.AMBIENT_AGENT_CONFIG_VERSION,
+  ].some((value) => value?.trim());
+  const profile = environment.AMBIENT_AGENT_RUNTIME_PROFILE?.trim();
+  if (!configured) {
+    if (profile === "operate") {
+      throw new Error("The hosted operate runtime requires its bridge identity and config version.");
+    }
+    return undefined;
+  }
+  if (profile !== "operate") {
+    throw new Error("Hosted bridge identity requires AMBIENT_AGENT_RUNTIME_PROFILE=operate.");
+  }
+  const configVersion = Number(environment.AMBIENT_AGENT_CONFIG_VERSION);
+  if (!Number.isSafeInteger(configVersion) || configVersion <= 0) {
+    throw new Error("AMBIENT_AGENT_CONFIG_VERSION must be a positive integer.");
+  }
+  return {
+    runtimeId: requiredRuntimeValue("AMBIENT_AGENT_RUNTIME_ID", environment.AMBIENT_AGENT_RUNTIME_ID),
+    bridgeSecret: requiredRuntimeValue(
+      "AMBIENT_AGENT_RUNTIME_BRIDGE_SECRET",
+      environment.AMBIENT_AGENT_RUNTIME_BRIDGE_SECRET,
+    ),
+    configVersion,
+  };
 };
 
 /** Composition-root boundary for the standalone, setup-only tenant server. */
