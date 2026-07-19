@@ -9,7 +9,7 @@
 When a WhatsApp chat becomes managed, Ambient Agent starts a background Scribe
 workflow that reads the chat's existing Conversation Archive and builds its shared
 graph history. The Speaker remains live throughout. The workflow processes bounded
-archive windows sequentially on one persistent Scribe conversation, checkpoints each
+archive windows sequentially on the chat's persistent Scribe agent conversation, checkpoints each
 successful window, catches up with traffic that arrived while it was working, and
 atomically hands the chat to the ordinary live Scribe coalescer.
 
@@ -33,7 +33,7 @@ the CLI is not the product trigger.
 - Chronological processing of the initial archive snapshot followed by insertion-order
   processing of messages that arrive during catch-up.
 - Fixed windows of at most 50 archive events.
-- One persistent Scribe session for every window in a run.
+- One persistent Scribe agent instance for every window and live turn for a chat.
 - Shared-store enforcement of the already-ratified exact-phrase convergence rule for
   keyless graph entities.
 - Structured `ctx.log` progress events.
@@ -153,33 +153,46 @@ The Speaker path is unchanged and always receives the full Window. GitHub and
 specialist-result inputs are unchanged. No second buffer or delivery ledger is added;
 the existing archive sequence and durable backfill cursor decide ownership.
 
-### 3.4 Scribe role and Flue session
+### 3.4 Scribe role and persistent agent instance
 
 `packages/agents/src/scribe/agent.ts:13-25` already mounts the graph-extraction skill
 and the four graph tools. The workflow reuses that agent definition and changes its
 role-wide `thinkingLevel` from `minimal` to `medium`.
 
-`FlueHarness.session(name)` returns one persisted named conversation. The session name
-must be stable per chat, not the hard-coded role name: concurrent chats must never share
-model context, while boot recovery for the same chat must resume its conversation.
-Derive a non-reversible name with the Node standard library so the raw JID is not stored
-as the session label:
+Do not use `harness.session(name)` for backfill continuity. Flue workflow harness
+conversations are scoped to one workflow execution; retrying the workflow creates a new
+run and cannot continue those sessions. Scribe is already a discovered continuing agent,
+and the live coalescer already dispatches to its per-chat instance with
+`dispatch(scribe, { id: chatId, ... })` (`packages/agents/src/scribe/coalescer.ts:44-45`).
+Backfill must address that same `scribe` agent instance by the same raw `chatId` and await
+each durable direct prompt through the Flue SDK:
 
 ```ts
-const sessionKey = createHash("sha256").update(chatId).digest("base64url");
-const session = await harness.session(`scribe-backfill:${sessionKey}`);
-
 for (;;) {
   const window = await nextWindow();
   if (window === undefined) break;
-  await session.prompt(renderScribeBatch(window));
+  await client.agents.prompt("scribe", chatId, {
+    message: renderScribeBatch(window),
+    signal,
+  });
   checkpoint(window);
 }
 ```
 
-The per-chat session preserves prior conversation and tool results across windows and
-boot recovery without leaking one chat's context into another. Flue's model-aware
-automatic compaction handles long histories; #175 adds no parallel summary mechanism.
+`client.agents.prompt()` waits for that agent submission's terminal result, so the
+workflow checkpoints only after the graph-tool turn settles. The continuing agent's
+canonical conversation—not the finite workflow run—preserves prior messages and tool
+results across backfill windows, later live turns, and boot recovery. The existing
+`apps/server/src/db.ts:1-7` file-backed Flue SQLite adapter persists that conversation
+across replacement of the local process. Concurrent chats remain isolated because each
+raw chat ID selects a different Scribe agent instance. Flue's model-aware automatic
+compaction handles long histories; #175 adds no parallel summary mechanism.
+
+The synchronous wait is process-scoped even though the accepted agent submission is
+durable. If the workflow process disappears after submission but before checkpointing,
+boot reconciliation starts a replacement workflow from the last durable archive cursor.
+That workflow may replay the window into the same Scribe conversation; the shared
+exact-phrase convergence rule in section 8 makes that replay safe.
 
 ## 4. Product admission and reconciliation
 
@@ -692,7 +705,8 @@ The implementation session should work in this dependency order:
 3. **Backfill workflow**
 
    - reuse the Scribe agent;
-   - stable per-chat persisted session, 50-event windows, three attempts;
+   - target the existing persistent Scribe agent instance keyed by raw chat ID;
+   - await each direct agent prompt before checkpointing, with 50-event windows and three attempts;
    - optional `eventOrder` metadata rendered in archive order;
    - medium Scribe thinking level;
    - structured run logs.
@@ -735,10 +749,11 @@ The implementation is complete when all of the following are proven:
   to live without violating its non-null cursor.
 - Mixed and receipt-only archive pages never send receipts to Scribe and still advance
   the durable raw archive cursor.
-- Windows run sequentially on one Scribe conversation and update the graph after each
-  turn.
-- Concurrent chat backfills use distinct persisted Scribe conversations; boot recovery
-  for the same chat reuses its prior conversation.
+- Windows run sequentially on the same persistent Scribe agent instance used by that
+  chat's live path and update the graph after each turn.
+- Concurrent chat backfills use distinct Scribe agent instances; boot recovery for the
+  same chat reuses the instance's durable canonical conversation rather than a new
+  workflow-local session.
 - A process interruption resumes from the last successful checkpoint.
 - Replaying a partial window does not increase entity or relation counts for identical
   facts; confidence may increase under the existing policy.
@@ -767,19 +782,19 @@ then un-skips the eval battery.
 
 ## 15. Decision ledger
 
-| Decision      | Ratified choice                                                                           |
-| ------------- | ----------------------------------------------------------------------------------------- |
-| Invocation    | Automatic background workflow on managed-chat selection; CLI only as dev/operator surface |
-| Awaiting      | Caller does not await; workflow awaits each Scribe window internally                      |
-| Live behavior | Speaker remains live; WhatsApp live-Scribe fanout is gated during catch-up                |
-| Readiness     | Admission is immediate; explicit sync completion plus archive drain gates snapshot        |
-| Handoff       | Transactional sequence tail check and mode switch                                         |
-| Session       | One stable persisted Scribe session per chat, reused on recovery                          |
-| Ordering      | Chronological initial snapshot, then insertion-order tail                                 |
-| Windowing     | Fixed maximum of 50 archive events                                                        |
-| Idempotency   | Shared exact-phrase convergence plus post-success checkpoints                             |
-| Lifecycle     | One durable per-chat state machine; three attempts; boot resume; disabled on removal      |
-| Provenance    | Existing optional singular provenance; no reset or provenance redesign                    |
-| Observability | Structured `ctx.log` lifecycle events, no message content                                 |
-| Model policy  | Reuse the Scribe role; raise role effort from `minimal` to `medium`                       |
-| Evals         | Defer fixture unskip until real output informs corpus and assertions                      |
+| Decision      | Ratified choice                                                                                                |
+| ------------- | -------------------------------------------------------------------------------------------------------------- |
+| Invocation    | Automatic background workflow on managed-chat selection; CLI only as dev/operator surface                      |
+| Awaiting      | Caller does not await; workflow awaits each Scribe window internally                                           |
+| Live behavior | Speaker remains live; WhatsApp live-Scribe fanout is gated during catch-up                                     |
+| Readiness     | Admission is immediate; explicit sync completion plus archive drain gates snapshot                             |
+| Handoff       | Transactional sequence tail check and mode switch                                                              |
+| Conversation  | Existing persistent Scribe agent instance keyed by raw chat ID, reused by backfill, live traffic, and recovery |
+| Ordering      | Chronological initial snapshot, then insertion-order tail                                                      |
+| Windowing     | Fixed maximum of 50 archive events                                                                             |
+| Idempotency   | Shared exact-phrase convergence plus post-success checkpoints                                                  |
+| Lifecycle     | One durable per-chat state machine; three attempts; boot resume; disabled on removal                           |
+| Provenance    | Existing optional singular provenance; no reset or provenance redesign                                         |
+| Observability | Structured `ctx.log` lifecycle events, no message content                                                      |
+| Model policy  | Reuse the Scribe role; raise role effort from `minimal` to `medium`                                            |
+| Evals         | Defer fixture unskip until real output informs corpus and assertions                                           |
