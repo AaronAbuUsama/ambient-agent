@@ -2,8 +2,9 @@
 
 > Evidence receipt, not the implementation contract. The ratified
 > [`173-CODING-WORKFLOW-SPEC.md`](./173-CODING-WORKFLOW-SPEC.md) supersedes the
-> candidate designs below: the mode is `new_issue`, Coder is the continuing root and
-> owns publication, and there is no PR-agent stage.
+> candidate designs below: the modes are `new_issue` and `review_continuation`, an
+> unprompted TypeScript coordinator is the root, Coder child tasks own implementation and
+> publication, and there is no PR-agent stage.
 
 Research date: 2026-07-18
 
