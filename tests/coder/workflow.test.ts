@@ -23,6 +23,7 @@ const plan: PlanArtifact = {
 };
 
 const receipt = (verdict: VerificationVerdict, report = `${verdict} report`): VerificationReceipt => ({ verdict, report });
+const workspace = (hash = "h1") => new Map([["src/index.ts", hash]]);
 
 describe("Coder new-issue admission", () => {
   it("preserves the legacy start_coder_job request shape and normalizes it to new_issue", () => {
@@ -98,9 +99,10 @@ describe("deterministic Planner → bounded Coder/Verifier loop", () => {
       cwd: "/workspace",
       maxVerificationRounds: 3,
       waypoint: (stage, status, extra) => waypoints.push(`${stage}:${status}:${extra?.verificationRound ?? "-"}:${extra?.verdict ?? "-"}`),
+      snapshot: async () => workspace(),
     });
 
-    expect(result).toEqual({ plan, verification: receipt("PASS", "PASS after repair"), rounds: 2 });
+    expect(result).toEqual({ plan, verification: receipt("PASS", "PASS after repair"), rounds: 2, verified: workspace() });
     expect(calls.map((call) => call.options.agent)).toEqual(["planner", "coder", "verifier", "coder", "verifier"]);
     expect(calls.every((call) => call.options.cwd === "/workspace")).toBe(true);
     expect(calls.every((call) => (call.options.frameworkTools as { task?: boolean }).task === false)).toBe(true);
@@ -141,10 +143,27 @@ describe("deterministic Planner → bounded Coder/Verifier loop", () => {
       cwd: "/workspace",
       maxVerificationRounds: max,
       waypoint: () => {},
+      snapshot: async () => workspace(),
     });
 
     expect(result.rounds).toBe(expectedRounds);
     expect(result.verification.verdict).toBe(verdicts[expectedRounds - 1]);
     expect(task).toHaveBeenCalledTimes(1 + expectedRounds * 2);
+  });
+
+  it("rejects Verifier-owned workspace mutations before publication", async () => {
+    const queue = [{ data: plan }, { data: undefined }, { data: receipt("PASS") }];
+    const snapshots = [workspace("coder"), workspace("verifier")];
+
+    await expect(runInternalCodingLoop({
+      session: { task: async () => queue.shift()! } as unknown as Pick<FlueSession, "task">,
+      plannerPrompt: "PLAN",
+      coderPrompt: () => "CODE",
+      verifierPrompt: () => "VERIFY",
+      cwd: "/workspace",
+      maxVerificationRounds: 1,
+      waypoint: () => {},
+      snapshot: async () => snapshots.shift()!,
+    })).rejects.toThrow("Verifier changed the shared workspace");
   });
 });

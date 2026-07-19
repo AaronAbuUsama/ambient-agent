@@ -33,7 +33,9 @@ import { createOpenPullRequestTool } from "./tool.ts";
 import {
   coderOutcome,
   coderTmpDir,
+  diffSnapshots,
   gitignoreMatcher,
+  isEmptyDiff,
   parseHashListing,
   renderGraphContext,
   type OpenPrRecord,
@@ -185,7 +187,8 @@ export const runInternalCodingLoop = async (input: {
   cwd: string;
   maxVerificationRounds: number;
   waypoint: StageWaypoint;
-}): Promise<{ plan: PlanArtifact; verification: VerificationReceipt; rounds: number }> => {
+  snapshot: () => Promise<WorkspaceSnapshot>;
+}): Promise<{ plan: PlanArtifact; verification: VerificationReceipt; rounds: number; verified: WorkspaceSnapshot }> => {
   input.waypoint("planner", "started");
   const plan = (await input.session.task(input.plannerPrompt, {
     ...ROLE_TURN,
@@ -204,6 +207,7 @@ export const runInternalCodingLoop = async (input: {
       cwd: input.cwd,
     });
     input.waypoint("coder", "completed", { verificationRound: round });
+    const coderWorkspace = await input.snapshot();
 
     input.waypoint("verifier", "started", { verificationRound: round });
     prior = (await input.session.task(input.verifierPrompt(round, plan), {
@@ -212,11 +216,15 @@ export const runInternalCodingLoop = async (input: {
       cwd: input.cwd,
       result: verificationReceiptSchema,
     })).data;
+    const verified = await input.snapshot();
+    if (!isEmptyDiff(diffSnapshots(coderWorkspace, verified))) {
+      throw new Error("Verifier changed the shared workspace; only Coder-owned bytes may be published.");
+    }
     input.waypoint("verifier", "completed", { verificationRound: round, verdict: prior.verdict });
-    if (prior.verdict === "PASS" || prior.verdict === "SKIP") return { plan, verification: prior, rounds: round };
+    if (prior.verdict === "PASS" || prior.verdict === "SKIP") return { plan, verification: prior, rounds: round, verified };
+    if (round === input.maxVerificationRounds) return { plan, verification: prior, rounds: round, verified };
   }
-  if (prior === undefined) throw new Error("Verification loop ended without a Verifier receipt.");
-  return { plan, verification: prior, rounds: input.maxVerificationRounds };
+  throw new Error("Verification loop ended without a Verifier receipt.");
 };
 
 const run = async ({ harness, input, log }: {
@@ -290,9 +298,9 @@ const run = async ({ harness, input, log }: {
         cwd: repoDir,
         maxVerificationRounds: input.maxVerificationRounds,
         waypoint,
+        snapshot,
       });
 
-      const verified = await snapshot();
       const requiredDraft = coordinated.verification.verdict === "FAIL" || coordinated.verification.verdict === "BLOCKED";
       const record: { pr?: OpenPrRecord } = {};
       const openPullRequest = createOpenPullRequestTool({
@@ -304,7 +312,7 @@ const run = async ({ harness, input, log }: {
         issue: input.issue,
         issueTitle: issue.title,
         before,
-        verified,
+        verified: coordinated.verified,
         requiredDraft,
         snapshotAfter: snapshot,
         readFile: (path) => harness.fs.readFileBuffer(`${repoDir}/${path}`),
