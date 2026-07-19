@@ -380,7 +380,8 @@ Do not create a new comment for every internal round.
 The external Reviewer from #147 is independent:
 
 - It automatically reviews every eligible non-draft PR under its own GitHub App.
-- It submits a formal `APPROVE`, `REQUEST_CHANGES`, or `COMMENT` review.
+- It submits a formal review using GitHub's write actions `APPROVE`, `REQUEST_CHANGES`,
+  or `COMMENT`.
 - It is idempotent per PR head SHA.
 - It has no knowledge of Coder's internal workflow or job registry.
 
@@ -391,15 +392,19 @@ pull_request_review.submitted
   → verify Reviewer App identity
   → verify PR exists in coding_jobs
   → refetch live PR + reviews + unresolved threads
+  → normalize review.state to changes_requested | approved | commented
   → count qualifying review cycles
-  → REQUEST_CHANGES within budget: invoke review_continuation
-  → REQUEST_CHANGES over budget: draft PR + update lifecycle comment
-  → APPROVE or COMMENT: no repair run
+  → changes_requested within budget: invoke review_continuation
+  → changes_requested over budget: draft PR + update lifecycle comment
+  → approved or commented: no repair run
 ```
 
-Only a formal `REQUEST_CHANGES` review by the configured Reviewer App can launch an
-automatic repair. Loose PR conversation comments and individual inline-comment events
-are not automatic completion signals.
+GitHub's read payloads do not use the write-action literals: webhook and `listReviews`
+records expose lowercase states (`changes_requested`, `approved`, `commented`). Normalize
+once at the GitHub adapter boundary to that internal union. Only a formal
+`changes_requested` review by the configured Reviewer App can launch an automatic repair.
+Loose PR conversation comments and individual inline-comment events are not automatic
+completion signals.
 
 ### Review snapshot
 
@@ -437,10 +442,10 @@ const DEFAULT_MAX_REVIEW_CYCLES = 2;
 ```
 
 The initial run has `reviewCycle: 0`; the first automatic repair has `reviewCycle: 1`.
-Count unique qualifying Reviewer `REQUEST_CHANGES` reviews from GitHub. For the current
+Count unique qualifying Reviewer `changes_requested` reviews from GitHub. For the current
 review, that count is the proposed `reviewCycle`: launch when
 `reviewCycle <= maxReviewCycles`. Webhook redeliveries do not consume another cycle.
-`APPROVE` and `COMMENT` do not consume a cycle.
+`approved` and `commented` do not consume a cycle.
 
 When the proposed cycle would exceed the maximum, do not start another coding run.
 Convert the PR to draft and update the one lifecycle status comment with the remaining
