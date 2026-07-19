@@ -12,7 +12,7 @@ import type { WhatsAppRuntimeControl } from "./whatsapp-runtime.ts";
 export interface BridgeRouteOptions {
   readonly webhookSecret: string;
   readonly status: () => WhatsAppRuntimeStatus;
-  readonly control: () => WhatsAppRuntimeControl | undefined;
+  readonly control: () => Pick<WhatsAppRuntimeControl, "synchronizedChats"> | undefined;
 }
 
 const authorized = (context: Context, options: BridgeRouteOptions, purpose: RuntimeBridgePurpose): boolean =>

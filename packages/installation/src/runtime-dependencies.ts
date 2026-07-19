@@ -15,42 +15,17 @@ export interface TenantRuntimeEnvironment extends TenantCredentialEnvironment {
   readonly AMBIENT_AGENT_RUNTIME_PROFILE?: string;
   readonly AMBIENT_AGENT_RUNTIME_ID?: string;
   readonly AMBIENT_AGENT_RUNTIME_BRIDGE_SECRET?: string;
+  readonly PORT?: string;
 }
 
 export interface TenantRuntimeSetupBoot {
   readonly mode: "setup";
   readonly runtimeId: string;
   readonly bridgeSecret: string;
+  readonly port: number;
   readonly paths: ManagedPaths;
   readonly credentialEnvironment: Required<TenantCredentialEnvironment>;
 }
-
-export type TenantRuntimeOperateBoot = ManagedRuntimeDependencies & { readonly mode: "operate" };
-export type TenantRuntimeBoot = TenantRuntimeSetupBoot | TenantRuntimeOperateBoot;
-
-export interface TenantRuntimeProfileState {
-  readonly applicationId: string;
-  readonly mode: TenantRuntimeBoot["mode"];
-  readonly managedChats: readonly string[];
-}
-
-export type TenantRuntimeProfileEvent =
-  | "activation.succeeded"
-  | "activation.failed"
-  | "repair.started"
-  | "repair.completed";
-
-const profileAfter = {
-  "activation.succeeded": "operate",
-  "activation.failed": "setup",
-  "repair.started": "setup",
-  "repair.completed": "operate",
-} as const satisfies Record<TenantRuntimeProfileEvent, TenantRuntimeBoot["mode"]>;
-
-export const transitionTenantRuntimeProfile = (
-  current: TenantRuntimeProfileState,
-  event: TenantRuntimeProfileEvent,
-): TenantRuntimeProfileState => ({ ...current, mode: profileAfter[event] });
 
 const RUNTIME_DEPENDENCIES = Symbol.for("ambient-agent.managed-runtime-dependencies");
 const WHATSAPP_RUNTIME_START = Symbol.for("ambient-agent.deferred-whatsapp-runtime-start");
@@ -80,34 +55,41 @@ const requiredSetupValue = (name: string, value: string | undefined): string => 
   return configured;
 };
 
-export const resolveTenantRuntimeBoot = (
+const setupRuntimePort = (value: string | undefined): number => {
+  const port = value === undefined ? 3000 : Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("The tenant setup runtime port must be an integer from 1 through 65535.");
+  }
+  return port;
+};
+
+/** Composition-root boundary for the standalone, setup-only tenant server. */
+export const resolveTenantRuntimeSetupBoot = (
   environment: TenantRuntimeEnvironment = process.env,
   paths: ManagedPaths = managedPaths(),
-): TenantRuntimeBoot => {
+): TenantRuntimeSetupBoot => {
   const profile = environment.AMBIENT_AGENT_RUNTIME_PROFILE?.trim();
-  if (profile === "setup") {
-    const tenantDatabase = tenantCredentialDatabaseFromEnvironment(environment);
-    if (tenantDatabase === undefined) {
-      throw new Error("TENANT_DB_URL and TENANT_DB_TOKEN are required for the tenant runtime setup profile.");
-    }
-    return {
-      mode: "setup",
-      runtimeId: requiredSetupValue("AMBIENT_AGENT_RUNTIME_ID", environment.AMBIENT_AGENT_RUNTIME_ID),
-      bridgeSecret: requiredSetupValue(
-        "AMBIENT_AGENT_RUNTIME_BRIDGE_SECRET",
-        environment.AMBIENT_AGENT_RUNTIME_BRIDGE_SECRET,
-      ),
-      paths,
-      credentialEnvironment: {
-        TENANT_DB_URL: tenantDatabase.url,
-        TENANT_DB_TOKEN: requiredSetupValue("TENANT_DB_TOKEN", tenantDatabase.authToken),
-      },
-    };
+  if (profile !== "setup") {
+    throw new Error("The tenant setup server requires AMBIENT_AGENT_RUNTIME_PROFILE=setup.");
   }
-  if (profile !== undefined && profile !== "operate") {
-    throw new Error(`Unsupported AMBIENT_AGENT_RUNTIME_PROFILE: ${profile}`);
+  const tenantDatabase = tenantCredentialDatabaseFromEnvironment(environment);
+  if (tenantDatabase === undefined) {
+    throw new Error("TENANT_DB_URL and TENANT_DB_TOKEN are required for the tenant runtime setup profile.");
   }
-  return { mode: "operate", ...getManagedRuntimeDependencies() };
+  return {
+    mode: "setup",
+    runtimeId: requiredSetupValue("AMBIENT_AGENT_RUNTIME_ID", environment.AMBIENT_AGENT_RUNTIME_ID),
+    bridgeSecret: requiredSetupValue(
+      "AMBIENT_AGENT_RUNTIME_BRIDGE_SECRET",
+      environment.AMBIENT_AGENT_RUNTIME_BRIDGE_SECRET,
+    ),
+    port: setupRuntimePort(environment.PORT),
+    paths,
+    credentialEnvironment: {
+      TENANT_DB_URL: tenantDatabase.url,
+      TENANT_DB_TOKEN: requiredSetupValue("TENANT_DB_TOKEN", tenantDatabase.authToken),
+    },
+  };
 };
 
 // The generated server and the CLI are separate bundles, so this handoff crosses
