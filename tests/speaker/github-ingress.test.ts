@@ -56,6 +56,7 @@ const pullRequestOpenedDelivery = (
         body: options.body ?? "Closes #29",
         state: "open",
         draft: options.draft ?? false,
+        head: { sha: "head-42" },
       },
       sender: { login: "octocat", id: 1, type: "User" },
     },
@@ -90,6 +91,35 @@ const pullRequestReviewSubmittedDelivery = (deliveryId: string): GitHubWebhookDe
     },
   }) as GitHubWebhookDelivery;
 describe("GitHub ingress delivery ledger", () => {
+  it.each(["opened", "ready_for_review", "synchronize"] as const)(
+    "admits an eligible non-draft PR on %s exactly once per webhook delivery",
+    async (action) => {
+      const store = createGitHubIngressStore(":memory:");
+      const launches: unknown[] = [];
+      try {
+        const ingress = createGitHubIngress({
+          store,
+          managedChats: ["chat-42@g.us"],
+          dispatch: async () => ({ dispatchId: "speaker", acceptedAt: "2026-07-18T00:00:01.000Z" }),
+          review: {
+            repositories: ["acme/widgets"],
+            launch: async (input) => {
+              launches.push(input);
+              return { runId: `review-${action}` };
+            },
+          },
+          logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+        });
+        const delivery = pullRequestOpenedDelivery(`review-${action}`) as GitHubWebhookDelivery & { payload: { action: string } };
+        delivery.payload.action = action;
+        await ingress(delivery);
+        await ingress(delivery);
+        expect(launches).toEqual([{ repository: "acme/widgets", pullRequest: 42, expectedHeadSha: "head-42" }]);
+      } finally {
+        store.close();
+      }
+    },
+  );
   it("broadcasts a supported event to every managed thread exactly once", async () => {
     const store = createGitHubIngressStore(":memory:");
     const dispatched: { readonly chatId: string; readonly input: GitHubIngressInput }[] = [];

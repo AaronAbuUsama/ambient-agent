@@ -9,12 +9,15 @@ import { createGraphStore } from "@ambient-agent/engine/graph/store.ts";
 import { createRunLedger } from "@ambient-agent/agents/capabilities/delegation/ledger.ts";
 import { sweepUnsettledLaunches } from "@ambient-agent/agents/capabilities/delegation/bridge.ts";
 import { configureCoderRuntime } from "@ambient-agent/agents/capabilities/coder/runtime.ts";
+import { configureReviewerRuntime } from "@ambient-agent/agents/capabilities/reviewer/runtime.ts";
+import { reviewer } from "@ambient-agent/agents/capabilities/reviewer/workflow.ts";
 import { coderTmpDir } from "@ambient-agent/agents/capabilities/coder/workspace.ts";
 import type { CoderGitHub } from "@ambient-agent/agents/capabilities/coder/workflow.ts";
 import { githubAppClient } from "@ambient-agent/installation/github-app-client.ts";
 import { readManagedGitHubAppCredential } from "@ambient-agent/installation/configuration.ts";
 import { createOctokitIssueRepository } from "@ambient-agent/installation/github-issue-repository.ts";
 import { local } from "@flue/runtime/node";
+import { invoke } from "@flue/runtime";
 import {
   getWhatsAppRuntimeStatus,
   startWhatsAppRuntime,
@@ -55,6 +58,21 @@ const configureCoderRuntimeIfProvisioned = async (paths: ManagedRuntimeDependenc
   });
 };
 
+const configureReviewerRuntimeIfProvisioned = async (paths: ManagedRuntimeDependencies["paths"]): Promise<boolean> => {
+  try {
+    const credential = await readManagedGitHubAppCredential(paths.githubAppCredentials.reviewer);
+    configureReviewerRuntime({
+      github: githubAppClient(credential) as never,
+      sandbox: local(),
+      workspacesRoot: paths.workspaces,
+    });
+    return true;
+  } catch {
+    console.warn("[reviewer] no reviewer App credential; automatic PR review is unprovisioned");
+    return false;
+  }
+};
+
 export const createAmbientAgentApp = async ({
   authentication,
   configuration,
@@ -73,6 +91,7 @@ export const createAmbientAgentApp = async ({
   // SaaS. The coder App may not be provisioned yet; if its credential is absent, the
   // start_coder_job tool stays mounted but a launch fails loudly rather than blocking boot.
   await configureCoderRuntimeIfProvisioned(paths);
+  const reviewerProvisioned = await configureReviewerRuntimeIfProvisioned(paths);
   let whatsappControl: WhatsAppRuntimeControl | undefined;
   // A SpeakerInput is a SpeakerInput, so the funnel delivers a specialist result to both
   // Speaker and Scribe. Held out here so the boot sweep can reuse it after the port is wired.
@@ -96,6 +115,16 @@ export const createAmbientAgentApp = async ({
         managedChats: configuration.managedChats,
       },
       dispatch: async (chatId, input) => await dispatchSpeaker({ id: chatId, input }),
+      ...(reviewerProvisioned ? {
+        review: {
+          repositories: configuration.github.reviewRepositories,
+          launch: async (input) => {
+            const admitted = await invoke(reviewer, { input });
+            delegation.ledger.record({ runId: admitted.runId, workflow: "reviewer", launchedAt: new Date().toISOString() });
+            return admitted;
+          },
+        },
+      } : {}),
     },
     graph: createGraphStore(paths.applicationDatabase),
     delegation,

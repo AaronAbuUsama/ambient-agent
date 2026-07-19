@@ -352,7 +352,7 @@ for current-head Node 22 and Node 24 checks before merging.
 
 ## Current limits
 
-This release does not yet provide pull-request review, implementation Bounded Workflows, planning, delivery automation,
+This release does not yet provide the internal Planner/Coder/Verifier loop, planning, delivery automation,
 cross-chat Agent memory, media understanding, active-active ownership, horizontal failover, or cross-host recovery. The
 supported runtime is one foreground Node process owning one managed local installation.
 

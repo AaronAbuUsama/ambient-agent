@@ -188,6 +188,7 @@ function githubPullRequestOpenedPayload(issueNumbers: readonly number[], pullReq
       body: issueNumbers.map((issueNumber) => `Closes: #${issueNumber}`).join("\n"),
       state: "open",
       draft: false,
+      head: { sha: "head-42" },
     },
     sender: { login: "octocat", id: 1, type: "User" },
   });
