@@ -255,7 +255,7 @@ describe("GitHub ingress delivery ledger", () => {
   });
 
   it.each([
-    ["read", reviewCommandDelivery("unauthorized")],
+    ["triage", reviewCommandDelivery("unauthorized")],
     ["malformed", reviewCommandDelivery("malformed", { body: "@tenant-reviewer please review" })],
     ["wrong slug", reviewCommandDelivery("wrong-slug", { body: "@global-reviewer review" })],
     ["issue conversation", reviewCommandDelivery("issue-comment", { pullRequest: false })],
@@ -272,7 +272,7 @@ describe("GitHub ingress delivery ledger", () => {
           launch: async () => ({ runId: `unexpected-${++launches}` }),
           command: {
             appSlug: "tenant-reviewer",
-            permission: async () => "read",
+            permission: async () => "triage",
             pullRequest: async () => ({ state: "open", draft: false, headSha: "live-head" }),
           },
         },
