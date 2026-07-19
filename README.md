@@ -165,6 +165,10 @@ ambient-agent doctor --live
 ambient-agent start
 ```
 
+Automatic pull-request review is deployment-gated: a host must bind an isolated
+Reviewer sandbox and explicitly list `github.reviewRepositories`. The packaged
+single-host CLI leaves that list empty and never executes untrusted PR code locally.
+
 `start` runs in the foreground. Use `Ctrl-C` for a clean stop; let systemd or another process manager own background
 supervision in a deployment.
 

@@ -4,7 +4,7 @@ import * as v from "valibot";
 import { resolveAgentModelProfile } from "@ambient-agent/engine/model/pi-subscription.ts";
 import { parseGitHubRepository } from "@ambient-agent/engine/github/repository.ts";
 import reviewerSkill from "./SKILL.md" with { type: "skill" };
-import { archiveBytes, findReviewForHead, listChangedFiles, reviewEvent, reviewerLogin, type ReviewVerdict } from "./github.ts";
+import { archiveBytes, findReviewForHead, listChangedFiles, reviewEvent, reviewerLogin, validInlineLocations, type ReviewVerdict } from "./github.ts";
 import { getReviewerRuntime } from "./runtime.ts";
 import { reviewFindingSchema, reviewerJobInputSchema, reviewerResultSchema, type ReviewerJobInput, type ReviewerResult } from "./schemas.ts";
 
@@ -57,6 +57,7 @@ const run = async ({ harness, input, log }: { harness: FlueHarness; input: Revie
     log.info("reviewer.exercising-repository", { repository: input.repository, pullRequest: pr.number, headSha: pr.head.sha });
     const checks = await runChecks(harness, workspace);
     const files = await listChangedFiles(github, repo, pr.number);
+    const inlineLocations = validInlineLocations(files);
     let submitted: ReviewerResult | undefined;
     const submitReview = defineTool({
       name: "submit_review",
@@ -74,7 +75,14 @@ const run = async ({ harness, input, log }: { harness: FlueHarness; input: Revie
           return submitted;
         }
         const event = reviewEvent(decision.verdict as ReviewVerdict, checks.passed);
-        const body = checks.passed ? decision.summary : `${decision.summary}\n\nRepository exercise failed; approval is unavailable until it is green.`;
+        const inline = decision.findings.filter((finding) => inlineLocations.has(`${finding.path}:${finding.line}`));
+        const summaryOnly = decision.findings.filter((finding) => !inlineLocations.has(`${finding.path}:${finding.line}`));
+        const body = [
+          checks.passed ? decision.summary : `${decision.summary}\n\nRepository exercise failed; approval is unavailable until it is green.`,
+          summaryOnly.length === 0
+            ? ""
+            : `Findings without a valid diff line:\n${summaryOnly.map((finding) => `- ${finding.path}:${finding.line} — ${finding.body}`).join("\n")}`,
+        ].filter(Boolean).join("\n\n");
         const review = await github.pulls.createReview({
           owner: repo.owner,
           repo: repo.repo,
@@ -82,7 +90,7 @@ const run = async ({ harness, input, log }: { harness: FlueHarness; input: Revie
           commit_id: pr.head.sha,
           event,
           body,
-          ...(decision.findings.length === 0 ? {} : { comments: decision.findings.map((finding) => ({ ...finding, side: "RIGHT" as const })) }),
+          ...(inline.length === 0 ? {} : { comments: inline.map((finding) => ({ ...finding, side: "RIGHT" as const })) }),
         });
         submitted = {
           status: event === "APPROVE" ? "approved" : event === "COMMENT" ? "commented" : "changes-requested",

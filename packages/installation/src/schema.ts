@@ -135,6 +135,8 @@ export const createManagedConfig = (managedChats: readonly string[], defaultRepo
     credential: GITHUB_CREDENTIAL_REFERENCE,
     defaultRepository,
     allowedRepositories: [defaultRepository],
-    reviewRepositories: [defaultRepository],
+    // Safe packaged default: automatic review stays off until a deployment binds an
+    // isolated Reviewer sandbox and explicitly opts repositories in.
+    reviewRepositories: [],
   },
 });

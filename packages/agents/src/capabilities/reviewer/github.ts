@@ -79,6 +79,26 @@ export const listChangedFiles = async (github: ReviewerGitHub, repo: GitHubRepos
   }
 };
 
+/** GitHub accepts RIGHT-side inline comments only on lines represented by the diff. */
+export const validInlineLocations = (files: readonly { filename: string; patch?: string }[]) => {
+  const locations = new Set<string>();
+  for (const file of files) {
+    let line = 0;
+    for (const row of file.patch?.split("\n") ?? []) {
+      const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/u.exec(row);
+      if (hunk !== null) {
+        line = Number(hunk[1]);
+      } else if (line > 0 && (row.startsWith("+") || row.startsWith(" "))) {
+        locations.add(`${file.filename}:${line}`);
+        line += 1;
+      } else if (line > 0 && !row.startsWith("-")) {
+        line += 1;
+      }
+    }
+  }
+  return locations;
+};
+
 export const archiveBytes = (data: unknown): Uint8Array => {
   if (data instanceof ArrayBuffer) return new Uint8Array(data);
   if (data instanceof Uint8Array) return data;

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { findReviewForHead, reviewEvent, reviewerLogin, type ReviewerGitHub } from "../../packages/agents/src/capabilities/reviewer/github.ts";
+import { findReviewForHead, reviewEvent, reviewerLogin, validInlineLocations, type ReviewerGitHub } from "../../packages/agents/src/capabilities/reviewer/github.ts";
 
 describe("Reviewer GitHub contract", () => {
   it("maps verdicts and never approves a red repository exercise", () => {
@@ -23,5 +23,11 @@ describe("Reviewer GitHub contract", () => {
     expect(login).toBe("reviewer[bot]");
     await expect(findReviewForHead(github, { owner: "acme", repo: "widgets" }, 42, "head", login))
       .resolves.toMatchObject({ id: 2, html_url: "live" });
+  });
+
+  it("accepts only RIGHT-side lines represented by a changed-file patch", () => {
+    const locations = validInlineLocations([{ filename: "src/a.ts", patch: "@@ -2,2 +2,3 @@\n same\n-old\n+new\n+more" }]);
+    expect([...locations]).toEqual(["src/a.ts:2", "src/a.ts:3", "src/a.ts:4"]);
+    expect(locations.has("src/a.ts:1")).toBe(false);
   });
 });
