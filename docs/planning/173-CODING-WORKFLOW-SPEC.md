@@ -119,7 +119,8 @@ for (let round = 1; round <= maxVerificationRounds; round += 1) {
 }
 
 const verifiedWorkspace = await snapshotAfter();
-const openPullRequest = createOpenPullRequestTool({ verifiedWorkspace });
+const verifiedBranchHead = (await getBranchHead(github, repo, branch)) ?? baseSha;
+const openPullRequest = createOpenPullRequestTool({ verifiedWorkspace, verifiedBranchHead });
 
 await coder.prompt(publicationPrompt({ plan: plan.data, priorVerification }), {
   tools: [openPullRequest],
@@ -130,9 +131,12 @@ await coder.prompt(publicationPrompt({ plan: plan.data, priorVerification }), {
 Verifier never receive it. The publication prompt is evidence authoring and PR
 publication only. Prompt text is not the enforcement boundary: immediately after the
 final Verifier task, the coordinator snapshots the workspace and binds that snapshot to
-`open_pull_request`. The tool must refuse publication if a fresh snapshot differs, before
-committing or updating GitHub. Thus any edit made during publication requires another
-Verifier round; unverified bytes cannot reach the PR branch.
+`open_pull_request`. It also records the live Coder branch head (or `baseSha` while the
+branch does not exist). Before committing, the tool must refuse publication if either a
+fresh workspace snapshot differs or `ensureBranch` returns a different head. The
+existing non-force ref update catches movement after that comparison. Thus any local edit
+or remote branch movement after verification requires a new snapshot/Verifier round;
+unverified bytes cannot reach the PR branch.
 
 ## 4. Invocation and inputs
 
