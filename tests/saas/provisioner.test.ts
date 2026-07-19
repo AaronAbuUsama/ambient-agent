@@ -555,6 +555,35 @@ describe("tenant provisioner", () => {
     expect(dokploy.calls.filter((call) => call.startsWith("stop:")).length).toBe(stopsBefore + 1);
   });
 
+  test("stops a bound application before blocking missing applied tenant credentials", async () => {
+    const client = await migrate();
+    const tenantId = await seed(client, "missing-applied-credentials");
+    const turso = new FakeTurso();
+    const dokploy = new FakeDokploy();
+    const provisioner = provisionerFor(client, turso, dokploy);
+
+    expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({ status: "running" });
+    await client.execute({
+      sql: `UPDATE tenant
+        SET tenant_db_url = NULL, tenant_db_token_ciphertext = NULL
+        WHERE id = ?1`,
+      args: [tenantId],
+    });
+    dokploy.failStopBeforeScale = true;
+    expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({
+      status: "retryable_error",
+      errorCode: "dokploy_quiescence_not_observed",
+    });
+    expect([...dokploy.taskCounts.values()]).toEqual([1]);
+
+    dokploy.failStopBeforeScale = false;
+    expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({
+      status: "blocked",
+      errorCode: "tenant_credentials_missing_for_applied_config",
+    });
+    expect([...dokploy.taskCounts.values()]).toEqual([0]);
+  });
+
   test("keeps a response-lost start pending until zero tasks are observed", async () => {
     const client = await migrate();
     const tenantId = await seed(client, "start-unknown");

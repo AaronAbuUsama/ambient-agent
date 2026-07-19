@@ -450,6 +450,18 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
     };
 
     let application: DokployApplication | null = null;
+    const recordCredentialInvariant = async (errorCode: string): Promise<ReconcileResult> => {
+      if (!target.dokployApplicationId) return await recordInvariant(null, errorCode);
+      const recovered = await boundApplicationForRecovery();
+      application = recovered.application;
+      if (!application) return await recordRetryable("dokploy_bound_identity_incomplete");
+      return await recordInvariant(
+        application,
+        errorCode,
+        recovered.recordMissing ? "reject" : "if-never-deployed",
+      );
+    };
+
     try {
       target = (await readProvisioningTarget(options.client, tenantId)) ?? initial;
 
@@ -516,7 +528,7 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
       let token: string;
       if (target.tenantDbUrl === null && target.tenantDbTokenCiphertext === null) {
         if (target.appliedConfigVersion > 0) {
-          return await recordInvariant(null, "tenant_credentials_missing_for_applied_config");
+          return await recordCredentialInvariant("tenant_credentials_missing_for_applied_config");
         }
         const database = await options.turso.ensureDatabase(target.tenantDbName, assertLease);
         const mintedToken = await options.turso.mintToken(target.tenantDbName, assertLease);
@@ -538,18 +550,10 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
         try {
           token = options.secrets.decrypt(target.tenantDbTokenCiphertext);
         } catch {
-          if (target.dokployApplicationId) {
-            const recovered = await boundApplicationForRecovery();
-            application = recovered.application;
-            if (!application) return await recordRetryable("dokploy_bound_identity_incomplete");
-            if (recovered.recordMissing) {
-              return await recordInvariant(application, "tenant_token_decryption_failed", "reject");
-            }
-          }
-          return await recordInvariant(application, "tenant_token_decryption_failed");
+          return await recordCredentialInvariant("tenant_token_decryption_failed");
         }
       } else {
-        return await recordInvariant(null, "tenant_credentials_incomplete");
+        return await recordCredentialInvariant("tenant_credentials_incomplete");
       }
 
       application = await ensureApplication();
