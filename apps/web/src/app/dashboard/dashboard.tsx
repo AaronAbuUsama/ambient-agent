@@ -58,6 +58,12 @@ type GitHubRepository = {
   readonly selected: boolean;
   readonly isDefault: boolean;
 };
+type GitHubConfigurationApplication = {
+  readonly currentConfigVersion: number;
+  readonly appliedConfigVersion: number;
+  readonly remoteConfigState: "idle" | "pending" | "confirmed" | "blocked_unknown";
+  readonly updated: boolean;
+};
 
 export default function Dashboard({
   customerState,
@@ -81,9 +87,10 @@ export default function Dashboard({
   const [selectedRepositories, setSelectedRepositories] = useState<string[]>([]);
   const [defaultRepository, setDefaultRepository] = useState("");
   const [repositoryRole, setRepositoryRole] = useState<GitHubRole>();
-  const operationIdentities = useRef<Partial<Record<"restart" | "repair" | "model" | "github", string>>>({});
+  const [githubApplication, setGitHubApplication] = useState<GitHubConfigurationApplication>();
+  const operationIdentities = useRef<Partial<Record<"restart" | "repair" | "model", string>>>({});
 
-  const identityFor = (kind: "restart" | "repair" | "model" | "github") => {
+  const identityFor = (kind: "restart" | "repair" | "model") => {
     operationIdentities.current[kind] ??= crypto.randomUUID();
     return operationIdentities.current[kind];
   };
@@ -125,10 +132,10 @@ export default function Dashboard({
       delete operationIdentities.current.model;
     }
     if (data.capabilities.whatsapp.state === "healthy") setPairing(undefined);
+    if (data.capabilities.github.state === "healthy") setGitHubApplication(undefined);
     for (const [key, kind] of [
       ["restart", "restart"],
       ["repair", "repair"],
-      ["github", "restart"],
     ] as const) {
       const identity = operationIdentities.current[key];
       if (
@@ -205,17 +212,21 @@ export default function Dashboard({
         defaultRepositoryId,
       }),
     });
-    const body = (await response.json()) as { error?: string };
-    if (!response.ok) throw new Error(body.error ?? "Repository selection could not be saved.");
-    const current = await client.coworker.refresh();
-    if (!current.configurationRevision) {
-      throw new Error("The current GitHub configuration revision could not be reviewed safely.");
+    const body = (await response.json()) as GitHubConfigurationApplication | { error?: string };
+    if (!response.ok) {
+      throw new Error("error" in body ? body.error : "Repository selection could not be saved.");
     }
-    await client.coworker.github.apply({
-      expectedConfigVersion: current.configurationRevision.configVersion,
-      expectedBasisFingerprint: current.configurationRevision.basisFingerprint,
-      operationIdentity: identityFor("github"),
-    });
+    if (
+      !("currentConfigVersion" in body) ||
+      typeof body.currentConfigVersion !== "number" ||
+      !("appliedConfigVersion" in body) ||
+      typeof body.appliedConfigVersion !== "number" ||
+      !("remoteConfigState" in body) ||
+      !["idle", "pending", "confirmed", "blocked_unknown"].includes(body.remoteConfigState)
+    ) {
+      throw new Error("Repository selection was saved without a configuration receipt.");
+    }
+    setGitHubApplication(body as GitHubConfigurationApplication);
     setRepositories(undefined);
     setRepositoryRole(undefined);
   };
@@ -288,6 +299,32 @@ export default function Dashboard({
             <Alert.Title>Repair needs attention</Alert.Title>
             <Alert.Description>{error}</Alert.Description>
           </Alert.Content>
+        </Alert>
+      ) : null}
+
+      {githubApplication &&
+      (githubApplication.remoteConfigState === "blocked_unknown" ||
+        githubApplication.currentConfigVersion !== githubApplication.appliedConfigVersion) ? (
+        <Alert status="warning">
+          <Alert.Content>
+            <Alert.Title>
+              {githubApplication.remoteConfigState === "blocked_unknown"
+                ? "GitHub configuration outcome uncertain"
+                : "GitHub configuration applying"}
+            </Alert.Title>
+            <Alert.Description>
+              Revision {githubApplication.currentConfigVersion} is saved. The runtime currently reports revision{" "}
+              {githubApplication.appliedConfigVersion};{" "}
+              {githubApplication.remoteConfigState === "blocked_unknown"
+                ? "refresh observations before retrying this repair."
+                : "this dashboard will refresh as reconciliation completes."}
+            </Alert.Description>
+          </Alert.Content>
+          {githubApplication.remoteConfigState === "blocked_unknown" ? (
+            <Button variant="secondary" onPress={() => snapshot.refetch()}>
+              Refresh observations
+            </Button>
+          ) : null}
         </Alert>
       ) : null}
 
@@ -385,9 +422,7 @@ export default function Dashboard({
                   <Button
                     size="sm"
                     variant="secondary"
-                    isDisabled={
-                      !data.entitlement.entitled || capability.state === "repairing" || capability.state === "uncertain"
-                    }
+                    isDisabled={!data.entitlement.entitled || capability.state === "repairing"}
                     isPending={busy === "model"}
                     onPress={() =>
                       run("model", async () =>
@@ -397,7 +432,7 @@ export default function Dashboard({
                       )
                     }
                   >
-                    Replace credential
+                    {capability.state === "uncertain" ? "Retry credential" : "Replace credential"}
                   </Button>
                 ) : null}
                 {name === "whatsapp" ? (
