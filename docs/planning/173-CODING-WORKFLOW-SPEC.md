@@ -103,6 +103,8 @@ state.
 The implementation shape is:
 
 ```ts
+const seedBranchHead = (await getBranchHead(github, repo, branch)) ?? baseSha;
+await prepareWorkspaceAt(seedBranchHead);
 const coordinator = await harness.session("coordinator");
 
 const plan = await coordinator.task(plannerPrompt, {
@@ -125,8 +127,7 @@ for (let round = 1; round <= maxVerificationRounds; round += 1) {
 }
 
 const verifiedWorkspace = await snapshotAfter();
-const verifiedBranchHead = (await getBranchHead(github, repo, branch)) ?? baseSha;
-const openPullRequest = createOpenPullRequestTool({ verifiedWorkspace, verifiedBranchHead });
+const openPullRequest = createOpenPullRequestTool({ verifiedWorkspace, seedBranchHead });
 
 await coordinator.task(publicationPrompt({ plan: plan.data, priorVerification }), {
   agent: "coder",
@@ -138,12 +139,15 @@ await coordinator.task(publicationPrompt({ plan: plan.data, priorVerification })
 Verifier never receive it. The publication prompt is evidence authoring and PR
 publication only. Prompt text is not the enforcement boundary: immediately after the
 final Verifier task, the coordinator snapshots the workspace and binds that snapshot to
-`open_pull_request`. It also records the live Coder branch head (or `baseSha` while the
-branch does not exist). Before committing, the tool must refuse publication if either a
-fresh workspace snapshot differs or `ensureBranch` returns a different head. The
-existing non-force ref update catches movement after that comparison. Thus any local edit
-or remote branch movement after verification requires a new snapshot/Verifier round;
-unverified bytes cannot reach the PR branch.
+`open_pull_request`. Before any model task, resolution records the Coder branch head (or
+`baseSha` while the branch does not exist) as `seedBranchHead` and prepares the shared
+workspace from exactly that commit. The value is immutable for the run; a post-verifier
+read must never replace it. Before committing, the tool must refuse publication if either
+a fresh workspace snapshot differs or `ensureBranch` returns a head other than
+`seedBranchHead`. The existing non-force ref update catches movement after that
+comparison. Thus any local edit or remote branch movement after the run was seeded
+requires a new resolution/Verifier run; unverified bytes cannot be rebased onto a new
+parent or reach the PR branch.
 
 ## 4. Invocation and inputs
 
@@ -405,6 +409,7 @@ pull_request_review.submitted
   → verify PR exists in coding_jobs
   → refetch live PR + reviews + unresolved threads
   → normalize review.state to changes_requested | approved | commented | dismissed
+  → require the triggering review.commit_id to equal the live PR head SHA
   → count qualifying review cycles
   → changes_requested within budget: invoke review_continuation
   → changes_requested over budget: draft PR + update lifecycle comment
@@ -421,6 +426,13 @@ exclude them from the current disposition and review-cycle count. Only a formal
 Loose PR conversation comments and individual inline-comment events are not automatic
 completion signals.
 
+The submitted review is also head-bound. After refetching the live PR, compare the
+triggering review's `commit_id` with `pullRequest.head.sha`. A mismatch is a stale wake-up
+and is acknowledged as a no-op: it must not consume budget, draft the PR, or launch a
+continuation. For a matching wake-up, select the latest qualifying Reviewer submission
+whose `commit_id` equals that same live head; never repair the current head from a review
+of an older commit.
+
 ### Review snapshot
 
 The webhook is a wake-up edge, not trusted hand-off state. At run start fetch and
@@ -433,7 +445,7 @@ paginate:
 
 The Coder-facing feedback bundle is:
 
-1. the triggering/latest submitted formal review; and
+1. the latest qualifying submitted formal review for the live head SHA; and
 2. every currently unresolved review thread.
 
 Ordinary Conversation-tab comments are excluded from the automatic repair contract.
