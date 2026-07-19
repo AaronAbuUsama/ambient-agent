@@ -579,12 +579,19 @@ describe("durable GitHub delivery router", () => {
     const store = createGitHubControlStore(databaseClient);
     await databaseClient.batch([
       {
+        sql: "UPDATE tenant SET status = 'active', desired_state = 'running' WHERE id = ?1",
+        args: [owner.tenantId],
+      },
+      {
         sql: `INSERT INTO agent_instance (
-                id, tenant_id, creds_store_key, desired_mode, observed_state,
+                id, tenant_id, creds_store_key, desired_mode, applied_mode, observed_state, phase, runtime_base_url,
                 dokploy_display_name, dokploy_creation_token, applied_config_version,
                 remote_config_operation_id, remote_config_owner_id, remote_config_fencing_token,
                 remote_config_target_version, remote_config_state
-              ) VALUES (?1, ?2, ?3, 'operate', 'healthy', ?4, ?5, 1, 'op-1', 'owner-1', 1, 1, 'confirmed')`,
+              ) VALUES (
+                ?1, ?2, ?3, 'operate', 'operate', 'healthy', 'running', 'http://runtime.internal',
+                ?4, ?5, 1, 'op-1', 'owner-1', 1, 1, 'confirmed'
+              )`,
         args: ["instance-revision", owner.tenantId, "tenant-db-revision", "Runtime revision", "token-revision"],
       },
       {
@@ -694,5 +701,37 @@ describe("durable GitHub delivery router", () => {
     await expect(relay.drainOnce(1)).resolves.toEqual({ claimed: 1, acknowledged: 1, retried: 0 });
     expect((await databaseClient.execute("SELECT status FROM delivery_route")).rows[0]?.status).toBe("ready");
     await expect(relay.drainOnce()).resolves.toEqual({ claimed: 0, acknowledged: 0, retried: 0 });
+
+    await store.acceptDelivery({
+      githubAppId: apps.planner.appId,
+      deliveryGuid: "stopped-before-ack",
+      eventName: "issues",
+      installationRole: "planner",
+      installationId: 910,
+      payloadJson: JSON.stringify({ action: "opened", installation: { id: 910 } }),
+      payloadSha256: "stopped-before-ack-hash",
+      receivedAtMs: 7,
+    });
+    await databaseClient.execute({
+      sql: "UPDATE delivery_route SET status = 'pending' WHERE tenant_id = ?1",
+      args: [owner.tenantId],
+    });
+    await expect(store.claimDueDeliveries(7, "claim-stopped", 1)).resolves.toHaveLength(1);
+    await databaseClient.execute({
+      sql: `UPDATE agent_instance SET observed_state = 'stopped', phase = 'stopped' WHERE tenant_id = ?1`,
+      args: [owner.tenantId],
+    });
+    await expect(
+      store.acknowledgeDelivery({
+        githubAppId: apps.planner.appId,
+        deliveryGuid: "stopped-before-ack",
+        tenantId: owner.tenantId,
+        claimId: "claim-stopped",
+        resultJson: JSON.stringify({ status: "unsupported" }),
+        acknowledgedAtMs: 8,
+        configVersion: 2,
+      }),
+    ).resolves.toEqual({ routeReady: false });
+    expect((await databaseClient.execute("SELECT status FROM delivery_route")).rows[0]?.status).toBe("pending");
   });
 });

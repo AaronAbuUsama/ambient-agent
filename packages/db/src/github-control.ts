@@ -757,12 +757,21 @@ export const createGitHubControlStore = (client: Client, options: { readonly cla
                 SELECT tenant.id, 'ready', ?5, ?5
                   FROM tenant
                   JOIN agent_instance ON agent_instance.tenant_id = tenant.id
+                  JOIN subscription_entitlement
+                    ON subscription_entitlement.id = tenant.subscription_entitlement_id
                  WHERE tenant.id = ?1
                    AND ?2 IS NOT NULL
+                   AND tenant.status = 'active'
+                   AND tenant.desired_state = 'running'
+                   AND subscription_entitlement.status IN ('active', 'trialing')
                    AND tenant.config_version = ?2
                    AND agent_instance.applied_config_version = ?2
                    AND agent_instance.remote_config_target_version = ?2
                    AND agent_instance.desired_mode = 'operate'
+                   AND agent_instance.applied_mode = 'operate'
+                   AND agent_instance.observed_state = 'healthy'
+                   AND agent_instance.phase = 'running'
+                   AND agent_instance.runtime_base_url IS NOT NULL
                    AND agent_instance.remote_config_state = 'confirmed'
                    AND (
                      SELECT count(*)
