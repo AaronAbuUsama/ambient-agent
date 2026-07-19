@@ -56,6 +56,7 @@ const pullRequestOpenedDelivery = (
         body: options.body ?? "Closes #29",
         state: "open",
         draft: options.draft ?? false,
+        head: { sha: "head-42" },
       },
       sender: { login: "octocat", id: 1, type: "User" },
     },
@@ -90,6 +91,71 @@ const pullRequestReviewSubmittedDelivery = (deliveryId: string): GitHubWebhookDe
     },
   }) as GitHubWebhookDelivery;
 describe("GitHub ingress delivery ledger", () => {
+  it.each(["opened", "ready_for_review", "synchronize"] as const)(
+    "admits an eligible non-draft PR on %s exactly once per webhook delivery",
+    async (action) => {
+      const store = createGitHubIngressStore(":memory:");
+      const launches: unknown[] = [];
+      try {
+        const ingress = createGitHubIngress({
+          store,
+          managedChats: ["chat-42@g.us"],
+          dispatch: async () => ({ dispatchId: "speaker", acceptedAt: "2026-07-18T00:00:01.000Z" }),
+          review: {
+            repositories: ["acme/widgets"],
+            launch: async (input) => {
+              launches.push(input);
+              return { runId: `review-${action}` };
+            },
+          },
+          logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+        });
+        const delivery = pullRequestOpenedDelivery(`review-${action}`) as GitHubWebhookDelivery & { payload: { action: string } };
+        delivery.payload.action = action;
+        await ingress(delivery);
+        await ingress(delivery);
+        expect(launches).toEqual([{ repository: "acme/widgets", pullRequest: 42, expectedHeadSha: "head-42" }]);
+      } finally {
+        store.close();
+      }
+    },
+  );
+
+  it("continues opened-PR Speaker ingress when Reviewer admission fails", async () => {
+    const store = createGitHubIngressStore(":memory:");
+    const operations = createIssueOperationStore(":memory:");
+    const dispatched: GitHubIngressInput[] = [];
+    try {
+      operations.begin({
+        operationId: "capture-29",
+        kind: "create-issue",
+        repository: "acme/widgets",
+        startedAt: "2026-07-16T00:00:00.000Z",
+      });
+      operations.complete("capture-29", 29, "2026-07-16T00:00:01.000Z");
+      const ingress = createGitHubIngress({
+        store,
+        operations,
+        managedChats: ["chat-29@g.us"],
+        dispatch: async (_chatId, input) => {
+          dispatched.push(input);
+          return { dispatchId: "speaker-pr-42", acceptedAt: "2026-07-16T00:00:02.000Z" };
+        },
+        review: {
+          repositories: ["acme/widgets"],
+          launch: async () => { throw new Error("reviewer temporarily unavailable"); },
+        },
+        logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+      });
+
+      await expect(ingress(pullRequestOpenedDelivery("reviewer-down"))).resolves.toMatchObject({ status: "done" });
+      expect(dispatched).toHaveLength(1);
+      expect(store.get("reviewer-down")).toMatchObject({ status: "done" });
+    } finally {
+      operations.close();
+      store.close();
+    }
+  });
   it("broadcasts a supported event to every managed thread exactly once", async () => {
     const store = createGitHubIngressStore(":memory:");
     const dispatched: { readonly chatId: string; readonly input: GitHubIngressInput }[] = [];
@@ -334,6 +400,7 @@ describe("GitHub ingress delivery ledger", () => {
         startedAt: "2026-07-16T00:00:00.000Z",
       });
       operations.uncertain("capture-29", "provider outcome unknown", "2026-07-16T00:00:01.000Z");
+      const reviewLaunches: unknown[] = [];
       const ingress = createGitHubIngress({
         store,
         operations,
@@ -342,11 +409,20 @@ describe("GitHub ingress delivery ledger", () => {
           dispatched.push(input);
           return { dispatchId: "dispatch-pr-42", acceptedAt: "2026-07-16T00:00:03.000Z" };
         },
+        review: {
+          repositories: ["acme/widgets"],
+          launch: async (input) => {
+            reviewLaunches.push(input);
+            return { runId: "review-after-correlation" };
+          },
+        },
         logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
       });
       const delivery = pullRequestOpenedDelivery("pr-after-reconciliation");
 
       await expect(ingress(delivery)).resolves.toMatchObject({ status: "deferred" });
+      await expect(ingress(delivery)).resolves.toMatchObject({ status: "deferred" });
+      expect(reviewLaunches).toEqual([]);
       expect(store.get("pr-after-reconciliation")).toMatchObject({ status: "received" });
       expect(dispatched).toEqual([]);
 

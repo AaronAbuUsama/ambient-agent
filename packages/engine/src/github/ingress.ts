@@ -37,8 +37,8 @@ const issueOpenedPayloadSchema = v.object({
     type: nonEmptyString,
   }),
 });
-const pullRequestOpenedPayloadSchema = v.object({
-  action: v.literal("opened"),
+const pullRequestPayloadSchema = v.object({
+  action: v.picklist(["opened", "ready_for_review", "synchronize"]),
   installation: v.optional(v.nullable(v.object({ id: positiveInteger }))),
   repository: v.object({
     id: positiveInteger,
@@ -53,6 +53,7 @@ const pullRequestOpenedPayloadSchema = v.object({
     body: v.nullable(v.string()),
     state: v.literal("open"),
     draft: v.boolean(),
+    head: v.object({ sha: nonEmptyString }),
   }),
   sender: v.object({
     login: nonEmptyString,
@@ -123,6 +124,7 @@ export type GitHubIngressResult =
   | { readonly status: "uncorrelated"; readonly deliveryId: string; readonly repository: string }
   | { readonly status: "deferred"; readonly deliveryId: string; readonly repository: string; readonly reason: string }
   | { readonly status: "failed"; readonly record: GitHubIngressRecord }
+  | { readonly status: "review-launched"; readonly deliveryId: string; readonly repository: string; readonly runId: string }
   | {
       readonly status: "done";
       readonly deliveryId: string;
@@ -157,6 +159,10 @@ export const createGitHubIngress = (options: {
   readonly managedChats: readonly string[];
   readonly dispatch: (chatId: string, input: GitHubIngressInput) => Promise<DispatchReceipt>;
   readonly operations?: IssueOperationStore;
+  readonly review?: {
+    readonly repositories: readonly string[];
+    readonly launch: (input: { repository: string; pullRequest: number; expectedHeadSha: string }) => Promise<{ runId: string }>;
+  };
   readonly logger?: GitHubIngressLogger;
   readonly now?: () => Date;
   readonly retry?: GitHubIngressRetryPolicy;
@@ -200,10 +206,11 @@ export const createGitHubIngress = (options: {
     }
 
     const isIssueOpened = delivery.name === "issues" && delivery.payload.action === "opened";
-    const isPullRequestOpened = delivery.name === "pull_request" && delivery.payload.action === "opened";
+    const isPullRequest = delivery.name === "pull_request" &&
+      ["opened", "ready_for_review", "synchronize"].includes(String(delivery.payload.action));
     const isPullRequestReviewSubmitted =
       delivery.name === "pull_request_review" && delivery.payload.action === "submitted";
-    if (!isIssueOpened && !isPullRequestOpened && !isPullRequestReviewSubmitted) {
+    if (!isIssueOpened && !isPullRequest && !isPullRequestReviewSubmitted) {
       options.store.settle(delivery.deliveryId, {
         status: "unsupported",
         settledAt: now().toISOString(),
@@ -218,14 +225,14 @@ export const createGitHubIngress = (options: {
 
     const parsed = isIssueOpened
       ? v.safeParse(issueOpenedPayloadSchema, delivery.payload)
-      : isPullRequestOpened
-        ? v.safeParse(pullRequestOpenedPayloadSchema, delivery.payload)
+      : isPullRequest
+        ? v.safeParse(pullRequestPayloadSchema, delivery.payload)
         : v.safeParse(pullRequestReviewSubmittedPayloadSchema, delivery.payload);
     if (!parsed.success) {
       const event = isIssueOpened
         ? "issues.opened"
-        : isPullRequestOpened
-          ? "pull_request.opened"
+        : isPullRequest
+          ? `pull_request.${String(delivery.payload.action)}`
           : "pull_request_review.submitted";
       const error = `Verified ${event} delivery did not match the supported application contract`;
       options.store.settle(delivery.deliveryId, {
@@ -244,6 +251,46 @@ export const createGitHubIngress = (options: {
 
     const payload = parsed.output;
     const repository = repositoryKey(payload.repository.owner.login, payload.repository.name);
+    let reviewLaunchError: string | undefined;
+    const launchReview = async (pullRequest: number, expectedHeadSha: string) => {
+      if (options.review === undefined) return undefined;
+      try {
+        return await options.review.launch({ repository, pullRequest, expectedHeadSha });
+      } catch (cause) {
+        reviewLaunchError = errorMessage(cause);
+        return null;
+      }
+    };
+
+    if (
+      isPullRequest &&
+      "pull_request" in payload &&
+      "head" in payload.pull_request &&
+      !payload.pull_request.draft &&
+      payload.action !== "opened" &&
+      options.review?.repositories.some((candidate) => candidate.toLowerCase() === repository)
+    ) {
+      const admitted = await launchReview(payload.pull_request.number, payload.pull_request.head.sha);
+      if (admitted === null) {
+        options.store.settle(delivery.deliveryId, { status: "failed", repository, error: reviewLaunchError!, settledAt: now().toISOString() });
+        return { status: "failed", record: options.store.get(delivery.deliveryId)! };
+      }
+      if (admitted !== undefined) {
+        options.store.settle(delivery.deliveryId, {
+          status: "done",
+          repository,
+          chatId: options.managedChats[0]!,
+          ambience: "ambience",
+          dispatchId: admitted.runId,
+          acceptedAt: receivedAt,
+          settledAt: now().toISOString(),
+        });
+        return { status: "review-launched", deliveryId: delivery.deliveryId, repository, runId: admitted.runId };
+      }
+    } else if (isPullRequest && "pull_request" in payload && payload.action !== "opened") {
+      options.store.settle(delivery.deliveryId, { status: "unsupported", repository, settledAt: now().toISOString() });
+      return { status: "unsupported", deliveryId: delivery.deliveryId };
+    }
 
     // Repo-level input factory. Correlation (below, for PRs) is computed once; only the
     // chat id varies per broadcast target, so the payload is built per managed thread.
@@ -313,6 +360,20 @@ export const createGitHubIngress = (options: {
           reason,
         });
         return { status: "deferred", deliveryId: delivery.deliveryId, repository, reason };
+      }
+      if (
+        !payload.pull_request.draft &&
+        options.review?.repositories.some((candidate) => candidate.toLowerCase() === repository)
+      ) {
+        const admitted = await launchReview(payload.pull_request.number, payload.pull_request.head.sha);
+        if (admitted === null) {
+          logger.warn({
+            event: "github.ingress.review-launch-failed",
+            deliveryId: delivery.deliveryId,
+            repository,
+            reason: reviewLaunchError!,
+          });
+        }
       }
       if (correlation.completedIssueNumbers.length === 0) {
         options.store.settle(delivery.deliveryId, {

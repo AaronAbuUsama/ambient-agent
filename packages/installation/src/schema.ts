@@ -61,6 +61,7 @@ export const ManagedConfigSchema = v.pipe(
       credential: v.literal(GITHUB_CREDENTIAL_REFERENCE),
       defaultRepository: Repository,
       allowedRepositories: v.pipe(v.array(Repository), v.nonEmpty()),
+      reviewRepositories: v.optional(v.array(Repository), []),
     }),
   }),
   v.check(
@@ -69,6 +70,12 @@ export const ManagedConfigSchema = v.pipe(
         (repository) => repository.toLowerCase() === config.github.defaultRepository.toLowerCase(),
       ),
     "The default GitHub repository must be included in allowedRepositories",
+  ),
+  v.check(
+    (config) => config.github.reviewRepositories.every((repository) =>
+      config.github.allowedRepositories.some((allowed) => allowed.toLowerCase() === repository.toLowerCase()),
+    ),
+    "Every review repository must be included in allowedRepositories",
   ),
   v.check(
     (config) =>
@@ -128,5 +135,8 @@ export const createManagedConfig = (managedChats: readonly string[], defaultRepo
     credential: GITHUB_CREDENTIAL_REFERENCE,
     defaultRepository,
     allowedRepositories: [defaultRepository],
+    // Safe packaged default: automatic review stays off until a deployment binds an
+    // isolated Reviewer sandbox and explicitly opts repositories in.
+    reviewRepositories: [],
   },
 });
