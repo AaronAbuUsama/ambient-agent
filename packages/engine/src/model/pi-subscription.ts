@@ -29,7 +29,7 @@ export type AgentModelProfiles = Readonly<Record<AgentModelRole, AgentModelProfi
 
 export const DEFAULT_AGENT_MODEL_PROFILES: AgentModelProfiles = {
   speaker: { id: LUNA_MODEL_ID, thinkingLevel: "low" },
-  scribe: { id: LUNA_MODEL_ID, thinkingLevel: "minimal" },
+  scribe: { id: LUNA_MODEL_ID, thinkingLevel: "medium" },
   planner: { id: "gpt-5.6-sol", thinkingLevel: "xhigh" },
   coder: { id: "gpt-5.6-sol", thinkingLevel: "high" },
   verifier: { id: "gpt-5.6-sol", thinkingLevel: "xhigh" },

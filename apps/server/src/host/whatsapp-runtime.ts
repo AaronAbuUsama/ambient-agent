@@ -1,7 +1,9 @@
 import { Cause, Effect, Exit, Fiber, Layer, type Scope } from "effect";
 import type { MessageRef, WhatsAppSession } from "whatsappd";
 
-import { makeSpeakerWindowDispatcher, type DispatchSpeaker } from "@ambient-agent/agents/speaker/dispatch.ts";
+import { configureScribeBackfillGate, makeSpeakerWindowDispatcher, type DispatchSpeaker } from "@ambient-agent/agents/speaker/dispatch.ts";
+import { invoke } from "@flue/runtime";
+import scribeBackfill from "../workflows/scribe-backfill.ts";
 import type { SpeakerDispatchEvent, SpeakerObserver } from "@ambient-agent/agents/speaker/observer.ts";
 import {
   configureWhatsAppParticipationPort,
@@ -16,6 +18,7 @@ import * as Coalescer from "@ambient-agent/engine/coalescer/coalescer.ts";
 import { configLayer, type CoalescerConfigValues } from "@ambient-agent/engine/coalescer/config.ts";
 import { botIdsOf, whatsappEventSource } from "@ambient-agent/engine/coalescer/whatsapp.ts";
 import { createConversationArchive } from "@ambient-agent/engine/intake/conversation-archive.ts";
+import { createScribeBackfillStore } from "@ambient-agent/engine/intake/scribe-backfill.ts";
 import { createManagedChatInbox, managedChatWindowStore, type ManagedChatInbox } from "@ambient-agent/engine/intake/managed-chat-inbox.ts";
 import { speakerActivity } from "@ambient-agent/agents/speaker/activity-reporter.ts";
 import { effectLoggerLayer, getLogger, upstreamWhatsAppLogger } from "@ambient-agent/engine/logging/logging.ts";
@@ -218,6 +221,8 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   const storeDir = options.storeDirectory;
   const gate = makeManagedChatGate(options.managedChats);
   const archive = createConversationArchive(options.applicationDatabase);
+  const scribeBackfills = createScribeBackfillStore(options.applicationDatabase);
+  configureScribeBackfillGate(scribeBackfills);
   const inbox = createManagedChatInbox(archive, { allowed: gate.allowed });
   speakerActivity.recoverWith((dispatchId) => {
     const window = inbox.windowForDispatch(dispatchId);
@@ -238,6 +243,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
 
   const program = Effect.gen(function* () {
     yield* Effect.addFinalizer(() => Effect.sync(() => archive.close()));
+    yield* Effect.addFinalizer(() => Effect.sync(() => scribeBackfills.close()));
     yield* Effect.addFinalizer(() => Effect.promise(() => account.stop()));
     if (!gate.hasTarget) {
       yield* Effect.logWarning("No managed WhatsApp chat is configured; ingress remains fail-closed.");
@@ -254,6 +260,26 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
         },
       }),
     );
+    if (account.initialArchiveReady !== undefined && options.sessionFactory === undefined) {
+      yield* Effect.promise(() => account.initialArchiveReady!());
+      for (const state of scribeBackfills.states()) {
+        if (!options.managedChats.includes(state.chatId)) scribeBackfills.disable(state.chatId);
+      }
+      for (const chatId of options.managedChats) {
+        const state = scribeBackfills.get(chatId);
+        const admission = state === undefined
+          ? scribeBackfills.admit(chatId)
+          : state.mode === "catching_up"
+            ? { admitted: true as const }
+            : state.mode === "disabled"
+              ? scribeBackfills.retry(chatId)
+              : { admitted: false as const };
+        if (admission.admitted) {
+          const { runId } = yield* Effect.promise(() => invoke(scribeBackfill, { input: { chatId } }));
+          scribeBackfills.setRunId(chatId, runId);
+        }
+      }
+    }
     const session = account.session();
     const botIds = botIdsOf(session, options.botLid);
     setRuntimeStatus({ phase: "online", chatTarget: gate.describe(), botIds });

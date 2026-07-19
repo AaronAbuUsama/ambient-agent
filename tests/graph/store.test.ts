@@ -20,6 +20,20 @@ const person = (externalId: string, extra: Record<string, unknown> = {}) => ({
   entity: { type: "person", identity: { platform: "github", externalId }, ...extra },
 });
 
+describe("keyless entity convergence", () => {
+  it("reuses exact phrases and accumulates confidence", () => {
+    const store = createGraphStore(":memory:");
+    for (const [type, key] of [["topic", "label"], ["commitment", "description"], ["goal", "description"]] as const) {
+      const first = store.upsertEntity({ type, properties: { [key]: "Ship it" }, confidence: 0.5 });
+      const replay = store.upsertEntity({ type, properties: { [key]: "Ship it" }, confidence: 0.5 });
+      expect(replay.entityId).toBe(first.entityId);
+      expect(replay.confidence).toBe(0.75);
+    }
+    expect(store.findEntities({}).length).toBe(3);
+    store.close();
+  });
+});
+
 describe("graph tool boundary schemas", () => {
   it("accepts each of the eleven entity types and rejects a malformed one", () => {
     const valid: unknown[] = [

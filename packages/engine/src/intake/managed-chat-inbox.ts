@@ -25,7 +25,7 @@ import type {
   ConversationRevocation,
 } from "./conversation-event.ts";
 
-interface InboxEventRow {
+export interface InboxEventRow {
   event_id: string;
   kind: ConversationEvent["kind"];
   provider_message_id: string;
@@ -100,7 +100,7 @@ export interface CreateManagedChatInboxOptions {
   readonly now?: () => number;
 }
 
-const decodeIncoming = (row: InboxEventRow): IncomingMessage => {
+export const decodeIncoming = (row: InboxEventRow): IncomingMessage => {
   const payload = JSON.parse(row.payload_json) as ConversationArrivalPayload;
   const applicationCanary = payload.applicationAdmission === "smoke-canary";
   return {
@@ -118,7 +118,7 @@ const decodeIncoming = (row: InboxEventRow): IncomingMessage => {
   };
 };
 
-const decodeUpdate = (row: InboxEventRow): ConversationUpdate => {
+export const decodeUpdate = (row: InboxEventRow): ConversationUpdate => {
   const base = {
     id: row.event_id,
     providerMessageId: row.provider_message_id,

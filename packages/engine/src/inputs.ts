@@ -71,6 +71,7 @@ const whatsappWindowInputSchema = v.object({
       }),
     ]),
   ),
+  eventOrder: v.optional(v.array(nonEmptyString)),
   graphContext,
 });
 
@@ -226,6 +227,7 @@ export const whatsappWindowInput = (window: ConversationWindow): WhatsAppWindowI
     reason: window.reason,
     messages: window.messages,
     updates: window.updates,
+    ...(window.eventOrder === undefined ? {} : { eventOrder: window.eventOrder }),
   });
 
 /**
