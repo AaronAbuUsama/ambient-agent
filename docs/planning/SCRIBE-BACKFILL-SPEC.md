@@ -182,8 +182,12 @@ For each managed chat:
 - `disabled`: transition back to `catching_up` and resume from its cursor.
 
 For each state row whose chat is no longer managed, transition any current mode to
-`disabled` in the reconciliation transaction. The running workflow also checks between
-windows and exits when it observes that state. Do not delete its graph or cursor.
+`disabled` in the reconciliation transaction. When disabling a `live` row, first set
+`after_sequence` to the chat's current `COALESCE(MAX(conversation_events.rowid), 0)`;
+this removal cutoff prevents re-addition from replaying the chat's prior live tenure.
+For `catching_up` or `failed`, preserve the existing checkpoint. The running workflow
+also checks between windows and exits when it observes disabled state. Do not delete
+its graph.
 
 ### 4.2 Admission is detached
 
@@ -354,10 +358,18 @@ scribeBatchInput([
     chatId,
     messages,
     updates,
+    eventOrder: scribeEvents.map(({ id }) => id),
     reason: "capacity",
   }),
 ]);
 ```
+
+Minimally extend the shared WhatsApp input schema with optional `eventOrder: string[]`.
+When present, it lists every message/update ID exactly once in raw page order. The
+Scribe renderer interleaves the existing `messages` and `updates` arrays by that list
+before rendering. Live callers may omit it; backfill must supply it. Do not expose
+archive row IDs to the model and do not replace the existing Window shape with a second
+payload language.
 
 The implementation may add an internal backfill reason if the existing reason union
 cannot represent the window honestly, but it must not invent a second extraction
@@ -456,7 +468,7 @@ live transition commits first, then removal
   => removal overwrites live with disabled before the new managed set is published
 ```
 
-In `live` mode, the retained `after_sequence` is the immutable handoff cutoff used by
+In `live` mode, the retained `after_sequence` is the stable handoff cutoff used by
 `liveSlice()`. A Window dispatched after handoff may contain events from both sides:
 rows at or below the cutoff belonged to backfill, while rows above it belong to live
 Scribe. If `liveSlice()` reads before the handoff transaction commits, it sees
@@ -491,11 +503,34 @@ old Flue run record.
 ### Managed-chat removal
 
 Removal reconciliation changes the row from any mode to `disabled` before the removed
-set is published to intake. Check that durable mode between windows and stop before the
-next prompt. The final handoff's conditional update provides the same guard if removal
-races the tail-empty transition. Do not delete historical graph facts or reset the
-cursor. Re-adding the chat changes `disabled` to `catching_up` and resumes from the
+set is published to intake. For a live chat, the same transaction replaces the old
+handoff cutoff with the archive high-water at removal; rows committed after that cutoff
+while disabled are the only rows backfilled after re-addition. For catching-up or
+failed work, preserve the last successful cursor. Check durable mode between windows
+and stop before the next prompt. The final handoff's conditional update provides the
+same guard if removal races the tail-empty transition. Do not delete historical graph
+facts. Re-adding the chat changes `disabled` to `catching_up` and resumes from the
 stored cursor.
+
+```sql
+BEGIN IMMEDIATE;
+
+UPDATE scribe_backfills
+   SET after_sequence = CASE
+         WHEN mode = 'live' THEN (
+           SELECT COALESCE(MAX(rowid), 0)
+             FROM conversation_events
+            WHERE chat_id = :chat_id
+         )
+         ELSE after_sequence
+       END,
+       mode = 'disabled',
+       run_id = NULL,
+       updated_at_ms = :now
+ WHERE chat_id = :chat_id;
+
+COMMIT;
+```
 
 ## 11. Observability contract
 
@@ -621,6 +656,7 @@ The implementation session should work in this dependency order:
 
    - reuse the Scribe agent;
    - persistent session, 50-event windows, three attempts;
+   - optional `eventOrder` metadata rendered in archive order;
    - medium Scribe thinking level;
    - structured run logs.
 
@@ -631,6 +667,7 @@ The implementation session should work in this dependency order:
    - WhatsApp-only, event-level live-Scribe cutoff gate;
    - one regression test for a Window that straddles the handoff cutoff;
    - one regression test for managed-chat removal racing final handoff;
+   - one regression test for removing and re-adding a formerly live chat;
    - disabled/failed/retry behavior.
 
 5. **Developer proof surface**
@@ -649,6 +686,8 @@ The implementation is complete when all of the following are proven:
 - The Speaker handles a live message while that chat is still backfilling.
 - The same message is archived but not offered to live Scribe during catch-up.
 - Initial history is presented chronologically in windows of at most 50 events.
+- Arrivals, edits, reactions, and revocations within a mixed page reach Scribe in one
+  archive-ordered sequence rather than grouped message/update order.
 - A newly admitted chat reads its first snapshot page, and equal-timestamp events retain
   archive insertion order.
 - An empty newly managed chat captures high-water `0`, reaches tail, and can transition
@@ -667,6 +706,8 @@ The implementation is complete when all of the following are proven:
 - Three failures produce durable `failed` state without stopping the Speaker or losing
   later archive events.
 - Removing a managed chat stops at the next window boundary and marks it disabled.
+- Removing and re-adding a formerly live chat starts after its removal high-water and
+  does not replay the prior live tenure.
 - Removal racing the tail-empty handoff cannot leave the chat `live`; re-adding it
   resumes from the stored cursor.
 - Run-stream consumers can observe started, per-window, retry, failure, and live events
