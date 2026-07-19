@@ -52,6 +52,17 @@ export const startWhatsAppSetupRuntime = (
     archive.close();
     throw cause;
   }
+  let cleanup: Promise<void> | undefined;
+  const cleanupResources = (): Promise<void> => {
+    cleanup ??= (async () => {
+      try {
+        await account.stop();
+      } finally {
+        archive.close();
+      }
+    })();
+    return cleanup;
+  };
   const authentication = Promise.resolve()
     .then(
       async () =>
@@ -64,8 +75,15 @@ export const startWhatsAppSetupRuntime = (
     .then(() => {
       if (!stopping) status = { phase: "online" };
     })
-    .catch((cause: unknown) => {
-      if (!stopping) status = { phase: "failed", error: errorMessage(cause) };
+    .catch(async (cause: unknown) => {
+      if (stopping) return;
+      let error = errorMessage(cause);
+      try {
+        await cleanupResources();
+      } catch (cleanupCause) {
+        error = `${error}; setup cleanup failed: ${errorMessage(cleanupCause)}`;
+      }
+      if (!stopping) status = { phase: "failed", error };
     });
   void authentication;
 
@@ -75,9 +93,8 @@ export const startWhatsAppSetupRuntime = (
     stop: async () => {
       stopping = true;
       try {
-        await account.stop();
+        await cleanupResources();
       } finally {
-        archive.close();
         status = { phase: "stopped" };
       }
     },

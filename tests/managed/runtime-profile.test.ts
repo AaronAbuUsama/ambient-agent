@@ -125,6 +125,37 @@ it("keeps pairing material in the authenticated bridge instead of runtime output
   expect(archive.close).toHaveBeenCalledTimes(1);
 });
 
+it("releases setup resources when WhatsApp authentication fails", async () => {
+  const account: ManagedWhatsAppAccount = {
+    authenticate: vi.fn(async () => {
+      throw new Error("logged_out");
+    }),
+    synchronizedChats: vi.fn(async () => []),
+    session: () => ({}) as never,
+    stop: vi.fn(async () => undefined),
+  };
+  const archive = { append: vi.fn(() => true), close: vi.fn() };
+  const runtime = startWhatsAppSetupRuntime(
+    {
+      storeDirectory: "/private/tenant-202/whatsapp",
+      applicationDatabase: "/private/tenant-202/application.sqlite",
+      credentialEnvironment: {
+        TENANT_DB_URL: "libsql://tenant-202.example",
+        TENANT_DB_TOKEN: "tenant-token-202",
+      },
+    },
+    { createAccount: () => account, createArchive: () => archive as never },
+  );
+
+  await vi.waitFor(() => expect(runtime.status()).toEqual({ phase: "failed", error: "logged_out" }));
+  expect(account.stop).toHaveBeenCalledTimes(1);
+  expect(archive.close).toHaveBeenCalledTimes(1);
+
+  await runtime.stop();
+  expect(account.stop).toHaveBeenCalledTimes(1);
+  expect(archive.close).toHaveBeenCalledTimes(1);
+});
+
 it("shares storage across setup, activation rollback, and repair without weakening operate configuration", () => {
   const paths = managedPaths({ dataDirectory: "/private/tenant-202" });
   const configuration = createManagedConfig(["project@g.us"], "owner/repository");
