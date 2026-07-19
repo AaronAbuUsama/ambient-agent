@@ -49,6 +49,9 @@ export const reviewEvent = (checksPassed: boolean, findings: readonly Pick<Revie
       ? "COMMENT" as const
       : "APPROVE" as const;
 
+export const missingVerdictReviewEvent = (checksPassed: boolean) =>
+  checksPassed ? "COMMENT" as const : "REQUEST_CHANGES" as const;
+
 export const renderReviewFinding = (finding: ReviewFinding): string =>
   `**[${finding.severity}] ${finding.title}**\n\n${finding.body}`;
 

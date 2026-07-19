@@ -4,7 +4,7 @@ import * as v from "valibot";
 import { resolveAgentModelProfile } from "@ambient-agent/engine/model/pi-subscription.ts";
 import { parseGitHubRepository } from "@ambient-agent/engine/github/repository.ts";
 import reviewerSkill from "./SKILL.md" with { type: "skill" };
-import { archiveBytes, findReviewForHead, listChangedFiles, renderReviewSubmission, reviewEvent, reviewerHeadMarker, reviewerLogin, validInlineLocations } from "./github.ts";
+import { archiveBytes, findReviewForHead, listChangedFiles, missingVerdictReviewEvent, renderReviewSubmission, reviewEvent, reviewerHeadMarker, reviewerLogin, validInlineLocations } from "./github.ts";
 import { getReviewerRuntime } from "./runtime.ts";
 import { reviewFindingSchema, reviewerJobInputSchema, reviewerResultSchema, type ReviewerJobInput, type ReviewerResult } from "./schemas.ts";
 
@@ -109,7 +109,7 @@ const run = async ({ harness, input, log }: { harness: FlueHarness; input: Revie
             submitted = { status: "commented", reviewUrl: alreadySubmitted.html_url, prNumber: pr.number, headSha: pr.head.sha, summary: "This Reviewer App already reviewed the live pull-request head." };
             return submitted;
           }
-          const event = missingModelVerdict ? "COMMENT" as const : reviewEvent(checks.passed, decision.findings);
+          const event = missingModelVerdict ? missingVerdictReviewEvent(checks.passed) : reviewEvent(checks.passed, decision.findings);
           const rendered = renderReviewSubmission(decision.summary, checks.passed, decision.findings, inlineLocations);
           const review = await github.pulls.createReview({
             owner: repo.owner,

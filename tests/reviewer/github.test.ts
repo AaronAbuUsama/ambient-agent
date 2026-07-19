@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import * as v from "valibot";
 
-import { findReviewForHead, renderReviewFinding, renderReviewSubmission, renderSummaryFinding, reviewEvent, reviewerHeadMarker, reviewerLogin, reviewerSlug, validInlineLocations, type ReviewerGitHub } from "../../packages/agents/src/capabilities/reviewer/github.ts";
+import { findReviewForHead, missingVerdictReviewEvent, renderReviewFinding, renderReviewSubmission, renderSummaryFinding, reviewEvent, reviewerHeadMarker, reviewerLogin, reviewerSlug, validInlineLocations, type ReviewerGitHub } from "../../packages/agents/src/capabilities/reviewer/github.ts";
 import { REVIEW_SEVERITIES, reviewFindingSchema } from "../../packages/agents/src/capabilities/reviewer/schemas.ts";
 import { reviewerExerciseCommand, serializeReviewerSubmission, singleSubmission } from "../../packages/agents/src/capabilities/reviewer/workflow.ts";
 
@@ -11,6 +11,8 @@ describe("Reviewer GitHub contract", () => {
     expect(reviewEvent(true, [{ blocking: true }])).toBe("REQUEST_CHANGES");
     expect(reviewEvent(true, [{ blocking: false }])).toBe("COMMENT");
     expect(reviewEvent(true, [])).toBe("APPROVE");
+    expect(missingVerdictReviewEvent(false)).toBe("REQUEST_CHANGES");
+    expect(missingVerdictReviewEvent(true)).toBe("COMMENT");
   });
 
   it.each(REVIEW_SEVERITIES)("validates and renders the %s finding contract", (severity) => {
