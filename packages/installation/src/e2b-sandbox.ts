@@ -13,6 +13,19 @@ export const E2B_SANDBOX_HOME = "/home/user";
 export const E2B_WORKSPACES_ROOT = `${E2B_SANDBOX_HOME}/workspaces`;
 
 /**
+ * Workspace-local `TMPDIR` (#172). The model's shell tools run the target repo's install and
+ * tests, and those spawn binaries out of the temp directory — which fails `EACCES` the moment
+ * `/tmp` is mounted `noexec`. That is the recorded cause of the Coder green path never once
+ * completing (`docs/proof/behavior-battery.md` BAT-0a).
+ *
+ * This is deliberately NOT assumed away for E2B. Whether a given template mounts `/tmp` exec
+ * is a provider detail we do not control and have never measured; pointing TMPDIR at the
+ * workspace tree removes the dependency on that detail entirely. Kept at the workspaces root
+ * rather than under a job's directory so a per-job cleanup never destroys it.
+ */
+export const E2B_TMP_DIR = `${E2B_WORKSPACES_ROOT}/.tmp`;
+
+/**
  * The slice of the `e2b` SDK's `Sandbox` this adapter drives. Structural, in the same
  * spirit as Flue's own `BashLike`, so a test can supply a fake without standing up the
  * whole SDK class. `defaultCreate` below assigns the real `Sandbox` to it, so the shape
@@ -129,7 +142,8 @@ class E2BSandboxApi implements SandboxApi {
         // E2B's own default is 60s, far under a repo's test run, so an unspecified
         // deadline falls back to the job's sandbox budget rather than E2B's.
         timeoutMs: options?.timeoutMs ?? this.defaultTimeoutMs,
-        ...(options?.env === undefined ? {} : { envs: options.env }),
+        // TMPDIR first so a caller can still override it deliberately.
+        envs: { TMPDIR: E2B_TMP_DIR, ...options?.env },
         ...(options?.signal === undefined ? {} : { signal: options.signal }),
       });
       return { stdout, stderr, exitCode };
@@ -197,6 +211,8 @@ export const e2bSandbox = (options: E2BSandboxOptions): SandboxFactory => {
           sessions.delete(id);
           void sandbox.kill().catch(() => undefined);
         }, options.timeoutMs).unref();
+        // TMPDIR must exist before the first command names it.
+        await sandbox.files.makeDir(E2B_TMP_DIR);
         return createSandboxSessionEnv(new E2BSandboxApi(sandbox, E2B_SANDBOX_HOME, options.timeoutMs), E2B_SANDBOX_HOME);
       })();
       sessions.set(id, session);

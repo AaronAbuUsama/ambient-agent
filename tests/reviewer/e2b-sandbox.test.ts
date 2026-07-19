@@ -64,12 +64,21 @@ describe("E2B sandbox adapter", () => {
     });
     expect(fake.runs[0]).toEqual({
       command: "pnpm test",
-      // E2B's own default is 60s — far under a repo's test run.
-      options: { cwd: "/home/user", timeoutMs: 900_000, envs: { CI: "1" } },
+      // E2B's own default is 60s — far under a repo's test run. TMPDIR is workspace-local
+      // (#172) so a `noexec /tmp` in any template cannot fail the repo's install or tests.
+      options: {
+        cwd: "/home/user",
+        timeoutMs: 900_000,
+        envs: { TMPDIR: "/home/user/workspaces/.tmp", CI: "1" },
+      },
     });
 
     await env.exec("pnpm test", { cwd: `${E2B_WORKSPACES_ROOT}/issue-7`, timeoutMs: 1_000 });
-    expect(fake.runs[1]?.options).toEqual({ cwd: `${E2B_WORKSPACES_ROOT}/issue-7`, timeoutMs: 1_000 });
+    expect(fake.runs[1]?.options).toEqual({
+      cwd: `${E2B_WORKSPACES_ROOT}/issue-7`,
+      timeoutMs: 1_000,
+      envs: { TMPDIR: `${E2B_WORKSPACES_ROOT}/.tmp` },
+    });
   });
 
   it("reports a failed command as a red result and a deadline as exit 124", async () => {
