@@ -5,11 +5,11 @@
   "description": "Speaker: a continuing ambient agent on Flue for managed WhatsApp chats and authorized GitHub issue management.",
   "keywords": [
     "ai-agents",
-    "speaker",
     "chatbot",
     "flue",
     "github",
     "octokit",
+    "speaker",
     "typescript",
     "whatsapp",
     "whatsappd"
@@ -87,6 +87,7 @@
     "@effect/vitest": "4.0.0-beta.98",
     "@flue/cli": "1.0.0-beta.9",
     "@flue/sdk": "1.0.0-beta.9",
+    "@orpc/client": "catalog:",
     "@orpc/server": "catalog:",
     "@types/json-schema": "7.0.15",
     "@types/node": "^22.10.0",

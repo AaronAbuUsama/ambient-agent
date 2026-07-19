@@ -13,6 +13,7 @@
     "@ambient-agent/api": "workspace:*",
     "@ambient-agent/auth": "workspace:*",
     "@ambient-agent/db": "workspace:*",
+    "@ambient-agent/engine": "workspace:*",
     "@ambient-agent/env": "workspace:*",
     "@ambient-agent/installation": "workspace:*",
     "@hono/node-server": "^2.0.8",

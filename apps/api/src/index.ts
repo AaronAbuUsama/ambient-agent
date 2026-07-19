@@ -11,6 +11,7 @@ import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
+import { createHostedCoworkerService } from "./coworker-hosted";
 import { installHostedGitHub } from "./github-hosted";
 import {
   createHostedTenantProvisioner,
@@ -18,7 +19,15 @@ import {
 } from "./provisioner-hosted";
 
 const app = new Hono();
-const appRouter = createAppRouter({ getEntitlementSnapshot });
+const appRouter = createAppRouter({
+  getEntitlementSnapshot,
+  coworker: createHostedCoworkerService({
+    client,
+    ...(process.env.GITHUB_RUNTIME_DELIVERY_SECRETS_JSON
+      ? { runtimeSecretsJson: process.env.GITHUB_RUNTIME_DELIVERY_SECRETS_JSON }
+      : {}),
+  }),
+});
 
 app.use(logger());
 app.use(
@@ -109,10 +118,11 @@ app.get("/", (c) => {
 
 import { serve } from "@hono/node-server";
 
+const port = Number(process.env.PORT ?? 3000);
 serve(
   {
     fetch: app.fetch,
-    port: 3000,
+    port,
   },
   (info) => {
     console.log(`Server is running on http://localhost:${info.port}`);
