@@ -14,6 +14,15 @@ const leasePredicate = `EXISTS (
     AND provisioner_lease.expires_at_ms > (${nowMs})
 )`;
 
+const currentActivationPredicate = `EXISTS (
+  SELECT 1
+  FROM control_operation
+  WHERE control_operation.tenant_id = tenant.id
+    AND control_operation.kind = 'activate'
+    AND control_operation.status IN ('pending', 'running')
+    AND control_operation.target_config_version = tenant.config_version
+)`;
+
 export type DesiredRuntimeMode = (typeof schema.agentInstance.$inferSelect)["desiredMode"];
 export type ObservedRuntimeState = (typeof schema.agentInstance.$inferSelect)["observedState"];
 export type RemoteConfigState = (typeof schema.agentInstance.$inferSelect)["remoteConfigState"];
@@ -29,12 +38,14 @@ export interface ProvisioningTarget {
   readonly tenantDbTokenCiphertext: string | null;
   readonly configJson: string;
   readonly configVersion: number;
+  readonly hasCurrentActivationIntent: boolean;
   readonly tenantStatus: TenantStatus;
   readonly tenantDesiredState: TenantDesiredState;
   readonly entitlementStatus: EntitlementStatus;
   readonly agentId: string;
   readonly credsStoreKey: string;
   readonly desiredMode: DesiredRuntimeMode;
+  readonly appliedMode: DesiredRuntimeMode;
   readonly observedState: ObservedRuntimeState;
   readonly runtimeBaseUrl: string | null;
   readonly dokployDisplayName: string;
@@ -73,6 +84,9 @@ const requiredNumber = (row: Record<string, unknown>, name: string): number => {
 const nullableNumber = (row: Record<string, unknown>, name: string): number | null =>
   row[name] === null ? null : requiredNumber(row, name);
 
+const requiredBoolean = (row: Record<string, unknown>, name: string): boolean =>
+  requiredNumber(row, name) === 1;
+
 const targetFrom = (row: Record<string, unknown>): ProvisioningTarget => ({
   tenantId: requiredString(row, "tenant_id"),
   tenantDbName: requiredString(row, "tenant_db_name"),
@@ -80,12 +94,14 @@ const targetFrom = (row: Record<string, unknown>): ProvisioningTarget => ({
   tenantDbTokenCiphertext: nullableString(row, "tenant_db_token_ciphertext"),
   configJson: requiredString(row, "config_json"),
   configVersion: requiredNumber(row, "config_version"),
+  hasCurrentActivationIntent: requiredBoolean(row, "has_current_activation_intent"),
   tenantStatus: requiredString(row, "tenant_status") as TenantStatus,
   tenantDesiredState: requiredString(row, "tenant_desired_state") as TenantDesiredState,
   entitlementStatus: requiredString(row, "entitlement_status") as EntitlementStatus,
   agentId: requiredString(row, "agent_id"),
   credsStoreKey: requiredString(row, "creds_store_key"),
   desiredMode: requiredString(row, "desired_mode") as DesiredRuntimeMode,
+  appliedMode: requiredString(row, "applied_mode") as DesiredRuntimeMode,
   observedState: requiredString(row, "observed_state") as ObservedRuntimeState,
   runtimeBaseUrl: nullableString(row, "runtime_base_url"),
   dokployDisplayName: requiredString(row, "dokploy_display_name"),
@@ -114,12 +130,14 @@ export async function readProvisioningTarget(
       tenant.tenant_db_token_ciphertext,
       tenant.config_json,
       tenant.config_version,
+      CASE WHEN ${currentActivationPredicate} THEN 1 ELSE 0 END AS has_current_activation_intent,
       tenant.status AS tenant_status,
       tenant.desired_state AS tenant_desired_state,
       subscription_entitlement.status AS entitlement_status,
       agent_instance.id AS agent_id,
       agent_instance.creds_store_key,
       agent_instance.desired_mode,
+      agent_instance.applied_mode,
       agent_instance.observed_state,
       agent_instance.runtime_base_url,
       agent_instance.dokploy_display_name,
@@ -158,19 +176,32 @@ export async function listProvisioningTenantIds(client: Pick<Client, "execute">)
         AND (
           tenant.status = 'active'
           OR (tenant.status = 'onboarding' AND agent_instance.desired_mode = 'setup')
+          OR (
+            tenant.status = 'onboarding'
+            AND agent_instance.desired_mode = 'operate'
+            AND ${currentActivationPredicate}
+          )
         )
         AND tenant.desired_state = 'running'
         AND agent_instance.desired_mode IN ('setup', 'operate')
         AND (
           agent_instance.observed_state != 'healthy'
           OR agent_instance.applied_config_version != tenant.config_version
+          OR agent_instance.applied_mode != agent_instance.desired_mode
         )
       )
       OR (
         (
           subscription_entitlement.status NOT IN ('active', 'trialing')
           OR tenant.status IN ('suspended', 'archived')
-          OR (tenant.status = 'onboarding' AND agent_instance.desired_mode != 'setup')
+          OR (
+            tenant.status = 'onboarding'
+            AND agent_instance.desired_mode != 'setup'
+            AND NOT (
+              agent_instance.desired_mode = 'operate'
+              AND ${currentActivationPredicate}
+            )
+          )
           OR tenant.desired_state != 'running'
           OR agent_instance.desired_mode = 'stopped'
         )
@@ -239,6 +270,7 @@ export async function beginRemoteConfig(
   lease: ProvisionerLease,
   operationId: string,
   targetVersion: number,
+  targetMode: DesiredRuntimeMode,
 ): Promise<boolean> {
   const result = await client.execute({
     sql: `UPDATE agent_instance
@@ -250,10 +282,12 @@ export async function beginRemoteConfig(
           updated_at_ms = (${nowMs})
       WHERE creds_store_key = ?1
         AND remote_config_state IN ('idle', 'confirmed')
-        AND ?5 > applied_config_version
+        AND desired_mode = ?6
+        AND ?5 >= applied_config_version
+        AND (?5 > applied_config_version OR ?6 != applied_mode)
         AND ${leasePredicate}
       RETURNING remote_config_operation_id`,
-    args: [credsStoreKey, lease.ownerId, lease.fencingToken, operationId, targetVersion],
+    args: [credsStoreKey, lease.ownerId, lease.fencingToken, operationId, targetVersion, targetMode],
   });
   return result.rows.length === 1;
 }
@@ -263,20 +297,28 @@ export async function confirmRemoteConfig(
   credsStoreKey: string,
   lease: ProvisionerLease,
   operationId: string,
+  targetMode: DesiredRuntimeMode,
 ): Promise<boolean> {
   const result = await client.execute({
     sql: `UPDATE agent_instance
       SET remote_config_state = 'confirmed',
           applied_config_version = remote_config_target_version,
+          applied_mode = ?5,
           updated_at_ms = (${nowMs})
       WHERE creds_store_key = ?1
         AND remote_config_operation_id = ?4
         AND remote_config_owner_id = ?2
         AND remote_config_fencing_token = ?3
         AND remote_config_state = 'pending'
+        AND desired_mode = ?5
+        AND remote_config_target_version = (
+          SELECT tenant.config_version
+          FROM tenant
+          WHERE tenant.id = agent_instance.tenant_id
+        )
         AND ${leasePredicate}
-      RETURNING applied_config_version`,
-    args: [credsStoreKey, lease.ownerId, lease.fencingToken, operationId],
+      RETURNING applied_config_version, applied_mode`,
+    args: [credsStoreKey, lease.ownerId, lease.fencingToken, operationId, targetMode],
   });
   return result.rows.length === 1;
 }

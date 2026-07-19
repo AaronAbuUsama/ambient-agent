@@ -262,7 +262,7 @@ describe("tenant provisioner", () => {
     });
     expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({ status: "stopped", taskCount: 0 });
     expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({ status: "stopped", taskCount: 0 });
-    expect(dokploy.calls.filter((call) => call.startsWith("stop:"))).toHaveLength(2);
+    expect(dokploy.calls.filter((call) => call.startsWith("stop:"))).toHaveLength(3);
   });
 
   test("recovers a response-lost create without creating or starting a second shell", async () => {
@@ -303,6 +303,44 @@ describe("tenant provisioner", () => {
     expect([...dokploy.taskCounts.values()]).toEqual([0]);
   });
 
+  test("gates onboarding operate mode on an activation for the current revision", async () => {
+    const client = await migrate();
+    const tenantId = await seed(client, "activation");
+    const turso = new FakeTurso();
+    const dokploy = new FakeDokploy();
+    const provisioner = provisionerFor(client, turso, dokploy);
+
+    expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({ status: "running" });
+    await client.execute({
+      sql: `UPDATE tenant
+        SET config_version = 2, config_json = '{"revision":2,"activated":true}'
+        WHERE id = ?1`,
+      args: [tenantId],
+    });
+    await client.execute({
+      sql: "UPDATE agent_instance SET desired_mode = 'operate' WHERE tenant_id = ?1",
+      args: [tenantId],
+    });
+    await client.execute({
+      sql: `INSERT INTO control_operation (
+        id, tenant_id, kind, status, operation_identity, target_config_version
+      ) VALUES (
+        'operation-activation', ?1, 'activate', 'pending', 'activate:activation:3', 3
+      )`,
+      args: [tenantId],
+    });
+
+    expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({ status: "stopped" });
+    await client.execute({
+      sql: `UPDATE control_operation
+        SET target_config_version = 2, operation_identity = 'activate:activation:2'
+        WHERE id = 'operation-activation'`,
+    });
+    expect(await provisioner.reconcilePendingTenants()).toEqual([
+      expect.objectContaining({ tenantId, status: "running", taskCount: 1 }),
+    ]);
+  });
+
   test("restarts a new config revision on the same stopped-first application", async () => {
     const client = await migrate();
     const tenantId = await seed(client, "restart");
@@ -330,8 +368,17 @@ describe("tenant provisioner", () => {
     expect(dokploy.calls.filter((call) => call.startsWith("prepare:"))).toHaveLength(2);
     expect(dokploy.calls.filter((call) => call.startsWith("deploy:"))).toHaveLength(2);
     expect(dokploy.calls.filter((call) => call.startsWith("start:"))).toHaveLength(3);
-    expect(dokploy.calls.filter((call) => call.startsWith("stop:"))).toHaveLength(1);
+    expect(dokploy.calls.filter((call) => call.startsWith("stop:"))).toHaveLength(2);
     expect([...dokploy.manifests.values()][0]?.command).toContain("dist/cli/main.js");
+
+    await client.execute({
+      sql: "UPDATE agent_instance SET desired_mode = 'setup' WHERE tenant_id = ?1",
+      args: [tenantId],
+    });
+    expect(await provisioner.reconcilePendingTenants()).toEqual([
+      expect.objectContaining({ tenantId, status: "running", taskCount: 1 }),
+    ]);
+    expect([...dokploy.manifests.values()][0]?.command).toContain("dist/cli/setup.js");
   });
 
   test("keeps a response-lost start pending until zero tasks are observed", async () => {

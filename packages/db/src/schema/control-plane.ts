@@ -107,6 +107,9 @@ export const agentInstance = sqliteTable(
     dokployApplicationId: text("dokploy_application_id").unique(),
     dokployAppName: text("dokploy_app_name").unique(),
     appliedConfigVersion: integer("applied_config_version").default(0).notNull(),
+    appliedMode: text("applied_mode", { enum: ["stopped", "setup", "operate"] })
+      .default("stopped")
+      .notNull(),
     remoteConfigOperationId: text("remote_config_operation_id").unique(),
     remoteConfigOwnerId: text("remote_config_owner_id"),
     remoteConfigFencingToken: integer("remote_config_fencing_token"),
@@ -148,6 +151,7 @@ export const agentInstance = sqliteTable(
       )`,
     ),
     check("agent_instance_applied_config_version_check", sql`${table.appliedConfigVersion} >= 0`),
+    check("agent_instance_applied_mode_check", sql`${table.appliedMode} in ('stopped', 'setup', 'operate')`),
     check(
       "agent_instance_remote_config_state_check",
       sql`${table.remoteConfigState} in ('idle', 'pending', 'confirmed', 'blocked_unknown')`,

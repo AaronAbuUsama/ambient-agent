@@ -108,7 +108,9 @@ describe("provisioner control store", () => {
     const target = await readProvisioningTarget(client, seeded.tenantId);
     expect(target).toMatchObject({
       tenantId: seeded.tenantId,
+      hasCurrentActivationIntent: false,
       tenantStatus: "onboarding",
+      appliedMode: "stopped",
       tenantDbUrl: "libsql://tenant-db-p.turso.io",
       tenantDbTokenCiphertext: "v1.ciphertext",
       dokployApplicationId: "app-p",
@@ -126,14 +128,14 @@ describe("provisioner control store", () => {
     expect(first).not.toBeNull();
     if (!first) throw new Error("first lease missing");
 
-    expect(await beginRemoteConfig(client, seeded.key, first, "remote-op-2", 2)).toBe(true);
+    expect(await beginRemoteConfig(client, seeded.key, first, "remote-op-2", 2, "setup")).toBe(true);
     expect(await releaseLease(client, seeded.key, first)).toBe(true);
     const successor = await acquireLease(client, seeded.key, "owner-b");
     expect(successor).not.toBeNull();
     if (!successor) throw new Error("successor lease missing");
 
-    expect(await confirmRemoteConfig(client, seeded.key, successor, "remote-op-2")).toBe(false);
-    expect(await beginRemoteConfig(client, seeded.key, successor, "remote-op-3", 3)).toBe(false);
+    expect(await confirmRemoteConfig(client, seeded.key, successor, "remote-op-2", "setup")).toBe(false);
+    expect(await beginRemoteConfig(client, seeded.key, successor, "remote-op-3", 3, "setup")).toBe(false);
     expect(await blockRemoteConfig(client, seeded.key, successor, "remote-op-2")).toBe(true);
     expect(
       await acknowledgeRemoteQuiescence(client, seeded.key, first, {
@@ -151,7 +153,7 @@ describe("provisioner control store", () => {
         auditId: "audit-rejected-wrong-operation",
       }),
     ).toBe(false);
-    expect(await beginRemoteConfig(client, seeded.key, successor, "remote-op-3", 3)).toBe(false);
+    expect(await beginRemoteConfig(client, seeded.key, successor, "remote-op-3", 3, "setup")).toBe(false);
     expect(
       await acknowledgeRemoteQuiescence(client, seeded.key, successor, {
         operationId: "remote-op-2",
@@ -160,8 +162,17 @@ describe("provisioner control store", () => {
         auditId: "audit-accepted",
       }),
     ).toBe(true);
-    expect(await beginRemoteConfig(client, seeded.key, successor, "remote-op-3", 3)).toBe(true);
-    expect(await confirmRemoteConfig(client, seeded.key, successor, "remote-op-3")).toBe(true);
+    await client.execute({
+      sql: `UPDATE tenant SET config_version = 3, config_json = '{"model":"ready","revision":3}'
+        WHERE id = ?1`,
+      args: [seeded.tenantId],
+    });
+    expect(await beginRemoteConfig(client, seeded.key, successor, "remote-op-3", 3, "setup")).toBe(true);
+    expect(await confirmRemoteConfig(client, seeded.key, successor, "remote-op-3", "setup")).toBe(true);
+    expect(await readProvisioningTarget(client, seeded.tenantId)).toMatchObject({
+      appliedConfigVersion: 3,
+      appliedMode: "setup",
+    });
 
     const audits = await client.execute(`SELECT id, operation_id, actor_id, outcome
       FROM provisioner_operator_audit ORDER BY id`);

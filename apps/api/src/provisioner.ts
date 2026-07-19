@@ -139,7 +139,10 @@ const entitled = (target: ProvisioningTarget): boolean =>
 const wantsRunning = (target: ProvisioningTarget): boolean =>
   entitled(target) &&
   (target.tenantStatus === "active" ||
-    (target.tenantStatus === "onboarding" && target.desiredMode === "setup")) &&
+    (target.tenantStatus === "onboarding" && target.desiredMode === "setup") ||
+    (target.tenantStatus === "onboarding" &&
+      target.desiredMode === "operate" &&
+      target.hasCurrentActivationIntent)) &&
   target.tenantDesiredState === "running" &&
   (target.desiredMode === "setup" || target.desiredMode === "operate");
 
@@ -458,10 +461,11 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
       }
       const manifest = manifestFor(target, application, token, options.secrets, options.configuration);
 
-      if (target.appliedConfigVersion !== target.configVersion) {
-        const currentTasks = await options.dokploy.waitForTaskCount(application.appName, 0);
-        if (currentTasks > 1) return await recordInvariant(application, "dokploy_multiple_tasks_observed");
-        if (currentTasks !== 0) await stopAndObserve(application);
+      if (
+        target.appliedConfigVersion !== target.configVersion ||
+        target.appliedMode !== target.desiredMode
+      ) {
+        await stopAndObserve(application);
         const operationId = `remote-config:${createId()}`;
         if (
           !(await beginRemoteConfig(
@@ -470,6 +474,7 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
             lease,
             operationId,
             target.configVersion,
+            target.desiredMode,
           ))
         ) {
           throw new LeaseLostError("lease_lost");
@@ -496,6 +501,7 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
               target.credsStoreKey,
               lease,
               operationId,
+              target.desiredMode,
             ))
           ) {
             throw new LeaseLostError("lease_lost");
