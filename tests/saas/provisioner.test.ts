@@ -101,6 +101,7 @@ class FakeDokploy implements DokployProvider {
   failPrepare = false;
   failStartAfterScale = false;
   failStopBeforeScale = false;
+  beforeHealth: (() => Promise<void>) | null = null;
   nextApplication = 1;
 
   async listApplications() {
@@ -190,6 +191,9 @@ class FakeDokploy implements DokployProvider {
 
   async health(_baseUrl: string, _runtimeId: string) {
     this.calls.push("health");
+    const beforeHealth = this.beforeHealth;
+    this.beforeHealth = null;
+    await beforeHealth?.();
     return true;
   }
 }
@@ -379,6 +383,43 @@ describe("tenant provisioner", () => {
       expect.objectContaining({ tenantId, status: "running", taskCount: 1 }),
     ]);
     expect([...dokploy.manifests.values()][0]?.command).toContain("dist/cli/setup.js");
+  });
+
+  test("stops a stale started manifest when the confirmation target changes", async () => {
+    const client = await migrate();
+    const tenantId = await seed(client, "confirm-race");
+    const turso = new FakeTurso();
+    const dokploy = new FakeDokploy();
+    dokploy.beforeHealth = async () => {
+      await client.execute({
+        sql: `UPDATE tenant
+          SET config_version = 2, config_json = '{"revision":2,"changed_during_start":true}'
+          WHERE id = ?1`,
+        args: [tenantId],
+      });
+    };
+    const provisioner = provisionerFor(client, turso, dokploy);
+
+    expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({
+      status: "blocked",
+      errorCode: "dokploy_config_outcome_unknown",
+    });
+    expect([...dokploy.taskCounts.values()]).toEqual([0]);
+    expect(dokploy.calls.findLastIndex((call) => call.startsWith("stop:"))).toBeGreaterThan(
+      dokploy.calls.findLastIndex((call) => call.startsWith("start:")),
+    );
+    const state = await client.execute({
+      sql: `SELECT applied_config_version, applied_mode, remote_config_target_version,
+          remote_config_state
+        FROM agent_instance WHERE tenant_id = ?1`,
+      args: [tenantId],
+    });
+    expect(state.rows[0]).toMatchObject({
+      applied_config_version: 0,
+      applied_mode: "stopped",
+      remote_config_target_version: 1,
+      remote_config_state: "blocked_unknown",
+    });
   });
 
   test("keeps a response-lost start pending until zero tasks are observed", async () => {

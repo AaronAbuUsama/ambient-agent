@@ -539,6 +539,7 @@ export const tenantReadiness = sqliteView("tenant_readiness", {
       when tenant.status = 'active'
         and tenant.desired_state = 'running'
         and agent_instance.desired_mode = 'operate'
+        and agent_instance.applied_mode = 'operate'
         and agent_instance.observed_state = 'healthy'
         and agent_instance.applied_config_version = tenant.config_version
         and model_connection.status = 'ready'

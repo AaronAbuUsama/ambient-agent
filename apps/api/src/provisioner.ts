@@ -504,7 +504,8 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
               target.desiredMode,
             ))
           ) {
-            throw new LeaseLostError("lease_lost");
+            await assertLease();
+            throw new RetryableProvisioningError("remote_config_confirmation_rejected");
           }
         } catch (error) {
           if (error instanceof LeaseLostError) throw error;
