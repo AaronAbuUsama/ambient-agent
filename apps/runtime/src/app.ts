@@ -61,7 +61,8 @@ export const createAmbientAgentApp = async ({
 }: ManagedRuntimeDependencies): Promise<Hono> => {
   const subscription = await connectPiChatGptSubscription({ authentication });
   const issueOperations = createIssueOperationStore(paths.applicationDatabase);
-  const runtimeId = runtimeInstallationId(githubCredential.webhookSecret);
+  const runtimeId =
+    deployment?.mode === "operate" ? deployment.runtimeId : runtimeInstallationId(githubCredential.webhookSecret);
   // The Coder Specialist (#158) runs under its own App identity in a config-bound full
   // sandbox — `local()` on the single-owner VPS (host-trusted), a remote container in
   // SaaS. The coder App may not be provisioned yet; if its credential is absent, the
@@ -109,7 +110,8 @@ export const createAmbientAgentApp = async ({
       });
       installBridgeRoute(routes, {
         runtimeId,
-        webhookSecret: githubCredential.webhookSecret,
+        webhookSecret: deployment?.mode === "operate" ? deployment.bridgeSecret : githubCredential.webhookSecret,
+        ...(deployment === undefined ? {} : { configVersion: deployment.configVersion }),
         status: getWhatsAppRuntimeStatus,
         control: () => whatsappControl,
       });

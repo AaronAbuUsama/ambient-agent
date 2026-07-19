@@ -20,10 +20,14 @@ export interface TenantRuntimeEnvironment extends TenantCredentialEnvironment {
   readonly PORT?: string;
 }
 
-export interface RuntimeDeploymentIdentity {
-  readonly configVersion: number;
-  readonly mode: "setup" | "operate";
-}
+export type RuntimeDeploymentIdentity =
+  | { readonly configVersion: number; readonly mode: "setup" }
+  | {
+      readonly configVersion: number;
+      readonly mode: "operate";
+      readonly runtimeId: string;
+      readonly bridgeSecret: string;
+    };
 
 export interface TenantRuntimeSetupBoot {
   readonly mode: "setup";
@@ -57,9 +61,9 @@ export const getManagedRuntimeDependencies = (): ManagedRuntimeDependencies => {
   return dependencies;
 };
 
-const requiredSetupValue = (name: string, value: string | undefined): string => {
+const requiredRuntimeValue = (name: string, value: string | undefined): string => {
   const configured = value?.trim();
-  if (!configured) throw new Error(`${name} is required for the tenant runtime setup profile.`);
+  if (!configured) throw new Error(`${name} is required for the tenant runtime.`);
   return configured;
 };
 
@@ -84,7 +88,17 @@ export const runtimeDeploymentIdentityFromEnvironment = (
   if (!Number.isSafeInteger(configVersion) || configVersion < 1) {
     throw new Error("AMBIENT_AGENT_CONFIG_VERSION must be a positive integer.");
   }
-  return { configVersion, mode };
+  return mode === "setup"
+    ? { configVersion, mode }
+    : {
+        configVersion,
+        mode,
+        runtimeId: requiredRuntimeValue("AMBIENT_AGENT_RUNTIME_ID", environment.AMBIENT_AGENT_RUNTIME_ID),
+        bridgeSecret: requiredRuntimeValue(
+          "AMBIENT_AGENT_RUNTIME_BRIDGE_SECRET",
+          environment.AMBIENT_AGENT_RUNTIME_BRIDGE_SECRET,
+        ),
+      };
 };
 
 /** Composition-root boundary for the standalone, setup-only tenant server. */
@@ -102,8 +116,8 @@ export const resolveTenantRuntimeSetupBoot = (
   }
   return {
     mode: "setup",
-    runtimeId: requiredSetupValue("AMBIENT_AGENT_RUNTIME_ID", environment.AMBIENT_AGENT_RUNTIME_ID),
-    bridgeSecret: requiredSetupValue(
+    runtimeId: requiredRuntimeValue("AMBIENT_AGENT_RUNTIME_ID", environment.AMBIENT_AGENT_RUNTIME_ID),
+    bridgeSecret: requiredRuntimeValue(
       "AMBIENT_AGENT_RUNTIME_BRIDGE_SECRET",
       environment.AMBIENT_AGENT_RUNTIME_BRIDGE_SECRET,
     ),
@@ -111,7 +125,7 @@ export const resolveTenantRuntimeSetupBoot = (
     paths,
     credentialEnvironment: {
       TENANT_DB_URL: tenantDatabase.url,
-      TENANT_DB_TOKEN: requiredSetupValue("TENANT_DB_TOKEN", tenantDatabase.authToken),
+      TENANT_DB_TOKEN: requiredRuntimeValue("TENANT_DB_TOKEN", tenantDatabase.authToken),
     },
     deployment: { configVersion: deployment.configVersion, mode: "setup" },
   };
