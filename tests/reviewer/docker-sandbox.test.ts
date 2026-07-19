@@ -1,0 +1,41 @@
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vite-plus/test";
+
+import { reviewerDockerSandbox } from "../../packages/installation/src/reviewer-docker-sandbox.ts";
+
+const roots: string[] = [];
+afterEach(async () => await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
+
+describe("Reviewer Docker sandbox", () => {
+  it("runs commands through the configured container boundary and rejects path escape", async () => {
+    const root = await mkdtemp(join(tmpdir(), "reviewer-docker-sandbox-"));
+    roots.push(root);
+    const docker = join(root, "docker");
+    await writeFile(docker, `#!/bin/sh
+if [ "$1" = "rm" ]; then exit 0; fi
+while [ "$1" != "sh" ]; do
+  if [ "$1" = "--env" ]; then export "$2"; shift 2
+  elif [ "$1" = "--name" ] || [ "$1" = "--network" ] || [ "$1" = "--mount" ] || [ "$1" = "--workdir" ]; then shift 2
+  else shift
+  fi
+done
+exec sh -c "$3"
+`);
+    await chmod(docker, 0o700);
+    const env = await reviewerDockerSandbox({
+      root,
+      cwd: "/workspace",
+      image: "reviewer-fixture",
+      executable: docker,
+    }).createSessionEnv({ id: "review-42" });
+
+    await expect(env.exec("printf '%s' \"$BOUNDARY\"", { env: { BOUNDARY: "container" } })).resolves.toEqual({
+      stdout: "container",
+      stderr: "",
+      exitCode: 0,
+    });
+    await expect(env.readFile("/etc/passwd")).rejects.toThrow("escapes /workspace");
+  });
+});

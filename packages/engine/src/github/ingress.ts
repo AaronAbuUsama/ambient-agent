@@ -61,6 +61,24 @@ const pullRequestPayloadSchema = v.object({
     type: nonEmptyString,
   }),
 });
+const pullRequestCommentPayloadSchema = v.object({
+  action: v.literal("created"),
+  repository: v.object({
+    id: positiveInteger,
+    name: nonEmptyString,
+    html_url: nonEmptyString,
+    owner: v.object({ login: nonEmptyString }),
+  }),
+  issue: v.object({
+    number: positiveInteger,
+    state: v.literal("open"),
+    pull_request: v.object({ url: nonEmptyString }),
+  }),
+  comment: v.object({
+    body: v.string(),
+    user: v.object({ login: nonEmptyString }),
+  }),
+});
 const pullRequestReviewSubmittedPayloadSchema = v.object({
   action: v.literal("submitted"),
   installation: v.optional(v.nullable(v.object({ id: positiveInteger }))),
@@ -162,6 +180,15 @@ export const createGitHubIngress = (options: {
   readonly review?: {
     readonly repositories: readonly string[];
     readonly launch: (input: { repository: string; pullRequest: number; expectedHeadSha: string }) => Promise<{ runId: string }>;
+    readonly command?: {
+      readonly appSlug: string;
+      readonly permission: (input: { owner: string; repo: string; username: string }) => Promise<string>;
+      readonly pullRequest: (input: { owner: string; repo: string; pullRequest: number }) => Promise<{
+        state: string;
+        draft: boolean;
+        headSha: string;
+      }>;
+    };
   };
   readonly logger?: GitHubIngressLogger;
   readonly now?: () => Date;
@@ -208,9 +235,10 @@ export const createGitHubIngress = (options: {
     const isIssueOpened = delivery.name === "issues" && delivery.payload.action === "opened";
     const isPullRequest = delivery.name === "pull_request" &&
       ["opened", "ready_for_review", "synchronize"].includes(String(delivery.payload.action));
+    const isPullRequestComment = delivery.name === "issue_comment" && delivery.payload.action === "created";
     const isPullRequestReviewSubmitted =
       delivery.name === "pull_request_review" && delivery.payload.action === "submitted";
-    if (!isIssueOpened && !isPullRequest && !isPullRequestReviewSubmitted) {
+    if (!isIssueOpened && !isPullRequest && !isPullRequestComment && !isPullRequestReviewSubmitted) {
       options.store.settle(delivery.deliveryId, {
         status: "unsupported",
         settledAt: now().toISOString(),
@@ -227,13 +255,17 @@ export const createGitHubIngress = (options: {
       ? v.safeParse(issueOpenedPayloadSchema, delivery.payload)
       : isPullRequest
         ? v.safeParse(pullRequestPayloadSchema, delivery.payload)
-        : v.safeParse(pullRequestReviewSubmittedPayloadSchema, delivery.payload);
+        : isPullRequestComment
+          ? v.safeParse(pullRequestCommentPayloadSchema, delivery.payload)
+          : v.safeParse(pullRequestReviewSubmittedPayloadSchema, delivery.payload);
     if (!parsed.success) {
       const event = isIssueOpened
         ? "issues.opened"
         : isPullRequest
           ? `pull_request.${String(delivery.payload.action)}`
-          : "pull_request_review.submitted";
+          : isPullRequestComment
+            ? "issue_comment.created"
+            : "pull_request_review.submitted";
       const error = `Verified ${event} delivery did not match the supported application contract`;
       options.store.settle(delivery.deliveryId, {
         status: "unsupported",
@@ -261,6 +293,59 @@ export const createGitHubIngress = (options: {
         return null;
       }
     };
+
+    if ("comment" in payload && "issue" in payload) {
+      const command = options.review?.command;
+      const allowlisted = options.review?.repositories.some((candidate) => candidate.toLowerCase() === repository);
+      if (
+        command === undefined ||
+        !allowlisted ||
+        payload.comment.body !== `@${command.appSlug} review`
+      ) {
+        options.store.settle(delivery.deliveryId, { status: "unsupported", repository, settledAt: now().toISOString() });
+        return { status: "unsupported", deliveryId: delivery.deliveryId };
+      }
+      try {
+        const providerPermission = await command.permission({
+          owner: payload.repository.owner.login,
+          repo: payload.repository.name,
+          username: payload.comment.user.login,
+        });
+        if (!["write", "maintain", "admin"].includes(providerPermission.toLowerCase())) {
+          options.store.settle(delivery.deliveryId, { status: "unsupported", repository, settledAt: now().toISOString() });
+          return { status: "unsupported", deliveryId: delivery.deliveryId };
+        }
+        const live = await command.pullRequest({
+          owner: payload.repository.owner.login,
+          repo: payload.repository.name,
+          pullRequest: payload.issue.number,
+        });
+        if (live.state !== "open" || live.draft) {
+          options.store.settle(delivery.deliveryId, { status: "unsupported", repository, settledAt: now().toISOString() });
+          return { status: "unsupported", deliveryId: delivery.deliveryId };
+        }
+        const admitted = await launchReview(payload.issue.number, live.headSha);
+        if (admitted === null) throw new Error(reviewLaunchError);
+        if (admitted === undefined) {
+          options.store.settle(delivery.deliveryId, { status: "unsupported", repository, settledAt: now().toISOString() });
+          return { status: "unsupported", deliveryId: delivery.deliveryId };
+        }
+        options.store.settle(delivery.deliveryId, {
+          status: "done",
+          repository,
+          chatId: options.managedChats[0]!,
+          ambience: "ambience",
+          dispatchId: admitted.runId,
+          acceptedAt: receivedAt,
+          settledAt: now().toISOString(),
+        });
+        return { status: "review-launched", deliveryId: delivery.deliveryId, repository, runId: admitted.runId };
+      } catch (cause) {
+        const error = errorMessage(cause);
+        options.store.settle(delivery.deliveryId, { status: "failed", repository, error, settledAt: now().toISOString() });
+        return { status: "failed", record: options.store.get(delivery.deliveryId)! };
+      }
+    }
 
     if (
       isPullRequest &&
