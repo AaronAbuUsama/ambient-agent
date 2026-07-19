@@ -75,19 +75,34 @@ buffer.
 ### 3.2 Provider sync eligibility
 
 whatsappd emits history as one or more `conversationSync` batches. Its internal
-`conversation_sync_complete` transition makes the session `online`; the installed
-documentation states that an authenticated device becomes online only after history
-sync settles.
+`conversation_sync_complete` transition makes the session `online`, but the local
+account boundary deliberately tolerates the opposite callback order. The regression at
+`tests/whatsapp/account.test.ts:161-204` proves that `authenticate()` may resolve on
+`online` before the first batch reaches the archive, while `synchronizedChats()` waits
+for that batch through `waitForInitialSync()` at
+`packages/installation/src/whatsapp-account.ts:196-225` and 331-352.
 
-The current local `waitForInitialSync()` in
-`packages/installation/src/whatsapp-account.ts:196-225` resolves after the first batch,
-not after the complete sync. It must not be used as the backfill completion boundary.
+Neither signal is sufficient alone: the first archived batch may precede provider sync
+completion, and `online` may be observed before that batch. Snapshot capture therefore
+waits for their conjunction. Extract or expose one account-level readiness promise that
+both `synchronizedChats()` and backfill can reuse:
+
+```ts
+await Promise.all([account.authenticate(), account.waitForInitialArchive()]);
+const snapshotHighWater = captureHighWater(chatId);
+```
+
+`waitForInitialArchive()` means at least one conversation-sync batch has completed its
+archive writes; it must reuse the existing waiter rather than add a timer or second
+subscription. `authenticate()` supplies the `online` half of the fence. If either wait
+times out or fails, do not capture high-water or advance to tail/live.
 
 The product rule is:
 
 ```text
-provider online      => the selected chat is eligible for backfill admission
-archive tail reached => backfill is complete and live Scribe may resume
+chat becomes managed              => admit the detached workflow
+online + initial batch archived   => capture high-water and start snapshot
+archive tail reached              => backfill is complete and live Scribe may resume
 ```
 
 ### 3.3 Live Scribe seam
@@ -223,7 +238,7 @@ CREATE TABLE scribe_backfills (
     CHECK (mode IN ('catching_up', 'live', 'failed', 'disabled')),
   phase TEXT NOT NULL
     CHECK (phase IN ('snapshot', 'tail')),
-  snapshot_high_water INTEGER NOT NULL DEFAULT 0,
+  snapshot_high_water INTEGER,
   snapshot_unknown_time INTEGER,
   snapshot_occurred_at_ms INTEGER,
   snapshot_sequence INTEGER,
@@ -237,7 +252,8 @@ CREATE TABLE scribe_backfills (
 The exact column names are implementation detail, but the stored information is not:
 
 - mode;
-- initial snapshot high-water sequence;
+- nullable initial snapshot high-water (`NULL` means not ready/captured; `0` means a
+  captured empty archive);
 - resumable chronological snapshot cursor;
 - resumable insertion-order tail cursor;
 - most recent workflow run ID;
@@ -250,17 +266,27 @@ Do not create a second run ledger. Flue owns workflow run records and run events
 
 ### 6.1 Initial snapshot
 
-After provider-online eligibility, capture the chat's archive high-water sequence while
-creating its state row:
+Admission creates the state row with `snapshot_high_water = NULL`. After the
+online-plus-archived-batch readiness fence, capture the chat's archive high-water once
+in the state transaction:
 
 ```sql
-SELECT COALESCE(MAX(rowid), 0) AS snapshot_high_water
-  FROM conversation_events
- WHERE chat_id = :chat_id;
+UPDATE scribe_backfills
+   SET snapshot_high_water = (
+         SELECT COALESCE(MAX(rowid), 0)
+           FROM conversation_events
+          WHERE chat_id = :chat_id
+       ),
+       updated_at_ms = :now
+ WHERE chat_id = :chat_id
+   AND mode = 'catching_up'
+   AND snapshot_high_water IS NULL;
 ```
 
-An empty chat therefore starts with high-water `0`, never `NULL`. Read only events at
-or below the captured sequence, ordered chronologically:
+After capture, an empty chat has high-water `0`; `NULL` remains reserved for “not yet
+ready.” A resumed workflow reuses a non-null boundary rather than recapturing it. Never
+start the snapshot query or transition to tail while the boundary is `NULL`. Read only
+events at or below the captured sequence, ordered chronologically:
 
 ```sql
 SELECT rowid AS archive_sequence, *
@@ -663,6 +689,7 @@ The implementation session should work in this dependency order:
 4. **Runtime reconciliation and live gate**
 
    - boot and managed-chat-change reconciliation;
+   - snapshot capture waits for both online and the first archived sync batch;
    - one active run per chat;
    - WhatsApp-only, event-level live-Scribe cutoff gate;
    - one regression test for a Window that straddles the handoff cutoff;
@@ -683,6 +710,8 @@ The implementation is complete when all of the following are proven:
 
 - Selecting a new managed chat admits exactly one background workflow and returns
   without waiting for completion.
+- If `online` arrives before the first conversation-sync batch, snapshot high-water is
+  not captured until that batch has been archived.
 - The Speaker handles a live message while that chat is still backfilling.
 - The same message is archived but not offered to live Scribe during catch-up.
 - Initial history is presented chronologically in windows of at most 50 events.
@@ -729,7 +758,7 @@ then un-skips the eval battery.
 | Invocation    | Automatic background workflow on managed-chat selection; CLI only as dev/operator surface |
 | Awaiting      | Caller does not await; workflow awaits each Scribe window internally                      |
 | Live behavior | Speaker remains live; WhatsApp live-Scribe fanout is gated during catch-up                |
-| Readiness     | Provider `online` gates admission; archive cursor determines completion                   |
+| Readiness     | Admission is immediate; online plus first archived sync batch gates snapshot capture      |
 | Handoff       | Transactional sequence tail check and mode switch                                         |
 | Session       | One persistent Scribe session for the whole run                                           |
 | Ordering      | Chronological initial snapshot, then insertion-order tail                                 |
