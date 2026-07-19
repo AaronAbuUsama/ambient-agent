@@ -74,35 +74,42 @@ buffer.
 
 ### 3.2 Provider sync eligibility
 
-whatsappd emits history as one or more `conversationSync` batches. Its internal
-`conversation_sync_complete` transition makes the session `online`, but the local
-account boundary deliberately tolerates the opposite callback order. The regression at
-`tests/whatsapp/account.test.ts:161-204` proves that `authenticate()` may resolve on
-`online` before the first batch reaches the archive, while `synchronizedChats()` waits
-for that batch through `waitForInitialSync()` at
-`packages/installation/src/whatsapp-account.ts:196-225` and 331-352.
+whatsappd emits history as one or more `conversationSync` batches. Its installed
+adapter produces `conversation_sync_complete` only after the final history batch
+(`node_modules/whatsappd/dist/adapter-19V5lRxH.mjs:1038-1055`), but that completion
+event is not exposed on the current public `WhatsAppSession`. The local wrapper's
+`waitForInitialSync()` at `packages/installation/src/whatsapp-account.ts:196-225`
+settles after the first batch, which is sufficient for chat discovery but not for
+freezing a complete chronological snapshot.
 
-Neither signal is sufficient alone: the first archived batch may precede provider sync
-completion, and `online` may be observed before that batch. Snapshot capture therefore
-waits for their conjunction. Extract or expose one account-level readiness promise that
-both `synchronizedChats()` and backfill can reuse:
+#175 must expose the provider's explicit initial-sync-complete signal through the
+WhatsApp session/account boundary. Do not infer it from `online`, the first batch, or a
+quiet-period timer. Feed batch archive writes and the completion barrier through the
+same serial queue; resolve readiness only when the completion barrier reaches the head:
 
 ```ts
-await Promise.all([account.authenticate(), account.waitForInitialArchive()]);
+session.onConversationSync((batch) => archiveQueue.add(() => archive(batch)));
+session.onConversationSyncComplete(() =>
+  archiveQueue.add(() => initialArchiveReady.resolve())
+);
+
+await Promise.all([account.authenticate(), account.initialArchiveReady()]);
 const snapshotHighWater = captureHighWater(chatId);
 ```
 
-`waitForInitialArchive()` means at least one conversation-sync batch has completed its
-archive writes; it must reuse the existing waiter rather than add a timer or second
-subscription. `authenticate()` supplies the `online` half of the fence. If either wait
-times out or fails, do not capture high-water or advance to tail/live.
+The barrier guarantees that every batch associated with the initial sync has completed
+its archive writes, regardless of whether the account wrapper observed `online` before
+or after those callbacks. `synchronizedChats()` and backfill reuse
+`initialArchiveReady()`; the former may still return its accumulated chat candidates.
+If authentication or archive readiness times out or fails, do not capture high-water or
+advance to tail/live.
 
 The product rule is:
 
 ```text
-chat becomes managed              => admit the detached workflow
-online + initial batch archived   => capture high-water and start snapshot
-archive tail reached              => backfill is complete and live Scribe may resume
+chat becomes managed             => admit the detached workflow
+initial sync complete + drained  => capture high-water and start snapshot
+archive tail reached             => backfill is complete and live Scribe may resume
 ```
 
 ### 3.3 Live Scribe seam
@@ -152,11 +159,15 @@ the existing archive sequence and durable backfill cursor decide ownership.
 and the four graph tools. The workflow reuses that agent definition and changes its
 role-wide `thinkingLevel` from `minimal` to `medium`.
 
-`FlueHarness.session(name)` returns one persisted named conversation. The workflow
-creates one session and awaits one prompt per archive window:
+`FlueHarness.session(name)` returns one persisted named conversation. The session name
+must be stable per chat, not the hard-coded role name: concurrent chats must never share
+model context, while boot recovery for the same chat must resume its conversation.
+Derive a non-reversible name with the Node standard library so the raw JID is not stored
+as the session label:
 
 ```ts
-const session = await harness.session("scribe-backfill");
+const sessionKey = createHash("sha256").update(chatId).digest("base64url");
+const session = await harness.session(`scribe-backfill:${sessionKey}`);
 
 for (;;) {
   const window = await nextWindow();
@@ -166,9 +177,9 @@ for (;;) {
 }
 ```
 
-The session preserves prior conversation and tool results across windows. Flue's
-model-aware automatic compaction handles long histories; #175 adds no parallel summary
-mechanism.
+The per-chat session preserves prior conversation and tool results across windows and
+boot recovery without leaking one chat's context into another. Flue's model-aware
+automatic compaction handles long histories; #175 adds no parallel summary mechanism.
 
 ## 4. Product admission and reconciliation
 
@@ -266,9 +277,9 @@ Do not create a second run ledger. Flue owns workflow run records and run events
 
 ### 6.1 Initial snapshot
 
-Admission creates the state row with `snapshot_high_water = NULL`. After the
-online-plus-archived-batch readiness fence, capture the chat's archive high-water once
-in the state transaction:
+Admission creates the state row with `snapshot_high_water = NULL`. After the explicit
+initial-sync-complete archive barrier, capture the chat's archive high-water once in the
+state transaction:
 
 ```sql
 UPDATE scribe_backfills
@@ -681,7 +692,7 @@ The implementation session should work in this dependency order:
 3. **Backfill workflow**
 
    - reuse the Scribe agent;
-   - persistent session, 50-event windows, three attempts;
+   - stable per-chat persisted session, 50-event windows, three attempts;
    - optional `eventOrder` metadata rendered in archive order;
    - medium Scribe thinking level;
    - structured run logs.
@@ -689,7 +700,7 @@ The implementation session should work in this dependency order:
 4. **Runtime reconciliation and live gate**
 
    - boot and managed-chat-change reconciliation;
-   - snapshot capture waits for both online and the first archived sync batch;
+   - expose initial-sync completion and drain all batch archive writes before snapshot;
    - one active run per chat;
    - WhatsApp-only, event-level live-Scribe cutoff gate;
    - one regression test for a Window that straddles the handoff cutoff;
@@ -710,8 +721,9 @@ The implementation is complete when all of the following are proven:
 
 - Selecting a new managed chat admits exactly one background workflow and returns
   without waiting for completion.
-- If `online` arrives before the first conversation-sync batch, snapshot high-water is
-  not captured until that batch has been archived.
+- If `online` arrives before a multi-batch initial sync finishes, snapshot high-water is
+  not captured until explicit sync completion and every batch archive write have
+  drained.
 - The Speaker handles a live message while that chat is still backfilling.
 - The same message is archived but not offered to live Scribe during catch-up.
 - Initial history is presented chronologically in windows of at most 50 events.
@@ -725,6 +737,8 @@ The implementation is complete when all of the following are proven:
   the durable raw archive cursor.
 - Windows run sequentially on one Scribe conversation and update the graph after each
   turn.
+- Concurrent chat backfills use distinct persisted Scribe conversations; boot recovery
+  for the same chat reuses its prior conversation.
 - A process interruption resumes from the last successful checkpoint.
 - Replaying a partial window does not increase entity or relation counts for identical
   facts; confidence may increase under the existing policy.
@@ -758,9 +772,9 @@ then un-skips the eval battery.
 | Invocation    | Automatic background workflow on managed-chat selection; CLI only as dev/operator surface |
 | Awaiting      | Caller does not await; workflow awaits each Scribe window internally                      |
 | Live behavior | Speaker remains live; WhatsApp live-Scribe fanout is gated during catch-up                |
-| Readiness     | Admission is immediate; online plus first archived sync batch gates snapshot capture      |
+| Readiness     | Admission is immediate; explicit sync completion plus archive drain gates snapshot        |
 | Handoff       | Transactional sequence tail check and mode switch                                         |
-| Session       | One persistent Scribe session for the whole run                                           |
+| Session       | One stable persisted Scribe session per chat, reused on recovery                          |
 | Ordering      | Chronological initial snapshot, then insertion-order tail                                 |
 | Windowing     | Fixed maximum of 50 archive events                                                        |
 | Idempotency   | Shared exact-phrase convergence plus post-success checkpoints                             |
