@@ -16,6 +16,10 @@ import type { GitHubIngressRecord, GitHubIngressStore } from "./ingress-store.ts
 
 const nonEmptyString = v.pipe(v.string(), v.minLength(1));
 const positiveInteger = v.pipe(v.number(), v.integer(), v.minValue(1));
+const providerStatus = (cause: unknown): number | undefined =>
+  typeof cause === "object" && cause !== null && "status" in cause && typeof cause.status === "number"
+    ? cause.status
+    : undefined;
 const issueOpenedPayloadSchema = v.object({
   action: v.literal("opened"),
   installation: v.optional(v.nullable(v.object({ id: positiveInteger }))),
@@ -306,11 +310,18 @@ export const createGitHubIngress = (options: {
         return { status: "unsupported", deliveryId: delivery.deliveryId };
       }
       try {
-        const providerPermission = await command.permission({
-          owner: payload.repository.owner.login,
-          repo: payload.repository.name,
-          username: payload.comment.user.login,
-        });
+        let providerPermission: string;
+        try {
+          providerPermission = await command.permission({
+            owner: payload.repository.owner.login,
+            repo: payload.repository.name,
+            username: payload.comment.user.login,
+          });
+        } catch (cause) {
+          if (providerStatus(cause) !== 404) throw cause;
+          options.store.settle(delivery.deliveryId, { status: "unsupported", repository, settledAt: now().toISOString() });
+          return { status: "unsupported", deliveryId: delivery.deliveryId };
+        }
         if (!["write", "maintain", "admin"].includes(providerPermission.toLowerCase())) {
           options.store.settle(delivery.deliveryId, { status: "unsupported", repository, settledAt: now().toISOString() });
           return { status: "unsupported", deliveryId: delivery.deliveryId };

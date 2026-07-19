@@ -255,6 +255,40 @@ describe("GitHub ingress delivery ledger", () => {
   });
 
   it.each([
+    [404, "unsupported"],
+    [500, "failed"],
+  ] as const)("maps a provider permission %s to %s", async (providerStatus, expectedStatus) => {
+    const store = createGitHubIngressStore(":memory:");
+    let launches = 0;
+    try {
+      const ingress = createGitHubIngress({
+        store,
+        managedChats: ["chat-42@g.us"],
+        dispatch: async () => ({ dispatchId: "speaker", acceptedAt: "now" }),
+        review: {
+          repositories: ["acme/widgets"],
+          launch: async () => ({ runId: `unexpected-${++launches}` }),
+          command: {
+            appSlug: "tenant-reviewer",
+            permission: async () => {
+              throw Object.assign(new Error(`Provider status ${providerStatus}`), { status: providerStatus });
+            },
+            pullRequest: async () => ({ state: "open", draft: false, headSha: "live-head" }),
+          },
+        },
+        logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+      });
+
+      await expect(ingress(reviewCommandDelivery(`permission-provider-${providerStatus}`))).resolves.toMatchObject({
+        status: expectedStatus,
+      });
+      expect(launches).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
+  it.each([
     ["read", reviewCommandDelivery("unauthorized")],
     ["malformed", reviewCommandDelivery("malformed", { body: "@tenant-reviewer please review" })],
     ["wrong slug", reviewCommandDelivery("wrong-slug", { body: "@global-reviewer review" })],
