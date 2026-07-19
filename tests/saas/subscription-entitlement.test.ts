@@ -448,6 +448,32 @@ describe("billing API authorization", () => {
     }
   });
 
+  it("returns inactive when Polar has no customer for the authenticated user", async () => {
+    const { polarClient } = await import("../../packages/auth/src/lib/payments");
+    const providerState = vi
+      .spyOn(polarClient.customers, "getStateExternal")
+      .mockRejectedValue(Object.assign(new Error("customer not found"), { statusCode: 404 }));
+
+    try {
+      const handler = new RPCHandler(createAppRouter({ getEntitlementSnapshot: authPackage.getEntitlementSnapshot }));
+      const result = await handler.handle(new Request("http://localhost/rpc/billing/entitlement", { method: "POST" }), {
+        prefix: "/rpc",
+        context: {
+          auth: null,
+          session: { user: { id: "missing-customer-user" } } as never,
+        },
+      });
+
+      expect(result.matched).toBe(true);
+      if (!result.matched) throw new Error("billing entitlement procedure did not match");
+      expect(result.response.status).toBe(200);
+      expect(await result.response.text()).toContain('"inactive"');
+      expect(providerState).toHaveBeenCalledWith({ externalId: "missing-customer-user" });
+    } finally {
+      providerState.mockRestore();
+    }
+  });
+
   it("rejects an unsigned webhook and accepts the same lifecycle event when signed", async () => {
     const timestamp = Math.floor(Date.now() / 1000);
     const payload = subscriptionPayload("signed-user", "active");
@@ -513,9 +539,39 @@ describe("billing API authorization", () => {
     expect(await response.json()).toEqual({ received: true });
     expect(await authPackage.subscriptionEntitlements.get("unrelated-user")).toMatchObject({ status: "inactive" });
   });
+
+  it("ignores a signed non-Pro webhook with no Better Auth customer binding", async () => {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const webhookId = "unowned-product-event";
+    const body = JSON.stringify(subscriptionPayload("unowned-user", "active", "product-unrelated", null));
+    const signature = createHmac("sha256", process.env.POLAR_WEBHOOK_SECRET!)
+      .update(`${webhookId}.${timestamp}.${body}`)
+      .digest("base64");
+    const response = await authPackage.auth.handler(
+      new Request("http://localhost:3000/api/auth/polar/webhooks", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "webhook-id": webhookId,
+          "webhook-timestamp": String(timestamp),
+          "webhook-signature": `v1,${signature}`,
+        },
+        body,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ received: true });
+    expect(await authPackage.subscriptionEntitlements.get("unowned-user")).toBeNull();
+  });
 });
 
-const subscriptionPayload = (userId: string, status: string, productId = proProductId) => {
+const subscriptionPayload = (
+  userId: string,
+  status: string,
+  productId = proProductId,
+  externalId: string | null = userId,
+) => {
   const now = new Date().toISOString();
   const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1_000).toISOString();
   return {
@@ -552,7 +608,7 @@ const subscriptionPayload = (userId: string, status: string, productId = proProd
         created_at: now,
         modified_at: now,
         metadata: {},
-        external_id: userId,
+        external_id: externalId,
         email: `${userId}@example.com`,
         email_verified: true,
         type: "individual",

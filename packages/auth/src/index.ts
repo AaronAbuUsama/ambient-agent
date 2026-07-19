@@ -68,15 +68,23 @@ export function createAuth() {
 
 export const auth = createAuth();
 
+const isPolarNotFound = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && Reflect.get(error, "statusCode") === 404;
+
 export const getEntitlementSnapshot = async (userId: string) => {
   const projection = await subscriptionEntitlements.get(userId);
   if (projection?.status === "active" || projection?.status === "trialing") {
     return entitlementSnapshot(projection);
   }
 
-  const customerState = await polarClient.customers.getStateExternal({ externalId: userId });
-  return entitlementSnapshot(
-    projection,
-    customerState.activeSubscriptions.some((subscription) => subscription.productId === polarProProductId),
-  );
+  try {
+    const customerState = await polarClient.customers.getStateExternal({ externalId: userId });
+    return entitlementSnapshot(
+      projection,
+      customerState.activeSubscriptions.some((subscription) => subscription.productId === polarProProductId),
+    );
+  } catch (error) {
+    if (isPolarNotFound(error)) return entitlementSnapshot(projection);
+    throw error;
+  }
 };

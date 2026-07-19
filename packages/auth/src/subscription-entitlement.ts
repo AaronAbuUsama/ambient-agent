@@ -112,8 +112,12 @@ export const subscriptionLifecycleEvent = (
   if (!subscriptionEventType(payload.type)) return null;
 
   const subscription = payload.data as Subscription;
+  const entitlingProduct = subscription.productId === allowedProductId;
   const userId = subscription.customer.externalId;
-  if (!userId) throw new Error(`Polar subscription ${subscription.id} has no Better Auth external customer ID`);
+  if (!userId) {
+    if (!entitlingProduct) return null;
+    throw new Error(`Polar subscription ${subscription.id} has no Better Auth external customer ID`);
+  }
 
   return {
     type: payload.type,
@@ -123,7 +127,7 @@ export const subscriptionLifecycleEvent = (
     polarSubscriptionId: subscription.id,
     subscriptionStatus: subscription.status,
     cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
-    entitlingProduct: subscription.productId === allowedProductId,
+    entitlingProduct,
   };
 };
 
