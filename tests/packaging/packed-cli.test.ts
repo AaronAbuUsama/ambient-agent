@@ -148,10 +148,22 @@ const startPackedRuntime = async (
 };
 
 const waitForCanonicalAgentText = async (databasePath: string, chatId: string, expected: string): Promise<string> => {
-  const adapter = sqlite(databasePath);
+  const deadline = Date.now() + 15_000;
+  let adapter: ReturnType<typeof sqlite> | undefined;
   try {
-    const { conversationStreamStore } = await adapter.connect();
-    const deadline = Date.now() + 15_000;
+    let conversationStreamStore: Awaited<ReturnType<ReturnType<typeof sqlite>["connect"]>>["conversationStreamStore"] | undefined;
+    while (conversationStreamStore === undefined && Date.now() < deadline) {
+      adapter = sqlite(databasePath);
+      try {
+        ({ conversationStreamStore } = await adapter.connect());
+      } catch (cause) {
+        await adapter.close?.();
+        adapter = undefined;
+        if (!(cause instanceof Error && cause.message.includes("database is locked"))) throw cause;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    if (conversationStreamStore === undefined) throw new Error("Flue database remained locked during runtime readiness.");
     let observed = "";
     while (Date.now() < deadline) {
       const page = await conversationStreamStore.read(`agents/speaker/${chatId}`, { offset: "-1", limit: 1_000 });
@@ -161,7 +173,7 @@ const waitForCanonicalAgentText = async (databasePath: string, chatId: string, e
     }
     throw new Error(`Canonical Speaker history did not contain ${expected}. Observed:\n${observed}`);
   } finally {
-    await adapter.close?.();
+    await adapter?.close?.();
   }
 };
 beforeAll(async () => {
