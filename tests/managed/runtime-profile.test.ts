@@ -83,6 +83,7 @@ it("boots setup with only health, pairing, and chat enumeration around one Whats
     credentialEnvironment: boot.credentialEnvironment,
   });
   expect(synchronizedChats).toHaveBeenCalledTimes(1);
+  expect((await app.request("/deliveries", { method: "POST" })).status).toBe(404);
   expect((await app.request("/smoke")).status).toBe(404);
   expect((await app.request("/agents/speaker")).status).toBe(404);
 });
