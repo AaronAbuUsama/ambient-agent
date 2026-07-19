@@ -314,3 +314,49 @@ describe("tenant provisioner provider adapters", () => {
     expect(JSON.stringify(calls)).not.toContain("platform-secret");
   });
 });
+
+describe("runtime health probe patience", () => {
+  test("retries transient failures within the deadline and still fails fast on identity mismatch", async () => {
+    let calls = 0;
+    const healthy = {
+      ok: true,
+      runtimeId: "runtime-one",
+      deployment: { configVersion: 1, mode: "setup" },
+    };
+    const dokploy = createDokployProvider({
+      baseUrl: "https://dokploy.test",
+      apiKey: "k",
+      environmentId: "env",
+      serverId: "srv",
+      pollIntervalMs: 1,
+      healthDeadlineMs: 2_000,
+      fetch: (async () => {
+        calls += 1;
+        if (calls < 3) throw new Error("connection refused");
+        return new Response(JSON.stringify(healthy), { status: 200 });
+      }) as typeof fetch,
+    });
+    await expect(
+      dokploy.health("http://ambient-one:3000", { runtimeId: "runtime-one", configVersion: 1, mode: "setup" }),
+    ).resolves.toBe(true);
+    expect(calls).toBe(3);
+
+    calls = 0;
+    const mismatch = createDokployProvider({
+      baseUrl: "https://dokploy.test",
+      apiKey: "k",
+      environmentId: "env",
+      serverId: "srv",
+      pollIntervalMs: 1,
+      healthDeadlineMs: 60_000,
+      fetch: (async () => {
+        calls += 1;
+        return new Response(JSON.stringify(healthy), { status: 200 });
+      }) as typeof fetch,
+    });
+    await expect(
+      mismatch.health("http://ambient-one:3000", { runtimeId: "runtime-one", configVersion: 2, mode: "setup" }),
+    ).resolves.toBe(false);
+    expect(calls).toBe(1);
+  });
+});

@@ -5,6 +5,8 @@
 # Build context is the repo root: docker build -f apps/runtime/Dockerfile .
 
 FROM node:24-slim AS build
+# vp pack is a Rust binary that needs system CA certificates, which slim omits.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN corepack enable
 WORKDIR /src
 ENV SKIP_ENV_VALIDATION=1

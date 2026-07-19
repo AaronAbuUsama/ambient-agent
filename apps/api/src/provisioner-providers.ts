@@ -210,6 +210,8 @@ export const createDokployProvider = (options: {
   readonly deploymentTimeoutMs?: number;
   readonly deploymentHeartbeatIntervalMs?: number;
   readonly pollIntervalMs?: number;
+  /** Window for the runtime /health probe to come up before the tenant is blocked. */
+  readonly healthDeadlineMs?: number;
 }): DokployProvider => {
   const fetch = options.fetch ?? globalThis.fetch;
   const root = options.baseUrl.replace(/\/+$/u, "");
@@ -470,28 +472,36 @@ export const createDokployProvider = (options: {
       throw new ProvisionerProviderError("dokploy", 504);
     },
     health: async (runtimeUrl, expected) => {
-      try {
-        const response = await fetch(`${runtimeUrl.replace(/\/+$/u, "")}/health`, {
-          signal: AbortSignal.timeout(options.timeoutMs ?? 8_000),
-        });
-        const value = z
-          .object({
-            ok: z.literal(true),
-            runtimeId: z.string(),
-            deployment: z.object({
-              configVersion: z.number().int().positive(),
-              mode: z.enum(["setup", "operate"]),
-            }),
-          })
-          .parse(await responseJson(response, "runtime"));
-        return (
-          value.runtimeId === expected.runtimeId &&
-          value.deployment.configVersion === expected.configVersion &&
-          value.deployment.mode === expected.mode
-        );
-      } catch {
-        return false;
-      }
+      // A single transient miss must not block the tenant: the operate runtime reports
+      // ok only once WhatsApp is online, which lags the HTTP bind. Poll transient
+      // failures within a bounded window; an identity mismatch on a well-formed
+      // response is not transient and fails fast.
+      const deadline = Date.now() + (options.healthDeadlineMs ?? 120_000);
+      do {
+        try {
+          const response = await fetch(`${runtimeUrl.replace(/\/+$/u, "")}/health`, {
+            signal: AbortSignal.timeout(options.timeoutMs ?? 8_000),
+          });
+          const value = z
+            .object({
+              ok: z.literal(true),
+              runtimeId: z.string(),
+              deployment: z.object({
+                configVersion: z.number().int().positive(),
+                mode: z.enum(["setup", "operate"]),
+              }),
+            })
+            .parse(await responseJson(response, "runtime"));
+          return (
+            value.runtimeId === expected.runtimeId &&
+            value.deployment.configVersion === expected.configVersion &&
+            value.deployment.mode === expected.mode
+          );
+        } catch {
+          await new Promise<void>((resolve) => setTimeout(resolve, options.pollIntervalMs ?? 250));
+        }
+      } while (Date.now() < deadline);
+      return false;
     },
   };
 };
