@@ -1075,6 +1075,44 @@ describe("hosted coworker journey", () => {
     ).toMatchObject({ rows: [expect.objectContaining({ desired_state: "running", desired_mode: "operate" })] });
   });
 
+  test("does not overwrite a runtime mode claimed while billing recovery is resuming", async () => {
+    const client = await migrate();
+    const userId = await seedUser(client, "billing-concurrent-repair");
+    const service = createCoworkerService({
+      client,
+      now: () => now,
+      lifecycle: { reconcileTenant: async () => ({ status: "lease_busy" }) },
+    });
+    const created = await service.create(userId, {
+      displayName: "Concurrent repair",
+      operationIdentity: "create-concurrent-repair",
+    });
+    await client.batch(
+      [
+        {
+          sql: "UPDATE tenant SET status = 'active', desired_state = 'stopped' WHERE id = ?1",
+          args: [created.tenant?.id ?? ""],
+        },
+        {
+          sql: "UPDATE agent_instance SET desired_mode = 'setup' WHERE tenant_id = ?1",
+          args: [created.tenant?.id ?? ""],
+        },
+      ],
+      "write",
+    );
+
+    await service.refresh(userId);
+
+    expect(
+      await client.execute({
+        sql: `SELECT tenant.desired_state, agent_instance.desired_mode
+                FROM tenant JOIN agent_instance ON agent_instance.tenant_id = tenant.id
+               WHERE tenant.id = ?1`,
+        args: [created.tenant?.id ?? ""],
+      }),
+    ).toMatchObject({ rows: [expect.objectContaining({ desired_state: "running", desired_mode: "setup" })] });
+  });
+
   test("restores the operate profile for an activation interrupted by billing suspension", async () => {
     const client = await migrate();
     const userId = await seedUser(client, "billing-activation");

@@ -1044,7 +1044,7 @@ export const createCoworkerService = (options: {
           {
             sql: `UPDATE agent_instance
                      SET desired_mode = ?2, updated_at_ms = ?3
-                   WHERE tenant_id = ?1
+                   WHERE tenant_id = ?1 AND desired_mode = 'stopped'
                      AND EXISTS (
                        SELECT 1 FROM tenant
                        JOIN subscription_entitlement
