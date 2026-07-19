@@ -389,17 +389,19 @@ export const createDokployProvider = (options: {
     },
     waitForTaskCount: async (appName, expected) => {
       const deadline = Date.now() + (options.observationTimeoutMs ?? 8_000);
-      let count = -1;
       do {
         const services = z
           .array(z.object({ Name: z.string(), Replicas: z.string() }).passthrough())
           .parse(await get(`/swarm.getNodeApps?serverId=${encodeURIComponent(options.serverId)}`));
         const service = services.find((candidate) => candidate.Name === appName);
-        count = service ? Number.parseInt(service.Replicas.split("/")[0] ?? "", 10) : 0;
-        if (count === expected) return count;
+        const [actualValue, desiredValue] = service?.Replicas.split("/") ?? ["0", "0"];
+        const actual = Number.parseInt(actualValue ?? "", 10);
+        const desired = Number.parseInt(desiredValue ?? "", 10);
+        if (actual > 1 || desired > 1) return Math.max(actual, desired);
+        if (actual === expected && desired === expected) return actual;
         await new Promise<void>((resolve) => setTimeout(resolve, options.pollIntervalMs ?? 250));
       } while (Date.now() < deadline);
-      return count;
+      throw new ProvisionerProviderError("dokploy", 504);
     },
     health: async (runtimeUrl, runtimeId) => {
       try {

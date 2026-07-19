@@ -191,6 +191,12 @@ describe("tenant provisioner provider adapters", () => {
     await dokploy.startApplication("app-1", beforeMutation);
     expect(await dokploy.waitForTaskCount("ambient-one-random", 1)).toBe(1);
     expect(await dokploy.health("http://ambient-one-random:3000", "runtime-one")).toBe(true);
+    replicas = "0/1";
+    await expect(dokploy.waitForTaskCount("ambient-one-random", 0)).rejects.toMatchObject({
+      provider: "dokploy",
+      status: 504,
+    });
+    replicas = "1/1";
     await dokploy.stopApplication("app-1", beforeMutation);
     await dokploy.stopApplication("app-1", beforeMutation);
     expect(await dokploy.waitForTaskCount("ambient-one-random", 0)).toBe(0);

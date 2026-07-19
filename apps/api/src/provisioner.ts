@@ -138,6 +138,8 @@ const entitled = (target: ProvisioningTarget): boolean =>
 
 const wantsRunning = (target: ProvisioningTarget): boolean =>
   entitled(target) &&
+  (target.tenantStatus === "active" ||
+    (target.tenantStatus === "onboarding" && target.desiredMode === "setup")) &&
   target.tenantDesiredState === "running" &&
   (target.desiredMode === "setup" || target.desiredMode === "operate");
 

@@ -108,6 +108,7 @@ describe("provisioner control store", () => {
     const target = await readProvisioningTarget(client, seeded.tenantId);
     expect(target).toMatchObject({
       tenantId: seeded.tenantId,
+      tenantStatus: "onboarding",
       tenantDbUrl: "libsql://tenant-db-p.turso.io",
       tenantDbTokenCiphertext: "v1.ciphertext",
       dokployApplicationId: "app-p",

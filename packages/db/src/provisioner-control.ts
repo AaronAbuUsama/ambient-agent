@@ -19,6 +19,7 @@ export type ObservedRuntimeState = (typeof schema.agentInstance.$inferSelect)["o
 export type RemoteConfigState = (typeof schema.agentInstance.$inferSelect)["remoteConfigState"];
 export type ProvisionerPhase = (typeof schema.agentInstance.$inferSelect)["phase"];
 export type TenantDesiredState = (typeof schema.tenant.$inferSelect)["desiredState"];
+export type TenantStatus = (typeof schema.tenant.$inferSelect)["status"];
 export type EntitlementStatus = (typeof schema.subscriptionEntitlement.$inferSelect)["status"];
 
 export interface ProvisioningTarget {
@@ -28,6 +29,7 @@ export interface ProvisioningTarget {
   readonly tenantDbTokenCiphertext: string | null;
   readonly configJson: string;
   readonly configVersion: number;
+  readonly tenantStatus: TenantStatus;
   readonly tenantDesiredState: TenantDesiredState;
   readonly entitlementStatus: EntitlementStatus;
   readonly agentId: string;
@@ -78,6 +80,7 @@ const targetFrom = (row: Record<string, unknown>): ProvisioningTarget => ({
   tenantDbTokenCiphertext: nullableString(row, "tenant_db_token_ciphertext"),
   configJson: requiredString(row, "config_json"),
   configVersion: requiredNumber(row, "config_version"),
+  tenantStatus: requiredString(row, "tenant_status") as TenantStatus,
   tenantDesiredState: requiredString(row, "tenant_desired_state") as TenantDesiredState,
   entitlementStatus: requiredString(row, "entitlement_status") as EntitlementStatus,
   agentId: requiredString(row, "agent_id"),
@@ -111,6 +114,7 @@ export async function readProvisioningTarget(
       tenant.tenant_db_token_ciphertext,
       tenant.config_json,
       tenant.config_version,
+      tenant.status AS tenant_status,
       tenant.desired_state AS tenant_desired_state,
       subscription_entitlement.status AS entitlement_status,
       agent_instance.id AS agent_id,
@@ -151,6 +155,10 @@ export async function listProvisioningTenantIds(client: Pick<Client, "execute">)
       OR agent_instance.phase IN ('provisioning', 'starting', 'stopping', 'retryable_error')
       OR (
         subscription_entitlement.status IN ('active', 'trialing')
+        AND (
+          tenant.status = 'active'
+          OR (tenant.status = 'onboarding' AND agent_instance.desired_mode = 'setup')
+        )
         AND tenant.desired_state = 'running'
         AND agent_instance.desired_mode IN ('setup', 'operate')
         AND (
@@ -161,6 +169,8 @@ export async function listProvisioningTenantIds(client: Pick<Client, "execute">)
       OR (
         (
           subscription_entitlement.status NOT IN ('active', 'trialing')
+          OR tenant.status IN ('suspended', 'archived')
+          OR (tenant.status = 'onboarding' AND agent_instance.desired_mode != 'setup')
           OR tenant.desired_state != 'running'
           OR agent_instance.desired_mode = 'stopped'
         )

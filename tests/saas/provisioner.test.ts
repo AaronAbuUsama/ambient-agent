@@ -284,6 +284,25 @@ describe("tenant provisioner", () => {
     expect(bound.rows[0]?.dokploy_application_id).toBe([...dokploy.applications.keys()][0]);
   });
 
+  test("stops an active runtime when the tenant becomes suspended", async () => {
+    const client = await migrate();
+    const tenantId = await seed(client, "suspended");
+    const turso = new FakeTurso();
+    const dokploy = new FakeDokploy();
+    const provisioner = provisionerFor(client, turso, dokploy);
+
+    expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({ status: "running" });
+    await client.execute({
+      sql: "UPDATE tenant SET status = 'suspended' WHERE id = ?1",
+      args: [tenantId],
+    });
+
+    expect(await provisioner.reconcilePendingTenants()).toEqual([
+      expect.objectContaining({ tenantId, status: "stopped", taskCount: 0 }),
+    ]);
+    expect([...dokploy.taskCounts.values()]).toEqual([0]);
+  });
+
   test("restarts a new config revision on the same stopped-first application", async () => {
     const client = await migrate();
     const tenantId = await seed(client, "restart");
@@ -294,6 +313,10 @@ describe("tenant provisioner", () => {
     expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({ status: "running" });
     await client.execute({
       sql: `UPDATE tenant SET config_version = 2, config_json = '{"revision":2}' WHERE id = ?1`,
+      args: [tenantId],
+    });
+    await client.execute({
+      sql: `UPDATE tenant SET status = 'active' WHERE id = ?1`,
       args: [tenantId],
     });
     await client.execute({
