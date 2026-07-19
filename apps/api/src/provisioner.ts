@@ -567,7 +567,11 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
 
   const reconcilePendingTenants = async (): Promise<readonly ReconcileResult[]> => {
     const tenantIds = await listProvisioningTenantIds(options.client);
-    return await Promise.all(tenantIds.map(reconcileTenant));
+    const settlements = await Promise.allSettled(tenantIds.map(reconcileTenant));
+    return settlements.map((settlement) => {
+      if (settlement.status === "rejected") throw settlement.reason;
+      return settlement.value;
+    });
   };
 
   const acknowledgeQuiescence = async (input: {
