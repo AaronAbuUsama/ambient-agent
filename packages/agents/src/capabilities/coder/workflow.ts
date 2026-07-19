@@ -188,6 +188,7 @@ export const runInternalCodingLoop = async (input: {
   maxVerificationRounds: number;
   waypoint: StageWaypoint;
   snapshot: () => Promise<WorkspaceSnapshot>;
+  initialWorkspace: WorkspaceSnapshot;
 }): Promise<{ plan: PlanArtifact; verification: VerificationReceipt; rounds: number; verified: WorkspaceSnapshot }> => {
   input.waypoint("planner", "started");
   const plan = (await input.session.task(input.plannerPrompt, {
@@ -196,6 +197,10 @@ export const runInternalCodingLoop = async (input: {
     cwd: input.cwd,
     result: planArtifactSchema,
   })).data;
+  const plannedWorkspace = await input.snapshot();
+  if (!isEmptyDiff(diffSnapshots(input.initialWorkspace, plannedWorkspace))) {
+    throw new Error("Planner changed the shared workspace; only Coder-owned bytes may be published.");
+  }
   input.waypoint("planner", "completed");
 
   let prior: VerificationReceipt | undefined;
@@ -300,6 +305,7 @@ const run = async ({ harness, input, log }: {
         maxVerificationRounds: input.maxVerificationRounds,
         waypoint,
         snapshot,
+        initialWorkspace: before,
       });
 
       const requiredDraft = coordinated.verification.verdict === "FAIL" || coordinated.verification.verdict === "BLOCKED";

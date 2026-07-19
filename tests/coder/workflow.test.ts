@@ -100,6 +100,7 @@ describe("deterministic Planner → bounded Coder/Verifier loop", () => {
       maxVerificationRounds: 3,
       waypoint: (stage, status, extra) => waypoints.push(`${stage}:${status}:${extra?.verificationRound ?? "-"}:${extra?.verdict ?? "-"}`),
       snapshot: async () => workspace(),
+      initialWorkspace: workspace(),
     });
 
     expect(result).toEqual({ plan, verification: receipt("PASS", "PASS after repair"), rounds: 2, verified: workspace() });
@@ -144,6 +145,7 @@ describe("deterministic Planner → bounded Coder/Verifier loop", () => {
       maxVerificationRounds: max,
       waypoint: () => {},
       snapshot: async () => workspace(),
+      initialWorkspace: workspace(),
     });
 
     expect(result.rounds).toBe(expectedRounds);
@@ -153,7 +155,7 @@ describe("deterministic Planner → bounded Coder/Verifier loop", () => {
 
   it("rejects Verifier-owned workspace mutations before publication", async () => {
     const queue = [{ data: plan }, { data: undefined }, { data: receipt("PASS") }];
-    const snapshots = [workspace("coder"), workspace("verifier")];
+    const snapshots = [workspace(), workspace("coder"), workspace("verifier")];
 
     await expect(runInternalCodingLoop({
       session: { task: async () => queue.shift()! } as unknown as Pick<FlueSession, "task">,
@@ -164,6 +166,24 @@ describe("deterministic Planner → bounded Coder/Verifier loop", () => {
       maxVerificationRounds: 1,
       waypoint: () => {},
       snapshot: async () => snapshots.shift()!,
+      initialWorkspace: workspace(),
     })).rejects.toThrow("Verifier changed the shared workspace");
+  });
+
+  it("rejects Planner-owned workspace mutations before Coder starts", async () => {
+    const task = vi.fn(async () => ({ data: plan }));
+
+    await expect(runInternalCodingLoop({
+      session: { task } as unknown as Pick<FlueSession, "task">,
+      plannerPrompt: "PLAN",
+      coderPrompt: () => "CODE",
+      verifierPrompt: () => "VERIFY",
+      cwd: "/workspace",
+      maxVerificationRounds: 1,
+      waypoint: () => {},
+      snapshot: async () => workspace("planner-edit"),
+      initialWorkspace: workspace(),
+    })).rejects.toThrow("Planner changed the shared workspace");
+    expect(task).toHaveBeenCalledOnce();
   });
 });
