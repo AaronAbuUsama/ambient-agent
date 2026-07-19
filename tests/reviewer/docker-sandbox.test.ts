@@ -38,4 +38,20 @@ exec sh -c "$3"
     });
     await expect(env.readFile("/etc/passwd")).rejects.toThrow("escapes /workspace");
   });
+
+  it("rejects safely when Docker exits before consuming stdin", async () => {
+    const root = await mkdtemp(join(tmpdir(), "reviewer-docker-sandbox-"));
+    roots.push(root);
+    const docker = join(root, "docker");
+    await writeFile(docker, "#!/bin/sh\nexit 23\n");
+    await chmod(docker, 0o700);
+    const env = await reviewerDockerSandbox({
+      root,
+      cwd: "/workspace",
+      image: "missing-reviewer-image",
+      executable: docker,
+    }).createSessionEnv({ id: "review-early-exit" });
+
+    await expect(env.writeFile("/workspace/package.tgz", new Uint8Array(8 * 1024 * 1024))).rejects.toThrow();
+  });
 });

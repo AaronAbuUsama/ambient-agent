@@ -31,6 +31,10 @@ const runProcess = async (
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
     child.on("error", reject);
+    // Docker may exit before consuming a required-operation payload (for example,
+    // when the configured image is invalid). Handle the resulting EPIPE on the
+    // writable stream so it rejects this operation instead of crashing the host.
+    child.stdin.on("error", reject);
     child.on("close", (code) => {
       if (timer !== undefined) clearTimeout(timer);
       options.signal?.removeEventListener("abort", stop);
