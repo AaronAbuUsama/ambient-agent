@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 
-import { bridgeHealth } from "@ambient-agent/installation/bridge-contract.ts";
+import { setupBridgeHealth } from "@ambient-agent/installation/bridge-contract.ts";
 import type { TenantRuntimeSetupBoot } from "@ambient-agent/installation/runtime-dependencies.ts";
 import { installBridgeRoute } from "./host/bridge-route.ts";
 import { stopRuntimeOnSignal } from "./host/runtime-signals.ts";
@@ -30,7 +30,7 @@ export const createAmbientAgentSetupApp = (
     startOnce();
     await next();
   });
-  app.get("/health", (context) => context.json(bridgeHealth(boot.runtimeId, status())));
+  app.get("/health", (context) => context.json(setupBridgeHealth(boot.runtimeId, status())));
   installBridgeRoute(app, {
     webhookSecret: boot.bridgeSecret,
     status,

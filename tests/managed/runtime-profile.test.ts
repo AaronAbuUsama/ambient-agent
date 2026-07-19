@@ -52,9 +52,9 @@ it("boots setup with only health, pairing, and chat enumeration around one Whats
   const health = await app.request("/health");
   expect(health.status).toBe(200);
   expect(await health.json()).toEqual({
-    ok: false,
+    ok: true,
     runtimeId: "runtime-202",
-    runtime: { state: "starting", whatsapp: { phase: "pairing" } },
+    runtime: { state: "healthy", whatsapp: { phase: "pairing" } },
   });
   expect(JSON.stringify(await (await app.request("/health")).json())).not.toContain("fake-qr-challenge");
 
