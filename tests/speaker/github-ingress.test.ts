@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import type { GitHubWebhookDelivery } from "@flue/github";
 
-import type { GitHubIngressInput } from "../../packages/engine/src/inputs.ts";
+import { speakerDigestSeeds, type GitHubIngressInput } from "../../packages/engine/src/inputs.ts";
 import { createIssueOperationStore } from "../../packages/engine/src/github/operation-store.ts";
 import { createGitHubIngress } from "../../packages/engine/src/github/ingress.ts";
 import { createGitHubIngressStore } from "../../packages/engine/src/github/ingress-store.ts";
@@ -58,6 +58,35 @@ const pullRequestOpenedDelivery = (
         draft: options.draft ?? false,
       },
       sender: { login: "octocat", id: 1, type: "User" },
+    },
+  }) as GitHubWebhookDelivery;
+
+const pullRequestReviewSubmittedDelivery = (deliveryId: string): GitHubWebhookDelivery =>
+  ({
+    name: "pull_request_review",
+    deliveryId,
+    payload: {
+      action: "submitted",
+      installation: { id: 77 },
+      repository: {
+        id: 101,
+        name: "widgets",
+        html_url: "https://github.com/acme/widgets",
+        owner: { login: "acme" },
+      },
+      pull_request: {
+        number: 42,
+        html_url: "https://github.com/acme/widgets/pull/42",
+        title: "Fix admission proof",
+        state: "open",
+        draft: false,
+      },
+      review: {
+        id: 501,
+        html_url: "https://github.com/acme/widgets/pull/42#pullrequestreview-501",
+        state: "changes_requested",
+      },
+      sender: { login: "reviewer[bot]", id: 2, type: "Bot" },
     },
   }) as GitHubWebhookDelivery;
 describe("GitHub ingress delivery ledger", () => {
@@ -128,6 +157,65 @@ describe("GitHub ingress delivery ledger", () => {
 
       await expect(ingress(unmanagedRepoDelivery)).resolves.toMatchObject({ status: "done" });
       expect(dispatched).toEqual(managedChats);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("normalizes a submitted PR review as the #173 continuation wake-up", async () => {
+    const store = createGitHubIngressStore(":memory:");
+    const dispatched: GitHubIngressInput[] = [];
+    try {
+      const ingress = createGitHubIngress({
+        store,
+        managedChats: ["chat-42@g.us"],
+        dispatch: async (_chatId, input) => {
+          dispatched.push(input);
+          return { dispatchId: "dispatch-review-501", acceptedAt: "2026-07-18T00:00:01.000Z" };
+        },
+        logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+      });
+
+      await expect(ingress(pullRequestReviewSubmittedDelivery("review-501"))).resolves.toMatchObject({
+        status: "done",
+        repository: "acme/widgets",
+      });
+      expect(dispatched).toEqual([
+        {
+          type: "github.pull-request-review.submitted",
+          chatId: "chat-42@g.us",
+          deliveryId: "review-501",
+          installationId: 77,
+          repository: {
+            owner: "acme",
+            repo: "widgets",
+            id: 101,
+            url: "https://github.com/acme/widgets",
+          },
+          pullRequest: {
+            number: 42,
+            url: "https://github.com/acme/widgets/pull/42",
+            title: "Fix admission proof",
+            state: "open",
+            draft: false,
+          },
+          review: {
+            id: 501,
+            url: "https://github.com/acme/widgets/pull/42#pullrequestreview-501",
+            state: "changes_requested",
+          },
+          sender: { login: "reviewer[bot]", id: 2, type: "Bot" },
+        },
+      ]);
+      expect(speakerDigestSeeds(dispatched[0]!)).toEqual({
+        chatId: "chat-42@g.us",
+        identities: [
+          { platform: "github", externalId: "acme/widgets" },
+          { platform: "github", externalId: "reviewer[bot]" },
+          { platform: "github", externalId: "acme/widgets#42" },
+        ],
+      });
+      expect(store.get("review-501")).toMatchObject({ status: "done", eventName: "pull_request_review" });
     } finally {
       store.close();
     }
