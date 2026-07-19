@@ -404,18 +404,19 @@ pull_request_review.submitted
   → verify Reviewer App identity
   → verify PR exists in coding_jobs
   → refetch live PR + reviews + unresolved threads
-  → normalize review.state to changes_requested | approved | commented
+  → normalize review.state to changes_requested | approved | commented | dismissed
   → count qualifying review cycles
   → changes_requested within budget: invoke review_continuation
   → changes_requested over budget: draft PR + update lifecycle comment
-  → approved or commented: no repair run
+  → approved, commented, or dismissed: no repair run
 ```
 
 GitHub's read surfaces are inconsistent: webhook payloads use lowercase states while
 REST `listReviews` may return uppercase strings such as `CHANGES_REQUESTED`. At the
 GitHub adapter boundary, trim and lowercase the raw value, map
-`changes_requested | approved | commented` to that internal union, and reject unknown
-states. Only a formal
+`changes_requested | approved | commented | dismissed` to that internal union, and
+reject unknown states. Retain dismissed reviews in the snapshot for audit/history but
+exclude them from the current disposition and review-cycle count. Only a formal
 `changes_requested` review by the configured Reviewer App can launch an automatic repair.
 Loose PR conversation comments and individual inline-comment events are not automatic
 completion signals.
@@ -514,7 +515,7 @@ import Speaker's model or hardcode a generation-specific ID.
 ```ts
 interface AgentModelProfile {
   id: string;
-  thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 }
 
 interface ManagedModelProfiles {
