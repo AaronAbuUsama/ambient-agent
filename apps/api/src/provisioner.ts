@@ -98,6 +98,7 @@ export interface TenantProvisionerOptions {
   readonly turso: TenantDatabaseProvider;
   readonly dokploy: DokployProvider;
   readonly secrets: TenantSecretCodec;
+  readonly operateRuntimeIdForTenant: (tenantId: string) => string | null;
   readonly configuration: TenantProvisionerConfiguration;
   readonly createId?: () => string;
 }
@@ -168,6 +169,7 @@ const manifestFor = (
   target: ProvisioningTarget,
   application: DokployApplication,
   token: string,
+  runtimeId: string,
   secrets: TenantSecretCodec,
   configuration: TenantProvisionerConfiguration,
 ): DokployManifest => {
@@ -184,7 +186,7 @@ const manifestFor = (
       TENANT_DB_TOKEN: token,
       AMBIENT_AGENT_CONFIG_VERSION: String(target.configVersion),
       AMBIENT_AGENT_RUNTIME_PROFILE: setup ? "setup" : "operate",
-      AMBIENT_AGENT_RUNTIME_ID: secrets.runtimeId(target.tenantId),
+      AMBIENT_AGENT_RUNTIME_ID: runtimeId,
       AMBIENT_AGENT_RUNTIME_BRIDGE_SECRET: secrets.bridgeSecret(target.tenantId),
       HOME: posix.dirname(dataDirectory),
       PORT: String(configuration.port),
@@ -463,7 +465,21 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
       if (target.appliedConfigVersion > target.configVersion) {
         return await recordInvariant(application, "tenant_config_version_regressed");
       }
-      const manifest = manifestFor(target, application, token, options.secrets, options.configuration);
+      const expectedRuntimeId =
+        target.desiredMode === "setup"
+          ? options.secrets.runtimeId(target.tenantId)
+          : options.operateRuntimeIdForTenant(target.tenantId);
+      if (expectedRuntimeId === null) {
+        return await recordInvariant(application, "tenant_operate_runtime_identity_missing");
+      }
+      const manifest = manifestFor(
+        target,
+        application,
+        token,
+        expectedRuntimeId,
+        options.secrets,
+        options.configuration,
+      );
 
       if (
         target.appliedConfigVersion !== target.configVersion ||
@@ -493,7 +509,7 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
           const startedTasks = await options.dokploy.waitForTaskCount(application.appName, 1);
           if (startedTasks > 1) throw new Error("multiple tasks after pending start");
           if (startedTasks !== 1) throw new Error("one task not observed after pending start");
-          if (!(await options.dokploy.health(baseUrl, options.secrets.runtimeId(tenantId)))) {
+          if (!(await options.dokploy.health(baseUrl, expectedRuntimeId))) {
             throw new Error("runtime health mismatch");
           }
           if (!(await options.dokploy.manifestMatches(manifest))) {
@@ -541,7 +557,7 @@ export const createTenantProvisioner = (options: TenantProvisionerOptions) => {
           return await recordInvariant(application, "dokploy_manifest_drift");
         }
         await startAndObserve(application);
-        if (!(await options.dokploy.health(baseUrl, options.secrets.runtimeId(tenantId)))) {
+        if (!(await options.dokploy.health(baseUrl, expectedRuntimeId))) {
           return await recordRetryable("tenant_runtime_unhealthy");
         }
       }

@@ -96,6 +96,7 @@ class FakeDokploy implements DokployProvider {
   readonly applications = new Map<string, DokployApplication>();
   readonly manifests = new Map<string, DokployManifest>();
   readonly taskCounts = new Map<string, number>();
+  readonly healthRuntimeIds: string[] = [];
   readonly calls: string[] = [];
   failCreateAfterInsert = false;
   failPrepare = false;
@@ -189,8 +190,9 @@ class FakeDokploy implements DokployProvider {
     return this.taskCounts.get(appName) ?? 0;
   }
 
-  async health(_baseUrl: string, _runtimeId: string) {
+  async health(_baseUrl: string, runtimeId: string) {
     this.calls.push("health");
+    this.healthRuntimeIds.push(runtimeId);
     const beforeHealth = this.beforeHealth;
     this.beforeHealth = null;
     await beforeHealth?.();
@@ -208,13 +210,20 @@ const secrets: TenantSecretCodec = {
   runtimeId: (tenantId) => `runtime:${tenantId}`,
 };
 
-const provisionerFor = (client: Client, turso: FakeTurso, dokploy: FakeDokploy) => {
+const provisionerFor = (
+  client: Client,
+  turso: FakeTurso,
+  dokploy: FakeDokploy,
+  operateRuntimeIdForTenant: (tenantId: string) => string | null = (tenantId) =>
+    `operate-runtime:${tenantId}`,
+) => {
   let id = 0;
   return createTenantProvisioner({
     client,
     turso,
     dokploy,
     secrets,
+    operateRuntimeIdForTenant,
     configuration: {
       runtimeImage: "ghcr.io/ambient-agent/runtime:sha-test",
       workerHostname: "worker-one",
@@ -343,6 +352,34 @@ describe("tenant provisioner", () => {
     expect(await provisioner.reconcilePendingTenants()).toEqual([
       expect.objectContaining({ tenantId, status: "running", taskCount: 1 }),
     ]);
+    expect(dokploy.healthRuntimeIds.at(-1)).toBe(`operate-runtime:${tenantId}`);
+    expect([...dokploy.manifests.values()][0]?.environment.AMBIENT_AGENT_RUNTIME_ID).toBe(
+      `operate-runtime:${tenantId}`,
+    );
+  });
+
+  test("stops before Operate when the delivery runtime identity is unavailable", async () => {
+    const client = await migrate();
+    const tenantId = await seed(client, "operate-identity");
+    const turso = new FakeTurso();
+    const dokploy = new FakeDokploy();
+    const provisioner = provisionerFor(client, turso, dokploy, () => null);
+
+    expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({ status: "running" });
+    await client.execute({
+      sql: `UPDATE tenant SET status = 'active' WHERE id = ?1`,
+      args: [tenantId],
+    });
+    await client.execute({
+      sql: `UPDATE agent_instance SET desired_mode = 'operate' WHERE tenant_id = ?1`,
+      args: [tenantId],
+    });
+
+    expect(await provisioner.reconcileTenant(tenantId)).toMatchObject({
+      status: "blocked",
+      errorCode: "tenant_operate_runtime_identity_missing",
+    });
+    expect([...dokploy.taskCounts.values()]).toEqual([0]);
   });
 
   test("restarts a new config revision on the same stopped-first application", async () => {

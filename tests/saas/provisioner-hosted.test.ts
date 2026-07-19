@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 
 import type { Client } from "@libsql/client";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { runtimeInstallationId } from "../../packages/installation/src/runtime-health";
 
 import {
   createHostedTenantProvisioner,
@@ -37,6 +38,9 @@ describe("hosted tenant provisioner composition", () => {
         TURSO_ORG: "ambient-org",
         TURSO_PLATFORM_TOKEN: "turso-secret",
         TENANT_SECRET_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString("base64"),
+        GITHUB_RUNTIME_DELIVERY_SECRETS_JSON: JSON.stringify({
+          "tenant-one": "operate-runtime-secret",
+        }),
       },
     });
 
@@ -45,9 +49,14 @@ describe("hosted tenant provisioner composition", () => {
       reconcilePendingTenants: expect.any(Function),
       acknowledgeQuiescence: expect.any(Function),
       reconciliationIntervalMs: 5_000,
+      operateRuntimeIdForTenant: expect.any(Function),
       runtimeBridgeSecretForTenant: expect.any(Function),
       runtimeIdForTenant: expect.any(Function),
     });
+    expect(provisioner?.operateRuntimeIdForTenant("tenant-one")).toBe(
+      runtimeInstallationId("operate-runtime-secret"),
+    );
+    expect(provisioner?.operateRuntimeIdForTenant("tenant-two")).toBeNull();
   });
 
   test("keeps sweeping later transitions without overlapping a slow sweep", async () => {

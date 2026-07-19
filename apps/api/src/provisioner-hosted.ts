@@ -1,4 +1,5 @@
 import type { Client } from "@libsql/client";
+import { runtimeInstallationId } from "@ambient-agent/installation/runtime-health.ts";
 import { z } from "zod";
 
 import { createTenantProvisioner } from "./provisioner";
@@ -43,7 +44,19 @@ const configurationSchema = z.object({
   TURSO_GROUP: z.string().min(1).default("default"),
   TURSO_PLATFORM_TOKEN: z.string().min(1),
   TENANT_SECRET_ENCRYPTION_KEY: z.string().min(1),
+  GITHUB_RUNTIME_DELIVERY_SECRETS_JSON: z.string().min(1).optional(),
 });
+
+const runtimeSecretsSchema = z.record(z.string().min(1), z.string().min(1));
+
+const runtimeSecretsFrom = (encoded: string | undefined): Readonly<Record<string, string>> => {
+  if (encoded === undefined) return {};
+  try {
+    return runtimeSecretsSchema.parse(JSON.parse(encoded) as unknown);
+  } catch {
+    throw new Error("GITHUB_RUNTIME_DELIVERY_SECRETS_JSON must contain a tenant-to-secret JSON object");
+  }
+};
 
 export const createHostedTenantProvisioner = (options: {
   readonly client: Client;
@@ -54,6 +67,13 @@ export const createHostedTenantProvisioner = (options: {
   if (!providerKeys.some((key) => environment[key]?.trim())) return null;
   const configuration = configurationSchema.parse(environment);
   const secrets = createTenantSecretCodec(configuration.TENANT_SECRET_ENCRYPTION_KEY);
+  const operateRuntimeSecrets = runtimeSecretsFrom(
+    configuration.GITHUB_RUNTIME_DELIVERY_SECRETS_JSON,
+  );
+  const operateRuntimeIdForTenant = (tenantId: string): string | null => {
+    const secret = operateRuntimeSecrets[tenantId];
+    return secret === undefined ? null : runtimeInstallationId(secret);
+  };
   const provisioner = createTenantProvisioner({
     client: options.client,
     turso: createTursoPlatformClient({
@@ -70,6 +90,7 @@ export const createHostedTenantProvisioner = (options: {
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     }),
     secrets,
+    operateRuntimeIdForTenant,
     configuration: {
       runtimeImage: configuration.TENANT_RUNTIME_IMAGE,
       workerHostname: configuration.DOKPLOY_WORKER_HOSTNAME,
@@ -81,6 +102,7 @@ export const createHostedTenantProvisioner = (options: {
   return {
     ...provisioner,
     reconciliationIntervalMs: configuration.TENANT_PROVISIONER_RECONCILE_INTERVAL_MS,
+    operateRuntimeIdForTenant,
     runtimeBridgeSecretForTenant: secrets.bridgeSecret,
     runtimeIdForTenant: secrets.runtimeId,
   };
