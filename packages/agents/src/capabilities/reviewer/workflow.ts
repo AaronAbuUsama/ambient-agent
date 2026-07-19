@@ -9,10 +9,24 @@ import { getReviewerRuntime } from "./runtime.ts";
 import { reviewFindingSchema, reviewerJobInputSchema, reviewerResultSchema, type ReviewerJobInput, type ReviewerResult } from "./schemas.ts";
 
 const SHELL_TIMEOUT_MS = 20 * 60 * 1000;
+const reviewerSubmissions = new Map<string, Promise<ReviewerResult>>();
 
 export const singleSubmission = <T>(): ((effect: () => Promise<T>) => Promise<T>) => {
   let submission: Promise<T> | undefined;
   return (effect) => submission ??= effect();
+};
+
+export const serializeReviewerSubmission = (
+  key: string,
+  effect: () => Promise<ReviewerResult>,
+): Promise<ReviewerResult> => {
+  const existing = reviewerSubmissions.get(key);
+  if (existing !== undefined) return existing;
+  const submission = effect().finally(() => {
+    if (reviewerSubmissions.get(key) === submission) reviewerSubmissions.delete(key);
+  });
+  reviewerSubmissions.set(key, submission);
+  return submission;
 };
 
 export const reviewerExerciseCommand = (): string => [
@@ -76,10 +90,15 @@ const run = async ({ harness, input, log }: { harness: FlueHarness; input: Revie
       }),
       output: reviewerResultSchema,
       run: async ({ input: decision }) => {
-        return await submitOnce(async () => {
+        return await submitOnce(async () => await serializeReviewerSubmission(`${repo.owner}/${repo.repo}#${pr.number}@${pr.head.sha}:${login}`, async () => {
           const live = await github.pulls.get({ owner: repo.owner, repo: repo.repo, pull_number: pr.number });
-          if (live.data.head.sha !== pr.head.sha) {
+          if (live.data.state !== "open" || live.data.draft || live.data.head.sha !== pr.head.sha) {
             submitted = { status: "blocked", prNumber: pr.number, headSha: live.data.head.sha, summary: "Review not submitted because the pull-request head changed during review." };
+            return submitted;
+          }
+          const alreadySubmitted = await findReviewForHead(github, repo, pr.number, pr.head.sha, login);
+          if (alreadySubmitted !== undefined) {
+            submitted = { status: "commented", reviewUrl: alreadySubmitted.html_url, prNumber: pr.number, headSha: pr.head.sha, summary: "This Reviewer App already reviewed the live pull-request head." };
             return submitted;
           }
           const event = reviewEvent(decision.verdict as ReviewVerdict, checks.passed);
@@ -109,7 +128,7 @@ const run = async ({ harness, input, log }: { harness: FlueHarness; input: Revie
             summary: body,
           };
           return submitted;
-        });
+        }));
       },
     });
     log.info("reviewer.judging-diff", { repository: input.repository, pullRequest: pr.number, headSha: pr.head.sha });

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { findReviewForHead, reviewEvent, reviewerLogin, validInlineLocations, type ReviewerGitHub } from "../../packages/agents/src/capabilities/reviewer/github.ts";
-import { reviewerExerciseCommand, singleSubmission } from "../../packages/agents/src/capabilities/reviewer/workflow.ts";
+import { reviewerExerciseCommand, serializeReviewerSubmission, singleSubmission } from "../../packages/agents/src/capabilities/reviewer/workflow.ts";
 
 describe("Reviewer GitHub contract", () => {
   it("maps verdicts and never approves a red repository exercise", () => {
@@ -40,6 +40,16 @@ describe("Reviewer GitHub contract", () => {
     const submit = singleSubmission<string>();
     const effect = vi.fn(async () => "formal-review");
     await expect(Promise.all([submit(effect), submit(effect)])).resolves.toEqual(["formal-review", "formal-review"]);
+    expect(effect).toHaveBeenCalledTimes(1);
+  });
+
+  it("serializes concurrent workflow submissions for one Reviewer App and PR head", async () => {
+    const result = { status: "commented", prNumber: 42, headSha: "head", summary: "reviewed" } as const;
+    const effect = vi.fn(async () => result);
+    await expect(Promise.all([
+      serializeReviewerSubmission("acme/widgets#42@head:reviewer[bot]", effect),
+      serializeReviewerSubmission("acme/widgets#42@head:reviewer[bot]", effect),
+    ])).resolves.toEqual([result, result]);
     expect(effect).toHaveBeenCalledTimes(1);
   });
 });
