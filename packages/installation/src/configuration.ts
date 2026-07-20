@@ -44,6 +44,26 @@ export const readManagedGitHubAppCredential = async (path: string): Promise<GitH
   await readPrivateJson(path, GitHubAppCredentialSchema);
 
 /**
+ * Read a Specialist's (Coder/Reviewer) GitHub App credential, or throw a clear, actionable error
+ * (#247, #251). A missing or mispasted App credential must fail the runtime loudly at start rather
+ * than silently mounting a dead capability — the configured-but-inert failure the one-box plan bans
+ * for the Speaker, and which used to boot green with a dead Coder.
+ */
+export const readProvisionedGitHubAppCredential = async (
+  path: string,
+  role: "coder" | "reviewer",
+): Promise<GitHubAppCredential> => {
+  try {
+    return await readManagedGitHubAppCredential(path);
+  } catch (cause) {
+    throw new Error(
+      `The ${role} GitHub App credential at ${path} is missing or malformed; the ${role} cannot start. Run ambient-agent config --github-app ${role} and paste a fresh triple.`,
+      { cause },
+    );
+  }
+};
+
+/**
  * The model API key. A missing or damaged file throws: the runtime must fail loudly at start
  * rather than boot green with no inference (#250).
  */

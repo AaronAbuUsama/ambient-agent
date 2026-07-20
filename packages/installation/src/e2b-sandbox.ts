@@ -170,14 +170,25 @@ export interface E2BSandboxOptions {
   readonly timeoutMs: number;
   /** E2B template to boot. Undefined uses the account's default template. */
   readonly template?: string;
+  /**
+   * The E2B API key, passed explicitly to `Sandbox.create` rather than left to the SDK's
+   * implicit `E2B_API_KEY` read (#251): the sandbox selector owns key resolution now, so the
+   * key travels through config rather than the ambient process environment.
+   */
+  readonly apiKey?: string;
   /** Seam for tests; production creates a real provider sandbox. */
-  readonly create?: (options: { timeoutMs: number; template?: string }) => Promise<E2BSandboxLike>;
+  readonly create?: (options: { timeoutMs: number; template?: string; apiKey?: string }) => Promise<E2BSandboxLike>;
 }
 
-const defaultCreate = async (options: { timeoutMs: number; template?: string }): Promise<E2BSandboxLike> =>
-  options.template === undefined
-    ? await Sandbox.create({ timeoutMs: options.timeoutMs })
-    : await Sandbox.create(options.template, { timeoutMs: options.timeoutMs });
+const defaultCreate = async (options: { timeoutMs: number; template?: string; apiKey?: string }): Promise<E2BSandboxLike> => {
+  const createOptions = {
+    timeoutMs: options.timeoutMs,
+    ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+  };
+  return options.template === undefined
+    ? await Sandbox.create(createOptions)
+    : await Sandbox.create(options.template, createOptions);
+};
 
 /**
  * Per-job E2B micro-VMs behind Flue's `SandboxFactory` seam (ADR 0021). The runtime
@@ -201,6 +212,7 @@ export const e2bSandbox = (options: E2BSandboxOptions): SandboxFactory => {
         const sandbox = await create({
           timeoutMs: options.timeoutMs,
           ...(options.template === undefined ? {} : { template: options.template }),
+          ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
         });
         // ponytail: SandboxFactory has no teardown hook, so the job's sandbox dies on its
         // own provider timeout rather than at the last task. This timer drops our

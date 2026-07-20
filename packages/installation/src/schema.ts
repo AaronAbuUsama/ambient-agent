@@ -40,6 +40,18 @@ const ManagedChat = v.pipe(
   v.regex(/^[^@\s]+@(g\.us|s\.whatsapp\.net)$/, "Expected a WhatsApp group or direct-chat JID"),
 );
 const RuntimePort = v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(65_535));
+/**
+ * The per-job agent sandbox both Specialist shells run in (#251). `local` runs the model's
+ * shell on the host as the runtime uid (single-operator use, D-1); `e2b` runs it in a
+ * disposable micro-VM. Default `local`, so flipping to `e2b` once an E2B key is configured is
+ * a one-line change rather than a swap of a hardcoded binding. `template` is the E2B blueprint
+ * to boot (absent uses the account default); it is migrated off `E2B_TEMPLATE` in #252.
+ */
+const RuntimeSandbox = v.strictObject({
+  kind: v.picklist(["local", "e2b"]),
+  template: v.optional(NonBlankString),
+});
+export type RuntimeSandbox = v.InferOutput<typeof RuntimeSandbox>;
 const CanaryGroup = v.pipe(ManagedChat, v.regex(/@g\.us$/, "Expected a WhatsApp group JID"));
 const ModelId = v.pipe(
   NonBlankString,
@@ -81,7 +93,9 @@ export const ManagedConfigSchema = v.pipe(
     }),
     runtime: v.optional(v.strictObject({
       port: RuntimePort,
-    }), { port: 3000 }),
+      // Optional with the local default (#251), so every existing `runtime` block parses unchanged.
+      sandbox: v.optional(RuntimeSandbox, { kind: "local" }),
+    }), { port: 3000, sandbox: { kind: "local" } }),
     smoke: v.optional(v.strictObject({ canaryChat: CanaryGroup })),
     github: v.strictObject({
       kind: v.literal("github-app"),
@@ -201,7 +215,7 @@ export const createManagedConfig = (
         : MODEL_API_KEY_CREDENTIAL_REFERENCE,
     profiles: model.profiles,
   },
-  runtime: { port: 3000 },
+  runtime: { port: 3000, sandbox: { kind: "local" } },
   github: {
     kind: "github-app",
     credential: GITHUB_CREDENTIAL_REFERENCE,

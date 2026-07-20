@@ -16,7 +16,7 @@ import {
   runtimeDeploymentIdentityFromEnvironment,
   startDeferredWhatsAppRuntime,
 } from "@ambient-agent/installation/runtime-dependencies.ts";
-import { e2bSandbox } from "@ambient-agent/installation/e2b-sandbox.ts";
+import { resolveAgentSandbox } from "@ambient-agent/installation/agent-sandbox.ts";
 import type { ManagedPaths } from "@ambient-agent/installation/paths.ts";
 import type { ChatGptAuthentication } from "@ambient-agent/engine/model/chatgpt-authentication.ts";
 
@@ -27,27 +27,6 @@ export interface RuntimeLoggingOptions {
 
 export type StartRuntime = (paths: ManagedPaths, logging: RuntimeLoggingOptions) => Promise<void>;
 export type ImportRuntime = (specifier: string) => Promise<unknown>;
-
-/**
- * One job's whole sandbox budget (ADR 0021): E2B keeps the micro-VM alive this long, and
- * it bounds any shell command whose caller names no shorter deadline. Comfortably over the
- * Coder's 20-minute per-command ceiling so a full implement→verify loop fits in one VM.
- */
-const AGENT_SANDBOX_TIMEOUT_MS = 60 * 60 * 1000;
-
-/**
- * The per-job sandbox both agent shells run in. Keyed off the E2B SDK's own `E2B_API_KEY`:
- * until the operator supplies one there is no isolated sandbox, so the Coder and Reviewer
- * stay unprovisioned rather than falling back to a host-local shell.
- */
-export const resolveAgentSandbox = (environment: NodeJS.ProcessEnv = process.env) => {
-  if (!environment.E2B_API_KEY?.trim()) return undefined;
-  const template = environment.E2B_TEMPLATE?.trim();
-  return e2bSandbox({
-    timeoutMs: AGENT_SANDBOX_TIMEOUT_MS,
-    ...(template ? { template } : {}),
-  });
-};
 
 const importRuntime: ImportRuntime = async (specifier) => await import(specifier);
 
@@ -93,6 +72,13 @@ export const parseRuntimePort = (value: string): number => {
     throw new Error("The runtime port must be an integer from 1 through 65535.");
   }
   return port;
+};
+
+export const parseSandboxKind = (value: string): "local" | "e2b" => {
+  if (value !== "local" && value !== "e2b") {
+    throw new Error("The agent sandbox must be either local or e2b.");
+  }
+  return value;
 };
 
 const portOccupied = (cause: unknown): boolean =>
@@ -147,15 +133,15 @@ export const startGeneratedRuntime = async (
       : await readModelApiKeyOrFail(paths, configuration.model.provider);
   const deployment = runtimeDeploymentIdentityFromEnvironment();
   const bridge = resolveTenantRuntimeOperateBridge();
-  const agentSandbox = resolveAgentSandbox();
+  const agentSandbox = await resolveAgentSandbox(configuration, paths);
   installManagedRuntimeDependencies({
     authentication,
     configuration,
     githubCredential: { ...githubCredential, webhookSecret: githubCredential.webhookSecret },
     paths,
+    agentSandbox,
     ...(deployment === undefined ? {} : { deployment }),
     ...(bridge === undefined ? {} : { bridge }),
-    ...(agentSandbox === undefined ? {} : { agentSandbox }),
     ...(modelApiKey === undefined ? {} : { modelApiKey }),
   });
   process.chdir(paths.root);

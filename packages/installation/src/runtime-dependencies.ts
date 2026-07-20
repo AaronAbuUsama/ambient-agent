@@ -1,8 +1,8 @@
 import type { ChatGptAuthentication } from "@ambient-agent/engine/model/chatgpt-authentication.ts";
+import type { AgentSandbox } from "./agent-sandbox.ts";
 import { managedPaths, type ManagedPaths } from "./paths.ts";
 import type { GitHubAppCredential, ManagedConfig } from "./schema.ts";
 import { tenantCredentialDatabaseFromEnvironment, type TenantCredentialEnvironment } from "./tenant-credentials.ts";
-import type { SandboxFactory } from "@flue/runtime";
 
 export interface ManagedRuntimeDependencies {
   readonly authentication: ChatGptAuthentication;
@@ -13,11 +13,12 @@ export interface ManagedRuntimeDependencies {
   readonly deployment?: RuntimeDeploymentIdentity;
   readonly bridge?: TenantRuntimeOperateBridge;
   /**
-   * The isolated per-job sandbox both agent shells run in (ADR 0021) — E2B in every
-   * deployment. Absent when the provider is unconfigured, which disables the Coder and
-   * the Reviewer rather than falling back to a host-local shell.
+   * The per-job agent sandbox both Specialist shells run in, and the workspace root it extracts
+   * repos into (#251) — resolved together by {@link resolveAgentSandbox}. Always present: the
+   * selector defaults to a `local` sandbox, so there is no "unconfigured, silently disabled"
+   * state any more (#247).
    */
-  readonly agentSandbox?: SandboxFactory;
+  readonly agentSandbox: AgentSandbox;
   /**
    * The key from `credentials/model-api-key.json`. Present exactly when
    * `configuration.model.provider` is not the subscription provider; the CLI reads it before

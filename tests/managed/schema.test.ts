@@ -31,7 +31,7 @@ describe("managed schemas", () => {
     const parsed = v.parse(ManagedConfigSchema, config);
     expect(parsed.managedChats).toEqual(["120363000@g.us", "15550000000@s.whatsapp.net"]);
     expect(parsed.github.defaultRepository).toBe("owner/repo");
-    expect(parsed.runtime).toEqual({ port: 3000 });
+    expect(parsed.runtime).toEqual({ port: 3000, sandbox: { kind: "local" } });
     expect(parsed.model.profiles).toEqual(EXPECTED_DEFAULT_PROFILES);
   });
 
@@ -137,7 +137,7 @@ describe("managed schemas", () => {
 
   it("defaults older managed configuration to the discoverable runtime port and validates explicit ports", () => {
     const { runtime: _runtime, ...older } = createManagedConfig(["120363000@g.us"], "owner/repo");
-    expect(v.parse(ManagedConfigSchema, older).runtime).toEqual({ port: 3000 });
+    expect(v.parse(ManagedConfigSchema, older).runtime).toEqual({ port: 3000, sandbox: { kind: "local" } });
     expect(v.safeParse(ManagedConfigSchema, { ...older, runtime: { port: 65_535 } }).success).toBe(true);
     expect(v.safeParse(ManagedConfigSchema, { ...older, runtime: { port: 65_536 } }).success).toBe(false);
     // The agent sandbox is operator environment, not managed config (ADR 0021): a config
@@ -146,6 +146,26 @@ describe("managed schemas", () => {
       ...older,
       runtime: { port: 3000, reviewerSandbox: { kind: "docker", image: "node:22-bookworm" } },
     }).success).toBe(false);
+  });
+
+  it("defaults the agent sandbox to local and validates an explicit selector (#251)", () => {
+    const config = createManagedConfig(["120363000@g.us"], "owner/repo");
+    // Default local, and a config predating the selector (runtime with only a port) still parses to local.
+    expect(v.parse(ManagedConfigSchema, config).runtime.sandbox).toEqual({ kind: "local" });
+    expect(v.parse(ManagedConfigSchema, { ...config, runtime: { port: 3737 } }).runtime.sandbox).toEqual({ kind: "local" });
+    // e2b with a template round-trips.
+    expect(
+      v.parse(ManagedConfigSchema, { ...config, runtime: { port: 3000, sandbox: { kind: "e2b", template: "flue-node" } } })
+        .runtime.sandbox,
+    ).toEqual({ kind: "e2b", template: "flue-node" });
+    // An unknown kind, an unknown sandbox field, and a blank template are all refused rather than written.
+    expect(v.safeParse(ManagedConfigSchema, { ...config, runtime: { port: 3000, sandbox: { kind: "docker" } } }).success).toBe(false);
+    expect(
+      v.safeParse(ManagedConfigSchema, { ...config, runtime: { port: 3000, sandbox: { kind: "local", image: "x" } } }).success,
+    ).toBe(false);
+    expect(
+      v.safeParse(ManagedConfigSchema, { ...config, runtime: { port: 3000, sandbox: { kind: "e2b", template: "  " } } }).success,
+    ).toBe(false);
   });
 
   it("parses an existing config unchanged and defaults its provider to the subscription one", () => {
