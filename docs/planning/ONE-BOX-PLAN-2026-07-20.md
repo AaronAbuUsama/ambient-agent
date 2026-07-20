@@ -128,6 +128,35 @@ re-run, not investigated as a regression.
 
 ---
 
+# The instrument is LIVE — T2 (#253) done 2026-07-20
+
+Verified independently of the implementing agent (GitHub API, SSH to the box, the kernel boot clock):
+
+- **Host:** `capxul-vps` (Tailscale `100.80.138.56`, user `abuusama`), systemd unit `ambient-agent`
+  enabled + active on **port 3737**. `curl localhost:3737/health` → `ok:true`, `whatsapp.phase:online`.
+- **Identity:** commit `6c6067d` on `claude/single-box-working`, tarball SHA-256
+  `e311b6e4…13ab402`. Model `openai/gpt-5.4-mini`, managed chat `Tst` (`120363410063306573@g.us`),
+  repo `AaronAbuUsama/ambient-agent`.
+- **Gate — every leg exercisable without a Coder run PASSED:** real reply · real
+  `ambient-planner[bot]` issue (#262) · reboot-without-re-pair (box boot clock 16:28:41, unit back
+  16:28:51) · conversational memory across reboot (DB-verified) · negatives observed
+  (absence-of-silence, second-instance loud exit-1 with survivor uncorrupted, post-reboot-reply-not-process).
+- **Deferred, honestly marked ❌:** the `kill -9` → `interrupted` leg — needs an in-flight Coder run,
+  so it re-runs as a T2 gate leg after **T3 (#251)** lands.
+
+**The instrument earned its place immediately.** The T2 blocker (#261) was a real bug only a live
+deploy could surface: the runtime restart hung 60s waiting for a conversation-sync batch that a
+whatsappd *reconnect* never emits, failing a healthy session. `createWhatsAppAccount` — the module
+the architecture assessment flagged as riskiest (cyclomatic 50, zero live coverage) — had never been
+run live until now. This is exactly the class of defect the instrument-first ordering exists to find.
+
+**Follow-ups filed** (not blockers): #264 (setup lock orphans on a killed `init`), #265 (Speaker
+silent ~15s on action turns), whatsappd#4 (`link-preview-js` missing from bundled baileys).
+
+Receipt: `docs/proof/one-box-instance-live.md`.
+
+---
+
 # Stages
 
 ## T1 · Model auth is API key OR subscription — #250
@@ -227,6 +256,9 @@ App triples ready for the guided paste; the OpenAI key.
 transcript.
 
 **This single event is what the old plan split into "M1's gate" and "M4's install".**
+
+> **STATUS: DONE 2026-07-20** — see "The instrument is LIVE" above. The `kill -9` leg is the only
+> deferred negative; it re-runs here after T3 (#251) produces a Coder run to interrupt.
 
 ## T3 · Sandbox selector → the Coder's first green PR — #251
 
