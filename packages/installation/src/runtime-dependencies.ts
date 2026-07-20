@@ -12,8 +12,19 @@ export interface ManagedRuntimeDependencies {
   readonly paths: ManagedPaths;
   readonly deployment?: RuntimeDeploymentIdentity;
   readonly bridge?: TenantRuntimeOperateBridge;
-  /** Deployment-supplied isolated Reviewer sandbox. Never substitute the host-local sandbox. */
-  readonly reviewerSandbox?: SandboxFactory;
+  /**
+   * The isolated per-job sandbox both agent shells run in (ADR 0021) — E2B in every
+   * deployment. Absent when the provider is unconfigured, which disables the Coder and
+   * the Reviewer rather than falling back to a host-local shell.
+   */
+  readonly agentSandbox?: SandboxFactory;
+  /**
+   * The key from `credentials/model-api-key.json`. Present exactly when
+   * `configuration.model.provider` is not the subscription provider; the CLI reads it before
+   * boot, so an absent credential fails the process rather than degrading to a runtime with
+   * no inference.
+   */
+  readonly modelApiKey?: string;
 }
 
 export interface TenantRuntimeEnvironment extends TenantCredentialEnvironment {

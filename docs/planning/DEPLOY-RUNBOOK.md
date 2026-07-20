@@ -1,5 +1,11 @@
 # Hosted deploy runbook — first two tenants
 
+> **SUPERSEDED — 2026-07-20.** The active plan is
+> [`ONE-BOX-PLAN-2026-07-20.md`](ONE-BOX-PLAN-2026-07-20.md). This document is kept for its
+> measured findings only; **its stages, gates and stage vocabulary are dead** and any `S`/`M`-stage
+> reference inside it points at work that is no longer scheduled. Findings accumulate; plans are
+> singular.
+
 Written 2026-07-19 on `integration/unify-tracks` (PR #239). Target: the existing Dokploy VPS
 (`ssh capxul-vps`, Swarm active, 1 manager node `srv1626161`, overlay network
 `dokploy-network`, ~21G disk free — watch this, the box is at 79%).
@@ -59,12 +65,11 @@ Plus Turso platform: org, group, and platform token (per-tenant DB creation).
 
 ## Known gaps accepted for tonight
 
-- **Hosted Reviewer cannot run (B3)**: the control plane never writes
-  `runtime.reviewerSandbox` and hard-codes `reviewRepositories: []`
-  (`packages/installation/src/schema.ts:144`); deeper still, the reviewer sandbox shells
-  out to `docker run`, which a tenant container cannot do without a socket mount.
-  Issue filing and the Coder pipeline work; PR review needs a design decision
-  (host-level reviewer service vs. socket-mounted sandbox vs. sandboxless first cut).
+- **Hosted Reviewer cannot run (B3)**: the isolation half is answered — both agent shells
+  now run in per-job E2B sandboxes (ADR 0021), so no tenant container needs a Docker
+  socket, and `E2B_API_KEY` in the runtime env is what turns the Coder and Reviewer on.
+  What remains is that the control plane still hard-codes `reviewRepositories: []`, so a
+  hosted tenant admits no pull request for review.
 - **Recovery lever**: a tenant blocked by the provisioner requires
   `acknowledgeQuiescence`, which no HTTP route exposes yet; recovery is a manual DB/API
   poke. The probe patience fix (C3) makes this much rarer.

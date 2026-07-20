@@ -31,7 +31,6 @@ import { coderBranch, downloadTarball, fetchDefaultBranch, fetchIssue, getBranch
 import { createOpenPullRequestTool } from "./tool.ts";
 import {
   coderOutcome,
-  coderTmpDir,
   gitignoreMatcher,
   parseHashListing,
   renderGraphContext,
@@ -249,11 +248,9 @@ const run = async ({ harness, input, log }: {
     const seedBranchHead = existingBranchHead ?? baseSha;
     const tarball = await downloadTarball(github, repo, seedBranchHead);
     const repoDir = `${workspacesRoot}/issue-${input.issue}`;
-    const tmpDir = coderTmpDir(workspacesRoot);
     const shellIn = async (command: string) => await harness.shell(command, { cwd: repoDir, timeoutMs: SHELL_TIMEOUT_MS });
 
     try {
-      await harness.fs.mkdir(tmpDir, { recursive: true });
       await harness.fs.rm(repoDir, { recursive: true, force: true });
       await harness.fs.mkdir(repoDir, { recursive: true });
       await harness.fs.writeFile(`${repoDir}/.coder-source.tar.gz`, tarball);

@@ -1,5 +1,11 @@
 # Ambient Agent → SaaS: MVP Plan (ratified decisions)
 
+> **SUPERSEDED — 2026-07-20.** The active plan is
+> [`ONE-BOX-PLAN-2026-07-20.md`](ONE-BOX-PLAN-2026-07-20.md). This document is kept for its
+> measured findings only; **its stages, gates and stage vocabulary are dead** and any `S`/`M`-stage
+> reference inside it points at work that is no longer scheduled. Findings accumulate; plans are
+> singular.
+
 **Status:** ratified brainstorm, ready for `/wayfinder`.
 **Date:** 2026-07-18. **Branch:** `saas`. **Control plane:** root `apps/web` + `apps/api`,
 imported from donor commit `00918f0` by PR #189.

@@ -3,12 +3,27 @@ import * as v from "valibot";
 import { GITHUB_REPOSITORY_PATTERN } from "@ambient-agent/engine/github/repository.ts";
 import {
   DEFAULT_AGENT_MODEL_PROFILES,
+  isModelProvider,
   MODEL_THINKING_LEVELS,
+  SUBSCRIPTION_PROVIDER_ID,
+  type AgentModelProfiles,
 } from "@ambient-agent/engine/model/pi-subscription.ts";
 
 const GITHUB_CREDENTIAL_REFERENCE = "github";
 const CHATGPT_OAUTH_CREDENTIAL_REFERENCE = "chatgpt-oauth";
 const LEGACY_PI_AUTH_CREDENTIAL_REFERENCE = "pi-auth";
+/** The one credential reference every API-key provider shares: `credentials/model-api-key.json`. */
+export const MODEL_API_KEY_CREDENTIAL_REFERENCE = "api-key";
+
+/**
+ * Which credential references a provider's config may name (#250). The subscription provider
+ * carries OAuth; every other provider ID is an API key, so the table is a rule, not a list —
+ * adding a provider is config, not code.
+ */
+export const modelCredentialReferences = (provider: string): readonly string[] =>
+  provider === SUBSCRIPTION_PROVIDER_ID
+    ? [CHATGPT_OAUTH_CREDENTIAL_REFERENCE, LEGACY_PI_AUTH_CREDENTIAL_REFERENCE]
+    : [MODEL_API_KEY_CREDENTIAL_REFERENCE];
 
 /** One GitHub App per Specialist identity (#135). The Planner file is also the Speaker's identity. */
 export const GITHUB_APP_REFERENCES = ["coder", "reviewer", "planner"] as const;
@@ -25,11 +40,18 @@ const ManagedChat = v.pipe(
   v.regex(/^[^@\s]+@(g\.us|s\.whatsapp\.net)$/, "Expected a WhatsApp group or direct-chat JID"),
 );
 const RuntimePort = v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(65_535));
-const ContainerImage = v.pipe(NonBlankString, v.regex(/^[^\s]+$/u, "Expected one Docker image reference"));
 const CanaryGroup = v.pipe(ManagedChat, v.regex(/@g\.us$/, "Expected a WhatsApp group JID"));
 const ModelId = v.pipe(
   NonBlankString,
   v.regex(/^[^/\s]+$/, "Expected an OpenAI model ID without a provider prefix"),
+);
+/**
+ * Validated against pi's live provider catalog rather than a hand-kept list: a build that
+ * ships a new provider accepts it with no schema change, and a typo is refused here.
+ */
+const ModelProviderId = v.pipe(
+  NonBlankString,
+  v.check(isModelProvider, "Expected a model provider ID this build of pi ships"),
 );
 const AgentModelProfileSchema = v.strictObject({
   id: ModelId,
@@ -48,16 +70,17 @@ export const ManagedConfigSchema = v.pipe(
     schemaVersion: v.literal(1),
     managedChats: v.pipe(v.array(ManagedChat), v.nonEmpty()),
     model: v.strictObject({
-      provider: v.literal("openai-codex"),
+      // Optional with the historical default, so every existing config parses unchanged.
+      provider: v.optional(ModelProviderId, SUBSCRIPTION_PROVIDER_ID),
       credential: v.union([
         v.literal(CHATGPT_OAUTH_CREDENTIAL_REFERENCE),
         v.literal(LEGACY_PI_AUTH_CREDENTIAL_REFERENCE),
+        v.literal(MODEL_API_KEY_CREDENTIAL_REFERENCE),
       ]),
       profiles: v.optional(AgentModelProfilesSchema, DEFAULT_AGENT_MODEL_PROFILES),
     }),
     runtime: v.optional(v.strictObject({
       port: RuntimePort,
-      reviewerSandbox: v.optional(v.strictObject({ kind: v.literal("docker"), image: ContainerImage })),
     }), { port: 3000 }),
     smoke: v.optional(v.strictObject({ canaryChat: CanaryGroup })),
     github: v.strictObject({
@@ -68,6 +91,13 @@ export const ManagedConfigSchema = v.pipe(
       reviewRepositories: v.optional(v.array(Repository), []),
     }),
   }),
+  // The mismatch gate. `writeManagedConfiguration` re-parses through this schema before it
+  // touches disk, so a provider paired with the wrong credential file is refused at
+  // config-write time and rolled back — never discovered at first inference.
+  v.check(
+    (config) => modelCredentialReferences(config.model.provider).includes(config.model.credential),
+    "The model credential reference must match the configured model provider",
+  ),
   v.check(
     (config) =>
       config.github.allowedRepositories.some(
@@ -125,13 +155,51 @@ export const ChatGptOAuthCredentialSchema = v.looseObject({
   expires: v.number(),
 });
 
-export const createManagedConfig = (managedChats: readonly string[], defaultRepository: string): ManagedConfig => ({
+/**
+ * `credentials/model-api-key.json`, mode 0600 — one file, whatever the provider. Config
+ * references it by name (`model.credential: "api-key"`) and never by value. The file names
+ * the provider it was issued for, so a config that points at a different provider than the
+ * key was pasted for is caught at start rather than at first inference.
+ */
+export const ModelApiKeyCredentialSchema = v.strictObject({
+  schemaVersion: v.literal(1),
+  kind: v.literal("api-key"),
+  provider: ModelProviderId,
+  apiKey: NonBlankString,
+});
+
+export type ModelApiKeyCredential = v.InferOutput<typeof ModelApiKeyCredentialSchema>;
+
+export const modelApiKeyCredentialFrom = (provider: string, apiKey: string): ModelApiKeyCredential =>
+  v.parse(ModelApiKeyCredentialSchema, { schemaVersion: 1, kind: "api-key", provider, apiKey });
+
+/** The model half of a config, chosen at first run. Defaults to the subscription provider. */
+export interface ManagedModelChoice {
+  readonly provider: string;
+  readonly profiles: AgentModelProfiles;
+}
+
+export const subscriptionModelChoice: ManagedModelChoice = {
+  provider: SUBSCRIPTION_PROVIDER_ID,
+  profiles: DEFAULT_AGENT_MODEL_PROFILES,
+};
+
+export const createManagedConfig = (
+  managedChats: readonly string[],
+  defaultRepository: string,
+  model: ManagedModelChoice = subscriptionModelChoice,
+): ManagedConfig => ({
   schemaVersion: 1,
   managedChats: [...managedChats],
   model: {
-    provider: "openai-codex",
-    credential: CHATGPT_OAUTH_CREDENTIAL_REFERENCE,
-    profiles: DEFAULT_AGENT_MODEL_PROFILES,
+    provider: model.provider,
+    // Decision 5: API key or subscription, neither required. The reference follows the
+    // provider so first-run setup cannot mint a config its own credential does not match.
+    credential:
+      model.provider === SUBSCRIPTION_PROVIDER_ID
+        ? CHATGPT_OAUTH_CREDENTIAL_REFERENCE
+        : MODEL_API_KEY_CREDENTIAL_REFERENCE,
+    profiles: model.profiles,
   },
   runtime: { port: 3000 },
   github: {

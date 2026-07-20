@@ -12,12 +12,11 @@ import { configureCoderRuntime } from "@ambient-agent/agents/capabilities/coder/
 import { configureReviewerRuntime } from "@ambient-agent/agents/capabilities/reviewer/runtime.ts";
 import { reviewerSlug, type ReviewerGitHub } from "@ambient-agent/agents/capabilities/reviewer/github.ts";
 import { reviewer } from "@ambient-agent/agents/capabilities/reviewer/workflow.ts";
-import { coderTmpDir } from "@ambient-agent/agents/capabilities/coder/workspace.ts";
 import type { CoderGitHub } from "@ambient-agent/agents/capabilities/coder/workflow.ts";
 import { githubAppClient } from "@ambient-agent/installation/github-app-client.ts";
 import { readManagedGitHubAppCredential } from "@ambient-agent/installation/configuration.ts";
+import { E2B_WORKSPACES_ROOT } from "@ambient-agent/installation/e2b-sandbox.ts";
 import { createOctokitIssueRepository } from "@ambient-agent/installation/github-issue-repository.ts";
-import { local } from "@flue/runtime/node";
 import { invoke } from "@flue/runtime";
 import {
   getWhatsAppRuntimeStatus,
@@ -36,7 +35,9 @@ import { bridgeHealth } from "@ambient-agent/installation/bridge-contract.ts";
 import { runtimeInstallationId } from "@ambient-agent/installation/runtime-health.ts";
 import {
   configureAgentModelProfiles,
+  connectPiApiKeyProvider,
   connectPiChatGptSubscription,
+  SUBSCRIPTION_PROVIDER_ID,
 } from "@ambient-agent/engine/model/pi-subscription.ts";
 
 /**
@@ -44,7 +45,14 @@ import {
  * The coder GitHub App does not exist on every install yet; a missing credential file is
  * expected, so we skip configuration rather than fail the whole runtime's boot.
  */
-const configureCoderRuntimeIfProvisioned = async (paths: ManagedRuntimeDependencies["paths"]): Promise<void> => {
+const configureCoderRuntimeIfProvisioned = async (
+  paths: ManagedRuntimeDependencies["paths"],
+  sandbox: ManagedRuntimeDependencies["agentSandbox"],
+): Promise<void> => {
+  if (sandbox === undefined) {
+    console.warn("[coder] no isolated sandbox binding; start_coder_job is mounted but unprovisioned");
+    return;
+  }
   let credential: Awaited<ReturnType<typeof readManagedGitHubAppCredential>>;
   try {
     credential = await readManagedGitHubAppCredential(paths.githubAppCredentials.coder);
@@ -52,19 +60,16 @@ const configureCoderRuntimeIfProvisioned = async (paths: ManagedRuntimeDependenc
     console.warn("[coder] no coder App credential; start_coder_job is mounted but unprovisioned");
     return;
   }
-  // Workspace-local TMPDIR (#172): the model's shell tools run the repo's tests, and a
-  // hardened host may mount /tmp noexec — point TMPDIR at the workspaces tree so an install
-  // or test that shells a temp binary still runs. The conductor `mkdir`s it per run.
   configureCoderRuntime({
     github: githubAppClient(credential) as unknown as CoderGitHub,
-    sandbox: local({ env: { TMPDIR: coderTmpDir(paths.workspaces) } }),
-    workspacesRoot: paths.workspaces,
+    sandbox,
+    workspacesRoot: E2B_WORKSPACES_ROOT,
   });
 };
 
 const configureReviewerRuntimeIfProvisioned = async (
   paths: ManagedRuntimeDependencies["paths"],
-  sandbox: ManagedRuntimeDependencies["reviewerSandbox"],
+  sandbox: ManagedRuntimeDependencies["agentSandbox"],
 ): Promise<{ github: ReviewerGitHub; appSlug: string } | undefined> => {
   if (sandbox === undefined) {
     console.warn("[reviewer] no isolated sandbox binding; automatic PR review is disabled");
@@ -77,7 +82,7 @@ const configureReviewerRuntimeIfProvisioned = async (
     configureReviewerRuntime({
       github,
       sandbox,
-      workspacesRoot: paths.workspaces,
+      workspacesRoot: E2B_WORKSPACES_ROOT,
     });
     return { github, appSlug };
   } catch {
@@ -93,21 +98,25 @@ export const createAmbientAgentApp = async ({
   deployment,
   githubCredential,
   paths,
-  reviewerSandbox,
+  agentSandbox,
+  modelApiKey,
 }: ManagedRuntimeDependencies): Promise<Hono> => {
-  configureAgentModelProfiles(configuration.model.profiles);
-  const subscription = await connectPiChatGptSubscription({
-    authentication,
-    profiles: configuration.model.profiles,
-  });
+  const { provider, profiles } = configuration.model;
+  configureAgentModelProfiles(profiles, provider);
+  // An API-key provider needs no api registration: every `api` pi's catalog names is already
+  // built in, so the key is the whole binding.
+  const subscription =
+    provider === SUBSCRIPTION_PROVIDER_ID
+      ? await connectPiChatGptSubscription({ authentication, profiles })
+      : await connectPiApiKeyProvider({ provider, apiKey: modelApiKey ?? "", profiles });
   const issueOperations = createIssueOperationStore(paths.applicationDatabase);
   const runtimeId = bridge?.runtimeId ?? runtimeInstallationId(githubCredential.webhookSecret);
-  // The Coder Specialist (#158) runs under its own App identity in a config-bound full
-  // sandbox — `local()` on the single-owner VPS (host-trusted), a remote container in
-  // SaaS. The coder App may not be provisioned yet; if its credential is absent, the
-  // start_coder_job tool stays mounted but a launch fails loudly rather than blocking boot.
-  await configureCoderRuntimeIfProvisioned(paths);
-  const reviewerProvisioned = await configureReviewerRuntimeIfProvisioned(paths, reviewerSandbox);
+  // The Coder Specialist (#158) runs under its own App identity in the same config-bound
+  // per-job E2B sandbox as the Reviewer (ADR 0021) — never a host-local shell. The coder
+  // App or the sandbox may not be provisioned yet; if either is absent, the start_coder_job
+  // tool stays mounted but a launch fails loudly rather than blocking boot.
+  await configureCoderRuntimeIfProvisioned(paths, agentSandbox);
+  const reviewerProvisioned = await configureReviewerRuntimeIfProvisioned(paths, agentSandbox);
   let whatsappControl: WhatsAppRuntimeControl | undefined;
   // A SpeakerInput is a SpeakerInput, so the funnel delivers a specialist result to both
   // Speaker and Scribe. Held out here so the boot sweep can reuse it after the port is wired.
