@@ -6,6 +6,7 @@ import {
   isModelProvider,
   MODEL_THINKING_LEVELS,
   SUBSCRIPTION_PROVIDER_ID,
+  type AgentModelProfiles,
 } from "@ambient-agent/engine/model/pi-subscription.ts";
 
 const GITHUB_CREDENTIAL_REFERENCE = "github";
@@ -172,13 +173,33 @@ export type ModelApiKeyCredential = v.InferOutput<typeof ModelApiKeyCredentialSc
 export const modelApiKeyCredentialFrom = (provider: string, apiKey: string): ModelApiKeyCredential =>
   v.parse(ModelApiKeyCredentialSchema, { schemaVersion: 1, kind: "api-key", provider, apiKey });
 
-export const createManagedConfig = (managedChats: readonly string[], defaultRepository: string): ManagedConfig => ({
+/** The model half of a config, chosen at first run. Defaults to the subscription provider. */
+export interface ManagedModelChoice {
+  readonly provider: string;
+  readonly profiles: AgentModelProfiles;
+}
+
+export const subscriptionModelChoice: ManagedModelChoice = {
+  provider: SUBSCRIPTION_PROVIDER_ID,
+  profiles: DEFAULT_AGENT_MODEL_PROFILES,
+};
+
+export const createManagedConfig = (
+  managedChats: readonly string[],
+  defaultRepository: string,
+  model: ManagedModelChoice = subscriptionModelChoice,
+): ManagedConfig => ({
   schemaVersion: 1,
   managedChats: [...managedChats],
   model: {
-    provider: SUBSCRIPTION_PROVIDER_ID,
-    credential: CHATGPT_OAUTH_CREDENTIAL_REFERENCE,
-    profiles: DEFAULT_AGENT_MODEL_PROFILES,
+    provider: model.provider,
+    // Decision 5: API key or subscription, neither required. The reference follows the
+    // provider so first-run setup cannot mint a config its own credential does not match.
+    credential:
+      model.provider === SUBSCRIPTION_PROVIDER_ID
+        ? CHATGPT_OAUTH_CREDENTIAL_REFERENCE
+        : MODEL_API_KEY_CREDENTIAL_REFERENCE,
+    profiles: model.profiles,
   },
   runtime: { port: 3000 },
   github: {

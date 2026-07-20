@@ -28,6 +28,7 @@ import {
 } from "@ambient-agent/installation/migration.ts";
 import {
   modelApiKeyCredentialFrom,
+  subscriptionModelChoice,
   GITHUB_APP_REFERENCES,
   type GitHubAppReference,
   type GitHubAppTriple,
@@ -55,11 +56,8 @@ import {
   type ChatGptOAuthAdapter,
   type ChatGptAuthentication,
 } from "@ambient-agent/engine/model/chatgpt-authentication.ts";
-import {
-  AGENT_MODEL_ROLES,
-  type ChatGptReadinessReceipt,
-} from "@ambient-agent/engine/model/pi-subscription.ts";
-import { resolveModelSelection, type ModelSelectionOptions } from "./model-configuration.ts";
+import type { ChatGptReadinessReceipt } from "@ambient-agent/engine/model/pi-subscription.ts";
+import { modelSelectionFrom, resolveModelSelection } from "./model-configuration.ts";
 import {
   discoverOriginRepository,
   normalizeGitHubRepository,
@@ -260,8 +258,22 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .option("--github-apps-file <path>", "read the three GitHub App triples from a private JSON file")
     .option("--whatsapp-store <path>", "copy a stopped local WhatsApp store into setup")
     .option("--authorize", "allow explicit headless ChatGPT device authorization")
+    .option("--model-provider <id>", "model provider ID; the API key is pasted at the prompt, never a flag")
+    .option("--model <id>", "model ID for every agent role")
+    .option("--model-speaker <id>", "model ID for the Speaker (a cheap model is fine here)")
+    .option("--model-scribe <id>", "model ID for the Scribe")
+    .option("--model-planner <id>", "model ID for the Planner")
+    .option("--model-coder <id>", "model ID for the Coder")
+    .option("--model-verifier <id>", "model ID for the Verifier")
     .action(async (options) => {
       const global = program.opts();
+      // Resolved before anything is created, so a bad provider or model ID fails before the
+      // operator sits through pairing. Omitting --model-provider keeps the subscription
+      // default and the ChatGPT device flow — neither mode is required.
+      const modelChoice = resolveModelSelection(
+        { ...subscriptionModelChoice, credential: "chatgpt-oauth" },
+        modelSelectionFrom(options),
+      );
       const current = await inspectManagedData({ dataDirectory: global.dataDir });
       output.stdout(`Data directory: ${current.dataDirectory}\n`);
       if (current.state === "ready") {
@@ -286,6 +298,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           dataDirectory: global.dataDir,
           interactive,
           allowFreshChatGptAuthentication: options.authorize ?? false,
+          modelChoice: { provider: modelChoice.provider, profiles: modelChoice.profiles },
           modelCredentialStorage: tenantDatabase === undefined ? "managed-file" : "tenant-database",
           ...(options.whatsappStore === undefined ? {} : { whatsappStoreSource: resolve(options.whatsappStore) }),
           services: firstRunServices,
@@ -363,16 +376,6 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
       if (rotateReference !== undefined && !GITHUB_APP_REFERENCES.includes(rotateReference)) {
         throw new Error("The --github-app reference must be one of coder, reviewer, or planner.");
       }
-      const modelSelection: ModelSelectionOptions = {
-        ...(options.modelProvider === undefined ? {} : { provider: options.modelProvider as string }),
-        ...(options.model === undefined ? {} : { model: options.model as string }),
-        roleModels: Object.fromEntries(
-          AGENT_MODEL_ROLES.flatMap((role) => {
-            const value = (options as Record<string, unknown>)[`model${role[0]!.toUpperCase()}${role.slice(1)}`];
-            return value === undefined ? [] : [[role, value as string]];
-          }),
-        ),
-      };
       // One-time token->App cutover: a lingering personal-token install (config + credential) is
       // walked to three Apps *before* the readiness gate, which would otherwise reject the
       // pre-cutover config (kind "personal-token") as corrupt and strand the operator.
@@ -477,7 +480,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
       // the operator has confirmed. The key itself is prompted, never a flag and never an
       // environment variable; it is written to credentials/model-api-key.json at mode 0600
       // and referenced from config by name only.
-      const model = resolveModelSelection(currentConfig.model, modelSelection);
+      const model = resolveModelSelection(currentConfig.model, modelSelectionFrom(options));
       let modelCredential: ReturnType<typeof modelApiKeyCredentialFrom> | undefined;
       if (model.needsApiKey) {
         if (!interactive || setupPrompts.modelApiKey === undefined) {

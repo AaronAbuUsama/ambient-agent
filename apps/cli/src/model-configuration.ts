@@ -22,6 +22,18 @@ export interface ModelSelectionOptions {
   readonly roleModels?: Partial<Record<AgentModelRole, string>>;
 }
 
+/** Read the `--model*` flags off a Commander options object, which camel-cases them. */
+export const modelSelectionFrom = (options: Record<string, unknown>): ModelSelectionOptions => ({
+  ...(options.modelProvider === undefined ? {} : { provider: String(options.modelProvider) }),
+  ...(options.model === undefined ? {} : { model: String(options.model) }),
+  roleModels: Object.fromEntries(
+    AGENT_MODEL_ROLES.flatMap((role) => {
+      const value = options[`model${role[0]!.toUpperCase()}${role.slice(1)}`];
+      return value === undefined ? [] : [[role, String(value)]];
+    }),
+  ),
+});
+
 export interface ResolvedModelSelection {
   readonly provider: string;
   readonly credential: string;

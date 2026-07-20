@@ -1,4 +1,5 @@
 import {
+  completeSimple,
   openAICodexResponsesApi,
   type Api,
   type Model,
@@ -126,7 +127,7 @@ export interface ChatGptReadinessReceipt {
   readonly model: string;
   readonly models: readonly string[];
   readonly request: "complete" | "failed";
-  readonly reason?: "cancelled" | "timeout" | "credential-rejected" | "request-failed";
+  readonly reason?: "cancelled" | "timeout" | "credential-rejected" | "rate-limited" | "request-failed";
 }
 
 export interface ChatGptReadinessCheckOptions {
@@ -148,6 +149,40 @@ export class ChatGptReadinessError extends Error {
     super(message, options);
   }
 }
+
+const CREDENTIAL_REJECTED = /\b(401|403|unauthori[sz]ed|forbidden|invalid[_ -]?token|revoked)\b/iu;
+const RATE_LIMITED = /\b(429|rate.?limit(ed|s)?|too many requests|quota)\b/iu;
+
+/**
+ * Classify a failed model request (#246). A 429 previously fell through to `request-failed`,
+ * making a rate limit indistinguishable from a network blip, a 500 or a DNS failure — so a
+ * live gate that merely hit the rate limit read as a regression. A rate-limited run is
+ * INCONCLUSIVE and re-runnable: never PASS, never FAIL.
+ *
+ * Credential rejection is checked first: a 401 that also happens to mention a quota is still
+ * a credential problem, and retrying it is pointless.
+ */
+export const readinessErrorFor = (message: string, options?: ErrorOptions): ChatGptReadinessError => {
+  if (CREDENTIAL_REJECTED.test(message)) {
+    return new ChatGptReadinessError(
+      "credential-rejected",
+      "ChatGPT rejected the managed credential during the live readiness check.",
+      options,
+    );
+  }
+  if (RATE_LIMITED.test(message)) {
+    return new ChatGptReadinessError(
+      "rate-limited",
+      "The model provider rate-limited the live readiness request; the result is inconclusive, not a regression. Re-run it.",
+      options,
+    );
+  }
+  return new ChatGptReadinessError(
+    "request-failed",
+    "The ChatGPT live readiness request failed; retry when the service is reachable.",
+    options,
+  );
+};
 
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
@@ -289,17 +324,7 @@ const requestChatGptReadiness = async (
       timeout ? "The ChatGPT readiness request timed out." : "The ChatGPT readiness request was cancelled.",
     );
   }
-  if (result.stopReason === "error") {
-    const rejected = /\b(401|403|unauthori[sz]ed|forbidden|invalid[_ -]?token|revoked)\b/iu.test(
-      result.errorMessage ?? "",
-    );
-    throw new ChatGptReadinessError(
-      rejected ? "credential-rejected" : "request-failed",
-      rejected
-        ? "ChatGPT rejected the managed credential during the live readiness check."
-        : "The ChatGPT live readiness request failed; retry when the service is reachable.",
-    );
-  }
+  if (result.stopReason === "error") throw readinessErrorFor(result.errorMessage ?? "");
 };
 
 const readinessFailure = (cause: unknown, signal?: AbortSignal): ChatGptReadinessError => {
@@ -312,11 +337,7 @@ const readinessFailure = (cause: unknown, signal?: AbortSignal): ChatGptReadines
       { cause },
     );
   }
-  return new ChatGptReadinessError(
-    "request-failed",
-    "The ChatGPT live readiness request failed; retry when the service is reachable.",
-    { cause },
-  );
+  return readinessErrorFor(cause instanceof Error ? cause.message : String(cause), { cause });
 };
 
 export const runChatGptReadinessCheck = async (
@@ -365,6 +386,58 @@ export async function connectPiChatGptSubscription(
     provider: PROVIDER_ID,
   };
 }
+
+export interface ApiKeyReadinessReceipt {
+  readonly model: string;
+  readonly request: "complete" | "failed";
+  readonly reason?: NonNullable<ChatGptReadinessReceipt["reason"]>;
+  /** The reply text. Non-empty is the only evidence that inference happened at all. */
+  readonly text: string;
+  readonly elapsedMs: number;
+}
+
+/**
+ * One real request through an API-key provider, for the pre-flight that de-risks a deploy.
+ *
+ * It deliberately reports the reply *text*: a `complete` request only means the stream ended
+ * without an error, and an empty response satisfies that. This makes no claim about any
+ * transport — it proves inference, nothing else.
+ */
+export const runApiKeyReadinessCheck = async (options: {
+  readonly provider: ModelProvider;
+  readonly apiKey: string;
+  readonly modelId: string;
+  readonly prompt?: string;
+  readonly maxTokens?: number;
+  readonly signal?: AbortSignal;
+}): Promise<ApiKeyReadinessReceipt> => {
+  const model = getBuiltinModels(options.provider as KnownProvider).find(({ id }) => id === options.modelId);
+  if (model === undefined) {
+    throw new Error(`${options.provider} has no model ${options.modelId} in this build's catalog.`);
+  }
+  const started = Date.now();
+  const specifier = modelSpecifier(options.provider, options.modelId);
+  try {
+    const result = await completeSimple(
+      model,
+      { messages: [{ role: "user", content: options.prompt ?? "Reply with READY.", timestamp: started }] },
+      { apiKey: options.apiKey, maxTokens: options.maxTokens ?? 16, ...(options.signal ? { signal: options.signal } : {}) },
+    );
+    if (result.stopReason === "error" || result.stopReason === "aborted") {
+      const failure = readinessErrorFor(result.errorMessage ?? String(result.stopReason));
+      return { model: specifier, request: "failed", reason: failure.code, text: "", elapsedMs: Date.now() - started };
+    }
+    const text = result.content
+      .filter((part): part is { type: "text"; text: string } => part.type === "text")
+      .map((part) => part.text)
+      .join("")
+      .trim();
+    return { model: specifier, request: "complete", text, elapsedMs: Date.now() - started };
+  } catch (cause) {
+    const failure = readinessFailure(cause, options.signal);
+    return { model: specifier, request: "failed", reason: failure.code, text: "", elapsedMs: Date.now() - started };
+  }
+};
 
 export interface PiApiKeyConnectorOptions {
   /** Any pi provider ID other than the subscription one. */

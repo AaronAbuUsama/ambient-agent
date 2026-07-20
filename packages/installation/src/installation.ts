@@ -13,11 +13,14 @@ import {
   GITHUB_APP_REFERENCES,
   GitHubAppCredentialSchema,
   ManagedConfigSchema,
+  MODEL_API_KEY_CREDENTIAL_REFERENCE,
+  modelApiKeyCredentialFrom,
   modelCredentialReferences,
   type GitHubAppCredential,
   type GitHubAppReference,
   type GitHubAppTriples,
   type ManagedConfig,
+  type ManagedModelChoice,
 } from "./schema.ts";
 import { errorCode } from "@ambient-agent/engine/shared/errors.ts";
 import { pathExists as exists } from "./files.ts";
@@ -109,6 +112,12 @@ export interface PreparedManagedData {
   readonly defaultRepository: string;
   /** One pasted triple per GitHub App identity (#135); guided-paste setup collects all three. */
   readonly githubApps: GitHubAppTriples;
+  /**
+   * The model provider chosen at first run, and the API key when it is not the subscription
+   * provider. Absent means the subscription provider with packaged profiles (decision 5:
+   * API key or subscription, neither required).
+   */
+  readonly model?: ManagedModelChoice & { readonly apiKey?: string };
 }
 
 export interface InstallPreparedManagedDataInput extends ManagedPathEnvironment {
@@ -696,7 +705,7 @@ export const installPreparedManagedData = async (
     const prepared = await input.prepare(stagingPaths);
     const configResult = v.safeParse(
       ManagedConfigSchema,
-      createManagedConfig(prepared.managedChats, prepared.defaultRepository),
+      createManagedConfig(prepared.managedChats, prepared.defaultRepository, prepared.model),
     );
     if (!configResult.success) throw new Error("Setup values do not form a valid Ambient Agent configuration.");
     const githubApps = {} as Record<GitHubAppReference, GitHubAppCredential>;
@@ -707,13 +716,27 @@ export const installPreparedManagedData = async (
       }
       githubApps[reference] = result.output;
     }
+    // An API-key install stages its own credential file here; the subscription install stages
+    // none, because the device flow already wrote one.
+    if (prepared.model?.apiKey !== undefined) {
+      await writeSecureFile(
+        stagingPaths.modelApiKeyCredential,
+        json(modelApiKeyCredentialFrom(prepared.model.provider, prepared.model.apiKey)),
+      );
+    }
     await writePreparedConfiguration(stagingPaths, configResult.output, githubApps);
     const stagingInspection = await inspectManagedData({ dataDirectory: stagingRoot });
-    const chatGptStaged =
-      (await exists(stagingPaths.chatGptOAuthCredential)) || (await exists(stagingPaths.legacyPiAuthCredential));
+    // Decision 5: model auth is an API key OR a subscription, and neither is required. The
+    // staged credential must be the one the config references — checking for a ChatGPT file
+    // unconditionally is what made an API-key-only install impossible to create.
+    const modelCredentialStaged =
+      configResult.output.model.credential === MODEL_API_KEY_CREDENTIAL_REFERENCE
+        ? await exists(stagingPaths.modelApiKeyCredential)
+        : (await exists(stagingPaths.chatGptOAuthCredential)) ||
+          (await exists(stagingPaths.legacyPiAuthCredential));
     // Credential files are component-owned and never fail an existing installation,
     // but first-run setup must still stage a complete tree before promotion.
-    const modelCredentialReady = input.modelCredentialStorage === "tenant-database" || chatGptStaged;
+    const modelCredentialReady = input.modelCredentialStorage === "tenant-database" || modelCredentialStaged;
     if (stagingInspection.state !== "ready" || !modelCredentialReady) {
       throw new Error("Managed staging verification failed; setup did not commit any files.");
     }
