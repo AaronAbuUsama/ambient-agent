@@ -33,6 +33,7 @@
     "./model/pi-subscription.ts": "./src/model/pi-subscription.ts",
     "./shared/errors.ts": "./src/shared/errors.ts",
     "./shared/flue-global.ts": "./src/shared/flue-global.ts",
+    "./shared/slugify.ts": "./src/shared/slugify.ts",
     "./shared/whatsapp-jid.ts": "./src/shared/whatsapp-jid.ts"
   },
   "dependencies": {
