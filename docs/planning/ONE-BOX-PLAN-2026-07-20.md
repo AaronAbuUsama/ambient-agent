@@ -58,9 +58,9 @@ Confirmed directly, 2026-07-19 → 2026-07-20:
    (`AMBIENT_AGENT_LIVE_*`) stay env vars by design.
 3. **The instrument lives on capxul-vps.** The code-factory rig keeps its proven webhook path
    undisturbed; pairing happens once, where the session will live.
-4. **One sandbox**, shared, selectable `local | e2b`. Local accepted for **attended**
-   single-operator use (exposure documented in #251). ⚠️ **Unattended operation is NOT yet
-   authorized — see Open decisions.**
+4. **One sandbox**, shared, selectable `local | e2b`. Local accepted for single-operator use
+   **including unattended operation** — authorized 2026-07-20, see Resolved decisions D-1
+   (exposure documented in #251).
 5. **Model auth is API key OR subscription — neither required.** Currently an OpenAI API key with
    limited funds; mid-tier models (`gpt-5.4-mini` / `gpt-5.1-codex-mini` class) are capable of
    small diffs, PRs and reviews — do not scope down on the assumption they are not.
@@ -353,17 +353,31 @@ high-value thing after the milestone; not on the critical path.
 
 ---
 
-# Open decisions — owner only
+# Resolved decisions
 
-**D-1 · Unattended local-sandbox operation.** Decision 4 accepted `local()` for **attended**
-single-operator use. But T2 installs a systemd unit with `Restart=always` surviving reboot — so the
-Coder answers chat tasks 24/7 with nobody at a terminal, running model-directed bash as the same
-uid in the same mount namespace as `~/.ambient-agent/credentials/` (three GitHub App private keys,
-the model token) and `whatsapp/` (session = account takeover). That is a widening of what was
-authorized, and **it must come from Aaron directly** — an agent writing "the owner accepted this"
-is not authorization. Options: accept explicitly until the E2B key arrives; or restrict the unit
-(no auto-restart / Coder disabled) until E2B; or move credentials out of the shell's namespace
-first.
+**D-1 · Unattended local-sandbox operation — AUTHORIZED by Aaron directly, 2026-07-20.**
+
+Decision 4 originally covered *attended* single-operator use. T2 installs a systemd unit with
+`Restart=always` surviving reboot, so the Coder answers chat tasks with nobody at a terminal,
+running model-directed bash as the same uid in the same mount namespace as
+`~/.ambient-agent/credentials/` (three GitHub App private keys, the model token) and `whatsapp/`
+(session = account takeover). `cat credentials/github-coder.json` is a successful command, not an
+exploit; `LocalSandboxOptions.env` restricts environment inheritance only and does nothing about
+the filesystem.
+
+Aaron authorized this explicitly in chat on 2026-07-20, in response to a question that named the
+exposure and offered three options (accept until E2B / restrict the unit / isolate credentials
+first). **Scope of the authorization: unattended `local` sandbox operation, single operator, on
+capxul-vps, until the E2B key arrives.** Flipping to `e2b` is a one-line config change
+(`runtime.sandbox.kind`), which is why the selector was built as a choice rather than a swap.
+
+**This authorization does not extend to:** a second operator or any additional party with chat
+access; a second company's chat (already blocked on #249's routing leak); or a publicly reachable
+instance. Any of those re-opens the decision.
+
+> Recorded here rather than inferred from a document. An agent writing "the owner confirmed this"
+> is what produced this repo's worst regression; this line exists because Aaron said it in chat, on
+> the date shown, to a question that spelled out what he was accepting.
 
 # Known risks
 
