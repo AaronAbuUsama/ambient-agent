@@ -18,8 +18,8 @@ Two things are deliberately absent:
   that injected the inbound message and captured the outbound reply was built and then
   **rejected and removed** — it was real-model-but-fake-world, which is never admissible as a
   gate. Reverted in `e235981`.
-- ❌ **No live model call.** The pre-flight below is gated behind an env var and has not been
-  run; it needs the owner's key.
+- ✅ **The pre-flight has now been run** with the owner's key — see below. It is a real model
+  call and makes **no transport claim**. It is not a gate.
 
 ## What shipped
 
@@ -166,7 +166,7 @@ The rate-limited message says **inconclusive** explicitly, and credential reject
 first so a 401 that mentions a quota is not retried forever. A `rate-limited` reason does not
 mark the credential unusable in the doctor, where `credential-rejected` does.
 
-## Pre-flight — owner runs this, one command, fractions of a cent
+## Pre-flight — RUN, 2026-07-20
 
 **Not a gate.** One real model call through the production API-key binding, claiming nothing
 about any transport. It de-risks the T2 deploy by flushing out provider bugs before we debug
@@ -186,10 +186,36 @@ asserts:
   ended without an error, and an empty response satisfies it.
 - a `rate-limited` reason is reported as **INCONCLUSIVE**, not a failure.
 
-It prints `model=<provider>/<id> chars=<n> elapsedMs=<n>`.
+### Result
 
-Verified non-vacuous: run with a deliberately invalid key, it fails with
-`expected 'failed' to be 'complete'` after reaching the provider.
+```text
+pre-flight: model=openai/gpt-5.4-mini chars=5 elapsedMs=1087
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 14 skipped (15)
+```
+
+| Measure | Value |
+|---|---|
+| Provider | `openai`, bound by `registerProvider("openai", {apiKey})` — asserted |
+| Model | `gpt-5.4-mini` |
+| Request | `complete` |
+| Reply text | **non-empty**, 5 characters |
+| Wall time | 1087 ms |
+| Requests | 1, `maxTokens: 16` |
+| Rate limited | no |
+
+The key was read from a gitignored `.env` at the repo root and never printed. Cost is below
+the resolution worth recording: one request capped at 16 output tokens on a mini-class model.
+
+**Verified non-vacuous.** The same test run with a deliberately invalid key fails with
+`expected 'failed' to be 'complete'` after reaching the provider — it is not passing on a
+skipped or short-circuited path.
+
+**What this proves:** the provider binding works. A real request through
+`connectPiApiKeyProvider` reached OpenAI and returned generated text.
+**What it does not prove:** ❌ anything about WhatsApp, the managed chat, the Speaker, or any
+transport. Those are T2.
 
 Overrides: `AMBIENT_AGENT_LIVE_PROVIDER` (default `openai`),
 `AMBIENT_AGENT_LIVE_MODEL_ID` (default `gpt-5.4-mini`).
@@ -213,9 +239,9 @@ config, not test harnesses.
 | Mismatch refused at config-write time | write refused, both files unchanged | ✅ |
 | 429 → `rate-limited`; network failure → `request-failed` | classifier table | ✅ |
 | Codex subscription path untouched | no diff to the connector or the Luna rewrite | ✅ |
+| A real request through the binding returns generated text | pre-flight: `openai/gpt-5.4-mini`, 5 chars, 1087 ms | ✅ |
 | Model auth actually works end to end | — | ❌ T2's first reply |
 | WhatsApp round trip | — | ❌ not attempted; #253 |
-| Live model call | — | ❌ pre-flight not yet run |
 
 ## Rollback
 
