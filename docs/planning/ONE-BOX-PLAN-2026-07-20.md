@@ -20,7 +20,8 @@ Confirmed directly, 2026-07-19 → 2026-07-20:
 3. **Deploy on the VPS**, not the laptop. Handoff to an agent working on the box.
 4. **One sandbox**, shared by Coder and Reviewer.
 5. **Local sandbox is acceptable.** Single operator, nobody else in the group, far from SaaS.
-6. **Anthropic for inference** — there are no OpenAI credits. Minimum viable, no over-engineering.
+6. **Inference comes from an API key** — no subscription is available. The owner has an OpenAI key
+   with **limited funds**, so a cheap model for now and not production-ready. Minimum viable.
 7. **Issues must work.** Filing a GitHub issue from chat is part of "working".
 
 ## What is actually true today — measured, not assumed
@@ -92,6 +93,32 @@ and settle silent. Assert a non-zero exit, not a log line.
 **Rollback:** `config --model-provider openai-codex`. The schema change is additive; existing configs
 parse unchanged.
 
+## The cheap-model trap — read before spending anything
+
+Funds are limited, so gates will run on a nano-class model. That creates a specific and expensive
+failure mode:
+
+**A cheap model failing at a task is indistinguishable from the code being broken.** The Coder green
+path has never once worked. If a nano model is pointed at it and the run fails, we cannot tell
+whether the plumbing is broken or the model simply could not write the code — and the tempting
+conclusion is the wrong one.
+
+**Therefore every gate splits in two:**
+
+| | Asserts | Cheap model? |
+|---|---|---|
+| **Plumbing** | the request left, the response parsed, a tool was invoked, a sandbox `exec` succeeded, a branch was created, a PR opened, the run settled | **Yes — run now** |
+| **Capability** | the diff is correct, the verifier returns `PASS` | **No — deferred until funds allow** |
+
+The thing believed to be broken (#172: `/tmp` mounted `noexec`, `EACCES` when the model spawns a
+binary) is **a filesystem fact, not a model capability**. A plumbing gate proves or refutes it for
+near-zero spend. That is the highest-value measurement available right now, and it is cheap.
+
+**Per-role profiles are the cost lever.** `AgentModelProfilesSchema` already supports a model per
+role (`resolveAgentModelProfile`, `pi-subscription.ts:46-49`). Put the Speaker on nano — chat
+replies are well within it — and leave the Coder role pointed at something capable rather than
+spending funds proving a cheap model cannot write code.
+
 ## M2 · One sandbox, selectable, config-driven
 
 Unblocks the Coder and Reviewer without E2B. Owner has accepted the local-shell exposure (single
@@ -118,12 +145,21 @@ always available. That closes the boot-green-with-specialists-absent hole for fr
 **Retain #172's fix:** `TMPDIR` must point inside the workspace, not `/tmp` (which is `noexec` on the
 rig). `e2b-sandbox.ts:146,214` already does this for E2B; the local branch needs the same.
 
-**Gate:** from the managed chat, ask for a code change; a real non-draft PR appears with a non-empty
-diff, authored by `ambient-coder[bot]`, produced in a local sandbox with no E2B key present.
-**Negative:** assert the verifier verdict is `PASS` **and** the diff is non-empty — a legitimate
-`SKIP` also yields a non-draft PR, so draft-ness alone proves nothing. And assert the process does
-**not** boot green with the sandbox misconfigured.
-**Receipt:** `docs/proof/coder-green-local.md`. **This is the thing that has never worked.**
+**Gate — split (see the cheap-model trap above).**
+
+*M2a · plumbing, runs now on a cheap model.* From the managed chat, ask for a code change and assert
+the **mechanics**: `start_coder_job` is invoked and a run lands in the ledger
+(`capabilities/delegation/ledger.ts:49`); a sandbox session is created and `exec` **succeeds inside
+it** — this is the model-independent #172 proof; the tarball unpacks; a branch is created; a PR is
+opened by `ambient-coder[bot]`; the run settles rather than hanging.
+*Negative:* the process must not boot green with the sandbox misconfigured, and a sandbox `exec`
+failure must surface as a **failed run**, not a silent skip.
+
+*M2b · capability, deferred until a capable model is affordable.* `verdict === "PASS"` **and** a
+non-empty diff. Draft-ness alone proves nothing — a legitimate `SKIP` also yields a non-draft PR.
+
+**Receipt:** `docs/proof/coder-green-local.md`. **M2a is the thing that has never worked, and it is
+cheap to settle.**
 
 ## M3 · Env vars → CLI config
 
