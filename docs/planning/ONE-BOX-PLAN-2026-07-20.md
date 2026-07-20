@@ -72,16 +72,21 @@ chat" is unrunnable until M4. Every ticket therefore has a proof the agent can p
 | Tier | Who | Needs |
 |---|---|---|
 | **A** | the agent | nothing — typecheck, tests, config round-trip, the negative assertions |
-| **B** | the owner, one command | an API key (and for M2, a throwaway repo). **No WhatsApp, no install.** |
-| **C** | deferred to M4 | the WhatsApp round trip — needs the one-time pairing ceremony |
+| **B** | the owner, one command | an API key (and for M2, a throwaway repo). A real model call with **no WhatsApp claim attached** — a pre-flight, not the gate. |
+| **C** | the gate | a machine with an **already-paired** session (the `code-factory` rig) |
 
 Tier B follows the gated live-test pattern already in the tree
 (`tests/speaker/pi-subscription.test.ts:320-341`, `tests/speaker/issue-management.live.test.ts`),
 which needs only a data directory and a credential. `AMBIENT_AGENT_LIVE_*` stays an environment
 variable by design — the no-env-vars rule governs **runtime config**, not test harnesses.
 
-**A green Tier B is the signal to start the next ticket.** The pairing ceremony happens once, in M4,
-where it belongs.
+**Tier B is a pre-flight, not a gate.** It flushes out provider bugs cheaply before a deploy; it
+proves a real model call and claims nothing about the transport.
+
+**Pairing is a declared prerequisite of every gate that involves WhatsApp** — a one-time ceremony on
+a machine that keeps its session. It is never part of a gate and is **never faked**. A rig that
+injects the inbound message and captures the outbound reply is real-model-but-fake-world, exactly
+what `tests/fixtures/speaker` is, and is inadmissible.
 
 ## M1 · Make the model provider an API-key choice
 
