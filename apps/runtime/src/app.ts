@@ -14,8 +14,7 @@ import { reviewerSlug, type ReviewerGitHub } from "@ambient-agent/agents/capabil
 import { reviewer } from "@ambient-agent/agents/capabilities/reviewer/workflow.ts";
 import type { CoderGitHub } from "@ambient-agent/agents/capabilities/coder/workflow.ts";
 import { githubAppClient } from "@ambient-agent/installation/github-app-client.ts";
-import { readManagedGitHubAppCredential } from "@ambient-agent/installation/configuration.ts";
-import { E2B_WORKSPACES_ROOT } from "@ambient-agent/installation/e2b-sandbox.ts";
+import { readProvisionedGitHubAppCredential } from "@ambient-agent/installation/configuration.ts";
 import { createOctokitIssueRepository } from "@ambient-agent/installation/github-issue-repository.ts";
 import { invoke } from "@flue/runtime";
 import {
@@ -41,52 +40,47 @@ import {
 } from "@ambient-agent/engine/model/pi-subscription.ts";
 
 /**
- * Bind the Coder's deployment runtime (§8 template rule 1: config-bound, never per-job).
- * The coder GitHub App does not exist on every install yet; a missing credential file is
- * expected, so we skip configuration rather than fail the whole runtime's boot.
+ * Bind the Coder's deployment runtime (§8 template rule 1: config-bound, never per-job). The
+ * sandbox is always resolved now (#251, `local` by default), and a missing or mispasted coder App
+ * credential fails boot loudly (#247) rather than mounting `start_coder_job` against a dead
+ * identity — the configured-but-inert failure the one-box plan bans for the Speaker and Coder alike.
  */
-const configureCoderRuntimeIfProvisioned = async (
+const configureCoderRuntimeBinding = async (
   paths: ManagedRuntimeDependencies["paths"],
-  sandbox: ManagedRuntimeDependencies["agentSandbox"],
+  agentSandbox: ManagedRuntimeDependencies["agentSandbox"],
 ): Promise<void> => {
-  if (sandbox === undefined) {
-    console.warn("[coder] no isolated sandbox binding; start_coder_job is mounted but unprovisioned");
-    return;
-  }
-  let credential: Awaited<ReturnType<typeof readManagedGitHubAppCredential>>;
-  try {
-    credential = await readManagedGitHubAppCredential(paths.githubAppCredentials.coder);
-  } catch {
-    console.warn("[coder] no coder App credential; start_coder_job is mounted but unprovisioned");
-    return;
-  }
+  const credential = await readProvisionedGitHubAppCredential(paths.githubAppCredentials.coder, "coder");
   configureCoderRuntime({
     github: githubAppClient(credential) as unknown as CoderGitHub,
-    sandbox,
-    workspacesRoot: E2B_WORKSPACES_ROOT,
+    sandbox: agentSandbox.sandbox,
+    workspacesRoot: agentSandbox.workspacesRoot,
   });
 };
 
-const configureReviewerRuntimeIfProvisioned = async (
+/**
+ * Bind the Reviewer's deployment runtime. A missing or mispasted reviewer App credential fails boot
+ * loudly (#247), same as the Coder. Resolving the App's own slug is a network call whose transient
+ * failure leaves review unprovisioned with a warning rather than bricking a boot: the Reviewer's
+ * GitHub access is verified lazily, exactly as the Coder's is, so a GitHub blip at boot must not
+ * take down a runtime whose Coder path (T3) does not depend on it. The review ingress itself stays
+ * off until a deployment opts repositories into `reviewRepositories` (T5b, #254).
+ */
+const configureReviewerRuntimeBinding = async (
   paths: ManagedRuntimeDependencies["paths"],
-  sandbox: ManagedRuntimeDependencies["agentSandbox"],
+  agentSandbox: ManagedRuntimeDependencies["agentSandbox"],
 ): Promise<{ github: ReviewerGitHub; appSlug: string } | undefined> => {
-  if (sandbox === undefined) {
-    console.warn("[reviewer] no isolated sandbox binding; automatic PR review is disabled");
-    return undefined;
-  }
+  const credential = await readProvisionedGitHubAppCredential(paths.githubAppCredentials.reviewer, "reviewer");
+  const github = githubAppClient(credential) as unknown as ReviewerGitHub;
   try {
-    const credential = await readManagedGitHubAppCredential(paths.githubAppCredentials.reviewer);
-    const github = githubAppClient(credential) as unknown as ReviewerGitHub;
     const appSlug = await reviewerSlug(github);
     configureReviewerRuntime({
       github,
-      sandbox,
-      workspacesRoot: E2B_WORKSPACES_ROOT,
+      sandbox: agentSandbox.sandbox,
+      workspacesRoot: agentSandbox.workspacesRoot,
     });
     return { github, appSlug };
-  } catch {
-    console.warn("[reviewer] no reviewer App credential; automatic PR review is unprovisioned");
+  } catch (cause) {
+    console.warn("[reviewer] could not resolve the reviewer App identity; automatic PR review is unprovisioned", cause);
     return undefined;
   }
 };
@@ -111,12 +105,11 @@ export const createAmbientAgentApp = async ({
       : await connectPiApiKeyProvider({ provider, apiKey: modelApiKey ?? "", profiles });
   const issueOperations = createIssueOperationStore(paths.applicationDatabase);
   const runtimeId = bridge?.runtimeId ?? runtimeInstallationId(githubCredential.webhookSecret);
-  // The Coder Specialist (#158) runs under its own App identity in the same config-bound
-  // per-job E2B sandbox as the Reviewer (ADR 0021) — never a host-local shell. The coder
-  // App or the sandbox may not be provisioned yet; if either is absent, the start_coder_job
-  // tool stays mounted but a launch fails loudly rather than blocking boot.
-  await configureCoderRuntimeIfProvisioned(paths, agentSandbox);
-  const reviewerProvisioned = await configureReviewerRuntimeIfProvisioned(paths, agentSandbox);
+  // The Coder Specialist (#158) runs under its own App identity in the config-bound per-job
+  // sandbox the selector resolved (ADR 0021, #251) — shared with the Reviewer. A missing or
+  // mispasted coder App credential fails boot loudly rather than mounting a dead capability.
+  await configureCoderRuntimeBinding(paths, agentSandbox);
+  const reviewerProvisioned = await configureReviewerRuntimeBinding(paths, agentSandbox);
   let whatsappControl: WhatsAppRuntimeControl | undefined;
   // A SpeakerInput is a SpeakerInput, so the funnel delivers a specialist result to both
   // Speaker and Scribe. Held out here so the boot sweep can reuse it after the port is wired.

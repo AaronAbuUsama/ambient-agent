@@ -896,6 +896,30 @@ describe("managed CLI", () => {
     expect(config.stdout()).not.toContain("fake-planner-key");
   });
 
+  it("selects the agent sandbox from the CLI and round-trips local|e2b (#251)", async () => {
+    const paths = await files();
+    await runCli(
+      ["--data-dir", paths.data, "init", "--chat", "120363000@g.us", "--repository", "owner/repo"],
+      harness(),
+    );
+    const managed = managedPaths({ dataDirectory: paths.data });
+    // A fresh install defaults to the local sandbox.
+    expect(JSON.parse(await readFile(managed.config, "utf8"))).toMatchObject({ runtime: { sandbox: { kind: "local" } } });
+
+    // Flip to e2b, then back to local — each selection is validated and persisted.
+    expect(await runCli(["--data-dir", paths.data, "config", "--sandbox", "e2b"], { ...harness(), interactive: false })).toBe(0);
+    expect(JSON.parse(await readFile(managed.config, "utf8"))).toMatchObject({ runtime: { sandbox: { kind: "e2b" } } });
+    expect(await runCli(["--data-dir", paths.data, "config", "--sandbox", "local"], { ...harness(), interactive: false })).toBe(0);
+    expect(JSON.parse(await readFile(managed.config, "utf8"))).toMatchObject({ runtime: { sandbox: { kind: "local" } } });
+
+    // An unknown selector is refused before anything is written.
+    const before = await readFile(managed.config, "utf8");
+    const bad = harness();
+    expect(await runCli(["--data-dir", paths.data, "config", "--sandbox", "docker"], { ...bad, interactive: false })).not.toBe(0);
+    expect(bad.stderr()).toContain("local or e2b");
+    await expect(readFile(managed.config, "utf8")).resolves.toBe(before);
+  });
+
   it("switches the model provider from the CLI, prompting for the key and never taking it as a flag", async () => {
     const paths = await files();
     await runCli(

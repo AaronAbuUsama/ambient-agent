@@ -198,6 +198,7 @@ it("shares storage across setup, activation rollback, and repair without weakeni
     configuration,
     githubCredential: { webhookSecret: "operate-secret" } as never,
     paths,
+    agentSandbox: {} as never,
   });
 
   const setup = resolveTenantRuntimeSetupBoot(setupEnvironment, paths);

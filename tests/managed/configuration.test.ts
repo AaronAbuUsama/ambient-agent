@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { ensureManagedGitHubWebhookSecret, writeManagedConfiguration } from "../../packages/installation/src/configuration.ts";
+import {
+  ensureManagedGitHubWebhookSecret,
+  readProvisionedGitHubAppCredential,
+  writeManagedConfiguration,
+} from "../../packages/installation/src/configuration.ts";
 
 const roots: string[] = [];
 afterEach(async () => await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
@@ -142,5 +146,29 @@ describe("managed configuration migrations", () => {
     expect(written).toEqual([]);
     await expect(readFile(configPath, "utf8")).resolves.toBe(previousConfig);
     await expect(readFile(credentialPath, "utf8")).resolves.toBe(previousCredential);
+  });
+});
+
+describe("readProvisionedGitHubAppCredential (#247, #251)", () => {
+  it("fails loudly and nameably on a missing or mispasted Specialist App credential", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ambient-provisioned-credential-"));
+    roots.push(root);
+
+    // Missing file → the runtime must exit non-zero at start, not boot with a dead Coder.
+    const missing = join(root, "github-coder.json");
+    await expect(readProvisionedGitHubAppCredential(missing, "coder")).rejects.toThrow(/coder GitHub App credential/u);
+
+    // A mispasted (present-but-malformed) credential is loud too, and names the role.
+    const malformed = join(root, "github-reviewer.json");
+    await writeFile(malformed, "{ not valid json", { mode: 0o600 });
+    await expect(readProvisionedGitHubAppCredential(malformed, "reviewer")).rejects.toThrow(/reviewer GitHub App credential/u);
+
+    // A well-formed credential reads back unchanged.
+    const good = join(root, "github-coder-good.json");
+    await writeFile(good, JSON.stringify(appCredential({ appId: "424242" })), { mode: 0o600 });
+    await expect(readProvisionedGitHubAppCredential(good, "coder")).resolves.toMatchObject({
+      kind: "github-app",
+      appId: "424242",
+    });
   });
 });

@@ -71,6 +71,7 @@ import { createScribeBackfillStore } from "@ambient-agent/engine/intake/scribe-b
 import { createDeviceCodeCallbacks, createWhatsAppCallbacks, defaultSetupPrompts, type SetupPrompts } from "./prompts.ts";
 import {
   parseRuntimePort,
+  parseSandboxKind,
   startGeneratedRuntime,
   type ImportRuntime,
   type RuntimeLoggingOptions,
@@ -367,6 +368,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .option("--canary-chat <jid>", "dedicated managed WhatsApp group for live smoke canaries")
     .option("--repository <owner/name>", "default GitHub repository")
     .option("--port <port>", "foreground runtime HTTP port")
+    .option("--sandbox <kind>", "agent sandbox for the Coder and Reviewer: local or e2b")
     .option("--github-app <reference>", "rotate one GitHub App (coder|reviewer|planner) by pasting a fresh triple")
     .option("--model-provider <id>", "model provider ID; the API key is pasted at the prompt, never a flag")
     .option("--model <id>", "model ID for every agent role")
@@ -526,6 +528,10 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           all.findIndex((candidate) => candidate.toLowerCase() === repository.toLowerCase()) === index,
       );
       const runtimePort = options.port === undefined ? currentConfig.runtime.port : parseRuntimePort(options.port);
+      const runtimeSandbox =
+        options.sandbox === undefined
+          ? currentConfig.runtime.sandbox
+          : { ...currentConfig.runtime.sandbox, kind: parseSandboxKind(options.sandbox) };
       // The verified coder/reviewer credential is committed only now that the review passed.
       if (rotatedSpecialist !== undefined) {
         await atomicWriteManagedConfig(rotatedSpecialist.path, rotatedSpecialist.credential);
@@ -542,7 +548,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           model: { provider: model.provider, credential: model.credential, profiles: model.profiles },
           managedChats,
           ...(canaryChat === undefined ? {} : { smoke: { canaryChat } }),
-          runtime: { ...currentConfig.runtime, port: runtimePort },
+          runtime: { ...currentConfig.runtime, port: runtimePort, sandbox: runtimeSandbox },
           github: {
             ...currentConfig.github,
             defaultRepository: verifiedRepository,

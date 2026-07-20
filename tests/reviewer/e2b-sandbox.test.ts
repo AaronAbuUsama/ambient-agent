@@ -169,4 +169,22 @@ describe("E2B sandbox adapter", () => {
     await expect(factory.createSessionEnv({ id: "job-1" })).resolves.toBeDefined();
     expect(attempts).toBe(2);
   });
+
+  it("threads the explicit E2B API key and template into sandbox creation (#251)", async () => {
+    let created: { timeoutMs: number; template?: string; apiKey?: string } | undefined;
+    const fake = fakeSandbox();
+    const factory = e2bSandbox({
+      timeoutMs: 1_000,
+      apiKey: "e2b_secret_key",
+      template: "flue-node",
+      create: async (options) => {
+        created = options;
+        return fake.sandbox;
+      },
+    });
+
+    await factory.createSessionEnv({ id: "job-key" });
+    // The key is passed explicitly rather than read implicitly from the process environment.
+    expect(created).toEqual({ timeoutMs: 1_000, template: "flue-node", apiKey: "e2b_secret_key" });
+  });
 });
