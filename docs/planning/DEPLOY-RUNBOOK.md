@@ -1,5 +1,11 @@
 # Hosted deploy runbook — first two tenants
 
+> **SUPERSEDED — 2026-07-20.** The active plan is
+> [`ONE-BOX-PLAN-2026-07-20.md`](ONE-BOX-PLAN-2026-07-20.md). This document is kept for its
+> measured findings only; **its stages, gates and stage vocabulary are dead** and any `S`/`M`-stage
+> reference inside it points at work that is no longer scheduled. Findings accumulate; plans are
+> singular.
+
 Written 2026-07-19 on `integration/unify-tracks` (PR #239). Target: the existing Dokploy VPS
 (`ssh capxul-vps`, Swarm active, 1 manager node `srv1626161`, overlay network
 `dokploy-network`, ~21G disk free — watch this, the box is at 79%).

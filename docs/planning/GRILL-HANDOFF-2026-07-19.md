@@ -1,5 +1,11 @@
 # Handoff — grill the rebuild plan, then spec it, then ticket it
 
+> **SUPERSEDED — 2026-07-20.** The active plan is
+> [`ONE-BOX-PLAN-2026-07-20.md`](ONE-BOX-PLAN-2026-07-20.md). This document is kept for its
+> measured findings only; **its stages, gates and stage vocabulary are dead** and any `S`/`M`-stage
+> reference inside it points at work that is no longer scheduled. Findings accumulate; plans are
+> singular.
+
 Paste the block below into a fresh session. Everything it needs is in the repo.
 
 ---

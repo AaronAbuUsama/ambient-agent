@@ -1,329 +1,408 @@
-# One box, working end to end
+# One box, working end to end — THE plan
 
-**2026-07-20.** Supersedes the staged rebuild in `REBUILD-PLAN-2026-07-19.md` as the *active* plan.
-That document stays for its measured findings; this one is what gets built.
+**2026-07-20, revision 3.** This is the **only active plan**. Every other document under
+`docs/planning/` is either findings (evidence, which accumulates) or superseded (bannered). If a
+document tells you what to build and it is not this one, it is wrong.
 
-## The goal, in one sentence
+Revision 3 applies an adversarial verification pass (four independent lenses: DAG validity,
+decision consistency, reference integrity, completeness). It fixed three blockers and eleven
+errors. What changed is recorded at the end.
+
+**Document policy, adopted after measuring the root cause of this repo's disorientation** (four
+unreconciled plans layered on one tree — `ARCHITECTURE-ASSESSMENT-2026-07-19.md`):
+**findings accumulate; plans are singular.** A scope change edits this file in place, re-derives
+the DAG, and re-checks every gate — it does not spawn a new document.
+
+## The goal
 
 **One VPS, one instance, one operator. A message in WhatsApp produces a real reply, files a real
 GitHub issue, and opens a real PR — and survives a reboot.**
 
-Everything else is deferred: multi-tenancy (dropped), the web app (later), E2B (later), billing
-(later), backup (later).
+**T2 and T3 green together constitute the goal**; `docs/proof/coder-green-local.md` is the
+milestone receipt.
+
+Deferred: multi-tenancy (dropped), the web app, E2B (config flip), billing, backup/restore, two
+GitHub orgs (#243/#249 — **no second company chat before #249**, it is a live cross-company leak),
+the graph viewer, the ADR-0020 self-approval 422 configuration test (#242), subscription token
+refresh (#248).
+
+## Acceptance vs gate — the distinction the last revision lacked
+
+- **Acceptance** is code-level: runnable by the implementing agent with no install, no paired
+  phone, no secrets. Typecheck, tests, config round-trips, negative assertions.
+- **Gate** is a real-world proof run **against the live instance**.
+- **Pre-flight** is a narrow real proof that claims nothing beyond what it exercised (e.g. one real
+  model call asserting non-empty output, with no transport claim). It de-risks a deploy. It is
+  never a substitute for a gate.
+
+**The one rule governs gates.** Acceptance and pre-flights are how we avoid debugging through a
+deploy; they never stand in for the live proof.
+
+## The ordering principle — build the instrument first
+
+Every gate is verified by observing a live, paired, installed instance. That instance is not a
+late-stage deliverable — it is the **measuring instrument**. The previous revision had the first
+gate requiring an install scheduled four stages later; that cycle is why acceptance criteria kept
+mutating ad hoc. **T2 stands up the instrument, immediately after the one code stage (T1) that
+currently makes an install impossible.**
+
+Code for later stages can be written in parallel at any time. Only **gates** wait for the
+instrument.
 
 ## Owner decisions this plan encodes
 
 Confirmed directly, 2026-07-19 → 2026-07-20:
 
-1. **Single instance.** No tenants. Two companies live inside it as chats + GitHub orgs.
-2. **No environment variables.** Everything configurable through the CLI into managed config.
-3. **Deploy on the VPS**, not the laptop. Handoff to an agent working on the box.
-4. **One sandbox**, shared by Coder and Reviewer.
-5. **Local sandbox is acceptable.** Single operator, nobody else in the group, far from SaaS.
-6. **Inference comes from an API key** — no subscription is available. The owner has an OpenAI key
-   with **limited funds**, so a cheap model for now and not production-ready. Minimum viable.
-7. **Issues must work.** Filing a GitHub issue from chat is part of "working".
+1. **Single instance.** No tenants. Two companies as chats + GitHub orgs inside it.
+2. **No environment variables for runtime config.** CLI into managed config. Test harness gates
+   (`AMBIENT_AGENT_LIVE_*`) stay env vars by design.
+3. **The instrument lives on capxul-vps.** The code-factory rig keeps its proven webhook path
+   undisturbed; pairing happens once, where the session will live.
+4. **One sandbox**, shared, selectable `local | e2b`. Local accepted for **attended**
+   single-operator use (exposure documented in #251). ⚠️ **Unattended operation is NOT yet
+   authorized — see Open decisions.**
+5. **Model auth is API key OR subscription — neither required.** Currently an OpenAI API key with
+   limited funds; mid-tier models (`gpt-5.4-mini` / `gpt-5.1-codex-mini` class) are capable of
+   small diffs, PRs and reviews — do not scope down on the assumption they are not.
+6. **No fakes, anywhere.** A rig that injects the inbound message and captures the outbound reply
+   is real-model-but-fake-world — what `tests/fixtures/speaker` is, inadmissible for the same
+   reason. **A receipt caveat does not legitimize a fake.**
+7. **Ceremonies are prerequisites, never gate content, never simulated.** WhatsApp pairing needs a
+   human and a phone, once (`first-run.ts:233-235` hard-aborts non-interactive pairing by design).
+8. **Filing a real GitHub issue from chat is part of "working"**, not an extra.
 
-## What is actually true today — measured, not assumed
+## Ground truth — measured, not assumed
 
 | Claim | Reality |
 |---|---|
-| "The Reviewer uses a Docker sandbox" | **False.** `bc93fb9` deleted `reviewer-docker-sandbox.ts` and its test. Zero docker sandbox references remain. |
-| "Coder and Reviewer need unifying" | **Already unified.** `apps/runtime/src/app.ts:112-113` passes one factory to both; `coder/runtime.ts:14-18` and `reviewer/runtime.ts:5-9` are byte-identical on the sandbox field. |
-| "The Coder is blocked on the E2B key" | **False.** `local()` (`@flue/runtime/node`, `dist/node/index.d.mts:45`) is a complete `SandboxFactory`, still installed, currently with **zero imports**. `bc93fb9` deleted the call site that used it. |
-| "The CLI depends on the web/SaaS stack" | **False.** Traced transitively from `apps/cli/src/main.ts`: 48 files, reaching only `apps/cli`, `packages/engine`, `packages/installation`, `packages/agents`. F-3/F-4 do not block the CLI. |
-| "The CLI needs env vars to run" | **False.** Zero required. Only 6 optional ones matter and all 6 move to config here. |
-| "We need a tunnel for the demo" | **False for outbound.** WhatsApp → Speaker → Coder → PR is entirely outbound. A tunnel is only needed for GitHub → agent. |
-| "pi can reuse a `pi login` on the box" | **False.** `pi-ai` is a library with no credential storage; `loadAnthropicOAuth` only imports the flow module. The app owns the store — as this repo already does for ChatGPT. |
-| "Nothing has been proven" | **False.** WhatsApp pairing + sends, session survival across restart, real signed webhook delivery, a real draft PR from `ambient-coder[bot]`, and a self-cleaning live GitHub issue test all have receipts. |
-| "It has been run end to end" | **False, and this is the real gap.** Every receipt is piecemeal, on the `code-factory` rig, via a packed tarball. No completed install exists anywhere. |
+| "The Reviewer uses a Docker sandbox" | **False.** `bc93fb9` deleted `reviewer-docker-sandbox.ts` + test. Zero docker sandbox references remain. |
+| "Coder and Reviewer need unifying" | **Already unified.** `apps/runtime/src/app.ts:112-113` passes one factory to both; the runtime contracts are byte-identical on the sandbox field. |
+| "The Coder is blocked on the E2B key" | **False.** `local()` (`@flue/runtime/node`, `dist/node/index.d.mts:45`) is a complete `SandboxFactory`, installed, zero imports. `bc93fb9` deleted its call site. |
+| "The CLI depends on the web/SaaS stack" | **False.** 48-file transitive trace from `apps/cli/src/main.ts` reaches only `apps/cli`, `packages/engine`, `packages/installation`, `packages/agents`. |
+| "A tunnel is needed to demo" | **False for outbound.** WhatsApp → Speaker → issue-filing → Coder → PR is entirely outbound. |
+| "`init` works with an API key" | **False.** `init` hard-requires the ChatGPT device flow. This is the single code defect blocking the instrument — T1's core. |
+| "It has been run end to end" | **False.** Every receipt is piecemeal, on the rig, via a packed tarball. No completed install exists anywhere. |
 
-## The one rule, unchanged
+## The one rule
 
-**Every gate is a real-world proof, and every gate asserts a negative.** The dominant failure mode
-here is silent degradation. Two live instances of it, both fixed below:
-
-- **The Reviewer fabricates a review on model silence** — `reviewer/workflow.ts:143-153` posts a real
-  GitHub review with `missingModelVerdict = true` and returns non-error success, shaped identically
-  to a genuine COMMENT.
-- **No 429 handling exists anywhere** — `pi-subscription.ts:247-257` classifies a rate limit as
-  `request-failed`, indistinguishable from a network blip.
+**Every gate is a real-world proof, run against the live instance, and asserts a negative that can
+actually fail.** The dominant failure mode is silent degradation. A negative that cannot fail is
+not a negative.
 
 ---
 
-# The order
+# The DAG
 
-```
-M1 API-key provider ──▶ M2 Sandbox selector ──▶ M4 Run it on the box ──▶ M5 Inbound GitHub
-        │                        │                        │
-        └──▶ M3 Env → CLI config ┘                        └──▶ M6 Eyes on it
-```
+```mermaid
+flowchart LR
+  T1["T1 · Model auth: API key OR subscription<br/>+ #246 rate-limited reason<br/><i>the only code blocking an install</i>"]
+  T2["T2 · Stand up the instrument<br/><i>capxul-vps · ceremony once</i><br/>reply · issue · restart · reboot"]
+  T3["T3 · Sandbox selector → Coder PR"]
+  T4["T4 · Env vars → CLI config"]
+  T5a["T5a · Inbound webhook delivery"]
+  T5b["T5b · Reviewer green<br/>+ #245 discriminator"]
+  T6["T6 · Observability"]
 
-**M1 is first because nothing else can be verified without inference.** Every downstream gate drives
-the model.
+  T1 --> T2
+  T2 --> T3
+  T2 --> T4
+  T2 --> T5a
+  T3 --> T5b
+  T5a --> T5b
+  T3 --> T6
+  T4 --> T6
 
-## How each ticket is accepted — no ceremony until M4
-
-The implementing agent works on a remote machine with **no install, no paired phone, and no
-secrets**. No completed install exists anywhere yet, so any gate phrased as "message the managed
-chat" is unrunnable until M4. Every ticket therefore has a proof the agent can produce alone, plus
-**one command the owner runs**.
-
-| Tier | Who | Needs |
-|---|---|---|
-| **A** | the agent | nothing — typecheck, tests, config round-trip, the negative assertions |
-| **B** | the owner, one command | an API key (and for M2, a throwaway repo). A real model call with **no WhatsApp claim attached** — a pre-flight, not the gate. |
-| **C** | the gate | a machine with an **already-paired** session (the `code-factory` rig) |
-
-Tier B follows the gated live-test pattern already in the tree
-(`tests/speaker/pi-subscription.test.ts:320-341`, `tests/speaker/issue-management.live.test.ts`),
-which needs only a data directory and a credential. `AMBIENT_AGENT_LIVE_*` stays an environment
-variable by design — the no-env-vars rule governs **runtime config**, not test harnesses.
-
-**Tier B is a pre-flight, not a gate.** It flushes out provider bugs cheaply before a deploy; it
-proves a real model call and claims nothing about the transport.
-
-**Pairing is a declared prerequisite of every gate that involves WhatsApp** — a one-time ceremony on
-a machine that keeps its session. It is never part of a gate and is **never faked**. A rig that
-injects the inbound message and captures the outbound reply is real-model-but-fake-world, exactly
-what `tests/fixtures/speaker` is, and is inadmissible.
-
-## M1 · Make the model provider an API-key choice
-
-No subscription is available and funds are tight. Without this, nothing else can be verified — every
-downstream gate drives the model.
-
-Originally scoped as "add Anthropic". It is now the general case, because the owner has switched
-provider twice in one sitting (ChatGPT subscription → Anthropic → OpenAI API key). The variation is
-real, so the seam is earned — and supporting any provider is **less** code than special-casing one.
-
-**Why it is small:** pi ships **38 providers**, nearly all API-key, through one `createProvider`
-shape:
-
-```js
-// pi-ai/dist/providers/openai.js
-id: "openai", baseUrl: "https://api.openai.com/v1",
-auth: { apiKey: envApiKeyAuth("OpenAI API key", ["OPENAI_API_KEY"]) },
-api: openAIResponsesApi(),
+  classDef now fill:#1f4f38,stroke:#2a7150,color:#fff
+  class T1,T2 now
 ```
 
-`anthropic`, `groq`, `deepseek`, `cerebras`, `openrouter`, `google`, `together`, `xai` are the same
-shape. Their apis (`openai-responses`, `anthropic-messages`, …) are **built-in** Flue api ids
-(`pi-ai/dist/compat.js:136` `registerBuiltInApiProviders()` at import), so there is **no
-`registerApiProvider`** — only `registerProvider`.
+Edges are **gate** dependencies. T3/T4 **code** is parallel-safe today; only their gates wait for
+the instrument. **#246 is inside T1's scope** (same file T1 already edits) — without it every live
+gate from T2 onward misreads a rate limit as a regression. **#245 is inside T5b's scope** — without
+it a fabricated review passes as a real one.
 
-**Leave the Codex subscription path alone.** `connectPiChatGptSubscription` and the Luna rewrite
-(`pi-subscription.ts:116-190`, gated on the Codex URL and model id at `:120`,`:168`) stay exactly as
-they are, for whenever a subscription returns. This adds a second, simpler path beside it.
-
-`pi-ai` is a library with **no credential storage** — the app owns the store, as it already does for
-ChatGPT. There is no `pi login` to reuse.
-
-| File | Change | ~Lines |
-|---|---|---|
-| `packages/installation/src/schema.ts:49-54` | `provider` accepts a pi provider id; add an `api-key` credential reference; `v.check` pairing provider and credential | 14 |
-| `packages/installation/src/paths.ts:16-27,80-90` | `credentials/model-api-key.json` — `{schemaVersion:1, provider, apiKey}` | 5 |
-| `packages/engine/src/model/pi-subscription.ts:40,297-321` | `modelSpecifier(provider, id)` (`:40` hardcodes `openai-codex`); `connectPiApiKeyProvider(providerId, apiKey, baseUrl)`, `registerProvider` only | 35 |
-| `apps/runtime/src/app.ts:102` | branch: api-key provider vs codex subscription | 6 |
-| `apps/cli/src/program.ts` | `config --model-provider <id>`, key via **prompt, not flag** | 20 |
-
-**Gate:** with `provider: "openai"` and a real key, a message to the managed chat gets a real reply.
-Record model id, turns, tokens, wall time and cost.
-**Negative:** with the credential file absent the runtime must **exit non-zero at start**, not boot
-and settle silent. Assert the exit code, not a log line. Second negative: a provider/credential
-mismatch is refused at **config-write** time (`configuration.ts:66` re-validates and rolls back), not
-discovered at first inference.
-**Receipt:** `docs/proof/api-key-inference-live.md`.
-**Rollback:** `config --model-provider openai-codex` returns to the untouched subscription path.
-Schema changes are `v.optional(…, default)`, so existing configs parse unchanged.
-
-## Running on a budget model
-
-Funds are limited, so gates run on a mid-tier model — `gpt-5.4-mini` or `gpt-5.1-codex-mini` class.
-**That is a capable coding model.** It will write a small correct diff, open a PR and review one.
-Gates assert real outcomes; nothing is deferred on the assumption the model cannot cope.
-
-Two practical adjustments, and that is all:
-
-1. **Give the first green run a well-specified small task.** Add a file, fix a bug with an obvious
-   fix, add a small function with a test. The point of the first run is to prove the loop closes, so
-   do not make the task the variable under test.
-2. **Instrument the run so a failure names its layer.** If a run fails, we need to know whether the
-   sandbox `exec` failed (#172, `/tmp` `noexec`, `EACCES` — a filesystem fact) or the model produced
-   a bad diff. Record the sandbox mount flags and whether `exec` succeeded *alongside* the verdict.
-   This costs nothing and is the difference between a useful failure and an ambiguous one.
-
-**Per-role profiles are the cost lever.** `AgentModelProfilesSchema` already supports a model per
-role (`resolveAgentModelProfile`, `pi-subscription.ts:46-49`). The Speaker can sit on something
-cheaper than the Coder — chat replies are less demanding than writing a diff.
-
-## M2 · One sandbox, selectable, config-driven
-
-Unblocks the Coder and Reviewer without E2B. Owner has accepted the local-shell exposure (single
-operator, his own repos, attended).
-
-The resolver must return **sandbox and `workspacesRoot` together** — `workspacesRoot` is hardcoded to
-`E2B_WORKSPACES_ROOT` (`/home/user/workspaces`, `e2b-sandbox.ts:13`), which does not exist on a host.
-With `local` it must be `paths.workspaces` (`paths.ts:94`).
-
-Use `local(options?)` from `@flue/runtime/node` — **verified**, and exactly what `bc93fb9` deleted.
-Not `bash(factory)`, which is the lower-level adapter.
-
-| File | Change | Δ |
-|---|---|---|
-| `packages/installation/src/schema.ts:57-60` | `runtime.sandbox` = `{kind: "local"\|"e2b", template?}`, default `local` | +8 |
-| `apps/cli/src/lifecycle.ts:36-42` | takes config not env; returns `{sandbox, workspacesRoot}` | +12/−10 |
-| `packages/installation/src/e2b-sandbox.ts:190` | explicit `apiKey` into `Sandbox.create` (SDK supports it) | +4 |
-| `packages/installation/src/runtime-dependencies.ts:20` | carry the pair, non-optional | +3/−4 |
-| `apps/runtime/src/app.ts:18,48-84` | drop the E2B import and **both** `if (sandbox === undefined)` guards | +6/−14 |
-
-**The `app.ts` diff is negative** — the two silent-disable paths disappear, because a sandbox is
-always available. That closes the boot-green-with-specialists-absent hole for free.
-
-**Retain #172's fix:** `TMPDIR` must point inside the workspace, not `/tmp` (which is `noexec` on the
-rig). `e2b-sandbox.ts:146,214` already does this for E2B; the local branch needs the same.
-
-**Gate:** from the managed chat, ask for a small well-specified code change. A real non-draft PR
-appears with a non-empty diff, authored by `ambient-coder[bot]`, produced in a local sandbox with no
-E2B key present, and the verifier returns `PASS`.
-
-**Negative:** assert `verdict === "PASS"` **and** a non-empty diff — draft-ness alone proves nothing,
-since a legitimate `SKIP` also yields a non-draft PR. And the process must **not** boot green with
-the sandbox misconfigured.
-
-**Record alongside the verdict, so a failure names its layer:** whether the sandbox `exec` succeeded,
-and the mount flags from inside the sandbox (`mount | grep /tmp`). A green run on an exec-mounted
-`/tmp` proves nothing about #172, and a failed run is only useful if we know whether the shell or the
-model was at fault.
-
-**Receipt:** `docs/proof/coder-green-local.md`. **This is the thing that has never worked.**
-
-## M3 · Env vars → CLI config
-
-Hard requirement: no environment variables. Only **6** actually matter.
-
-| Var | Destination |
-|---|---|
-| `E2B_API_KEY` | `credentials/e2b.json` (secret) |
-| `E2B_TEMPLATE` | `runtime.sandbox.template` (M2) |
-| `BRAINTRUST_TRACING` | `runtime.tracing.enabled` |
-| `BRAINTRUST_API_KEY` | `credentials/braintrust.json` (secret) |
-| `BRAINTRUST_PROJECT_NAME` / `_ID` | `runtime.tracing.project` |
-
-Everything else is test-only (`*_FIXTURE_READY`, `*_LIVE_*`, `FLUE_BASE_URL`) and **stays an env
-var**, or dies with the provisioner (`TENANT_DB_*`, `AMBIENT_AGENT_RUNTIME_*`, `PORT`,
-`packages/env/src/server.ts`).
-
-**Follow the `runtime.port` pattern exactly** — it is the worked example, five steps:
-validator+field (`schema.ts:27,58-60`) → creation default (`:126-137`) → **`CONFIG_ISSUE_PATHS`
-(`installation.ts:26-57`) — the most-forgotten step** → CLI flag + merge
-(`program.ts:341-346,483,494-506`) → runtime read (`lifecycle.ts:70,92`).
-
-**One structural change:** `braintrust.ts:7,9,22` reads env at **module-load time**, which cannot see
-a config file read later. It becomes `configureBraintrustTracing({apiKey, project})` called from
-`startGeneratedRuntime` beside `configureLogging` (`lifecycle.ts:64-68`).
-
-**Migration: none.** Every addition is `v.optional(…, default)`, so existing configs parse unchanged
-— the precedent is `runtime`, `profiles` and `reviewRepositories`. No `schemaVersion` bump.
-If `E2B_API_KEY` is in the environment, print a warning naming `config --sandbox e2b`. Nothing more.
-
-**Gate:** `env -i` (empty environment) + `ambient-agent start` runs fully configured — sandbox,
-tracing and model all from `config.json` and `credentials/`.
-**Negative:** setting `E2B_API_KEY` in the environment must **not** change behaviour. Assert config
-wins, so the env path is genuinely dead rather than a silent fallback.
-
-## M4 · Run it on the box, and survive a reboot
-
-**Use the tarball, not Docker.** The tarball is the proven unit — every receipt uses
-`npx --package=file:…ambient-agent-*.tgz`. `apps/runtime/Dockerfile`'s `CMD` is `dist/cli/setup.js`,
-the deleted provisioner's entry, and has never run standalone. It also costs 5-6 GB to build on a box
-with ~19 GB free at ~80%.
-
-1. `pnpm install --frozen-lockfile && pnpm pack --pack-destination ./artifacts` (prepack runs
-   `build:dist`). **Record the SHA-256** — every proof doc does.
-2. `npm install -g ./artifacts/ambient-agent-*.tgz` on capxul-vps.
-3. **`ambient-agent init` inside `tmux` over SSH.** SSH allocates a PTY so `program.ts:173-175` goes
-   interactive. The QR renders as terminal ASCII (`qr.ts:12`, `small: true`); the ChatGPT/Anthropic
-   step is a URL + code. `tmux` matters — `authenticationSignal()` is a 20-minute timeout and a
-   dropped connection aborts setup.
-4. `ambient-agent config --port <p>` — default 3000 collides with the compose `api` service.
-5. **A systemd unit — ~12 lines that do not exist.** `Type=simple`, `Restart=always`, `User=`,
-   `ExecStart=… start --log-format json`. `stopRuntimeOnSignal`
-   (`apps/runtime/src/host/runtime-signals.ts`) already handles SIGTERM cleanly, so a supervisor
-   works correctly; there just isn't one.
-
-**Prerequisite (ceremony, not a gate):** someone points a phone at the terminal. There is **no
-unattended WhatsApp pairing** — `first-run.ts:233-235` hard-aborts when `onPairing` fires
-non-interactively. The only alternative is pairing elsewhere and importing with `--whatsapp-store`.
-
-**Gate:** `systemctl restart`, then reboot the box; the agent comes back **without re-pairing** and
-replies in the managed chat.
-**Negative:** never run two replicas against one volume — Flue's durability forbids it. Assert the
-second instance refuses or fails loudly rather than silently corrupting.
-**Receipt:** `docs/proof/one-box-live.md`.
-
-## M5 · Inbound GitHub
-
-Only needed for GitHub → agent (issue comments, PR events, the Reviewer). Outbound already works
-without it.
-
-The proven shape is Cloudflare proxied A record → Caddy → `127.0.0.1:<port>`, route
-`/channels/github/webhook`, `X-Hub-Signature-256` verified over exact bytes before parse, secret from
-`credentials/github-planner.json` (auto-created by `ensureManagedGitHubWebhookSecret`,
-`lifecycle.ts:71`). **Only the Planner App sends webhooks**; Coder and Reviewer are actors.
-
-**Two unresolved items for the agent on the box — discovery, not assumption:**
-- **Caddy vs Traefik.** capxul-vps runs Dokploy, which almost certainly owns 443. Nothing in the repo
-  installs or configures Caddy; the Caddyfile exists only as a quoted block inside a proof doc.
-  Traefik could reverse-proxy instead, but that combination has never been run.
-- **The DNS record `ambient-agent.co-worker.tech` currently points at the code-factory rig.**
-  Repointing it kills the one proven webhook path. Prefer a new hostname.
-
-**Gate:** open a real issue in a real repo; the event is delivered, signature-verified, settles in
-the ledger, and reaches the chat.
-**Negative:** an unsigned probe returns **401** and lands no row.
-
-## M6 · Eyes on it
-
-Cheapest first. **Flue ships no UI** — `docs-api-routing-api.md:98`: *"Flue ships no admin HTTP
-surface"*; `flue dev` is watch-mode only. So there is nothing to switch on there, but three things
-are nearly free:
-
-1. **Braintrust is already wired** at `apps/runtime/src/app.ts:3`, gated at `braintrust.ts:7`. Turn
-   it on via M3's config and you get runs, model turns including the full prompt, tool calls and
-   tasks in a hosted UI. Richest thing available, ~zero code.
-2. **`export const runs`** on the coder + reviewer workflows and **`export const route`** on the
-   Speaker — **3 lines total** — lights up `GET /runs/:runId` (SSE + `?meta`) and
-   `GET /agents/speaker/:chatId`. Currently dark: `export const runs` has **zero hits** repo-wide.
-3. **Logs already carry a stable `operatorEvent` field**
-   (`speaker/activity-reporter.ts:48-71`): `tail -f … | jq 'select(.operatorEvent)'`.
-
-**The graph has no viewer at all** (`graph/store.ts:152-178`; its only reader is
-`computeGraphDigest`). Three SQL selects behind a read-only route would fix it. That is the smallest
-high-value thing left, and it is **not** on the critical path.
-
-**Gate:** a Coder run is observable end to end from an external surface while it happens.
+**How INCONCLUSIVE surfaces:** the `rate-limited` reason reaches a gate runner through the
+structured log stream (`operatorEvent`, `speaker/activity-reporter.ts:48-71`), which every gate
+transcript must capture. A rate-limited run is **INCONCLUSIVE — never PASS, never FAIL** — and is
+re-run, not investigated as a regression.
 
 ---
 
-# Deliberately not doing
+# Stages
 
-- The web app (F-3/F-4 are real but the CLI sidesteps both entirely).
-- E2B — the selector makes it a one-line config flip when the key arrives.
-- Multi-tenancy, two GitHub orgs (#243/#249), billing.
-- Backup/restore, a second-replica guard, a graph viewer, the Docker deploy unit.
-- Anthropic OAuth — API key first; the flow is in pi when flat-rate matters.
+## T1 · Model auth is API key OR subscription — #250
+
+The only code standing between us and an instrument. Three parts:
+
+**a. Provider binding.** `model.provider` accepts a pi provider id;
+`credentials/model-api-key.json` (`{schemaVersion:1, provider, apiKey}`, mode 0600, referenced by
+name); `modelSpecifier(provider, id)` replaces the hardcode at `pi-subscription.ts:40`;
+`connectPiApiKeyProvider` via `registerProvider` only — provider apis are built-in Flue api ids
+(`pi-ai/dist/compat.js:136`), so no `registerApiProvider`.
+
+**b. The `init` fix** — the defect that makes (a) usable. First-run setup accepts the provider
+choice and an API key and does **not** force the ChatGPT device flow. **This is a widening:
+subscription setup keeps working; neither mode is required.**
+
+**c. #246 — the `rate-limited` reason.** Split it out of `request-failed` at
+`pi-subscription.ts:247` and add it to the union at `:84`. Every live gate from T2 onward depends
+on this to distinguish a rate limit from a regression.
+
+The Codex subscription path (`connectPiChatGptSubscription`, and the Luna rewrite at
+`pi-subscription.ts:116-190`, gated on the Codex URL and model id) is untouched **per boot**.
+Known limitation, tracked in **#248**, not fixed here: the subscription apiKey is captured once at
+boot (`pi-subscription.ts:300,309`) and never refreshed, so a long-lived subscription instance goes
+stale at token expiry until restart. The API-key path is the active one and is unaffected.
+
+**Acceptance — all runnable by the implementing agent; no install, no phone, no secrets:**
+- `pnpm typecheck && pnpm test` green.
+- `config --model-provider <id>` round-trips config + credential file.
+- A **structural** exercise of the real `init` code path **up to and not including** the pairing
+  step. It must **not** stub the PTY, fake the prompt loop, or simulate the pairing abort; its
+  receipt is labelled structural-only. **The auth claim is proven solely by T2's first reply.**
+- **Negative (API-key mode):** config selects an API-key provider whose referenced credential file
+  is absent → runtime exits **non-zero** *and* emits the credential-specific message, asserted on
+  an otherwise-ready seeded managed directory missing **only**
+  `credentials/model-api-key.json`. Exit code alone is insufficient — an unconfigured install
+  already exits 1 (`tests/managed/cli.test.ts:312-318`).
+- **Mirror positive (decision 5):** a **subscription-configured** runtime with **no**
+  `model-api-key.json` **starts normally**. This asserts the widening rather than assuming it.
+- **Negative:** provider/credential mismatch refused at **config-write** time
+  (`configuration.ts:68`, which re-validates and rolls back both files), not at first inference.
+- **Negative (#246):** a synthetic 429 classifies as `rate-limited`; a genuine network failure
+  still classifies as `request-failed`.
+
+**Pre-flight (owner, one command, fractions of a cent):**
+`AMBIENT_AGENT_LIVE_MODEL=1 OPENAI_API_KEY=… pnpm vitest run tests/speaker/pi-subscription.test.ts`
+asserting the reply text is **non-empty** — `request:"complete"` alone passes on an empty response
+(`pi-subscription.ts:214-245`).
+
+**T1 has no gate.** Its end-to-end proof is T2's first reply.
+
+## T2 · Stand up the instrument — capxul-vps — #253
+
+**Depends on #250 only.** T3's gate depends on this ticket, not the reverse.
+
+The tarball is the proven unit; `apps/runtime/Dockerfile`'s `CMD` is the deleted provisioner's
+setup entry and a Docker build costs 5-6 GB on a box at ~80% disk.
+
+1. **Pack from a commit containing #250 and #246.** Record **both the commit SHA and the tarball
+   SHA-256** in the receipt. If packed before #250 merges, `init` still hard-requires the device
+   flow and the install fails at the model step; without #246 the instrument cannot report
+   INCONCLUSIVE without a redeploy.
+2. `npm install -g` the tarball on capxul-vps.
+3. **`ambient-agent init` inside `tmux` over SSH** — SSH allocates a PTY
+   (`program.ts:173-175`), the QR renders as terminal ASCII (`qr.ts:12`), the T1 API-key path makes
+   the model step a paste. `tmux` because `authenticationSignal()` is a 20-minute timeout.
+4. `config --port <p>` — the default 3000 collides with the compose `api` service on this box.
+5. **A single-instance lock** on the data directory at runtime start (~10 lines; nothing enforces
+   this today and Flue forbids two replicas on one volume).
+6. **systemd unit** (~12 lines, does not exist): `Type=simple`, `Restart=always`,
+   `ExecStart=… start --log-format json`. `stopRuntimeOnSignal` already handles SIGTERM cleanly.
+
+**Prerequisites (ceremony, not gate content):** the owner's phone scans the QR once; three GitHub
+App triples ready for the guided paste; the OpenAI key.
+
+**Gate (re-runnable thereafter; re-running must not re-pair):**
+1. A real message from the owner's phone produces a **real reply**.
+2. "File an issue for X" produces a **real GitHub issue** authored by `ambient-planner[bot]`.
+3. `systemctl restart`, then **reboot**: the agent returns **without re-pairing** and replies.
+4. **Conversational memory across restart** — establish a fact in the thread, restart, ask for it
+   in the same thread, get it back. "State is still there" is not observable; this is.
+
+**Negatives:**
+- Drive an input whose reply is mandatory and assert the **absence of silence** — a
+  configured-but-inert agent must read FAIL, not pass vacuously.
+- A second instance against the same data directory **refuses or fails loudly** (item 5 is the
+  code that makes this assertable).
+- Post-reboot, assert the **reply**, not the process state — a live unit with a dead agent is the
+  silent failure this catches.
+- **`kill -9` during an in-flight run** → the run settles as `interrupted`, the message reaches the
+  thread, and **no relaunch happens without a user turn** (`sweepUnsettledLaunches`,
+  `apps/runtime/src/app.ts:187-199`). Relocated here by the grill; it is a restart-integrity proof,
+  not a tenancy one. *(Requires T3 for a Coder run to interrupt — run this leg after T3 lands, as a
+  T2 gate re-run.)*
+
+**Receipt:** `docs/proof/one-box-instance-live.md` — commit SHA, tarball SHA-256, unit file, full
+transcript.
+
+**This single event is what the old plan split into "M1's gate" and "M4's install".**
+
+## T3 · Sandbox selector → the Coder's first green PR — #251
+
+**Code parallel-safe now; the gate runs on the instrument (#253).**
+
+`runtime.sandbox = {kind:"local"|"e2b", template?}`, default `local`; the resolver returns
+**sandbox + workspacesRoot together** (`E2B_WORKSPACES_ROOT` = `/home/user/…` does not exist on a
+host; local uses `paths.workspaces`); `local(options?)` from `@flue/runtime/node` — exactly what
+`bc93fb9` deleted — not `bash(factory)`; explicit `apiKey` into `Sandbox.create`; the #172 `TMPDIR`
+fix carries into the local branch (workspace-local, `mkdir` before first use — deleting it once
+already caused a regression).
+
+**Silent-disable removal — all five paths, not two.** `apps/runtime/src/app.ts` has **four**
+warn-and-continue paths: `:51` and `:73` (sandbox, deleted by the selector, closes #247) **and
+`:58` and `:87` (missing Coder/Reviewer App credential)**, plus the CLI-side sibling
+`lifecycle.ts:35-42` (`resolveAgentSandbox` returning `undefined`). A mispasted App credential
+currently boots green with a dead Coder — the same configured-but-inert failure T2's negative names
+for the Speaker. Missing credential → non-zero exit or config-write refusal, consistent with T1.
+
+**Pre-flight:** the self-cleaning live-test pattern from
+`tests/speaker/issue-management.live.test.ts` driving the Coder against a **throwaway repo** — real
+GitHub, real model, real local sandbox, no WhatsApp claim.
+
+**Gate (on the instrument):** from the managed chat, a small well-specified task produces a real
+**non-draft PR** by `ambient-coder[bot]` with a **non-empty diff**, `verdict === "PASS"`, in a local
+sandbox with **no E2B key present** — **and the PR references the real GitHub issue filed by the
+same chat request.** One run therefore proves the whole goal sentence (reply → issue → PR) rather
+than leaving the issue leg asserted once in T2 and never again.
+
+**Negatives:** `PASS` **and** non-empty diff asserted together — a legitimate `SKIP` also yields a
+non-draft PR, so draft-ness alone proves nothing. The process must not boot green with the sandbox
+or an App credential misconfigured.
+
+**Recorded alongside, so a failure names its layer:** whether sandbox `exec` succeeded, and
+`mount | grep /tmp` from inside the sandbox. A green run on an exec-mounted `/tmp` proves nothing
+about #172; a red run is only useful if we know whether the shell or the model failed.
+
+**Receipt:** `docs/proof/coder-green-local.md`. **This is the path that has never worked, and T2 +
+T3 green together are the goal.**
+
+## T4 · Env vars → CLI config — #252
+
+**Code parallel-safe now; the gate runs on the instrument (#253).**
+
+Six vars move: `E2B_API_KEY` → `credentials/e2b.json`; `E2B_TEMPLATE` →
+`runtime.sandbox.template`; `BRAINTRUST_TRACING` → `runtime.tracing.enabled`; `BRAINTRUST_API_KEY`
+→ `credentials/braintrust.json`; `BRAINTRUST_PROJECT_NAME/_ID` → `runtime.tracing.project`.
+Everything else is test-only (stays env) or dies with the provisioner.
+
+Follow the `runtime.port` pattern verbatim (validator → creation default → **`CONFIG_ISSUE_PATHS`,
+the forgotten step** → CLI flag + merge → runtime read). One structural change: `braintrust.ts:7,9,22`
+reads env at module load; becomes `configureBraintrustTracing(...)` called from
+`startGeneratedRuntime` beside `configureLogging`. Migration: none — all additions are
+`v.optional(…, default)`.
+
+**Gate:** `env -i HOME="$HOME" PATH=/usr/bin:/bin "$(command -v ambient-agent)" start` — an
+environment empty of every `E2B_*`, `BRAINTRUST_*` and `OPENAI_*` var — runs fully configured from
+`config.json` + `credentials/`. (`env -i` alone strips `PATH` and the gate would fail for the wrong
+reason.)
+
+**Negatives — both must be able to fail:**
+- `runtime.sandbox.kind = e2b` with `credentials/e2b.json` **absent** and `E2B_API_KEY=garbage` in
+  the environment → startup **fails at config validation** rather than silently adopting the env
+  value.
+- `BRAINTRUST_TRACING=1` in the environment with `runtime.tracing.enabled = false` → tracing stays
+  **off**, observable in the logs and in Braintrust.
+
+*(The previously drafted negative — "setting `E2B_API_KEY` changes nothing" — was vacuous: on a
+`kind=local` box the env path is already dead after T3, so it could not fail.)*
+
+## T5a · Inbound webhook delivery — #254
+
+Only the **Planner** App sends webhooks; Coder/Reviewer are actors. Proven shape: Cloudflare
+proxied record → reverse proxy → `127.0.0.1:<port>`, route `/channels/github/webhook`,
+`X-Hub-Signature-256` over exact bytes before parse, secret auto-managed
+(`ensureManagedGitHubWebhookSecret`, `lifecycle.ts:71`).
+
+**Discovery on the box, not assumption:** what owns 443 (Dokploy/Traefik almost certainly); whether
+Traefik proxies this or Caddy is added. **Use a new hostname** — `ambient-agent.co-worker.tech`
+points at the code-factory rig and repointing it kills the one proven webhook path.
+
+**Gate:** a real issue opened in a real repo is delivered, **signature-verified**, settles in the
+ledger, reaches the chat.
+**Negative:** an unsigned probe returns **401 and lands no row** — a 401 with a side effect is the
+failure this catches.
+
+## T5b · The Reviewer's first real review — #254 (second half)
+
+**Needs T5a (PR events must arrive) and T3 (a Coder PR must exist).** Reviewing a hand-made PR
+instead would be exactly the fake-world substitution decision 6 bans.
+
+Scope: **#245 — the fallback discriminator on `ReviewerResult`** (`reviewer/schemas.ts:31-38` has
+no such field today, and `workflow.ts:143-153` still fabricates a review on model silence), plus
+one config line deriving `reviewRepositories` from the reviewer role's selections — it defaults to
+`[]`, so automatic review is **dead by configuration** today.
+
+**Gate:** a real review by `ambient-reviewer[bot]` on the Coder's PR, citing a real finding, **with
+the discriminator confirming a genuine model verdict**.
+**Negative:** the fabricated-review fallback must **not** satisfy the same predicate — assert the
+discriminator rejects it. Any APPROVE is attributed to an identity distinct from the PR author.
+
+## T6 · Observability — #255
+
+**Needs T3** (no Coder run can occur before the sandbox resolver exists) **and T4** (Braintrust
+needs `runtime.tracing`).
+
+Flue ships **no admin HTTP surface** (`docs-api-routing-api.md:92`). Three nearly-free layers:
+1. **Braintrust** — already wired at `app.ts:3`, gated at `braintrust.ts:7`; T4's config turns it
+   on. Runs, model turns incl. the full prompt, tool calls. Richest surface, ~zero code.
+2. **Three exports** — `export const runs` on coder + reviewer workflows, `export const route` on
+   the Speaker → `GET /runs/:runId` (SSE + `?meta`) and `GET /agents/speaker/:chatId`. Zero hits
+   repo-wide today.
+3. **Logs** — the `operatorEvent` field is already structured
+   (`speaker/activity-reporter.ts:48-71`).
+
+**Gate:** a Coder run is observable end to end from an external surface **while it happens**.
+**Negative:** dispatch a Coder task against a repository the Coder App installation **cannot
+access**, then assert the surface renders that run as **failed**. An observability layer that
+renders everything green is the silent-degradation trap with a dashboard.
+
+**Not here:** the graph viewer. No viewer exists (`graph/store.ts:152-178`); the only readers are
+`computeGraphDigest` and the agents' own lookup tools (`graph/tools.ts:145-165`). Smallest
+high-value thing after the milestone; not on the critical path.
+
+---
+
+# Open decisions — owner only
+
+**D-1 · Unattended local-sandbox operation.** Decision 4 accepted `local()` for **attended**
+single-operator use. But T2 installs a systemd unit with `Restart=always` surviving reboot — so the
+Coder answers chat tasks 24/7 with nobody at a terminal, running model-directed bash as the same
+uid in the same mount namespace as `~/.ambient-agent/credentials/` (three GitHub App private keys,
+the model token) and `whatsapp/` (session = account takeover). That is a widening of what was
+authorized, and **it must come from Aaron directly** — an agent writing "the owner accepted this"
+is not authorization. Options: accept explicitly until the E2B key arrives; or restrict the unit
+(no auto-restart / Coder disabled) until E2B; or move credentials out of the shell's namespace
+first.
 
 # Known risks
 
-- **macOS is unexercised** — every proof is Linux. Irrelevant if we go straight to the VPS, which is
-  the plan.
-- **The Coder green path may still not work.** The `TMPDIR` root cause (#172) is documented and the
-  fix is restored, but it has never been observed green. M2 is the measurement.
-- **`createWhatsAppAccount` is the riskiest surviving module** — cyclomatic 50, cognitive 60, and
-  every existing test fakes it through `sessionFactory`.
-- **Rate limits and the fabricated-review fallback** make live gates read as PASS when they should
-  read as inconclusive. Fix before trusting any Reviewer gate.
-- **`local()` puts credentials one `cat` away** — three GitHub App private keys, the model token, and
-  the live WhatsApp session share the shell's mount namespace. Accepted by the owner for attended,
-  single-operator use. Revisit before anything unattended or multi-party.
+- **T3 may fail for the original reason.** #172's `TMPDIR` fix is restored but never observed
+  green. T3's layer-naming instrumentation makes its failure diagnostic rather than ambiguous.
+- **capxul-vps is unexercised.** ~80% disk, port 3000 collision, 443 ownership unknown. T2/T5a
+  surface these while someone is at a terminal.
+- **`createWhatsAppAccount`** — cyclomatic 50, zero live coverage, every test fakes it. T2's
+  reboot gate is its first honest exercise.
+- **Subscription token staleness (#248)** — a long-lived subscription instance dies at token expiry
+  until restart. Not on the API-key path; do not switch to subscription for a standing instance
+  before #248.
+
+# What changed in revision 3
+
+Verification found three blockers and eleven errors. T1's absent-credential negative made an API
+key mandatory, violating decision 5 — now scoped to API-key mode with a mirror positive proving the
+subscription path still boots. #246 had a stated binding but no owner — folded into T1's scope; #245
+likewise — folded into T5b. T5 split into T5a/T5b with a **T3 → T5b** edge, because the Reviewer
+gate needs a Coder PR that only T3 produces — the old M1/M4 deadlock recurring one layer down.
+Added **T3 → T6** for the same reason. T2's second-instance negative gated on enforcement nothing
+built — the lock is now T2 scope. T4's negative was vacuous and is replaced by two that can fail;
+its `env -i` command would have failed on `PATH`. T3's gate gained the issue leg (decision 8), so
+one run proves the whole goal sentence. Restored two restart-integrity proofs the grill relocated
+and this plan had dropped (conversational memory across restart; `kill -9` → `interrupted` with no
+unattended relaunch). T3 now removes **five** silent-disable paths, not two — the two credential
+ones survived. T2 must pack from a commit containing #250 and #246. Acceptance/gate/pre-flight
+defined. Corrected `configuration.ts:66→68`, `routing-api.md:98→92`, the "sole reader" claim about
+the graph store, and the receipt filename. Recorded #248, #242 and D-1 rather than losing them.
+
+# Superseded documents
+
+**To be bannered in the commit that finalizes this plan** (kept for their findings):
+`REBUILD-PLAN-2026-07-19.md`, `GRILL-HANDOFF-2026-07-19.md`, `DEPLOY-RUNBOOK.md`,
+`SAAS-MVP-PLAN.md`, `SAAS-WEBAPP-HANDOFF.md`. Bannering quarantines their internal `S`-stage
+references, which would otherwise dangle.
+
+**To be deleted in that same commit** (dead within hours, never executed):
+`SPEC-S0.5-boot-and-lock.md`, `SPEC-S7a-web-app-demo.md`.
+
+**Findings, authoritative as evidence:** `ARCHITECTURE-ASSESSMENT-2026-07-19.md`,
+`GRILL-REPORT-2026-07-19.md`.

@@ -1,5 +1,11 @@
 # Rebuild plan — one operator-managed instance
 
+> **SUPERSEDED — 2026-07-20.** The active plan is
+> [`ONE-BOX-PLAN-2026-07-20.md`](ONE-BOX-PLAN-2026-07-20.md). This document is kept for its
+> measured findings only; **its stages, gates and stage vocabulary are dead** and any `S`/`M`-stage
+> reference inside it points at work that is no longer scheduled. Findings accumulate; plans are
+> singular.
+
 **Revision 3.** Written 2026-07-19 against ADRs 0020, 0021, 0024 and the grill report
 `GRILL-REPORT-2026-07-19.md`. Supersedes revision 2 and `REBUILD-HANDOFF.md`.
 
@@ -140,7 +146,7 @@ succeed while silently retaining a live Polar call — assert `POLAR_ACCESS_TOKE
 outbound request to `api.polar.sh` during a full wizard poll cycle.
 **Receipt:** `docs/proof/operator-auth-live.md`. **Rollback:** revert; nothing else depends on it yet.
 
-Full spec: `SPEC-S0.5-boot-and-lock.md`.
+~~Full spec: `SPEC-S0.5-boot-and-lock.md`~~ — deleted 2026-07-20, never executed.
 
 ## S7a · Web app — delete the dead screens ✅ unblocked
 
@@ -161,7 +167,7 @@ activating with a stale `basisFingerprint` is refused with a **visible** message
 **Prerequisite (ceremony, not a gate):** the account is paired once.
 **Receipt:** `docs/proof/operator-demo-live.md`.
 
-Full spec: `SPEC-S7a-web-app-demo.md`.
+~~Full spec: `SPEC-S7a-web-app-demo.md`~~ — deleted 2026-07-20, never executed.
 
 ## G1 · Make the gates honest ✅ unblocked — **do before any live gate is trusted**
 
