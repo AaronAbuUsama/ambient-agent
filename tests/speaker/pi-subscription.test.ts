@@ -5,10 +5,14 @@ import {
   DEFAULT_AGENT_MODEL_PROFILES,
   ChatGptReadinessError,
   configureAgentModelProfiles,
+  connectPiApiKeyProvider,
   connectPiChatGptSubscription,
   modelSpecifier,
+  SUBSCRIPTION_PROVIDER_ID,
   prepareLunaResponsesLiteRequest,
   resolveAgentModelProfile,
+  readinessErrorFor,
+  runApiKeyReadinessCheck,
   runChatGptReadinessCheck,
 } from "../../packages/engine/src/model/pi-subscription.ts";
 import {
@@ -25,9 +29,9 @@ const authentication = (apiKey = "header.payload.signature"): ChatGptAuthenticat
 });
 
 const SPEAKER_MODEL_ID = DEFAULT_AGENT_MODEL_PROFILES.speaker.id;
-const SPEAKER_MODEL_SPECIFIER = modelSpecifier(SPEAKER_MODEL_ID);
+const SPEAKER_MODEL_SPECIFIER = modelSpecifier(SUBSCRIPTION_PROVIDER_ID, SPEAKER_MODEL_ID);
 
-afterEach(() => configureAgentModelProfiles(DEFAULT_AGENT_MODEL_PROFILES));
+afterEach(() => configureAgentModelProfiles(DEFAULT_AGENT_MODEL_PROFILES, SUBSCRIPTION_PROVIDER_ID));
 
 describe("connectPiChatGptSubscription", () => {
   it("loads model authorization only from the injected Ambient Agent authentication service", async () => {
@@ -270,7 +274,7 @@ describe("connectPiChatGptSubscription", () => {
       ...DEFAULT_AGENT_MODEL_PROFILES,
       speaker: { id: "gpt-5.6-terra", thinkingLevel: "medium" },
       verifier: { id: "gpt-5.6-luna", thinkingLevel: "off" },
-    });
+    }, SUBSCRIPTION_PROVIDER_ID);
 
     expect(resolveAgentModelProfile("speaker")).toEqual({
       model: "openai-codex/gpt-5.6-terra",
@@ -317,6 +321,59 @@ describe("connectPiChatGptSubscription", () => {
     ).rejects.toMatchObject({ code: "credential-rejected" });
   });
 
+  it("classifies a rate limit apart from a genuine failure, so a gate can report inconclusive", async () => {
+    // #246: a 429 used to fall through to request-failed, indistinguishable from a network
+    // blip. Every live gate from T2 onward needs that difference to avoid reading a rate
+    // limit as a regression.
+    const failing = async (message: string) =>
+      await runChatGptReadinessCheck(authentication(), {
+        profiles: DEFAULT_AGENT_MODEL_PROFILES,
+        request: async () => {
+          throw new Error(message);
+        },
+      })
+        .then(() => {
+          throw new Error("The readiness check resolved when it was expected to fail.");
+        })
+        .catch((cause: unknown) => cause as { code: string; message: string });
+
+    for (const message of [
+      "429 Too Many Requests",
+      "Rate limit reached for gpt-5.4-mini",
+      "You exceeded your current quota",
+      "too many requests, please slow down",
+    ]) {
+      expect(await failing(message)).toMatchObject({ code: "rate-limited" });
+    }
+    // A rate-limited result is re-runnable, so it must say so rather than read as a defect.
+    expect((await failing("429 Too Many Requests")).message).toMatch(/inconclusive/iu);
+
+    // Genuine failures keep their existing classification — the negative that can fail.
+    for (const message of [
+      "fetch failed: ECONNREFUSED",
+      "getaddrinfo ENOTFOUND api.openai.com",
+      "500 Internal Server Error",
+      "socket hang up",
+    ]) {
+      expect(await failing(message)).toMatchObject({ code: "request-failed" });
+    }
+    // A rejected credential still wins over a quota mention: retrying it is pointless.
+    expect(await failing("401 Unauthorized — quota check failed")).toMatchObject({
+      code: "credential-rejected",
+    });
+  });
+
+  it("classifies the stream-error path the same way as the thrown path", () => {
+    // The provider reports most failures through the stream's stopReason rather than by
+    // throwing. Both branches call this one classifier, so asserting it directly covers the
+    // stopReason path without a real stream.
+    expect(readinessErrorFor("429 Too Many Requests").code).toBe("rate-limited");
+    expect(readinessErrorFor("403 Forbidden").code).toBe("credential-rejected");
+    expect(readinessErrorFor("fetch failed").code).toBe("request-failed");
+    // No provider detail leaks into the operator-facing message.
+    expect(readinessErrorFor("429 for org-secret-name").message).not.toContain("org-secret-name");
+  });
+
   it.runIf(process.env.AMBIENT_AGENT_LIVE_CHATGPT === "1")(
     "makes one gated real model request with the managed credential",
     async () => {
@@ -336,6 +393,114 @@ describe("connectPiChatGptSubscription", () => {
           signal: AbortSignal.timeout(60_000),
         }),
       ).resolves.toMatchObject({ request: "complete" });
+    },
+    70_000,
+  );
+});
+
+describe("connectPiApiKeyProvider", () => {
+  it("binds any catalog provider with the key alone, and never registers an api", async () => {
+    // Every api pi's catalog names is already built in (`compat.js:136` calls
+    // registerBuiltInApiProviders at import), so an api-key provider is one registerProvider
+    // call. Supporting all 35 is this, not a per-provider branch.
+    for (const provider of ["openai", "anthropic", "groq", "deepseek", "openrouter"]) {
+      const registerProvider = vi.fn();
+      const receipt = await connectPiApiKeyProvider({
+        provider,
+        apiKey: "managed-api-key",
+        profiles: DEFAULT_AGENT_MODEL_PROFILES,
+        registerProvider,
+      });
+
+      expect(registerProvider).toHaveBeenCalledTimes(1);
+      expect(registerProvider).toHaveBeenCalledWith(provider, { apiKey: "managed-api-key" });
+      expect(receipt).toMatchObject({ authentication: "api-key", provider });
+    }
+  });
+
+  it("refuses an empty key and a provider no build ships rather than failing at first inference", async () => {
+    const registerProvider = vi.fn();
+    await expect(
+      connectPiApiKeyProvider({
+        provider: "openai",
+        apiKey: "   ",
+        profiles: DEFAULT_AGENT_MODEL_PROFILES,
+        registerProvider,
+      }),
+    ).rejects.toThrow(/API key/iu);
+    await expect(
+      connectPiApiKeyProvider({
+        provider: "opeani",
+        apiKey: "managed-api-key",
+        profiles: DEFAULT_AGENT_MODEL_PROFILES,
+        registerProvider,
+      }),
+    ).rejects.toThrow(/not a model provider/iu);
+    expect(registerProvider).not.toHaveBeenCalled();
+  });
+
+  it("prefixes each role's own model with the configured provider", () => {
+    // Funds are limited: a cheap Speaker beside a capable Coder is config, and every agent
+    // reads it through this one seam.
+    configureAgentModelProfiles(
+      {
+        ...DEFAULT_AGENT_MODEL_PROFILES,
+        speaker: { id: "gpt-5.4-nano", thinkingLevel: "low" },
+        coder: { id: "gpt-5.4", thinkingLevel: "high" },
+      },
+      "openai",
+    );
+
+    expect(resolveAgentModelProfile("speaker")).toEqual({ model: "openai/gpt-5.4-nano", thinkingLevel: "low" });
+    expect(resolveAgentModelProfile("coder")).toEqual({ model: "openai/gpt-5.4", thinkingLevel: "high" });
+  });
+
+  it.runIf(process.env.AMBIENT_AGENT_LIVE_MODEL === "1")(
+    "pre-flight: makes one real API-key model request and gets non-empty text back",
+    async () => {
+      // NOT A GATE. One real model call through the production API-key binding, claiming
+      // nothing about any transport. It de-risks the T2 deploy by flushing out provider bugs
+      // before we debug them through an install.
+      //
+      //   AMBIENT_AGENT_LIVE_MODEL=1 OPENAI_API_KEY=sk-... pnpm vitest run tests/speaker/pi-subscription.test.ts
+      const apiKey = process.env.OPENAI_API_KEY?.trim();
+      if (!apiKey) throw new Error("OPENAI_API_KEY is required for the live API-key pre-flight.");
+      const provider = process.env.AMBIENT_AGENT_LIVE_PROVIDER?.trim() || "openai";
+      const modelId = process.env.AMBIENT_AGENT_LIVE_MODEL_ID?.trim() || "gpt-5.4-mini";
+
+      // The production binding, not a bespoke one: the same call apps/runtime makes at boot.
+      const registerProvider = vi.fn();
+      const receipt = await connectPiApiKeyProvider({
+        provider,
+        apiKey,
+        profiles: { ...DEFAULT_AGENT_MODEL_PROFILES, speaker: { id: modelId, thinkingLevel: "low" } },
+        registerProvider,
+      });
+      expect(registerProvider).toHaveBeenCalledWith(provider, { apiKey });
+      expect(receipt.model).toBe(`${provider}/${modelId}`);
+
+      const live = await runApiKeyReadinessCheck({
+        provider,
+        apiKey,
+        modelId,
+        prompt: "Reply with the single word READY.",
+        maxTokens: 16,
+        signal: AbortSignal.timeout(60_000),
+      });
+
+      // A rate limit is inconclusive, not a regression (#246) — say so instead of failing.
+      if (live.reason === "rate-limited") {
+        throw new Error(
+          `INCONCLUSIVE: ${provider} rate-limited the pre-flight. This is not a regression; re-run it.`,
+        );
+      }
+      expect(live.request).toBe("complete");
+      // The assertion that matters. `complete` alone means only that the stream ended without
+      // an error, and an empty response satisfies it.
+      expect(live.text.length).toBeGreaterThan(0);
+      console.log(
+        `pre-flight: model=${live.model} chars=${live.text.length} elapsedMs=${live.elapsedMs}`,
+      );
     },
     70_000,
   );

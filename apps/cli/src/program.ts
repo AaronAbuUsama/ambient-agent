@@ -27,6 +27,8 @@ import {
   type ManagedDataMigration,
 } from "@ambient-agent/installation/migration.ts";
 import {
+  modelApiKeyCredentialFrom,
+  subscriptionModelChoice,
   GITHUB_APP_REFERENCES,
   type GitHubAppReference,
   type GitHubAppTriple,
@@ -55,6 +57,7 @@ import {
   type ChatGptAuthentication,
 } from "@ambient-agent/engine/model/chatgpt-authentication.ts";
 import type { ChatGptReadinessReceipt } from "@ambient-agent/engine/model/pi-subscription.ts";
+import { modelSelectionFrom, resolveModelSelection } from "./model-configuration.ts";
 import {
   discoverOriginRepository,
   normalizeGitHubRepository,
@@ -255,8 +258,22 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .option("--github-apps-file <path>", "read the three GitHub App triples from a private JSON file")
     .option("--whatsapp-store <path>", "copy a stopped local WhatsApp store into setup")
     .option("--authorize", "allow explicit headless ChatGPT device authorization")
+    .option("--model-provider <id>", "model provider ID; the API key is pasted at the prompt, never a flag")
+    .option("--model <id>", "model ID for every agent role")
+    .option("--model-speaker <id>", "model ID for the Speaker (a cheap model is fine here)")
+    .option("--model-scribe <id>", "model ID for the Scribe")
+    .option("--model-planner <id>", "model ID for the Planner")
+    .option("--model-coder <id>", "model ID for the Coder")
+    .option("--model-verifier <id>", "model ID for the Verifier")
     .action(async (options) => {
       const global = program.opts();
+      // Resolved before anything is created, so a bad provider or model ID fails before the
+      // operator sits through pairing. Omitting --model-provider keeps the subscription
+      // default and the ChatGPT device flow — neither mode is required.
+      const modelChoice = resolveModelSelection(
+        { ...subscriptionModelChoice, credential: "chatgpt-oauth" },
+        modelSelectionFrom(options),
+      );
       const current = await inspectManagedData({ dataDirectory: global.dataDir });
       output.stdout(`Data directory: ${current.dataDirectory}\n`);
       if (current.state === "ready") {
@@ -281,6 +298,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           dataDirectory: global.dataDir,
           interactive,
           allowFreshChatGptAuthentication: options.authorize ?? false,
+          modelChoice: { provider: modelChoice.provider, profiles: modelChoice.profiles },
           modelCredentialStorage: tenantDatabase === undefined ? "managed-file" : "tenant-database",
           ...(options.whatsappStore === undefined ? {} : { whatsappStoreSource: resolve(options.whatsappStore) }),
           services: firstRunServices,
@@ -345,6 +363,13 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .option("--repository <owner/name>", "default GitHub repository")
     .option("--port <port>", "foreground runtime HTTP port")
     .option("--github-app <reference>", "rotate one GitHub App (coder|reviewer|planner) by pasting a fresh triple")
+    .option("--model-provider <id>", "model provider ID; the API key is pasted at the prompt, never a flag")
+    .option("--model <id>", "model ID for every agent role")
+    .option("--model-speaker <id>", "model ID for the Speaker (a cheap model is fine here)")
+    .option("--model-scribe <id>", "model ID for the Scribe")
+    .option("--model-planner <id>", "model ID for the Planner")
+    .option("--model-coder <id>", "model ID for the Coder")
+    .option("--model-verifier <id>", "model ID for the Verifier")
     .action(async (options) => {
       const paths = managedPaths({ dataDirectory: program.opts().dataDir });
       const rotateReference = options.githubApp as GitHubAppReference | undefined;
@@ -451,6 +476,18 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           rotatedSpecialist = { path: paths.githubAppCredentials[rotateReference], credential: rotated };
         }
       }
+      // Resolved before the review so a bad provider or model ID is refused here, not after
+      // the operator has confirmed. The key itself is prompted, never a flag and never an
+      // environment variable; it is written to credentials/model-api-key.json at mode 0600
+      // and referenced from config by name only.
+      const model = resolveModelSelection(currentConfig.model, modelSelectionFrom(options));
+      let modelCredential: ReturnType<typeof modelApiKeyCredentialFrom> | undefined;
+      if (model.needsApiKey) {
+        if (!interactive || setupPrompts.modelApiKey === undefined) {
+          throw new Error(`Selecting the ${model.provider} model provider requires the interactive guided key paste.`);
+        }
+        modelCredential = modelApiKeyCredentialFrom(model.provider, await setupPrompts.modelApiKey(model.provider));
+      }
       // The runtime's own identity is the Planner App, so it proves access to the repository.
       const plannerCredential = rotatedPlanner ?? currentCredential;
       const verifiedRepository = await firstRunServices.verifyGitHub(
@@ -488,11 +525,16 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
       if (rotatedSpecialist !== undefined) {
         await atomicWriteManagedConfig(rotatedSpecialist.path, rotatedSpecialist.credential);
       }
+      // Written before the config that references it, so the referenced file always exists.
+      if (modelCredential !== undefined) {
+        await atomicWriteManagedConfig(paths.modelApiKeyCredential, modelCredential);
+      }
       await writeManagedConfiguration(
         paths.config,
         paths.githubAppCredentials.planner,
         {
           ...currentConfig,
+          model: { provider: model.provider, credential: model.credential, profiles: model.profiles },
           managedChats,
           ...(canaryChat === undefined ? {} : { smoke: { canaryChat } }),
           runtime: { ...currentConfig.runtime, port: runtimePort },

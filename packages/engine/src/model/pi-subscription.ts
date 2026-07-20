@@ -1,4 +1,5 @@
 import {
+  completeSimple,
   openAICodexResponsesApi,
   type Api,
   type Model,
@@ -8,10 +9,47 @@ import {
   registerApiProvider as flueRegisterApiProvider,
   registerProvider as flueRegisterProvider,
 } from "@flue/runtime";
+import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
+import type { KnownProvider } from "@earendil-works/pi-ai";
 import type { ChatGptAuthentication } from "./chatgpt-authentication.ts";
 import type { ModelAuthorization } from "./chatgpt-authentication.ts";
 
-const PROVIDER_ID = "openai-codex";
+/**
+ * The ChatGPT subscription provider — the one provider that is not an API key. It carries an
+ * OAuth credential and a bespoke Responses Lite adaptation, so it keeps its own connector
+ * ({@link connectPiChatGptSubscription}). Every other provider ID pi ships is an API key and
+ * shares {@link connectPiApiKeyProvider}.
+ */
+export const SUBSCRIPTION_PROVIDER_ID = "openai-codex";
+
+const PROVIDER_ID = SUBSCRIPTION_PROVIDER_ID;
+
+/** A pi provider ID, e.g. `openai`, `anthropic`, `groq` — the prefix on every model specifier. */
+export type ModelProvider = string;
+
+/**
+ * pi's built-in provider catalog, 35 entries. Every one is a `createProvider({id, baseUrl,
+ * auth: {apiKey}, api})` of identical shape, and every `api` they name (`openai-responses`,
+ * `anthropic-messages`, …) is already registered by `registerBuiltInApiProviders()` at import
+ * (`pi-ai/dist/compat.js:136`). Binding one is therefore a single `registerProvider(id,
+ * {apiKey})` and never a `registerApiProvider`.
+ */
+export const modelProviders = (): readonly string[] => getBuiltinProviders();
+
+export const isModelProvider = (value: string): boolean => modelProviders().includes(value);
+
+/**
+ * The provider's catalog model IDs, so a rejected ID can be answered with the real ones. pi
+ * types this by the `KnownProvider` union it derives from its generated catalog; a provider
+ * ID out of config is a plain string, and the function already answers with an empty list
+ * for an ID the catalog does not carry — which is exactly what the callers ask.
+ */
+export const catalogModelIds = (provider: ModelProvider): readonly string[] =>
+  getBuiltinModels(provider as KnownProvider).map((model) => model.id);
+
+/** Whether the provider's catalog lists this model ID, so a typo is refused before it is written. */
+export const isCatalogModel = (provider: ModelProvider, modelId: string): boolean =>
+  catalogModelIds(provider).includes(modelId);
 
 export const LUNA_MODEL_ID = "gpt-5.6-luna";
 export const AGENT_MODEL_ROLES = ["speaker", "scribe", "planner", "coder", "verifier"] as const;
@@ -36,16 +74,24 @@ export const DEFAULT_AGENT_MODEL_PROFILES: AgentModelProfiles = {
 };
 
 let agentModelProfiles = DEFAULT_AGENT_MODEL_PROFILES;
+let agentModelProvider: ModelProvider = PROVIDER_ID;
 
-export const modelSpecifier = (id: string): `${typeof PROVIDER_ID}/${string}` => `${PROVIDER_ID}/${id}`;
+export const modelSpecifier = (provider: ModelProvider, id: string): `${string}/${string}` =>
+  `${provider}/${id}`;
 
-export const configureAgentModelProfiles = (profiles: AgentModelProfiles): void => {
+export const configureAgentModelProfiles = (profiles: AgentModelProfiles, provider: ModelProvider): void => {
   agentModelProfiles = profiles;
+  agentModelProvider = provider;
 };
 
+/**
+ * The single seam every agent resolves its model through. All five roles read their own
+ * profile here, so a per-role model — a cheap Speaker beside a capable Coder — is config,
+ * and no agent ever names a provider.
+ */
 export const resolveAgentModelProfile = (role: AgentModelRole) => {
   const profile = agentModelProfiles[role];
-  return { model: modelSpecifier(profile.id), thinkingLevel: profile.thinkingLevel };
+  return { model: modelSpecifier(agentModelProvider, profile.id), thinkingLevel: profile.thinkingLevel };
 };
 
 export const configuredModelIds = (profiles: AgentModelProfiles): readonly string[] => [
@@ -81,7 +127,7 @@ export interface ChatGptReadinessReceipt {
   readonly model: string;
   readonly models: readonly string[];
   readonly request: "complete" | "failed";
-  readonly reason?: "cancelled" | "timeout" | "credential-rejected" | "request-failed";
+  readonly reason?: "cancelled" | "timeout" | "credential-rejected" | "rate-limited" | "request-failed";
 }
 
 export interface ChatGptReadinessCheckOptions {
@@ -103,6 +149,40 @@ export class ChatGptReadinessError extends Error {
     super(message, options);
   }
 }
+
+const CREDENTIAL_REJECTED = /\b(401|403|unauthori[sz]ed|forbidden|invalid[_ -]?token|revoked)\b/iu;
+const RATE_LIMITED = /\b(429|rate.?limit(ed|s)?|too many requests|quota)\b/iu;
+
+/**
+ * Classify a failed model request (#246). A 429 previously fell through to `request-failed`,
+ * making a rate limit indistinguishable from a network blip, a 500 or a DNS failure — so a
+ * live gate that merely hit the rate limit read as a regression. A rate-limited run is
+ * INCONCLUSIVE and re-runnable: never PASS, never FAIL.
+ *
+ * Credential rejection is checked first: a 401 that also happens to mention a quota is still
+ * a credential problem, and retrying it is pointless.
+ */
+export const readinessErrorFor = (message: string, options?: ErrorOptions): ChatGptReadinessError => {
+  if (CREDENTIAL_REJECTED.test(message)) {
+    return new ChatGptReadinessError(
+      "credential-rejected",
+      "ChatGPT rejected the managed credential during the live readiness check.",
+      options,
+    );
+  }
+  if (RATE_LIMITED.test(message)) {
+    return new ChatGptReadinessError(
+      "rate-limited",
+      "The model provider rate-limited the live readiness request; the result is inconclusive, not a regression. Re-run it.",
+      options,
+    );
+  }
+  return new ChatGptReadinessError(
+    "request-failed",
+    "The ChatGPT live readiness request failed; retry when the service is reachable.",
+    options,
+  );
+};
 
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
@@ -244,17 +324,7 @@ const requestChatGptReadiness = async (
       timeout ? "The ChatGPT readiness request timed out." : "The ChatGPT readiness request was cancelled.",
     );
   }
-  if (result.stopReason === "error") {
-    const rejected = /\b(401|403|unauthori[sz]ed|forbidden|invalid[_ -]?token|revoked)\b/iu.test(
-      result.errorMessage ?? "",
-    );
-    throw new ChatGptReadinessError(
-      rejected ? "credential-rejected" : "request-failed",
-      rejected
-        ? "ChatGPT rejected the managed credential during the live readiness check."
-        : "The ChatGPT live readiness request failed; retry when the service is reachable.",
-    );
-  }
+  if (result.stopReason === "error") throw readinessErrorFor(result.errorMessage ?? "");
 };
 
 const readinessFailure = (cause: unknown, signal?: AbortSignal): ChatGptReadinessError => {
@@ -267,11 +337,7 @@ const readinessFailure = (cause: unknown, signal?: AbortSignal): ChatGptReadines
       { cause },
     );
   }
-  return new ChatGptReadinessError(
-    "request-failed",
-    "The ChatGPT live readiness request failed; retry when the service is reachable.",
-    { cause },
-  );
+  return readinessErrorFor(cause instanceof Error ? cause.message : String(cause), { cause });
 };
 
 export const runChatGptReadinessCheck = async (
@@ -288,8 +354,8 @@ export const runChatGptReadinessCheck = async (
     throw readinessFailure(cause, options.signal);
   }
   return {
-    model: modelSpecifier(options.profiles.speaker.id),
-    models: modelIds.map(modelSpecifier),
+    model: modelSpecifier(PROVIDER_ID, options.profiles.speaker.id),
+    models: modelIds.map((id) => modelSpecifier(PROVIDER_ID, id)),
     request: "complete",
   };
 };
@@ -315,8 +381,102 @@ export async function connectPiChatGptSubscription(
 
   return {
     authentication: "chatgpt-oauth",
-    model: modelSpecifier(options.profiles.speaker.id),
-    models: modelIds.map(modelSpecifier),
+    model: modelSpecifier(PROVIDER_ID, options.profiles.speaker.id),
+    models: modelIds.map((id) => modelSpecifier(PROVIDER_ID, id)),
     provider: PROVIDER_ID,
+  };
+}
+
+export interface ApiKeyReadinessReceipt {
+  readonly model: string;
+  readonly request: "complete" | "failed";
+  readonly reason?: NonNullable<ChatGptReadinessReceipt["reason"]>;
+  /** The reply text. Non-empty is the only evidence that inference happened at all. */
+  readonly text: string;
+  readonly elapsedMs: number;
+}
+
+/**
+ * One real request through an API-key provider, for the pre-flight that de-risks a deploy.
+ *
+ * It deliberately reports the reply *text*: a `complete` request only means the stream ended
+ * without an error, and an empty response satisfies that. This makes no claim about any
+ * transport — it proves inference, nothing else.
+ */
+export const runApiKeyReadinessCheck = async (options: {
+  readonly provider: ModelProvider;
+  readonly apiKey: string;
+  readonly modelId: string;
+  readonly prompt?: string;
+  readonly maxTokens?: number;
+  readonly signal?: AbortSignal;
+}): Promise<ApiKeyReadinessReceipt> => {
+  const model = getBuiltinModels(options.provider as KnownProvider).find(({ id }) => id === options.modelId);
+  if (model === undefined) {
+    throw new Error(`${options.provider} has no model ${options.modelId} in this build's catalog.`);
+  }
+  const started = Date.now();
+  const specifier = modelSpecifier(options.provider, options.modelId);
+  try {
+    const result = await completeSimple(
+      model,
+      { messages: [{ role: "user", content: options.prompt ?? "Reply with READY.", timestamp: started }] },
+      { apiKey: options.apiKey, maxTokens: options.maxTokens ?? 16, ...(options.signal ? { signal: options.signal } : {}) },
+    );
+    if (result.stopReason === "error" || result.stopReason === "aborted") {
+      const failure = readinessErrorFor(result.errorMessage ?? String(result.stopReason));
+      return { model: specifier, request: "failed", reason: failure.code, text: "", elapsedMs: Date.now() - started };
+    }
+    const text = result.content
+      .filter((part): part is { type: "text"; text: string } => part.type === "text")
+      .map((part) => part.text)
+      .join("")
+      .trim();
+    return { model: specifier, request: "complete", text, elapsedMs: Date.now() - started };
+  } catch (cause) {
+    const failure = readinessFailure(cause, options.signal);
+    return { model: specifier, request: "failed", reason: failure.code, text: "", elapsedMs: Date.now() - started };
+  }
+};
+
+export interface PiApiKeyConnectorOptions {
+  /** Any pi provider ID other than the subscription one. */
+  readonly provider: ModelProvider;
+  /** The key read from the managed credential store; never an environment variable. */
+  readonly apiKey: string;
+  readonly profiles: AgentModelProfiles;
+  readonly registerProvider?: ProviderRegistrar;
+}
+
+export interface PiApiKeyReceipt {
+  readonly authentication: "api-key";
+  readonly model: string;
+  readonly models: readonly string[];
+  readonly provider: ModelProvider;
+}
+
+/**
+ * Bind any catalog provider with an API key. The registration carries only the key: the api
+ * id, endpoint, context window and per-model cost all hydrate from pi's catalog. There is
+ * deliberately no `registerApiProvider` and no request rewriting — the Codex Responses Lite
+ * adaptation is gated on the Codex URL and model id and never sees these requests.
+ */
+export async function connectPiApiKeyProvider(options: PiApiKeyConnectorOptions): Promise<PiApiKeyReceipt> {
+  if (!nonEmptyString(options.apiKey)) {
+    throw new Error(
+      `The managed API key for model provider ${options.provider} is empty; run ambient-agent config --model-provider ${options.provider}.`,
+    );
+  }
+  if (!isModelProvider(options.provider)) {
+    throw new Error(`${options.provider} is not a model provider this build of pi ships.`);
+  }
+  const modelIds = configuredModelIds(options.profiles);
+  (options.registerProvider ?? flueRegisterProvider)(options.provider, { apiKey: options.apiKey });
+
+  return {
+    authentication: "api-key",
+    model: modelSpecifier(options.provider, options.profiles.speaker.id),
+    models: modelIds.map((id) => modelSpecifier(options.provider, id)),
+    provider: options.provider,
   };
 }
