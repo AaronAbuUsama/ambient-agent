@@ -154,7 +154,13 @@ export const createWhatsAppAccount = (options: CreateWhatsAppAccountOptions): Ma
   let archiveQueue = Promise.resolve();
 
   const settleInitialArchive = (): void => {
-    if (!onlineObserved || !initialSyncObserved || initialArchiveReady) return;
+    // `online` is whatsappd's settled-and-ready signal: it fires only after the authenticated
+    // sync sub-state (draining → syncing) completes on a first link, and immediately on a
+    // reconnect where history sync is skipped because the store already holds it. Requiring a
+    // conversation-sync batch on top of it hung every restart — a reconnect emits no batch, so
+    // the runtime waited 60s and failed on a healthy session. The online handler chains this
+    // through archiveQueue, so any batch delivered before online is durably written first.
+    if (!onlineObserved || initialArchiveReady) return;
     initialArchiveReady = true;
     for (const settle of archiveReadyWaiters) settle();
     archiveReadyWaiters.clear();
