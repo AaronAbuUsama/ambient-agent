@@ -56,10 +56,28 @@ The two negatives assert the **throw** (a rejected promise), which is what makes
 `startGeneratedRuntime` / the server module's top-level `await` reject and the
 process exit non-zero. They do not assert a log line.
 
-## Pre-flight (owner runs) — TBD
+## Pre-flight — sandbox shell, model-independent — ✅ observed
 
-_This section is pending the owner's decision on the pre-flight approach and is
-not yet observed. See the report accompanying PR #266._
+The Coder is a server-embedded Flue workflow; it cannot be driven standalone
+without forking `createAmbientAgentApp`'s runtime composition and a live model
+key, so the model-driven half of the pre-flight is folded into the gate (a small
+task on this repo from the managed chat — no throwaway repo). The
+**model-independent** half — does the resolved local sandbox actually run the
+model's shell — is proven here and needs no model, GitHub, or key:
+
+`tests/coder/local-sandbox-shell.test.ts` (runs in the normal suite):
+
+| In the local sandbox | Observed |
+|---|---|
+| `$TMPDIR` | `<workspaces>/.tmp` — workspace-local, not `/tmp` (the #172 fix) |
+| write + `chmod +x` + run a binary from `$TMPDIR` | exit 0, prints `ran-from-tmpdir` — the scenario that failed `EACCES` on `noexec /tmp` |
+| `node --version` | exit 0, resolves on the host PATH `local()` keeps |
+
+Demonstrated live (2026-07-20, local dev host) additionally running
+`npx fallow --help` inside the sandbox → exit 0. The owner can run
+`pnpm vitest run tests/coder/local-sandbox-shell.test.ts` on `capxul-vps` to
+confirm the shell layer there before the model-driven gate; capture
+`mount | grep /tmp` alongside it (exec-mounted on that box).
 
 ## Re-deploy the instrument — ❌ NOT DONE
 
