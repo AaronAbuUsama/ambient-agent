@@ -12,7 +12,7 @@ afterEach(async () => await Promise.all(roots.splice(0).map((root) => rm(root, {
 
 const localConfig = () => ({
   ...createManagedConfig(["120363000@g.us"], "owner/repo"),
-  runtime: { port: 3000, sandbox: { kind: "local" as const } },
+  runtime: { port: 3000, sandbox: { kind: "local" as const }, tracing: { enabled: false } },
 });
 
 /**

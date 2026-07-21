@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { configureLogging, type LogFormat } from "@ambient-agent/engine/logging/logging.ts";
 import {
   ensureManagedGitHubWebhookSecret,
+  readManagedBraintrustApiKey,
   readManagedConfig,
   readManagedGitHubAppCredential,
   readManagedModelApiKey,
@@ -81,6 +82,13 @@ export const parseSandboxKind = (value: string): "local" | "e2b" => {
   return value;
 };
 
+export const parseTracingToggle = (value: string): boolean => {
+  if (value !== "on" && value !== "off") {
+    throw new Error("The --tracing option must be on or off.");
+  }
+  return value === "on";
+};
+
 const portOccupied = (cause: unknown): boolean =>
   cause instanceof AggregateError
     ? cause.errors.some(portOccupied)
@@ -109,6 +117,22 @@ const readModelApiKeyOrFail = async (paths: ManagedPaths, provider: string): Pro
   return credential.apiKey;
 };
 
+/**
+ * Read the Braintrust key when tracing is enabled, or throw (#252). Read here beside the model key,
+ * before anything binds, so a tracing-on config with a missing key fails the process at start rather
+ * than booting with tracing silently dead. The key is threaded into the runtime bundle, never env.
+ */
+const readBraintrustApiKeyOrFail = async (paths: ManagedPaths): Promise<string> => {
+  try {
+    return (await readManagedBraintrustApiKey(paths.braintrustCredential)).apiKey;
+  } catch (cause) {
+    throw new Error(
+      `runtime.tracing.enabled is true but the Braintrust key at ${paths.braintrustCredential} is missing or unreadable. Run ambient-agent config --tracing on and paste a key, or ambient-agent config --tracing off.`,
+      { cause },
+    );
+  }
+};
+
 export const startGeneratedRuntime = async (
   paths: ManagedPaths,
   logging: RuntimeLoggingOptions,
@@ -131,6 +155,9 @@ export const startGeneratedRuntime = async (
     configuration.model.provider === SUBSCRIPTION_PROVIDER_ID
       ? undefined
       : await readModelApiKeyOrFail(paths, configuration.model.provider);
+  const braintrustApiKey = configuration.runtime.tracing.enabled
+    ? await readBraintrustApiKeyOrFail(paths)
+    : undefined;
   const deployment = runtimeDeploymentIdentityFromEnvironment();
   const bridge = resolveTenantRuntimeOperateBridge();
   const agentSandbox = await resolveAgentSandbox(configuration, paths);
@@ -143,6 +170,7 @@ export const startGeneratedRuntime = async (
     ...(deployment === undefined ? {} : { deployment }),
     ...(bridge === undefined ? {} : { bridge }),
     ...(modelApiKey === undefined ? {} : { modelApiKey }),
+    ...(braintrustApiKey === undefined ? {} : { braintrustApiKey }),
   });
   process.chdir(paths.root);
   const serverEntry = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "server.mjs"));

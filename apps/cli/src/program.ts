@@ -27,12 +27,16 @@ import {
   type ManagedDataMigration,
 } from "@ambient-agent/installation/migration.ts";
 import {
+  braintrustCredentialFrom,
+  e2bCredentialFrom,
   modelApiKeyCredentialFrom,
   subscriptionModelChoice,
   GITHUB_APP_REFERENCES,
   type GitHubAppReference,
   type GitHubAppTriple,
   type GitHubAppTriples,
+  type RuntimeSandbox,
+  type RuntimeTracing,
 } from "@ambient-agent/installation/schema.ts";
 import { managedPaths, type ManagedPaths } from "@ambient-agent/installation/paths.ts";
 import {
@@ -77,6 +81,7 @@ import { createDeviceCodeCallbacks, createWhatsAppCallbacks, defaultSetupPrompts
 import {
   parseRuntimePort,
   parseSandboxKind,
+  parseTracingToggle,
   startGeneratedRuntime,
   type ImportRuntime,
   type RuntimeLoggingOptions,
@@ -130,6 +135,16 @@ export type { WindowDeliveryCounts } from "./rendering.ts";
 const defaultOutput: CliOutput = {
   stdout: (text) => process.stdout.write(text),
   stderr: (text) => process.stderr.write(text),
+};
+
+/** True when a regular file already exists at `path`; a broken/other node counts as present. */
+const regularFileExists = async (path: string): Promise<boolean> => {
+  try {
+    return (await lstat(path)).isFile();
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw cause;
+  }
 };
 
 
@@ -388,6 +403,10 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .option("--repository <owner/name>", "default GitHub repository")
     .option("--port <port>", "foreground runtime HTTP port")
     .option("--sandbox <kind>", "agent sandbox for the Coder and Reviewer: local or e2b")
+    .option("--sandbox-template <name>", "E2B template to boot (absent uses the account default)")
+    .option("--tracing <on|off>", "Braintrust production tracing")
+    .option("--tracing-project <name>", "Braintrust tracing project name")
+    .option("--tracing-project-id <id>", "Braintrust tracing project id")
     .option("--github-app <reference>", "rotate one GitHub App (coder|reviewer|planner) by pasting a fresh triple")
     .option("--model-provider <id>", "model provider ID; the API key is pasted at the prompt, never a flag")
     .option("--model <id>", "model ID for every agent role")
@@ -557,10 +576,46 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           all.findIndex((candidate) => candidate.toLowerCase() === repository.toLowerCase()) === index,
       );
       const runtimePort = options.port === undefined ? currentConfig.runtime.port : parseRuntimePort(options.port);
-      const runtimeSandbox =
-        options.sandbox === undefined
-          ? currentConfig.runtime.sandbox
-          : { ...currentConfig.runtime.sandbox, kind: parseSandboxKind(options.sandbox) };
+      // sandbox.template: NonBlankString or absent — an empty --sandbox-template clears it (back to
+      // the E2B account default), so an operator can undo a template without hand-editing config.json.
+      const runtimeSandbox: RuntimeSandbox = {
+        ...currentConfig.runtime.sandbox,
+        ...(options.sandbox === undefined ? {} : { kind: parseSandboxKind(options.sandbox) }),
+        ...(options.sandboxTemplate === undefined
+          ? {}
+          : options.sandboxTemplate.trim() === ""
+            ? { template: undefined }
+            : { template: options.sandboxTemplate.trim() }),
+      };
+      const currentTracing = currentConfig.runtime.tracing;
+      const tracingEnabled =
+        options.tracing === undefined ? currentTracing.enabled : parseTracingToggle(options.tracing);
+      const tracingProject = {
+        ...currentTracing.project,
+        ...(options.tracingProject === undefined ? {} : { name: options.tracingProject.trim() || undefined }),
+        ...(options.tracingProjectId === undefined ? {} : { id: options.tracingProjectId.trim() || undefined }),
+      };
+      const runtimeTracing: RuntimeTracing = {
+        enabled: tracingEnabled,
+        ...(tracingProject.name === undefined && tracingProject.id === undefined ? {} : { project: tracingProject }),
+      };
+      // The E2B key lives in credentials/e2b.json (#252), pasted when e2b is selected and the file is
+      // absent; a headless run leaves provisioning to the file mount and start fails clearly if unset.
+      if (runtimeSandbox.kind === "e2b" && !(await regularFileExists(paths.e2bCredential))) {
+        if (interactive && setupPrompts.e2bApiKey !== undefined) {
+          await atomicWriteManagedConfig(paths.e2bCredential, e2bCredentialFrom(await setupPrompts.e2bApiKey()));
+        }
+      }
+      // The Braintrust key lives in credentials/braintrust.json (#252), pasted when tracing is turned
+      // on and the file is absent; same headless fallback as the E2B key.
+      if (runtimeTracing.enabled && !(await regularFileExists(paths.braintrustCredential))) {
+        if (interactive && setupPrompts.braintrustApiKey !== undefined) {
+          await atomicWriteManagedConfig(
+            paths.braintrustCredential,
+            braintrustCredentialFrom(await setupPrompts.braintrustApiKey()),
+          );
+        }
+      }
       // The verified coder/reviewer credential is committed only now that the review passed.
       if (rotatedSpecialist !== undefined) {
         await atomicWriteManagedConfig(rotatedSpecialist.path, rotatedSpecialist.credential);
@@ -577,7 +632,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           model: { provider: model.provider, credential: model.credential, profiles: modelProfiles },
           managedChats,
           ...(canaryChat === undefined ? {} : { smoke: { canaryChat } }),
-          runtime: { ...currentConfig.runtime, port: runtimePort, sandbox: runtimeSandbox },
+          runtime: { ...currentConfig.runtime, port: runtimePort, sandbox: runtimeSandbox, tracing: runtimeTracing },
           github: {
             ...currentConfig.github,
             defaultRepository: verifiedRepository,

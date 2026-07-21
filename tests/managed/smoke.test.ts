@@ -17,6 +17,8 @@ const paths = {
   chatGptOAuthCredential: "/missing/credentials/chatgpt-oauth.json",
   legacyPiAuthCredential: "/missing/credentials/pi-auth.json",
   modelApiKeyCredential: "/missing/credentials/model-api-key.json",
+  e2bCredential: "/missing/credentials/e2b.json",
+  braintrustCredential: "/missing/credentials/braintrust.json",
   applicationDatabase: "/missing/application.sqlite",
   flueDatabase: "/missing/flue.sqlite",
   whatsapp: "/missing/whatsapp",

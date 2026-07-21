@@ -48,6 +48,10 @@ export interface FirstRunPrompts {
   githubApp(reference: GitHubAppReference, repository: string): Promise<GitHubAppTriple>;
   /** Guided paste of the model API key, at first run or via `config --model-provider <id>`. */
   modelApiKey?(provider: string): Promise<string>;
+  /** Guided paste of the E2B API key when `config --sandbox e2b` needs `credentials/e2b.json` (#252). */
+  e2bApiKey?(): Promise<string>;
+  /** Guided paste of the Braintrust API key when `config --tracing on` needs the credential (#252). */
+  braintrustApiKey?(): Promise<string>;
   /** First-run auth choice (C1): the subscription device flow, or a pasted API key. */
   modelAuthMode?(): Promise<"subscription" | "api-key">;
   /** Pick one model from the provider's catalog; applied to every agent role. */

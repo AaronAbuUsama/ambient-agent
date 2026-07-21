@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { SandboxFactory } from "@flue/runtime";
 import { local } from "@flue/runtime/node";
 
+import { readManagedE2BApiKey } from "./configuration.ts";
 import { E2B_WORKSPACES_ROOT, e2bSandbox } from "./e2b-sandbox.ts";
 import type { ManagedPaths } from "./paths.ts";
 import type { ManagedConfig } from "./schema.ts";
@@ -39,10 +40,12 @@ export interface AgentSandbox {
  * tree and create it before the first command names it. Kept at the workspaces root rather than
  * under a job directory so a per-job cleanup never destroys it.
  *
- * `e2b` reads `E2B_API_KEY` and threads it **explicitly** into `Sandbox.create` rather than leaving
- * the SDK to read it from the ambient environment; the key stays operator environment until #252
- * moves it into `credentials/e2b.json`. Selecting `e2b` without a key throws here, so the runtime
- * exits non-zero at start rather than booting with a dead Coder — the sandbox-misconfigured negative.
+ * `e2b` reads its API key from `credentials/e2b.json` (#252) and threads it **explicitly** into
+ * `Sandbox.create` rather than leaving the SDK to read `E2B_API_KEY` from the ambient environment.
+ * A missing or damaged credential throws here, so the runtime exits non-zero at start rather than
+ * booting with a dead Coder — the sandbox-misconfigured negative. A stale `E2B_API_KEY` still in the
+ * environment is ignored with a warning, so an operator who has not yet moved it off env is not
+ * silently running on the old value.
  */
 export const resolveAgentSandbox = async (
   config: ManagedConfig,
@@ -51,10 +54,18 @@ export const resolveAgentSandbox = async (
 ): Promise<AgentSandbox> => {
   const { kind, template } = config.runtime.sandbox;
   if (kind === "e2b") {
-    const apiKey = environment.E2B_API_KEY?.trim();
-    if (!apiKey) {
+    if (environment.E2B_API_KEY?.trim()) {
+      console.warn(
+        "[sandbox] E2B_API_KEY is set in the environment but ignored; the E2B key is read from credentials/e2b.json (ambient-agent config --sandbox e2b).",
+      );
+    }
+    let apiKey: string;
+    try {
+      ({ apiKey } = await readManagedE2BApiKey(paths.e2bCredential));
+    } catch (cause) {
       throw new Error(
-        "runtime.sandbox.kind is e2b but E2B_API_KEY is not set. Set it, or run ambient-agent config --sandbox local.",
+        `runtime.sandbox.kind is e2b but the E2B key at ${paths.e2bCredential} is missing or unreadable. Run ambient-agent config --sandbox e2b and paste a key, or ambient-agent config --sandbox local.`,
+        { cause },
       );
     }
     return {

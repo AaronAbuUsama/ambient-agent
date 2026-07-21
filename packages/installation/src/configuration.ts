@@ -6,9 +6,13 @@ import * as v from "valibot";
 
 import { SUBSCRIPTION_PROVIDER_ID } from "@ambient-agent/engine/model/pi-subscription.ts";
 import {
+  BraintrustCredentialSchema,
+  E2BCredentialSchema,
   GitHubAppCredentialSchema,
   ManagedConfigSchema,
   ModelApiKeyCredentialSchema,
+  type BraintrustCredential,
+  type E2BCredential,
   type GitHubAppCredential,
   type ManagedConfig,
   type ModelApiKeyCredential,
@@ -69,6 +73,20 @@ export const readProvisionedGitHubAppCredential = async (
  */
 export const readManagedModelApiKey = async (path: string): Promise<ModelApiKeyCredential> =>
   await readPrivateJson(path, ModelApiKeyCredentialSchema);
+
+/**
+ * The E2B API key from `credentials/e2b.json` (#252). A missing or damaged file throws: an `e2b`
+ * sandbox with no key must fail the runtime loudly at start rather than boot with a dead Coder.
+ */
+export const readManagedE2BApiKey = async (path: string): Promise<E2BCredential> =>
+  await readPrivateJson(path, E2BCredentialSchema);
+
+/**
+ * The Braintrust API key from `credentials/braintrust.json` (#252). A missing or damaged file
+ * throws: tracing that is configured on but has no key must fail loudly rather than boot silent.
+ */
+export const readManagedBraintrustApiKey = async (path: string): Promise<BraintrustCredential> =>
+  await readPrivateJson(path, BraintrustCredentialSchema);
 
 export const atomicWriteManagedConfig = async (path: string, value: unknown): Promise<void> => {
   const directory = dirname(path);

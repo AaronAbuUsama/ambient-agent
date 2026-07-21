@@ -920,6 +920,84 @@ describe("managed CLI", () => {
     await expect(readFile(managed.config, "utf8")).resolves.toBe(before);
   });
 
+  it("re-homes E2B and Braintrust config to the CLI, pasting the keys and never taking them as flags (#252)", async () => {
+    const paths = await files();
+    await runCli(
+      ["--data-dir", paths.data, "init", "--chat", "120363000@g.us", "--repository", "owner/repo"],
+      harness(),
+    );
+    const managed = managedPaths({ dataDirectory: paths.data });
+    // A fresh install traces nothing and runs the local sandbox.
+    expect(JSON.parse(await readFile(managed.config, "utf8"))).toMatchObject({
+      runtime: { sandbox: { kind: "local" }, tracing: { enabled: false } },
+    });
+
+    const cli = harness();
+    const configured = {
+      ...cli,
+      setupPrompts: {
+        ...cli.setupPrompts,
+        e2bApiKey: async () => "e2b_sk_pasted",
+        braintrustApiKey: async () => "bt_sk_pasted",
+      },
+    };
+    expect(
+      await runCli(
+        [
+          "--data-dir",
+          paths.data,
+          "config",
+          "--sandbox",
+          "e2b",
+          "--sandbox-template",
+          "flue-node",
+          "--tracing",
+          "on",
+          "--tracing-project",
+          "ambient-agent",
+          "--tracing-project-id",
+          "p42",
+        ],
+        configured,
+      ),
+    ).toBe(0);
+
+    // Config round-trips the non-secret fields identically.
+    expect(JSON.parse(await readFile(managed.config, "utf8"))).toMatchObject({
+      runtime: {
+        sandbox: { kind: "e2b", template: "flue-node" },
+        tracing: { enabled: true, project: { name: "ambient-agent", id: "p42" } },
+      },
+    });
+    // The pasted secrets land in their own 0600 credential files, referenced by name, never in config.
+    expect(JSON.parse(await readFile(managed.e2bCredential, "utf8"))).toEqual({
+      schemaVersion: 1,
+      kind: "e2b",
+      apiKey: "e2b_sk_pasted",
+    });
+    expect(JSON.parse(await readFile(managed.braintrustCredential, "utf8"))).toEqual({
+      schemaVersion: 1,
+      kind: "braintrust",
+      apiKey: "bt_sk_pasted",
+    });
+    expect((await lstat(managed.e2bCredential)).mode & 0o777).toBe(0o600);
+    expect((await lstat(managed.braintrustCredential)).mode & 0o777).toBe(0o600);
+    expect(await readFile(managed.config, "utf8")).not.toContain("e2b_sk_pasted");
+    expect(configured.stdout()).not.toContain("e2b_sk_pasted");
+    expect(configured.stdout()).not.toContain("bt_sk_pasted");
+
+    // Turning tracing off round-trips back and does not delete the key file.
+    expect(await runCli(["--data-dir", paths.data, "config", "--tracing", "off"], harness())).toBe(0);
+    expect(JSON.parse(await readFile(managed.config, "utf8")).runtime.tracing.enabled).toBe(false);
+
+    // A bad toggle is refused before anything is written.
+    const untouched = await readFile(managed.config, "utf8");
+    const bad = harness();
+    expect(await runCli(["--data-dir", paths.data, "config", "--tracing", "maybe"], bad)).not.toBe(0);
+    expect(bad.stderr()).toContain("on or off");
+    await expect(readFile(managed.config, "utf8")).resolves.toBe(untouched);
+  });
+
   it("switches the model provider from the CLI, prompting for the key and never taking it as a flag", async () => {
     const paths = await files();
     await runCli(
