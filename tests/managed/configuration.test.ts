@@ -5,9 +5,15 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   ensureManagedGitHubWebhookSecret,
+  readManagedBraintrustApiKey,
+  readManagedE2BApiKey,
   readProvisionedGitHubAppCredential,
   writeManagedConfiguration,
 } from "../../packages/installation/src/configuration.ts";
+import {
+  braintrustCredentialFrom,
+  e2bCredentialFrom,
+} from "../../packages/installation/src/schema.ts";
 
 const roots: string[] = [];
 afterEach(async () => await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
@@ -170,5 +176,38 @@ describe("readProvisionedGitHubAppCredential (#247, #251)", () => {
       kind: "github-app",
       appId: "424242",
     });
+  });
+});
+
+describe("re-homed secret credentials (#252)", () => {
+  it("round-trips the E2B key file and rejects a malformed one", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ambient-e2b-cred-"));
+    roots.push(root);
+    const path = join(root, "e2b.json");
+
+    // write → read → identical.
+    await writeFile(path, `${JSON.stringify(e2bCredentialFrom("e2b_sk_live"))}\n`, { mode: 0o600 });
+    await expect(readManagedE2BApiKey(path)).resolves.toEqual({ schemaVersion: 1, kind: "e2b", apiKey: "e2b_sk_live" });
+
+    // A blank key is refused by the schema rather than read back as a live credential.
+    await writeFile(path, JSON.stringify({ schemaVersion: 1, kind: "e2b", apiKey: "" }), { mode: 0o600 });
+    await expect(readManagedE2BApiKey(path)).rejects.toThrow();
+  });
+
+  it("round-trips the Braintrust key file and rejects a malformed one", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ambient-braintrust-cred-"));
+    roots.push(root);
+    const path = join(root, "braintrust.json");
+
+    await writeFile(path, `${JSON.stringify(braintrustCredentialFrom("bt_sk_live"))}\n`, { mode: 0o600 });
+    await expect(readManagedBraintrustApiKey(path)).resolves.toEqual({
+      schemaVersion: 1,
+      kind: "braintrust",
+      apiKey: "bt_sk_live",
+    });
+
+    // Wrong kind (an E2B file at the Braintrust path) is refused rather than silently accepted.
+    await writeFile(path, JSON.stringify(e2bCredentialFrom("mismatch")), { mode: 0o600 });
+    await expect(readManagedBraintrustApiKey(path)).rejects.toThrow();
   });
 });

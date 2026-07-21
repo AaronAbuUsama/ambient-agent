@@ -1,6 +1,6 @@
 import type { Hono } from "hono";
 
-import "@ambient-agent/engine/braintrust.ts";
+import { configureBraintrustTracing } from "@ambient-agent/engine/braintrust.ts";
 import { composeSpeaker } from "@ambient-agent/agents/speaker/compose.ts";
 import { dispatchSpeaker } from "@ambient-agent/agents/speaker/dispatch.ts";
 import { createIssueManagementPolicy } from "@ambient-agent/agents/capabilities/issue-management/runtime.ts";
@@ -94,9 +94,18 @@ export const createAmbientAgentApp = async ({
   paths,
   agentSandbox,
   modelApiKey,
+  braintrustApiKey,
 }: ManagedRuntimeDependencies): Promise<Hono> => {
   const { provider, profiles } = configuration.model;
   configureAgentModelProfiles(profiles, provider);
+  // Register Braintrust tracing here, inside the runtime bundle, so the isolate-scoped
+  // @flue/runtime observer attaches to the same isolate that emits events (#252). The key
+  // arrives through the dependencies the CLI read from credentials/braintrust.json; tracing
+  // stays off when runtime.tracing.enabled is false (the CLI passes no key) — never from env.
+  configureBraintrustTracing({
+    ...(configuration.runtime.tracing.enabled && braintrustApiKey !== undefined ? { apiKey: braintrustApiKey } : {}),
+    ...(configuration.runtime.tracing.project === undefined ? {} : { project: configuration.runtime.tracing.project }),
+  });
   // An API-key provider needs no api registration: every `api` pi's catalog names is already
   // built in, so the key is the whole binding.
   const subscription =

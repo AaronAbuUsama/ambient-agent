@@ -31,7 +31,7 @@ describe("managed schemas", () => {
     const parsed = v.parse(ManagedConfigSchema, config);
     expect(parsed.managedChats).toEqual(["120363000@g.us", "15550000000@s.whatsapp.net"]);
     expect(parsed.github.defaultRepository).toBe("owner/repo");
-    expect(parsed.runtime).toEqual({ port: 3000, sandbox: { kind: "local" } });
+    expect(parsed.runtime).toEqual({ port: 3000, sandbox: { kind: "local" }, tracing: { enabled: false } });
     expect(parsed.model.profiles).toEqual(EXPECTED_DEFAULT_PROFILES);
   });
 
@@ -137,7 +137,11 @@ describe("managed schemas", () => {
 
   it("defaults older managed configuration to the discoverable runtime port and validates explicit ports", () => {
     const { runtime: _runtime, ...older } = createManagedConfig(["120363000@g.us"], "owner/repo");
-    expect(v.parse(ManagedConfigSchema, older).runtime).toEqual({ port: 3000, sandbox: { kind: "local" } });
+    expect(v.parse(ManagedConfigSchema, older).runtime).toEqual({
+      port: 3000,
+      sandbox: { kind: "local" },
+      tracing: { enabled: false },
+    });
     expect(v.safeParse(ManagedConfigSchema, { ...older, runtime: { port: 65_535 } }).success).toBe(true);
     expect(v.safeParse(ManagedConfigSchema, { ...older, runtime: { port: 65_536 } }).success).toBe(false);
     // The agent sandbox is operator environment, not managed config (ADR 0021): a config
@@ -165,6 +169,34 @@ describe("managed schemas", () => {
     ).toBe(false);
     expect(
       v.safeParse(ManagedConfigSchema, { ...config, runtime: { port: 3000, sandbox: { kind: "e2b", template: "  " } } }).success,
+    ).toBe(false);
+  });
+
+  it("defaults tracing off and round-trips an explicit tracing block (#252)", () => {
+    const config = createManagedConfig(["120363000@g.us"], "owner/repo");
+    // Default off, and a config predating tracing (runtime with only a port) still parses to off.
+    expect(v.parse(ManagedConfigSchema, config).runtime.tracing).toEqual({ enabled: false });
+    expect(v.parse(ManagedConfigSchema, { ...config, runtime: { port: 3737 } }).runtime.tracing).toEqual({
+      enabled: false,
+    });
+    // Enabled with a named project round-trips identically.
+    const tracing = { enabled: true, project: { name: "ambient-agent", id: "abc123" } };
+    expect(
+      v.parse(ManagedConfigSchema, { ...config, runtime: { port: 3000, tracing } }).runtime.tracing,
+    ).toEqual(tracing);
+    // Bad values are refused rather than written: non-boolean enabled, unknown field, blank project name.
+    expect(
+      v.safeParse(ManagedConfigSchema, { ...config, runtime: { port: 3000, tracing: { enabled: "yes" } } }).success,
+    ).toBe(false);
+    expect(
+      v.safeParse(ManagedConfigSchema, { ...config, runtime: { port: 3000, tracing: { enabled: true, sink: "x" } } })
+        .success,
+    ).toBe(false);
+    expect(
+      v.safeParse(ManagedConfigSchema, {
+        ...config,
+        runtime: { port: 3000, tracing: { enabled: true, project: { name: "  " } } },
+      }).success,
     ).toBe(false);
   });
 

@@ -52,6 +52,22 @@ const RuntimeSandbox = v.strictObject({
   template: v.optional(NonBlankString),
 });
 export type RuntimeSandbox = v.InferOutput<typeof RuntimeSandbox>;
+/**
+ * Braintrust production tracing (#252), migrated off `BRAINTRUST_TRACING`/`_PROJECT_NAME`/`_ID`.
+ * `enabled` is the explicit opt-in the old env toggle carried; the API key is a secret referenced
+ * by name (`credentials/braintrust.json`), never config, so it is not here. Default `enabled: false`,
+ * so tracing stays off unless a deployment turns it on — every existing config parses unchanged.
+ */
+const RuntimeTracing = v.strictObject({
+  enabled: v.boolean(),
+  project: v.optional(
+    v.strictObject({
+      name: v.optional(NonBlankString),
+      id: v.optional(NonBlankString),
+    }),
+  ),
+});
+export type RuntimeTracing = v.InferOutput<typeof RuntimeTracing>;
 const CanaryGroup = v.pipe(ManagedChat, v.regex(/@g\.us$/, "Expected a WhatsApp group JID"));
 const ModelId = v.pipe(
   NonBlankString,
@@ -95,7 +111,9 @@ export const ManagedConfigSchema = v.pipe(
       port: RuntimePort,
       // Optional with the local default (#251), so every existing `runtime` block parses unchanged.
       sandbox: v.optional(RuntimeSandbox, { kind: "local" }),
-    }), { port: 3000, sandbox: { kind: "local" } }),
+      // Optional with tracing off (#252), so every existing `runtime` block parses unchanged.
+      tracing: v.optional(RuntimeTracing, { enabled: false }),
+    }), { port: 3000, sandbox: { kind: "local" }, tracing: { enabled: false } }),
     smoke: v.optional(v.strictObject({ canaryChat: CanaryGroup })),
     github: v.strictObject({
       kind: v.literal("github-app"),
@@ -184,6 +202,38 @@ export const ModelApiKeyCredentialSchema = v.strictObject({
 
 export type ModelApiKeyCredential = v.InferOutput<typeof ModelApiKeyCredentialSchema>;
 
+/**
+ * `credentials/e2b.json`, mode 0600 (#252) — the E2B API key migrated off `E2B_API_KEY`. Config
+ * references it by the `runtime.sandbox.kind: "e2b"` selection, never by value; the sandbox
+ * selector reads this file rather than the ambient environment.
+ */
+export const E2BCredentialSchema = v.strictObject({
+  schemaVersion: v.literal(1),
+  kind: v.literal("e2b"),
+  apiKey: NonBlankString,
+});
+
+export type E2BCredential = v.InferOutput<typeof E2BCredentialSchema>;
+
+export const e2bCredentialFrom = (apiKey: string): E2BCredential =>
+  v.parse(E2BCredentialSchema, { schemaVersion: 1, kind: "e2b", apiKey });
+
+/**
+ * `credentials/braintrust.json`, mode 0600 (#252) — the Braintrust API key migrated off
+ * `BRAINTRUST_API_KEY`. Config turns tracing on (`runtime.tracing.enabled`) and names the project;
+ * the key lives here, referenced by name, never echoed or logged.
+ */
+export const BraintrustCredentialSchema = v.strictObject({
+  schemaVersion: v.literal(1),
+  kind: v.literal("braintrust"),
+  apiKey: NonBlankString,
+});
+
+export type BraintrustCredential = v.InferOutput<typeof BraintrustCredentialSchema>;
+
+export const braintrustCredentialFrom = (apiKey: string): BraintrustCredential =>
+  v.parse(BraintrustCredentialSchema, { schemaVersion: 1, kind: "braintrust", apiKey });
+
 export const modelApiKeyCredentialFrom = (provider: string, apiKey: string): ModelApiKeyCredential =>
   v.parse(ModelApiKeyCredentialSchema, { schemaVersion: 1, kind: "api-key", provider, apiKey });
 
@@ -215,7 +265,7 @@ export const createManagedConfig = (
         : MODEL_API_KEY_CREDENTIAL_REFERENCE,
     profiles: model.profiles,
   },
-  runtime: { port: 3000, sandbox: { kind: "local" } },
+  runtime: { port: 3000, sandbox: { kind: "local" }, tracing: { enabled: false } },
   github: {
     kind: "github-app",
     credential: GITHUB_CREDENTIAL_REFERENCE,

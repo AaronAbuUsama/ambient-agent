@@ -99,6 +99,14 @@ export const defaultSetupPrompts: SetupPrompts = {
     await requiredPrompt(`${provider} API key`, () =>
       prompts.password({ message: `${provider} API key (paste the value; it is never echoed)`, mask: "*" }),
     ),
+  e2bApiKey: async () =>
+    await requiredPrompt("E2B API key", () =>
+      prompts.password({ message: "E2B API key (paste the value; it is never echoed)", mask: "*" }),
+    ),
+  braintrustApiKey: async () =>
+    await requiredPrompt("Braintrust API key", () =>
+      prompts.password({ message: "Braintrust API key (paste the value; it is never echoed)", mask: "*" }),
+    ),
   modelAuthMode: async () =>
     await promptValue(
       prompts.select({

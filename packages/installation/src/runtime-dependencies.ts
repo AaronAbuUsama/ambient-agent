@@ -26,6 +26,13 @@ export interface ManagedRuntimeDependencies {
    * no inference.
    */
   readonly modelApiKey?: string;
+  /**
+   * The key from `credentials/braintrust.json`, present exactly when `runtime.tracing.enabled` is
+   * true (#252). The CLI reads it before boot and threads it here so `configureBraintrustTracing`
+   * runs inside the runtime bundle — where `@flue/runtime`'s isolate-scoped observer lives — while
+   * the secret is never read from `process.env`.
+   */
+  readonly braintrustApiKey?: string;
 }
 
 export interface TenantRuntimeEnvironment extends TenantCredentialEnvironment {
