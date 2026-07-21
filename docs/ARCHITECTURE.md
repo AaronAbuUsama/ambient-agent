@@ -1,5 +1,9 @@
 # Architecture map
 
+> This is the **code taxonomy** — which package owns what. For the definitive
+> description of how the agentic system *works* (the Brain, Speakers, the Graph, the
+> Digest, the control loop), see [`SYSTEM-ARCHITECTURE.md`](./SYSTEM-ARCHITECTURE.md).
+
 The ratified taxonomy (#117 → #131): three packages, two apps, one arrow diagram —
 enforced, not aspirational (`tests/speaker/hard-cut.test.ts`).
 
