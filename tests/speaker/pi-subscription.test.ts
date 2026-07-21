@@ -10,6 +10,7 @@ import {
   modelSpecifier,
   SUBSCRIPTION_PROVIDER_ID,
   prepareLunaResponsesLiteRequest,
+  rateLimitRetryingFetch,
   resolveAgentModelProfile,
   readinessErrorFor,
   runApiKeyReadinessCheck,
@@ -504,4 +505,58 @@ describe("connectPiApiKeyProvider", () => {
     },
     70_000,
   );
+});
+
+describe("rateLimitRetryingFetch (#246 follow-up)", () => {
+  const res = (status: number, headers: Record<string, string> = {}) =>
+    new Response(status === 429 ? "rate limited" : "ok", { status, headers });
+
+  it("retries a 429 and returns the first non-429 response", async () => {
+    const statuses = [429, 429, 200];
+    const calls: unknown[] = [];
+    const upstream = (async (input: unknown) => {
+      calls.push(input);
+      return res(statuses.shift()!);
+    }) as unknown as typeof fetch;
+    const waits: number[] = [];
+    const fetching = rateLimitRetryingFetch(upstream, { delay: async (ms) => { waits.push(ms); } });
+
+    const out = await fetching("https://api.example/v1", { body: "{}" });
+    expect(out.status).toBe(200);
+    expect(calls).toHaveLength(3); // initial + 2 retries
+    expect(waits).toEqual([1000, 2000]); // capped exponential backoff, no Retry-After header
+  });
+
+  it("honors a Retry-After header over the backoff", async () => {
+    const statuses = [429, 200];
+    const upstream = (async () => res(statuses.shift()!, statuses.length === 1 ? { "retry-after": "7" } : {})) as unknown as typeof fetch;
+    const waits: number[] = [];
+    const out = await rateLimitRetryingFetch(upstream, { delay: async (ms) => { waits.push(ms); } })("u", { body: "{}" });
+    expect(out.status).toBe(200);
+    expect(waits).toEqual([7000]);
+  });
+
+  it("gives up after maxRetries and surfaces the final 429 for the caller to classify", async () => {
+    let calls = 0;
+    const upstream = (async () => { calls++; return res(429); }) as unknown as typeof fetch;
+    const out = await rateLimitRetryingFetch(upstream, { maxRetries: 3, delay: async () => {} })("u", { body: "{}" });
+    expect(out.status).toBe(429);
+    expect(calls).toBe(4); // initial + 3 retries, then the 429 is returned
+  });
+
+  it("does not retry a non-resendable (streamed) body, so a consumed stream is never re-sent", async () => {
+    let calls = 0;
+    const upstream = (async () => { calls++; return res(429); }) as unknown as typeof fetch;
+    const out = await rateLimitRetryingFetch(upstream, { delay: async () => {} })("u", { body: new ReadableStream() });
+    expect(out.status).toBe(429);
+    expect(calls).toBe(1); // passed straight through, never retried
+  });
+
+  it("caps a single backoff wait at maxDelayMs", async () => {
+    const statuses = [429, 429, 429, 200];
+    const upstream = (async () => res(statuses.shift()!)) as unknown as typeof fetch;
+    const waits: number[] = [];
+    await rateLimitRetryingFetch(upstream, { maxDelayMs: 3000, delay: async (ms) => { waits.push(ms); } })("u", { body: "{}" });
+    expect(waits).toEqual([1000, 2000, 3000]); // 4000 would be next, capped to 3000
+  });
 });

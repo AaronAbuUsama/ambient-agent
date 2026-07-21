@@ -103,6 +103,11 @@ const SPEAKER_CODEX_API = "speaker-openai-codex-responses";
 const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 const LUNA_MINIMUM_CODEX_VERSION = "0.144.1";
 const RESPONSES_LITE_FETCH = Symbol.for("whatsappd.speaker.responses-lite-fetch");
+const RATE_LIMIT_RETRY_FETCH = Symbol.for("whatsappd.speaker.rate-limit-retry-fetch");
+/** Retries per request before a 429 surfaces. Model prompts fire in bursts, so a few is plenty. */
+const RATE_LIMIT_MAX_RETRIES = 5;
+/** Cap for a single backoff wait, so a stuck provider fails a job in minutes, not forever. */
+const RATE_LIMIT_MAX_DELAY_MS = 30_000;
 
 type ApiRegistration = Parameters<typeof flueRegisterApiProvider>[0];
 type ApiRegistrar = (provider: ApiRegistration) => void;
@@ -269,6 +274,78 @@ function installLunaResponsesLiteFetch(): void {
   globalThis.fetch = wrapped;
 }
 
+/** Milliseconds to wait from a `Retry-After` header (delta-seconds or HTTP-date), else undefined. */
+function retryAfterMs(response: Response): number | undefined {
+  const header = response.headers.get("retry-after");
+  if (header === null) return undefined;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const date = Date.parse(header);
+  return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
+}
+
+const abortableDelay = (ms: number, signal?: AbortSignal | null): Promise<void> =>
+  new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal!.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+
+/**
+ * Wrap a `fetch` so a `429` is honored and retried instead of surfaced as a fatal error (#246
+ * follow-up). A single transient tokens-per-minute rate limit was aborting an entire Coder run
+ * after minutes of real work — OpenAI asks the client to wait a few seconds and retry, so we do:
+ * `Retry-After` when present, otherwise capped exponential backoff, bounded by {@link
+ * RATE_LIMIT_MAX_RETRIES}. Only requests with a resendable (string/empty) body are retried; a
+ * streamed body can be consumed once, so it is passed straight through. The retry is abandoned if
+ * the caller's signal aborts, so a cancelled job never hangs on a backoff.
+ */
+export const rateLimitRetryingFetch = (
+  upstream: typeof fetch,
+  options: {
+    readonly maxRetries?: number;
+    readonly maxDelayMs?: number;
+    readonly delay?: (ms: number, signal?: AbortSignal | null) => Promise<void>;
+  } = {},
+): typeof fetch => {
+  const maxRetries = options.maxRetries ?? RATE_LIMIT_MAX_RETRIES;
+  const maxDelayMs = options.maxDelayMs ?? RATE_LIMIT_MAX_DELAY_MS;
+  const delay = options.delay ?? abortableDelay;
+  return async (input, init) => {
+    const bodyResendable = init?.body === undefined || init?.body === null || typeof init.body === "string";
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : null);
+    for (let attempt = 0; ; attempt++) {
+      const response = await upstream(input, init);
+      if (response.status !== 429 || attempt >= maxRetries || !bodyResendable || signal?.aborted) return response;
+      const wait = Math.min(retryAfterMs(response) ?? 1000 * 2 ** attempt, maxDelayMs);
+      // The 429 body is discarded before the retry so the connection can be reused.
+      await response.body?.cancel().catch(() => {});
+      try {
+        await delay(wait, signal);
+      } catch (cause) {
+        // Aborted while waiting: propagate the abort so a cancelled job never hangs on a backoff.
+        throw cause;
+      }
+    }
+  };
+};
+
+/** Install {@link rateLimitRetryingFetch} over the global fetch once, idempotently. */
+function installModelRateLimitRetryFetch(): void {
+  const upstream = globalThis.fetch as typeof fetch & { [RATE_LIMIT_RETRY_FETCH]?: true };
+  if (upstream[RATE_LIMIT_RETRY_FETCH]) return;
+  const wrapped = rateLimitRetryingFetch(upstream);
+  Object.defineProperty(wrapped, RATE_LIMIT_RETRY_FETCH, { value: true });
+  globalThis.fetch = wrapped;
+}
+
 function codexSubscriptionModel(model: Model<Api>): Model<Api> {
   const configured = {
     ...model,
@@ -367,6 +444,8 @@ export async function connectPiChatGptSubscription(
   if (!nonEmptyString(apiKey)) throw new Error("ChatGPT model authorization is not ready; run ambient-agent doctor.");
 
   if (!options.codexApi) installLunaResponsesLiteFetch();
+  // A transient 429 must back off and retry, not abort a running Coder job (#246 follow-up).
+  installModelRateLimitRetryFetch();
   const codexApi = options.codexApi ?? openAICodexResponsesApi();
   const modelIds = configuredModelIds(options.profiles);
   (options.registerApiProvider ?? flueRegisterApiProvider)(codexSubscriptionApi(codexApi));
@@ -470,6 +549,8 @@ export async function connectPiApiKeyProvider(options: PiApiKeyConnectorOptions)
   if (!isModelProvider(options.provider)) {
     throw new Error(`${options.provider} is not a model provider this build of pi ships.`);
   }
+  // A transient 429 must back off and retry, not abort a running Coder job (#246 follow-up).
+  installModelRateLimitRetryFetch();
   const modelIds = configuredModelIds(options.profiles);
   (options.registerProvider ?? flueRegisterProvider)(options.provider, { apiKey: options.apiKey });
 
