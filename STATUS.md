@@ -25,8 +25,22 @@ Coder / Reviewer / Planner Specialists as distinct GitHub identities.
 - Reduce the **Speaker** to a dumb mouth — remove issue/delegation/ontology-write, add intent escalation.
 - Replace GitHub webhook broadcast + drop with the single up-inbox.
 
-## The reset
+## The reset — where the code stands (2026-07-21)
 
-Order, locked decisions, and the carried-forward DAG items live in
-[`docs/planning/RESET-HANDOFF-2026-07-21.md`](docs/planning/RESET-HANDOFF-2026-07-21.md).
+The reset is a code-level cut down to **one runtime path** (single-box self-host), done in two layers:
+
+- **Layer 1 — done.** Dropped the dead SaaS / multi-tenant + operator-web stack:
+  `apps/{api,web,server}`, `packages/{api,auth,db,env}`, and their tests.
+- **Layer 2 — done.** Removed the orphaned hosted/tenant runtime boot (`setup-server`/`setup-app`,
+  `TenantRuntime*` setup-boot + operate-bridge, `prepareHostedManagedLayout`). Only
+  `ambient-agent start` → `apps/runtime/app.ts` remains.
+
+Both were behaviour-neutral on single-box (all removed code was gated behind unset
+`AMBIENT_AGENT_RUNTIME_PROFILE`/`TENANT_DB_URL`); typecheck + full test suite green, and the
+single-box build is deployed and healthy.
+
+**Deferred (decisions, not deletes — for the next design pass):**
+- Credential/session storage: collapse the file-vs-libsql fork to files-only (`tenant-credentials.ts`).
+- Specialist sandbox substrate: `local()` vs Daytona (native in Flue) vs e2b.
+
 Branding is `coworker` (surface only); repo, package, and login names are unchanged for now.

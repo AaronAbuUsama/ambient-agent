@@ -10,9 +10,8 @@ Operating contract for coding agents working in this repository.
   system is meant to be*; derive design answers from its §1 first principles.
 - **Code layout:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — which package owns what.
 - **Domain language:** [`CONTEXT.md`](CONTEXT.md) — the ratified vocabulary. Use these words.
-- **Decisions:** [`docs/adr/`](docs/adr/) — load-bearing trade-offs in short form.
-- **Current reset:** [`docs/planning/RESET-HANDOFF-2026-07-21.md`](docs/planning/RESET-HANDOFF-2026-07-21.md) —
-  the frozen plan, the settled decisions, and the order. **Do not re-litigate what it settles.**
+- **Current status & reset:** [`STATUS.md`](STATUS.md) — what the reset removed, what is
+  one runtime path now, and the decisions deliberately deferred. Don't re-open what it marks settled.
 
 ## Code discovery — graph before grep
 

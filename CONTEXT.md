@@ -4,9 +4,9 @@ The vocabulary used throughout the product and code. The canonical *conceptual* 
 is [`docs/SYSTEM-ARCHITECTURE.md`](docs/SYSTEM-ARCHITECTURE.md); this file is its glossary.
 Where that document sharpens a term, its §12 says so — those sharpenings are ratified here.
 
-> Reset note: the ratified glossary is being finalized in the domain-modeling step of the
-> reset (see [`docs/planning/RESET-HANDOFF-2026-07-21.md`](docs/planning/RESET-HANDOFF-2026-07-21.md)).
-> This file already reflects the coworker frame; deeper terms may still be sharpened there.
+> Reset note: the ratified glossary is still being finalized (the domain-modeling pass is a
+> deferred design step — see [`STATUS.md`](STATUS.md)). This file already reflects the coworker
+> frame; deeper terms may still be sharpened.
 
 ## The coworker
 
