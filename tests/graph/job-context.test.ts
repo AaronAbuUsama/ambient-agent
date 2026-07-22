@@ -31,10 +31,16 @@ describe("buildJobGraphContext — the pushed digest, or a no-op", () => {
 
   it("builds a non-empty digest from the job's issue once a store is wired", () => {
     const store = createGraphStore(":memory:");
-    store.upsertEntity({
-      type: "issue",
-      properties: { repo: "acme/widgets", number: 158, title: "Coder workflow", state: "open" },
-      identity: { platform: "github", externalId: "acme/widgets#158" },
+    store.attest({
+      context: { author: { kind: "ingester", id: "test-fixture" }, evidenceIds: ["test:issue:158"] },
+      claim: {
+        kind: "entity",
+        input: {
+          type: "issue",
+          properties: { repo: "acme/widgets", number: 158, title: "Coder workflow", state: "open" },
+          identity: { platform: "github", externalId: "acme/widgets#158" },
+        },
+      },
     });
     configureGraphStore(store);
 

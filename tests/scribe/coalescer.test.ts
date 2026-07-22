@@ -14,6 +14,7 @@ import {
   dispatchScribeAttempt,
 } from "../../packages/agents/src/scribe/coalescer.ts";
 import { scribeBatchInput, scribeBatchWave, type ScribeOffer } from "../../packages/agents/src/scribe/input.ts";
+import { scribeAttemptContext } from "../../packages/agents/src/scribe/attempt-context.ts";
 import type { SpeakerInput } from "../../packages/engine/src/inputs.ts";
 
 const DEBOUNCE = Duration.millis(30);
@@ -214,9 +215,14 @@ describe("Scribe coalescer", () => {
   it.effect("uses the runtime terminal-result dispatcher when no test seam overrides it", () =>
     Effect.gen(function* () {
       const seen = yield* Ref.make<readonly string[]>([]);
-      const restore = configureScribeAttemptDispatch((attemptId) =>
-        Effect.runPromise(Ref.update(seen, (current) => [...current, attemptId])),
-      );
+      const restore = configureScribeAttemptDispatch((attemptId, batch) => {
+        expect(scribeAttemptContext(attemptId)).toMatchObject({
+          author: { kind: "scribe", id: "scribe" },
+          evidenceIds: batch.evidenceIds,
+          batchId: batch.batchId,
+        });
+        return Effect.runPromise(Ref.update(seen, (current) => [...current, attemptId]));
+      });
       try {
         const coalescer = createScribeCoalescer({ config: { cap: 1 } });
         yield* Effect.forkScoped(coalescer.run);

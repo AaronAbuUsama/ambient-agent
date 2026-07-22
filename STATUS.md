@@ -14,23 +14,23 @@ cutover — have been stripped down to one stable line, and the system is being 
 forward from `SYSTEM-ARCHITECTURE.md`. **One instance, one operator — not multi-tenant**
 (tenancy was killed 2026-07-19).
 
-**Already built in reusable form** (§13): the Graph's typed query surface, the live Digest
+**Already built in reusable form** (§13): the append-only Graph Attestation log and derived
+Belief Projection (including the typed query surface), the live Digest
 pull side, the reactive Brain conversation loop (Intent → Batch → Directive/silence → Outcome),
 stable account-scoped Surfaces, async delegation with durable return, modelless coalescing,
 the global Scribe batch shape and shared bounded-attempt gate, and the Coder / Reviewer /
-Planner Specialists as distinct GitHub identities. The current Graph write model
-is **not** definitive: mutable entity/relation upserts must become append-only Attestations
-with the same read shape derived as the Belief Projection.
+Planner Specialists as distinct GitHub identities. Scribe write attempts now receive trusted
+Evidence Sets and append retry-idempotent proposals; Speaker and Specialist Graph access is
+read-only. Brain rulings and proposal-delta integration are not wired yet.
 
 **The distance to close is concentration of authority, not new machinery:**
 
 - Finish concentrating authority in the **Brain** — route GitHub/work/ontology through its
   existing durable up-inbox and add its proactive clock.
-- Finish the **Scribe** clock and write side: durably admit live and Historical Replay evidence
-  through one retry-idempotent queue, turn trusted batch evidence into append-only Attestations,
-  inject a fresh bounded Belief Projection into every attempt, and return proposal deltas to the Brain.
-- Replace mutable Graph writes with the append-only Attestation log + derived Belief Projection.
-- Reduce the **Speaker** to a dumb mouth — remove issue/delegation/ontology-write; Intent
+- Finish the **Scribe** clock: durably admit live and Historical Replay evidence through one
+  retry-idempotent queue, inject a fresh bounded Belief Projection into every attempt, and
+  return durable proposal deltas to the Brain.
+- Reduce the **Speaker** to a dumb mouth — remove issue management and delegation; Intent
   escalation and Directive-only Saying are already built.
 - Replace GitHub webhook broadcast + drop with the single up-inbox.
 - Complete **Surface** routing by resolving known-Person DM targets through the existing

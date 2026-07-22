@@ -50,6 +50,7 @@ sequenceDiagram
   ENG->>ENG: Coalescer: one fiber per chatId,<br/>throttle + settle window → Window
   ENG-->>SC: accepted live observations<br/>or global Historical Replay batch
   SC->>FLUE: bounded stateless attempt<br/>stable batchId + fresh attempt id
+  SC->>DB: append immutable Evidence Set Attestations<br/>refresh derived Belief Projection
   ENG->>SP: WindowDispatcher port → admitWindow (admission, retry, at-least-once)
   SP->>DB: escalate_intent (immutable evidence-backed admission)
   DB->>FLUE: wake one Brain Batch on instance global
@@ -64,8 +65,8 @@ sequenceDiagram
   FLUE-->>SP: lifecycle observations (dispatchId only)<br/>→ Window or Directive correlation
 ```
 
-The Speaker still mounts legacy issue-management, delegation, and ontology-write capabilities;
-the final cutover removes those after their authority moves to the Brain. The diagram above is
+The Speaker still mounts legacy issue-management and delegation capabilities; its Graph access
+is read-only. The final cutover removes those remaining capabilities after their authority moves to the Brain. The diagram above is
 the replacement conversation path that exists now, not a claim that the remaining work loop has
 already moved.
 

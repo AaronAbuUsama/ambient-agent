@@ -1021,8 +1021,6 @@ describe("production Issue Management tools", () => {
       "github_delete_issue_comment",
       "github_set_issue_state",
       "lookup_graph",
-      "record_entity",
-      "merge_entities",
       "start_coder_job",
       "check_jobs",
     ]);
