@@ -610,7 +610,8 @@ extension is fighting the architecture — re-derive it from §1 first.
 
 This document reuses [`CONTEXT.md`](../CONTEXT.md) vocabulary verbatim wherever it can
 (the Graph, Entity, Relation, Confidence, Provenance, Commitment, Cross-platform identity,
-Managed Chat, Window, Coalescer, Capability, Skill, Tool, Bounded Workflow, Specialist,
+Managed Chat, Surface Inbox, Window, Coalescer, Capability, Skill, Tool, Surface-bound Tool,
+Bounded Workflow, Specialist,
 Admission, Operation Identity, Durably Terminal, Milestone). It introduces or sharpens a
 few terms, which should be ratified back into `CONTEXT.md`:
 

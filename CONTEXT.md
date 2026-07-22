@@ -142,12 +142,15 @@ _Avoid_: Batch, buffer flush, message dump
 **Coalescer**:
 The per-chat actor that gathers incoming messages into Windows and decides when a Window is ready.
 
-**Managed Chat Inbox**:
-The durable processing state for Conversation Events accepted from Managed Chats and awaiting inclusion in a Window. An accepted event remains pending for the coworker until its Window is admitted and the admission receipt is recorded.
+**Surface Inbox**:
+The durable processing state for Conversation Events accepted from active Surfaces and
+awaiting inclusion in a Window. An accepted event remains pending for the coworker until its
+Window is admitted and the admission receipt is recorded.
 _Avoid_: Best-effort listener, live queue
 
 **Say**:
-The single explicit act of sending a message to a Managed Chat. Anything the agent produces without Saying it is private working context.
+The single explicit act of sending a message through the Speaker's bound Surface. Anything
+the agent produces without Saying it is private working context.
 _Avoid_: Reply, respond, send
 
 ### Shared graph
@@ -233,11 +236,13 @@ _Avoid_: Workflow (when no independent run is needed), Tool (when agent-backed w
 **Tool**:
 A typed direct application function the agent can act with. Tools do; they carry no judgment or agent-backed process.
 
-**Chat-bound Tool**:
-A Tool permanently scoped to one Managed Chat at construction, so it cannot reach another chat regardless of what the model asks.
+**Surface-bound Tool**:
+A Tool permanently scoped to one Surface at construction, so it cannot reach another Surface
+regardless of what the model asks.
 
 **Evaluation Scenario**:
-A repeatable Managed Chat situation with controlled provider state and observable expected effects, used to measure the coworker's judgment and Capability use across changes.
+A repeatable Surface situation with controlled provider state and observable expected effects,
+used to measure the coworker's judgment and Capability use across changes.
 _Avoid_: Prompt test, golden response, vibe check
 
 ### Work execution
