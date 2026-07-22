@@ -171,9 +171,18 @@ up (to the Brain as intent, and to the Scribe as a fact stream). Speakers have a
 
 A **surface** is one place the coworker can listen and speak: a group chat, a direct
 message with one person, and — by extension — any future channel (§11). Each surface has
-one Speaker. Surfaces are not fixed configuration; they are a registry the Brain grows: it
-can **open** a surface (start a DM with a person) and speak through a freshly-bound
-Speaker on it. "Which chats we watch" is just the set of surfaces that exist right now.
+stable application identity and exactly one continuing Speaker. Its provider chat address is
+a replaceable **Surface Binding**, not the Surface's identity.
+
+Discovery and authorization are separate. Provider sync may observe and archive any chat but
+does not activate it. Operator-configured groups seed the registry. To prompt a Speaker, the
+Brain selects either an existing Surface or a known Person. Trusted application code resolves a
+Person target to an existing direct Surface or atomically materializes an ordinary direct
+Surface as part of that same prompt admission; the model never supplies a raw chat address.
+This is one routing operation, not a separate "open Surface" effect or DM lifecycle. Intake and
+Say both revalidate an active binding and fail closed. Re-pairing the same provider account
+preserves Surface/Speaker identity; replacing the account retires old bindings rather than
+silently moving them.
 
 ### 3.5 The Scribe (global ingestion clock)
 
@@ -204,9 +213,10 @@ Detailed in §5.
 The Digest is **not a stored thing and no one deliberately pushes it by default** — it is a
 live read-projection of the Graph, computed fresh for a Speaker turn from the identities in
 view. It is the cheap, automatic way a Speaker gets relevant memory without asking. The
-Brain, when it deliberately pushes, attaches a *richer* projection through the same pipe.
-Detailed in §5.4 — this is the abstraction most worth understanding precisely, because the
-default (mechanical pull) and the Brain's push are the same mechanism at two intensities.
+Brain, when it deliberately pushes, stores only a bounded selection of extra entity seeds;
+trusted code recomputes and merges them through the same projector and `graphContext` pipe.
+Detailed in §5.4 — the default pull and the Brain's push are one mechanism at two intensities,
+not a cached second payload.
 
 ### 3.8 Specialists and Bounded Workflows (the backstage team)
 
@@ -247,12 +257,11 @@ flowchart TB
 
   INBOX --> DECIDE[Brain decides<br/>reasons over the Graph]
 
-  DECIDE --> D1[Push context + directive<br/>into a chosen surface]
-  DECIDE --> D2[Open a new surface<br/>e.g. DM a person]
-  DECIDE --> D3[Dispatch bounded work<br/>Coder / Reviewer / Planner]
-  DECIDE --> D4[Append an Attestation or ruling<br/>confirm · overrule · merge]
-  DECIDE --> D5[Schedule a future wake]
-  DECIDE --> D6[Decide to stay silent<br/>a decision, not an accident]
+  DECIDE --> D1[Prompt a chosen Surface or known Person<br/>context + directive]
+  DECIDE --> D2[Dispatch bounded work<br/>Coder / Reviewer / Planner]
+  DECIDE --> D3[Append an Attestation or ruling<br/>confirm · overrule · merge]
+  DECIDE --> D4[Schedule a future wake]
+  DECIDE --> D5[Decide to stay silent<br/>a decision, not an accident]
 ```
 
 **Why one inbox.** External events (a webhook, a monitor alert) and internal intents (a
@@ -287,6 +296,12 @@ delivered message, known failure, ambiguous delivery, or a Speaker turn that set
 Saying produces a durable Directive Outcome back to the Brain. Directive input is instruction,
 not conversation evidence, so it never enters the Scribe stream.
 
+The Brain selects a stable `surfaceId`, never a provider chat id or an originating chat return
+address. Immediately before dispatch and Say, the application resolves and authorizes the
+current Surface Binding. Each logical Say records a Surface Delivery before crossing the
+provider boundary; provider acknowledgment plus its outbound Conversation Archive event proves
+delivery, while an ambiguous result remains Uncertain and is never blindly retried.
+
 ---
 
 ## 5. State and knowledge — the Graph, the Scribe, the Digest
@@ -310,7 +325,7 @@ flowchart LR
   DIG -->|rides on the input as graphContext| S1 & S2
 
   BRAIN -->|READ + JUDGE| BELIEF
-  BRAIN -->|deliberate PUSH: richer / cross-surface projection| S1 & S2
+  BRAIN -->|deliberate PUSH: bounded extra entity seeds| S1 & S2
 ```
 
 ### 5.1 What the Graph holds
@@ -373,13 +388,23 @@ at two intensities that share one pipe:
   automatic "relevant memory, for free" that keeps Speakers dumb but not ignorant. Nobody
   decides to send it; it is a live query.
 - **Deliberate push (when the Brain acts).** When the Brain routes an event, relays
-  cross-surface information, or nudges an open loop, it attaches a *richer* projection —
-  cross-surface, multi-hop, or reasoned — through the **same `graphContext` channel**. The
-  Speaker consumes it identically; it just contains more, chosen by a mind.
+  cross-surface information, or nudges an open loop, it selects a small bounded set of extra
+  entity ids with the Directive. At delivery, trusted code recomputes the normal pull and
+  those extra seeds from one Belief Projection version, unions them by stable entity/relation
+  identity, and attaches the result through the **same `graphContext` channel**. The model
+  never authors Graph rows, confidence, provenance, traversal depth, or a serialized Digest.
+
+The target `graphContext` records its schema version, Projection high-water mark, generation
+time, pull/push seed selection, supporting Attestation ids, and any deterministic truncation.
+Push uses the existing one-hop walk and named secondary roll-ups; arbitrary depth is not an
+escape hatch. The durable Directive stores only seed selection. The computed Digest remains
+ephemeral and is recomputed after restart, so it cannot become a stale cache.
 
 Understanding this collapses the earlier confusion: "the digest" and "the Brain pushing
-context" are not two systems. They are the same context-injection mechanism, one driven by
-a fixed rule and one driven by a decision.
+context" are not two systems. They are one context-injection mechanism, one seeded by a fixed
+rule and one extended by a decision. The Directive's Brief remains separate: it preserves the
+causal source evidence for *this decision*, while Digest is current ambient ontology and may
+legitimately change before delivery.
 
 ### 5.5 Who appends vs who rules — single *authority*, multiple authors
 
@@ -501,11 +526,13 @@ Two identity facts hold simultaneously, and the architecture is built to keep bo
   and that team is visible. The backstage multiplicity and the front-of-house singularity
   are not in conflict; they are two views of one system.
 
-The Brain chooses **surface and voice** as part of every decision (§4, D1–D2): say it in
-the group room, or open/continue a DM with a specific person, or carry information across
-rooms. Because a surface is just a place with a Speaker, "DM someone" and "reply in the
-group" are the same operation with a different target. The Brain manages its own DM
-surfaces exactly as it manages group surfaces.
+The Brain chooses **surface and voice** as part of every decision (§4, D1): say it in the
+group room, continue a DM with a specific person, or carry information across rooms. Because a
+surface is just a place with a Speaker, "DM someone" and "reply in the group" share one prompt
+operation. The target is either an existing stable Surface or a known Person whom trusted code
+resolves to the same ordinary Surface registry during prompt admission. Configured groups remain
+operator-authorized. Discovery alone never grants participation, and a source Surface is
+provenance rather than a forced return address.
 
 Note that no infrastructural role *is* the identity. Owning a webhook secret, or filing
 issues under a particular app, are jobs done by parts of the team; they are not the
@@ -545,6 +572,8 @@ as testable guarantees.
 | **Provenance-complete** | Every derived fact knows its origin | Every Attestation has a permanent non-empty Evidence Set (§5.3) |
 | **Self-healing knowledge** | Ambiguity never blocks; the graph corrects itself | Append-only claims + derived confidence + Brain rulings (§5.2, §5.5) |
 | **Dumb mouths** | Speakers converse only; they never act or own state | Work + ontology authority live in the Brain (§3.3, §7) |
+| **Fail-closed surfaces** | Observation never silently grants participation | Active account-scoped binding is revalidated at intake and Say (§3.4, §8) |
+| **Honest delivery** | Provider acknowledgment, known failure, and ambiguity remain distinct | Surface Delivery + Conversation Archive evidence + Uncertain (§4) |
 
 ---
 
@@ -583,7 +612,8 @@ extension is fighting the architecture — re-derive it from §1 first.
 
 This document reuses [`CONTEXT.md`](../CONTEXT.md) vocabulary verbatim wherever it can
 (the Graph, Entity, Relation, Confidence, Provenance, Commitment, Cross-platform identity,
-Managed Chat, Window, Coalescer, Capability, Skill, Tool, Bounded Workflow, Specialist,
+Managed Chat, Surface Inbox, Window, Coalescer, Capability, Skill, Tool, Surface-bound Tool,
+Bounded Workflow, Specialist,
 Admission, Operation Identity, Durably Terminal, Milestone). It introduces or sharpens a
 few terms, which should be ratified back into `CONTEXT.md`:
 
@@ -595,15 +625,16 @@ few terms, which should be ratified back into `CONTEXT.md`:
 - **Speaker** — the surface-bound conversational mouth. Sharpens the older per–Managed-Chat
   instance ("Ambience"): it is now explicitly *a mouth, not the whole*, and explicitly
   *dumb* (converses only; escalates intent; never acts or owns state).
-- **Surface** — a generalization of Managed Chat to any place with a Speaker (group chat,
-  DM, future channel), registered in a surface registry the Brain grows.
+- **Surface / Surface Binding / Surface Delivery** — stable application identity for one
+  authorized place with a Speaker; its account-scoped provider address; and durable evidence
+  for one logical Say. Discovery is observation, never authorization.
 - **Scribe** — sharpened from "silent *per-thread* agent" to one global ingestion clock
   driving bounded concurrent stateless attempts. Its role is to append evidence-backed
   proposals, never own memory or authority.
 - **Attestation / Evidence Set / Belief Projection** — the Graph's persistence and read
   vocabulary. Claims are append-only; current understanding is a rebuildable projection.
-- **Digest** — the read-projection of the Graph, at two intensities (mechanical pull /
-  deliberate push) over one channel.
+- **Digest** — one versioned read-projection over one `graphContext` channel. Mechanical pull
+  supplies local seeds; deliberate push supplies bounded extra seeds and is recomputed live.
 - **Intent escalation** — a Speaker signalling the Brain that conversation implies work or
   a cross-surface consequence, without acting on it.
 - **Brain Batch / Brain Effect** — the durable decision boundary and one typed consequence
@@ -622,13 +653,13 @@ meant to be. "Distance" is descriptive, not a plan.
 | Abstraction | Definitive architecture | Where the code is today | Distance |
 |---|---|---|---|
 | **Graph** | Append-only Attestation log + derived Belief Projection | Current `packages/engine/src/graph/store.ts` is a **mutable current-state store**: entity/relation upserts overwrite provenance and fold confidence in place | **Replace mutable writes with Attestation inserts; derive the existing read shape as the Belief Projection** |
-| **Digest** | Pull-by-default + Brain push, one channel | Pull side built: `graph/digest.ts` (live one-hop, no cache) attached at the funnel by `capabilities/graph/digest.ts`. Deliberate-push side not yet — there is no Brain to push | **Add the push driver** (the Brain), reuse the `graphContext` channel unchanged |
+| **Digest** | Versioned live projection; local pull + bounded Brain-selected seeds, one channel | Pull side built: `graph/digest.ts` (live one-hop, no cache) attached at the funnel by `capabilities/graph/digest.ts`; current shape lacks Projection version/evidence/caps and the funnel replaces rather than composes context | **Extend the existing projector/shape and compose at the funnel; persist only Directive seed selection** |
 | **Scribe** | One global clock; bounded concurrent stateless attempts; per-Attestation Evidence Sets | Built but **per-chat**: `scribe/coalescer.ts` forks one loop per chatId. Provenance is implicit per batch and writes target the mutable Graph | **Build global live/replay batching; push full context into each attempt; append evidence-set-idempotent proposals** |
 | **Speaker** | Dumb mouth: converses only, escalates intent | Built but **overloaded**: mounts issue-management + delegation and holds ontology-write authority (`speaker/agent.ts` skills/tools; `record_entity`/`merge_entities`) | **Remove issue/delegation/ontology-write from the Speaker; add intent escalation** |
 | **Brain** | Single global mind: up-inbox, two clocks, owns state + work | **Does not exist as an actor.** Its would-be jobs are scattered: routing lives in webhook broadcast (`github/ingress.ts`), work-launch lives on the Speaker, ontology-write on Speaker/Scribe | **Introduce the Brain**; move routing, work-dispatch, and ontology curation onto it |
 | **Control loop** | One up-inbox; events + intents up; push down | Partial and split: inbound GitHub events **broadcast to every surface**, each Speaker self-judging relevance (`ingress.ts`); uncorrelated events are **dropped** (`ingress.ts`); intents aren't a concept | **Replace broadcast + drop with the single up-inbox**; add intent as an input |
 | **Two clocks** | Reactive + proactive (cron floor + event wakes + self-schedule) | Only the reactive clock exists. Overdue commitments are *flagged* in the digest but nothing acts on them | **Add the proactive clock**; reuse the durable-ledger + boot-sweep pattern for self-scheduled wakes |
-| **Surfaces** | Registry the Brain grows; group + DM + future channels | Only fixed group **Managed Chats** exist (`installation` config `managedChats`); the home chat is hard-coded to the first one | **Generalize Managed Chat → surface registry**; let the Brain open DM surfaces |
+| **Surfaces** | Stable registry + account-scoped bindings + one Speaker + durable delivery evidence | Config already accepts group/DM JIDs, but authorization is an in-memory `managedChats` set, Speaker id is the chat JID, and specialist return is hard-coded to the first chat; outbound archive evidence exists but no Surface/Directive ledger correlates it | **Seed configured Surfaces; resolve known-Person prompt targets through that same registry; route by Surface UUID; fail closed; record Surface Delivery** |
 | **Work / delegation** | All work dispatched by the Brain; Brain owns each lifecycle incl. refinement | Async delegation + durable return + boot reconciliation are built and solid (`capabilities/delegation/*`), but launched **by the Speaker**, returning to the launching **chat** | **Move the launcher to the Brain**; return address becomes the Brain, which owns the loop |
 | **Specialists / Bounded Workflows** | Backstage team, distinct GitHub identities, results up | Built and matches (Coder/Reviewer/Planner as Specialists; distinct app identities) | **None** conceptually — rewire the launcher/return only |
 | **Coalescer** | Modelless timing for Speakers and Scribe | Built and matches: `engine/src/coalescer/*` (Speaker Windows + Scribe batch) | **None** — the Scribe instance goes global (see Scribe row) |

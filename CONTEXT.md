@@ -35,10 +35,24 @@ _Avoid_: Ambience, the voice, sub-bot, one-to-one assistant
 
 **Surface**:
 One place the coworker can listen and speak: a group chat, a DM with one person, or any
-future channel. Each Surface has exactly one Speaker. Surfaces are a registry the Brain
-grows — it can open a Surface (start a DM) and speak through a freshly-bound Speaker.
-Generalizes Managed Chat to any place with a Speaker.
-_Avoid_: Channel plumbing, allowed group
+future channel. It has stable application identity, exactly one continuing Speaker, and one
+current provider binding. Discovery never authorizes participation: configured groups seed
+the registry. When the Brain prompts a known Person directly, trusted application code resolves
+or materializes an ordinary DM Surface inside that same prompt admission. This is target
+resolution, not a second kind of Surface or a separate open-surface action. Generalizes Managed
+Chat to any authorized place with a Speaker.
+_Avoid_: Channel plumbing, allowed group, Brain-opened Surface
+
+**Surface Binding**:
+The active mapping from a Surface to one authenticated provider account and provider chat
+identity. Every intake or Say revalidates it; account replacement never silently rebinds it.
+_Avoid_: Surface identity, model-supplied chat id, return address
+
+**Surface Delivery**:
+The durable application record of one logical Say across its provider boundary: attempting,
+sent with provider and Conversation Archive evidence, failed, or Uncertain. Generated Flue ids
+and logs are evidence, never its identity.
+_Avoid_: Say result log, dispatch receipt, assumed delivery
 
 **Intent**:
 An immutable, evidence-backed request from a Speaker for the Brain to exercise global
@@ -76,7 +90,8 @@ _Avoid_: Cron job history, Graph watcher, a second Brain
 A read-projection of the Graph, filtered to what a turn needs, delivered over one
 `graphContext` channel at two intensities: mechanical *pull* by default (deterministic
 one-hop, no model, no cache, recomputed live every Speaker turn) and deliberate *push* when
-the Brain attaches a richer cross-surface projection. Same mechanism, two intensities.
+the Brain selects extra cross-Surface entity seeds. Trusted code recomputes and merges both
+from one Belief Projection version. Same mechanism and bounded payload, two intensities.
 _Avoid_: Cache, snapshot, context dump
 
 **Directive**:
@@ -129,12 +144,15 @@ _Avoid_: Batch, buffer flush, message dump
 **Coalescer**:
 The per-chat actor that gathers incoming messages into Windows and decides when a Window is ready.
 
-**Managed Chat Inbox**:
-The durable processing state for Conversation Events accepted from Managed Chats and awaiting inclusion in a Window. An accepted event remains pending for the coworker until its Window is admitted and the admission receipt is recorded.
+**Surface Inbox**:
+The durable processing state for Conversation Events accepted from active Surfaces and
+awaiting inclusion in a Window. An accepted event remains pending for the coworker until its
+Window is admitted and the admission receipt is recorded.
 _Avoid_: Best-effort listener, live queue
 
 **Say**:
-The single explicit act of sending a message to a Managed Chat. Anything the agent produces without Saying it is private working context.
+The single explicit act of sending a message through the Speaker's bound Surface. Anything
+the agent produces without Saying it is private working context.
 _Avoid_: Reply, respond, send
 
 ### Shared graph
@@ -220,11 +238,13 @@ _Avoid_: Workflow (when no independent run is needed), Tool (when agent-backed w
 **Tool**:
 A typed direct application function the agent can act with. Tools do; they carry no judgment or agent-backed process.
 
-**Chat-bound Tool**:
-A Tool permanently scoped to one Managed Chat at construction, so it cannot reach another chat regardless of what the model asks.
+**Surface-bound Tool**:
+A Tool permanently scoped to one Surface at construction, so it cannot reach another Surface
+regardless of what the model asks.
 
 **Evaluation Scenario**:
-A repeatable Managed Chat situation with controlled provider state and observable expected effects, used to measure the coworker's judgment and Capability use across changes.
+A repeatable Surface situation with controlled provider state and observable expected effects,
+used to measure the coworker's judgment and Capability use across changes.
 _Avoid_: Prompt test, golden response, vibe check
 
 ### Work execution
