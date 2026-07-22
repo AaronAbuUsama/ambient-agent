@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { SpeakerInput } from "@ambient-agent/engine/inputs.ts";
+import type { ScribeObservation, ScribeObservationSource } from "@ambient-agent/engine/scribe/inbox.ts";
 
 /** One raw observation offered to Scribe independently of Speaker admission. */
 export interface ScribeOffer {
@@ -69,6 +70,19 @@ const occurredAt = (input: SpeakerInput): number | undefined => {
 
 export const scribeOffers = (input: SpeakerInput): readonly ScribeOffer[] =>
   observationInputs(input).map((observation) => ({ input: observation }));
+
+/** Convert each raw fact-stream observation into the shared durable admission shape. */
+export const scribeObservations = (
+  offers: readonly ScribeOffer[],
+  source: ScribeObservationSource,
+): readonly ScribeObservation[] =>
+  offers.map(({ input }) => {
+    const evidenceIds = scribeEvidenceIds(input);
+    if (evidenceIds.length !== 1) {
+      throw new Error(`One Scribe observation requires exactly one evidence id; received ${evidenceIds.length}.`);
+    }
+    return { evidenceId: evidenceIds[0]!, occurredAt: occurredAt(input) ?? 0, source, input };
+  });
 
 const orderedInputs = (inputs: readonly SpeakerInput[]): readonly SpeakerInput[] => {
   const observations = inputs

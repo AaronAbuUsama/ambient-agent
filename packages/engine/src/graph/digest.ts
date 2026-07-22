@@ -35,6 +35,7 @@ const digestEntitySchema = v.object({
   properties: v.record(v.string(), v.unknown()),
   confidence: v.number(),
   lowConfidence: v.boolean(),
+  supportingAttestationIds: v.array(v.string()),
 });
 const digestRelationSchema = v.object({
   fromId: v.string(),
@@ -42,6 +43,7 @@ const digestRelationSchema = v.object({
   toId: v.string(),
   confidence: v.number(),
   lowConfidence: v.boolean(),
+  supportingAttestationIds: v.array(v.string()),
 });
 const digestCommitmentSchema = v.object({
   entityId: v.string(),
@@ -50,10 +52,13 @@ const digestCommitmentSchema = v.object({
   confidence: v.number(),
   lowConfidence: v.boolean(),
   overdue: v.boolean(),
+  supportingAttestationIds: v.array(v.string()),
 });
 
 /** The pushed digest — one shape, shared by the Speaker input and the Specialist job input. */
 export const graphDigestSchema = v.object({
+  schemaVersion: v.literal("graph-digest.v1"),
+  projectionVersion: v.string(),
   seeds: v.array(v.string()),
   entities: v.array(digestEntitySchema),
   relations: v.array(digestRelationSchema),
@@ -75,6 +80,11 @@ export interface DigestOptions {
 }
 
 const DEFAULT_LOW_CONFIDENCE = 0.75;
+const MAX_ENTITIES = 64;
+const MAX_RELATIONS = 128;
+const MAX_COMMITMENTS = 32;
+const MAX_SUPPORTING_ATTESTATIONS = 8;
+export const MAX_GRAPH_DIGEST_BYTES = 64 * 1024;
 
 /** Roll-up edges followed for one extra hop off GitHub work-in-view (§5 D3, "secondary hops"). */
 const SECONDARY_HOPS: readonly GraphRelationType[] = ["resolves", "part_of", "advances"];
@@ -110,24 +120,25 @@ export const computeGraphDigest = (store: GraphStore, seeds: DigestSeeds, option
     if (entity !== undefined && !entities.has(entity.entityId)) entities.set(entity.entityId, entity);
   };
   const edgeKey = (fromId: string, relation: string, toId: string): string => `${fromId}\u0000${relation}\u0000${toId}`;
-  const record = (fromId: string, relation: GraphRelationType, toId: string, confidence: number): void => {
-    relations.set(edgeKey(fromId, relation, toId), {
-      fromId,
-      relation,
-      toId,
-      confidence,
-      lowConfidence: low(confidence),
+  const record = (edge: ReturnType<GraphStore["relationsFrom"]>[number]): void => {
+    relations.set(edgeKey(edge.fromId, edge.relation, edge.toId), {
+      fromId: edge.fromId,
+      relation: edge.relation,
+      toId: edge.toId,
+      confidence: edge.confidence,
+      lowConfidence: low(edge.confidence),
+      supportingAttestationIds: edge.attestationIds.slice(-MAX_SUPPORTING_ATTESTATIONS),
     });
   };
 
   for (const seedId of seedIds) remember(store.getEntity(seedId));
   for (const seedId of seedIds) {
     for (const edge of store.relationsFrom(seedId)) {
-      record(edge.fromId, edge.relation, edge.toId, edge.confidence);
+      record(edge);
       remember(store.getEntity(edge.toId));
     }
     for (const edge of store.relationsTo(seedId)) {
-      record(edge.fromId, edge.relation, edge.toId, edge.confidence);
+      record(edge);
       remember(store.getEntity(edge.fromId));
     }
   }
@@ -138,7 +149,7 @@ export const computeGraphDigest = (store: GraphStore, seeds: DigestSeeds, option
     if (!SECONDARY_HOP_TYPES.has(entity.type)) continue;
     for (const relation of SECONDARY_HOPS) {
       for (const edge of store.relationsFrom(entity.entityId, relation)) {
-        record(edge.fromId, edge.relation, edge.toId, edge.confidence);
+        record(edge);
         remember(store.getEntity(edge.toId));
       }
     }
@@ -157,6 +168,7 @@ export const computeGraphDigest = (store: GraphStore, seeds: DigestSeeds, option
         confidence: entity.confidence,
         lowConfidence: low(entity.confidence),
         overdue: isOverdue(entity.properties.due, nowMs),
+        supportingAttestationIds: entity.attestationIds.slice(-MAX_SUPPORTING_ATTESTATIONS),
       });
       continue;
     }
@@ -166,10 +178,29 @@ export const computeGraphDigest = (store: GraphStore, seeds: DigestSeeds, option
       properties: entity.properties,
       confidence: entity.confidence,
       lowConfidence: low(entity.confidence),
+      supportingAttestationIds: entity.attestationIds.slice(-MAX_SUPPORTING_ATTESTATIONS),
     });
   }
 
-  return { seeds: [...seedIds], entities: plainEntities, relations: [...relations.values()], commitments };
+  const digest: GraphDigest = {
+    schemaVersion: "graph-digest.v1",
+    projectionVersion: store.projectionVersion(),
+    seeds: [...seedIds].sort().slice(0, MAX_ENTITIES),
+    entities: plainEntities.sort((left, right) => left.entityId.localeCompare(right.entityId)).slice(0, MAX_ENTITIES),
+    relations: [...relations.values()]
+      .sort((left, right) => edgeKey(left.fromId, left.relation, left.toId).localeCompare(edgeKey(right.fromId, right.relation, right.toId)))
+      .slice(0, MAX_RELATIONS),
+    commitments: commitments
+      .sort((left, right) => left.entityId.localeCompare(right.entityId))
+      .slice(0, MAX_COMMITMENTS),
+  };
+  while (Buffer.byteLength(JSON.stringify(digest)) > MAX_GRAPH_DIGEST_BYTES) {
+    if (digest.relations.length > 0) digest.relations.pop();
+    else if (digest.entities.length > 0) digest.entities.pop();
+    else if (digest.commitments.length > 0) digest.commitments.pop();
+    else break;
+  }
+  return digest;
 };
 
 /** True when a digest carries nothing worth spending a transcript turn on. */

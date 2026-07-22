@@ -48,9 +48,11 @@ sequenceDiagram
 
   WA->>ENG: ConversationEvent → Conversation Archive (append-only)
   ENG->>ENG: Coalescer: one fiber per chatId,<br/>throttle + settle window → Window
-  ENG-->>SC: accepted live observations<br/>or global Historical Replay batch
-  SC->>FLUE: bounded stateless attempt<br/>stable batchId + fresh attempt id
+  ENG->>DB: admit live or Historical Replay observations<br/>to one durable evidence-keyed Scribe inbox
+  DB-->>SC: claim one bounded chronological<br/>cross-Surface Scribe Batch wave
+  SC->>FLUE: bounded stateless attempt<br/>stable batchId + fresh attempt id + current Projection
   SC->>DB: append immutable Evidence Set Attestations<br/>refresh derived Belief Projection
+  SC->>DB: admit the durable proposal delta<br/>to the Brain up-inbox
   ENG->>SP: WindowDispatcher port → admitWindow (admission, retry, at-least-once)
   SP->>DB: escalate_intent (immutable evidence-backed admission)
   DB->>FLUE: wake one Brain Batch on instance global
@@ -66,7 +68,9 @@ sequenceDiagram
 ```
 
 The Speaker still mounts legacy issue-management and delegation capabilities; its Graph access
-is read-only. The final cutover removes those remaining capabilities after their authority moves to the Brain. The diagram above is
+is read-only. The Brain now considers Scribe proposal deltas and owns Graph rulings, but does not
+yet own bounded work or proactive time. The final cutover removes the Speaker's remaining global
+capabilities after their authority moves to the Brain. The diagram above is
 the replacement conversation path that exists now, not a claim that the remaining work loop has
 already moved.
 

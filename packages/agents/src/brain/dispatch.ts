@@ -1,4 +1,5 @@
 import { dispatch, type DispatchReceipt } from "@flue/runtime";
+import { Effect, Semaphore } from "effect";
 
 import type { BrainBatch, BrainInbox } from "@ambient-agent/engine/brain/inbox.ts";
 import brain from "./agent.ts";
@@ -15,18 +16,33 @@ export type DispatchBrain = (request: BrainDispatchRequest) => Promise<DispatchR
 
 export const dispatchBrain: DispatchBrain = (request) => dispatch(brain, request);
 
+const wakes = Semaphore.makeUnsafe(1);
+
 export const wakeBrain = async (
   inbox: BrainInbox,
   deliver: DispatchBrain = dispatchBrain,
-): Promise<BrainBatch | undefined> => {
-  const batch = inbox.claimBatch();
-  if (batch === undefined || batch.dispatch !== undefined) return batch;
-  const receipt = await deliver({
-    id: "global",
-    input: {
-      type: "brain.batch",
-      batch: { id: batch.id, createdAt: batch.createdAt, intents: batch.intents },
-    },
-  });
-  return inbox.markBatchDispatched(batch.id, receipt);
-};
+): Promise<BrainBatch | undefined> =>
+  Effect.runPromise(
+    wakes.withPermits(1)(
+      Effect.tryPromise({
+        try: async () => {
+          const batch = inbox.claimBatch();
+          if (batch === undefined || batch.dispatch !== undefined) return batch;
+          const receipt = await deliver({
+            id: "global",
+            input: {
+              type: "brain.batch",
+              batch: {
+                id: batch.id,
+                createdAt: batch.createdAt,
+                intents: batch.intents,
+                knowledgeDeltas: batch.knowledgeDeltas,
+              },
+            },
+          });
+          return inbox.markBatchDispatched(batch.id, receipt);
+        },
+        catch: (cause) => cause,
+      }),
+    ),
+  );

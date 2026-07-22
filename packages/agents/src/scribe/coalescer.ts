@@ -8,19 +8,22 @@
  * over already-composed inputs (a different layer & element type from the raw
  * WhatsApp coalescer) with much laggier knobs and NO immediate-fire predicate.
  *
- * Failure isolation (#141 D2): `offer` is called independently of Speaker admission,
- * never awaited, and can never throw — either arm may fail without gating the other.
- * There is no durable Scribe admission ledger yet; a crash can drop one live buffer.
+ * Failure isolation (#141 D2): `offer` is called independently of Speaker admission.
+ * Production persists it by immutable evidence before waking this timer; the Speaker
+ * catches admission failure and continues. A crash may lose only the timer wake, never
+ * the observation, and startup drains the same durable frontier as Historical Replay.
  */
 import { randomUUID } from "node:crypto";
 import { dispatch } from "@flue/runtime";
-import { Effect, Queue, Semaphore } from "effect";
+import { Effect, Fiber, Queue, Semaphore } from "effect";
 
 import { debounceActor, type DebounceParams } from "@ambient-agent/engine/coalescer/debounce-actor.ts";
+import type { ScribeInbox } from "@ambient-agent/engine/scribe/inbox.ts";
 import scribe from "./agent.ts";
-import { scribeBatchInput, type ScribeBatchInput, type ScribeOffer } from "./input.ts";
+import { scribeBatchInput, scribeObservations, type ScribeBatchInput, type ScribeOffer } from "./input.ts";
 import { scribeCoalescerConfig } from "./config.ts";
 import { withScribeAttemptContext } from "./attempt-context.ts";
+import { drainScribeInbox, type ScribeDrainOptions } from "./durable-clock.ts";
 
 /** Why a batch fired. Unused downstream (extraction is uniform) but keeps the actor typed. */
 type ScribeFireReason = "debounce" | "maximum-wait" | "capacity";
@@ -34,10 +37,13 @@ export interface ScribeCoalescerOptions {
   readonly maxConcurrentAttempts?: number;
   /** Injected for tests; defaults to dispatching the Scribe agent with the batched inputs. */
   readonly dispatchBatch?: DispatchScribeBatch;
+  /** Application-owned durable admission and retry frontier. */
+  readonly inbox?: ScribeInbox;
+  readonly onProposalDelta?: ScribeDrainOptions["onProposalDelta"];
 }
 
 export interface ScribeCoalescer {
-  /** Offer one funnel input to the Scribe. Detached, best-effort, never throws. */
+  /** Durably offer one funnel input, then wake the detached global drain. */
   readonly offer: (offer: ScribeOffer) => void;
   /** The router fiber; the default instance forks it lazily. Exposed for tests. */
   readonly run: Effect.Effect<void>;
@@ -90,17 +96,30 @@ export const createScribeCoalescer = (options: ScribeCoalescerOptions = {}): Scr
   // safe to use from the plain-async funnel and across the forked router fiber).
   const mailbox = Effect.runSync(Queue.unbounded<ScribeOffer>());
 
-  // A failed extraction turn logs and ingestion continues; durable retry is a later rung.
+  const durableDrain = (): Promise<unknown> =>
+    drainScribeInbox(options.inbox!, dispatchBatch, { onProposalDelta: options.onProposalDelta });
+
   const swallow =
     (attemptId: string, batchId: string) =>
     (cause: unknown): Effect.Effect<void> =>
-      Effect.logError(`Scribe extraction failed for ${batchId}; the attempt was not durably retried`).pipe(
+      Effect.logError(`Scribe extraction failed for ${batchId}; the durable Batch remains pending`).pipe(
         Effect.annotateLogs({ cause: String(cause), attemptId, batchId }),
       );
 
   const scribeLoop = debounceActor<ScribeOffer, ScribeFireReason>(params, {
     reasons: { debounce: "debounce", maxWait: "maximum-wait", capacity: "capacity" },
     flush: (buffer) => {
+      if (options.inbox !== undefined) {
+        const drain = Effect.tryPromise({ try: durableDrain, catch: (cause) => cause }).pipe(
+          Effect.asVoid,
+          Effect.catch((cause) =>
+            Effect.logError("Scribe durable drain failed; unfinished Batches remain pending").pipe(
+              Effect.annotateLogs({ cause: String(cause) }),
+            ),
+          ),
+        );
+        return Effect.forkDetach(drain).pipe(Effect.asVoid);
+      }
       const attemptId = `scribe-attempt:${randomUUID()}`;
       const batch = scribeBatchInput(buffer.map((entry) => entry.input));
       const attempt = attempts.withPermits(1)(
@@ -117,14 +136,31 @@ export const createScribeCoalescer = (options: ScribeCoalescerOptions = {}): Scr
     },
   });
 
-  const run = scribeLoop(mailbox);
+  const run =
+    options.inbox === undefined
+      ? scribeLoop(mailbox)
+      : Effect.gen(function* () {
+          yield* Effect.forkDetach(
+            Effect.tryPromise({ try: durableDrain, catch: (cause) => cause }).pipe(
+              Effect.asVoid,
+              Effect.catch((cause) =>
+                Effect.logError("Scribe startup recovery failed; unfinished Batches remain pending").pipe(
+                  Effect.annotateLogs({ cause: String(cause) }),
+                ),
+              ),
+            ),
+          );
+          yield* scribeLoop(mailbox);
+        });
 
   return {
     offer: (entry) => {
       try {
+        options.inbox?.admit(scribeObservations([entry], "live"));
         Queue.offerUnsafe(mailbox, entry);
-      } catch {
-        // Best-effort: the Scribe fan-out must never surface into the Speaker's path.
+      } catch (cause) {
+        if (options.inbox !== undefined) throw cause;
+        // The in-memory test seam remains best-effort.
       }
     },
     run,
@@ -133,6 +169,42 @@ export const createScribeCoalescer = (options: ScribeCoalescerOptions = {}): Scr
 
 let defaultInstance: ScribeCoalescer | undefined;
 let started = false;
+let defaultFiber: Fiber.Fiber<void, never> | undefined;
+let runtimeInbox: ScribeInbox | undefined;
+let runtimeOnProposalDelta: ScribeDrainOptions["onProposalDelta"];
+
+export const configureScribeInbox = (
+  inbox: ScribeInbox,
+  onProposalDelta?: ScribeDrainOptions["onProposalDelta"],
+): (() => void) => {
+  const previous = runtimeInbox;
+  const previousOnProposalDelta = runtimeOnProposalDelta;
+  runtimeInbox = inbox;
+  runtimeOnProposalDelta = onProposalDelta;
+  if (defaultFiber !== undefined) Effect.runFork(Fiber.interrupt(defaultFiber));
+  defaultInstance = createScribeCoalescer({
+    inbox,
+    ...(onProposalDelta === undefined ? {} : { onProposalDelta }),
+  });
+  started = false;
+  void drainScribeInbox(
+    inbox,
+    dispatchScribeAttempt,
+    onProposalDelta === undefined ? {} : { onProposalDelta },
+  ).catch((cause) => {
+    console.error("[scribe] startup recovery failed; unfinished Batches remain pending", cause);
+  });
+  return () => {
+    if (runtimeInbox === inbox) {
+      if (defaultFiber !== undefined) Effect.runFork(Fiber.interrupt(defaultFiber));
+      defaultFiber = undefined;
+      defaultInstance = undefined;
+      started = false;
+      runtimeInbox = previous;
+      runtimeOnProposalDelta = previousOnProposalDelta;
+    }
+  };
+};
 
 /**
  * The process-wide Scribe coalescer used by the funnel. The router fiber starts on
@@ -141,14 +213,17 @@ let started = false;
 export const scribeCoalescer: Pick<ScribeCoalescer, "offer"> = {
   offer: (entry) => {
     try {
-      if (defaultInstance === undefined) defaultInstance = createScribeCoalescer();
+      if (defaultInstance === undefined) {
+        defaultInstance = createScribeCoalescer({ inbox: runtimeInbox, onProposalDelta: runtimeOnProposalDelta });
+      }
       if (!started) {
         started = true;
-        Effect.runFork(defaultInstance.run);
+        defaultFiber = Effect.runFork(defaultInstance.run);
       }
       defaultInstance.offer(entry);
-    } catch {
-      // Best-effort: a Scribe fan-out failure can never re-run or re-deliver the Speaker.
+    } catch (cause) {
+      if (runtimeInbox !== undefined) throw cause;
+      // The legacy in-memory test seam remains best-effort.
     }
   },
 };

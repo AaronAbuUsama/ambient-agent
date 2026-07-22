@@ -63,3 +63,10 @@ export const attachGraphContext = (input: SpeakerInput, options?: DigestOptions)
     return input;
   }
 };
+
+/** Scribe attempts always receive the current Projection explicitly, including an empty versioned Digest. */
+export const attachCurrentGraphContext = (input: SpeakerInput, options?: DigestOptions): SpeakerInput => {
+  const store = tryGetGraphStore();
+  if (store === undefined) return input;
+  return { ...input, graphContext: computeGraphDigest(store, speakerDigestSeeds(input), options) };
+};

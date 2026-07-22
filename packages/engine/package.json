@@ -35,6 +35,7 @@
     "./shared/errors.ts": "./src/shared/errors.ts",
     "./shared/flue-global.ts": "./src/shared/flue-global.ts",
     "./shared/whatsapp-jid.ts": "./src/shared/whatsapp-jid.ts",
+    "./scribe/inbox.ts": "./src/scribe/inbox.ts",
     "./surfaces/delivery.ts": "./src/surfaces/delivery.ts",
     "./surfaces/registry.ts": "./src/surfaces/registry.ts"
   },

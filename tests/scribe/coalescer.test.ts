@@ -5,7 +5,10 @@
  * Scribe turn never wedges ingestion or surfaces to the caller (failure isolation).
  */
 import { describe, expect, it } from "@effect/vitest";
-import { Duration, Effect, Ref } from "effect";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Duration, Effect, Fiber, Ref } from "effect";
 import { TestClock } from "effect/testing";
 
 import {
@@ -16,6 +19,9 @@ import {
 import { scribeBatchInput, scribeBatchWave, type ScribeOffer } from "../../packages/agents/src/scribe/input.ts";
 import { scribeAttemptContext } from "../../packages/agents/src/scribe/attempt-context.ts";
 import type { SpeakerInput } from "../../packages/engine/src/inputs.ts";
+import { createScribeInbox } from "../../packages/engine/src/scribe/inbox.ts";
+import { createGraphStore } from "../../packages/engine/src/graph/store.ts";
+import { configureGraphStore } from "../../packages/agents/src/capabilities/graph/runtime.ts";
 
 const DEBOUNCE = Duration.millis(30);
 
@@ -264,5 +270,87 @@ describe("Scribe coalescer", () => {
   it("offer never throws, even before the router is running", () => {
     const coalescer = createScribeCoalescer({ dispatchBatch: async () => undefined });
     expect(() => coalescer.offer(offerFor("chat-a@g.us", "x"))).not.toThrow();
+  });
+
+  it("recovers an admitted live observation after a crash before the debounce fires", async () => {
+    const root = mkdtempSync(join(tmpdir(), "scribe-coalescer-"));
+    const path = join(root, "application.sqlite");
+    try {
+      const firstInbox = createScribeInbox(path);
+      const beforeCrash = createScribeCoalescer({ inbox: firstInbox, dispatchBatch: async () => undefined });
+      beforeCrash.offer(offerFor("chat-a@g.us", "survives"));
+      firstInbox.close();
+
+      const seen: string[][] = [];
+      const reopenedInbox = createScribeInbox(path, { recoverInterruptedAttempts: true });
+      const recovered = createScribeCoalescer({
+        inbox: reopenedInbox,
+        dispatchBatch: async (_attemptId, batch) => {
+          seen.push([...batch.evidenceIds]);
+        },
+      });
+      const fiber = Effect.runFork(recovered.run);
+      for (let attempt = 0; attempt < 50 && seen.length === 0; attempt++) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 2));
+      }
+      expect(seen).toEqual([["arrival:chat-a@g.us:m-survives"]]);
+      expect(reopenedInbox.isEvidenceComplete(seen[0]!)).toBe(true);
+      await Effect.runPromise(Fiber.interrupt(fiber));
+      reopenedInbox.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("recomputes the bounded Projection on retry and durably emits the Scribe proposal delta", async () => {
+    const graph = createGraphStore(":memory:");
+    configureGraphStore(graph);
+    const inbox = createScribeInbox(":memory:");
+    const versions: string[] = [];
+    const deltas: unknown[] = [];
+    let calls = 0;
+    const coalescer = createScribeCoalescer({
+      inbox,
+      config: { cap: 1 },
+      dispatchBatch: async (_attemptId, batch) => {
+        calls++;
+        const input = batch.inputs[0];
+        versions.push(input?.graphContext?.projectionVersion ?? "missing");
+        if (calls === 1) {
+          graph.attest({
+            context: {
+              author: { kind: "scribe", id: "scribe" },
+              evidenceIds: batch.evidenceIds,
+              batchId: batch.batchId,
+            },
+            claim: { kind: "entity", input: { type: "topic", properties: { label: "retry knowledge" } } },
+          });
+          throw new Error("retry after a partial model turn");
+        }
+      },
+      onProposalDelta: (delta) => {
+        deltas.push(delta);
+      },
+    });
+    const fiber = Effect.runFork(coalescer.run);
+    coalescer.offer(offerFor("chat-a@g.us", "fresh-projection"));
+    for (let attempt = 0; attempt < 50 && deltas.length === 0; attempt++) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 2));
+    }
+
+    expect(versions).toHaveLength(2);
+    expect(versions[0]).not.toBe(versions[1]);
+    expect(deltas).toEqual([
+      expect.objectContaining({
+        scribeBatchId: expect.stringMatching(/^scribe-batch:/),
+        attestationIds: [expect.stringMatching(/^attestation:/)],
+        evidenceIds: ["arrival:chat-a@g.us:m-fresh-projection"],
+        projectionVersion: versions[1],
+      }),
+    ]);
+    await Effect.runPromise(Fiber.interrupt(fiber));
+    inbox.close();
+    graph.close();
+    configureGraphStore(createGraphStore(":memory:"));
   });
 });
