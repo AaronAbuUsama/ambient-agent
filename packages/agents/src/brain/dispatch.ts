@@ -37,6 +37,7 @@ export const wakeBrain = async (
                 createdAt: batch.createdAt,
                 intents: batch.intents,
                 knowledgeDeltas: batch.knowledgeDeltas,
+                specialistResults: batch.specialistResults,
               },
             },
           });

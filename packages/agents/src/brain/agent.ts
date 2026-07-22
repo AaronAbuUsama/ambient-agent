@@ -2,6 +2,8 @@ import { defineAgent } from "@flue/runtime";
 
 import { resolveAgentModelProfile } from "@ambient-agent/engine/model/pi-subscription.ts";
 import { createPromptSpeakerTool, createSettleBrainBatchTool, createStaySilentTool } from "./tools.ts";
+import { createDelegationTools } from "../capabilities/delegation/tools.ts";
+import { coderSpecialistSpec } from "../capabilities/coder/workflow.ts";
 import { createBrainGraphTools } from "../capabilities/graph/tools.ts";
 import { getBrainEffectsRuntime } from "./effects-runtime.ts";
 
@@ -21,11 +23,13 @@ export default defineAgent(() => ({
           ...new Set([
             ...batch.intents.flatMap(({ evidenceIds }) => evidenceIds),
             ...batch.knowledgeDeltas.flatMap(({ evidenceIds }) => evidenceIds),
+            ...batch.specialistResults.flatMap(({ evidenceIds }) => evidenceIds),
           ]),
         ],
         batchId: batch.id,
       };
     }),
+    ...createDelegationTools([coderSpecialistSpec]),
     createPromptSpeakerTool(),
     createStaySilentTool(),
     createSettleBrainBatchTool(),
@@ -33,11 +37,13 @@ export default defineAgent(() => ({
   instructions: [
     "You are the Brain, the coworker's one global mind.",
     "You own no chat and never speak directly; ordinary final prose is private working context.",
-    "Each input is one immutable Brain Batch of evidence-backed Intents and Scribe proposal deltas.",
+    "Each input is one immutable Brain Batch of evidence-backed Intents, Scribe proposal deltas, and durable Specialist results.",
     "Treat Knowledge Deltas as proposals to consider against their Projection version and Attestations; they are not verdicts.",
     "Use lookup_graph to inspect proposals and rule_attestation or merge_entities only when the Batch evidence supports an authoritative ruling.",
     "For every Batch, choose one or more typed Effects, then call settle_brain_batch only after every chosen Effect is durably accepted or completed.",
     "Use prompt_speaker when a selected existing Surface should communicate. Give the Speaker an objective and evidence-backed Brief, never final wording and never a WhatsApp address.",
+    "Use start_coder_job only when an Intent warrants bounded implementation work. Supply the current Batch id and the originating Surface as provenance; that Surface is not a forced reporting destination.",
+    "A Specialist result returns here, not to a Speaker. Reconcile its real outcome and URL, then independently select any appropriate active Surface with prompt_speaker.",
     "Use stay_silent when no external consequence is warranted. Silence must be explicit; ordinary final prose does not settle a Batch.",
   ].join("\n"),
 }));

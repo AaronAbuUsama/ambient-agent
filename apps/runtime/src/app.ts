@@ -6,8 +6,7 @@ import { dispatchSpeaker } from "@ambient-agent/agents/speaker/dispatch.ts";
 import { createIssueManagementPolicy } from "@ambient-agent/agents/capabilities/issue-management/runtime.ts";
 import { createIssueOperationStore } from "@ambient-agent/engine/github/operation-store.ts";
 import { createGraphStore } from "@ambient-agent/engine/graph/store.ts";
-import { createRunLedger } from "@ambient-agent/agents/capabilities/delegation/ledger.ts";
-import { sweepUnsettledLaunches } from "@ambient-agent/agents/capabilities/delegation/bridge.ts";
+import { installDelegationBridge } from "@ambient-agent/agents/capabilities/delegation/bridge.ts";
 import { configureCoderRuntime } from "@ambient-agent/agents/capabilities/coder/runtime.ts";
 import { configureReviewerRuntime } from "@ambient-agent/agents/capabilities/reviewer/runtime.ts";
 import { reviewerSlug, type ReviewerGitHub } from "@ambient-agent/agents/capabilities/reviewer/github.ts";
@@ -122,6 +121,7 @@ export const createAmbientAgentApp = async ({
       ? await connectPiChatGptSubscription({ authentication, profiles })
       : await connectPiApiKeyProvider({ provider, apiKey: modelApiKey ?? "", profiles });
   const issueOperations = createIssueOperationStore(paths.applicationDatabase);
+  installDelegationBridge();
   const runtimeId = runtimeInstallationId(githubCredential.webhookSecret);
   // The Coder Specialist (#158) runs under its own App identity in the config-bound per-job
   // sandbox the selector resolved (ADR 0021, #251) — shared with the Reviewer. A missing or
@@ -129,12 +129,6 @@ export const createAmbientAgentApp = async ({
   await configureCoderRuntimeBinding(paths, agentSandbox);
   const reviewerProvisioned = await configureReviewerRuntimeBinding(paths, agentSandbox);
   let whatsappControl: WhatsAppRuntimeControl | undefined;
-  // A SpeakerInput is a SpeakerInput, so the funnel delivers a specialist result to both
-  // Speaker and Scribe. Held out here so the boot sweep can reuse it after the port is wired.
-  const delegation = {
-    ledger: createRunLedger(paths.applicationDatabase),
-    dispatch: (request: Parameters<typeof dispatchSpeaker>[0]) => dispatchSpeaker(request),
-  };
   const app = composeSpeaker({
     issues: createOctokitIssueRepository(githubAppClient(githubCredential)),
     operations: issueOperations,
@@ -145,9 +139,8 @@ export const createAmbientAgentApp = async ({
     ingress: {
       settings: {
         databasePath: paths.applicationDatabase,
-        // Broadcast: a supported GitHub event fans out to every managed thread's Speaker,
-        // each judging relevance itself (#144). The repo→chat mapping now survives only for
-        // specialist-return (resolveSpecialistReturnChat), not inbound routing.
+        // Legacy ingress still fans supported GitHub events to configured Speakers. The
+        // final routing slice removes this broadcast path in favour of Brain selection.
         managedChats: configuration.managedChats,
       },
       dispatch: async (chatId, input) => await dispatchSpeaker({ id: chatId, input }),
@@ -156,7 +149,6 @@ export const createAmbientAgentApp = async ({
           repositories: configuration.github.reviewRepositories,
           launch: async (input) => {
             const admitted = await invoke(reviewer, { input });
-            delegation.ledger.record({ runId: admitted.runId, workflow: "reviewer", launchedAt: new Date().toISOString() });
             return admitted;
           },
           command: {
@@ -172,7 +164,6 @@ export const createAmbientAgentApp = async ({
       } : {}),
     },
     graph: createGraphStore(paths.applicationDatabase),
-    delegation,
     // The WhatsApp participation port is wired later by runWhatsAppSession, once the
     // live socket exists.
     health: () => {
@@ -205,14 +196,6 @@ export const createAmbientAgentApp = async ({
       storeDirectory: paths.whatsapp,
       applicationDatabase: paths.applicationDatabase,
       managedChats: configuration.managedChats,
-      // The ADR 0001 boot sweep, deferred to here: once per boot, after the participation
-      // port is wired (so the Speaker can voice each `interrupted` notification), detached,
-      // errors caught. Any launch a crash left unsettled self-heals into a chat message.
-      afterParticipationReady: () => {
-        void sweepUnsettledLaunches(delegation).catch((cause) => {
-          console.error("[delegation] boot sweep failed", cause);
-        });
-      },
       ...(configuration.smoke === undefined ? {} : { canaryChat: configuration.smoke.canaryChat }),
     });
     whatsappControl = whatsapp;

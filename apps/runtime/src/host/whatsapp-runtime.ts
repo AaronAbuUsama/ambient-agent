@@ -9,10 +9,14 @@ import {
 } from "@ambient-agent/agents/speaker/dispatch.ts";
 import { configureIntentEscalationRuntime } from "@ambient-agent/agents/capabilities/intent-escalation/runtime.ts";
 import { configureDirectiveDeliveryRuntime } from "@ambient-agent/agents/capabilities/directive-delivery/runtime.ts";
+import { configureDelegationRuntime } from "@ambient-agent/agents/capabilities/delegation/runtime.ts";
+import { reconcileSpecialistWorkAtBoot } from "@ambient-agent/agents/capabilities/delegation/bridge.ts";
+import { recoverPendingSpecialistLaunches } from "@ambient-agent/agents/capabilities/delegation/tools.ts";
+import { coderSpecialistSpec } from "@ambient-agent/agents/capabilities/coder/workflow.ts";
 import { wakeBrain } from "@ambient-agent/agents/brain/dispatch.ts";
 import { configureBrainEffectsRuntime, recoverPendingPrompts } from "@ambient-agent/agents/brain/effects-runtime.ts";
 import { configureScribeInbox } from "@ambient-agent/agents/scribe/coalescer.ts";
-import { invoke } from "@flue/runtime";
+import { getRun, invoke } from "@flue/runtime";
 import historicalReplayWorkflow from "../workflows/historical-replay.ts";
 import type { SpeakerDispatchEvent, SpeakerObserver } from "@ambient-agent/agents/speaker/observer.ts";
 import {
@@ -360,6 +364,13 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
         },
       }),
     );
+    yield* Effect.sync(() =>
+      configureDelegationRuntime({
+        inbox: brainInbox,
+        wake: () => wakeBrain(brainInbox),
+        providerChatIdForSurface: (surfaceId) => surfaces.activeBinding(surfaceId)?.providerChatId,
+      }),
+    );
     if (account.initialArchiveReady !== undefined && options.sessionFactory === undefined) {
       yield* Effect.promise(() => account.initialArchiveReady!());
       for (const state of historicalReplay.states()) {
@@ -407,6 +418,8 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
       ...(options.coalescer === undefined ? {} : { coalescer: options.coalescer }),
       afterParticipationReady: async () => {
         await recoverPendingPrompts();
+        await recoverPendingSpecialistLaunches([coderSpecialistSpec]);
+        await reconcileSpecialistWorkAtBoot({ inbox: brainInbox, wake: () => wakeBrain(brainInbox), getRun });
         await wakeBrain(brainInbox);
         await options.afterParticipationReady?.();
       },

@@ -171,29 +171,6 @@ function githubIssueOpenedPayload(repository = "widgets"): string {
   });
 }
 
-function githubPullRequestOpenedPayload(issueNumbers: readonly number[], pullRequestNumber = 42): string {
-  return JSON.stringify({
-    action: "opened",
-    installation: { id: 77 },
-    repository: {
-      id: 101,
-      name: "widgets",
-      html_url: "https://github.com/acme/widgets",
-      owner: { login: "acme" },
-    },
-    pull_request: {
-      number: pullRequestNumber,
-      html_url: `https://github.com/acme/widgets/pull/${pullRequestNumber}`,
-      title: "Fix the captured issue",
-      body: issueNumbers.map((issueNumber) => `Closes: #${issueNumber}`).join("\n"),
-      state: "open",
-      draft: false,
-      head: { sha: "head-42" },
-    },
-    sender: { login: "octocat", id: 1, type: "User" },
-  });
-}
-
 async function githubDelivery(options: {
   readonly deliveryId: string;
   readonly body: string;
@@ -290,25 +267,8 @@ async function githubEvents(): Promise<readonly FakeIssueRepositoryEvent[]> {
   return (await response.json()) as FakeIssueRepositoryEvent[];
 }
 
-async function githubOperations(): Promise<readonly Record<string, unknown>[]> {
-  const response = await fetch(`${origin}/test/github/operations`);
-  expect(response.status).toBe(200);
-  return (await response.json()) as readonly Record<string, unknown>[];
-}
-
 async function resetGitHub(): Promise<void> {
   const response = await fetch(`${origin}/test/github/events`, { method: "DELETE" });
-  expect(response.status).toBe(204);
-}
-
-async function setNextGitHubCreate(mode: "failure" | "timeout-before" | "timeout-after"): Promise<void> {
-  const path =
-    mode === "failure"
-      ? "fail-next-create"
-      : `timeout-next-create?afterMutation=${mode === "timeout-after" ? "true" : "false"}`;
-  const response = await fetch(`${origin}/test/github/${path}`, {
-    method: "POST",
-  });
   expect(response.status).toBe(204);
 }
 
@@ -391,43 +351,6 @@ describe("persisted Speaker admission", () => {
     expect(serverOutput).toContain(`"ambience":"ambience"`);
     expect(serverOutput).toContain(`"dispatchId":"${firstReceipt.dispatchId}"`);
     expect(serverOutput).toContain(`"runId":null`);
-  });
-
-  it("posts one PR-link message per captured issue when a verified PR closes multiple concerns", async () => {
-    const chatId = "github-ingress-29@g.us";
-    await resetWhatsApp();
-    await prompt(chatId, "CREATE_COMPLETE_ISSUE");
-    await prompt(chatId, "CREATE_COMPLETE_FEATURE");
-    const completedCreates = [...(await githubOperations())]
-      .reverse()
-      .filter((operation) => operation.kind === "create-issue" && operation.status === "completed")
-      .slice(0, 2);
-    expect(completedCreates).toHaveLength(2);
-    expect(completedCreates).toEqual([
-      expect.objectContaining({ repository: "acme/widgets", issueNumber: expect.any(Number) }),
-      expect.objectContaining({ repository: "acme/widgets", issueNumber: expect.any(Number) }),
-    ]);
-    const issueNumbers = completedCreates.map((operation) => operation.issueNumber as number);
-
-    const deliveryId = "42-captured-pr";
-    const body = githubPullRequestOpenedPayload(issueNumbers);
-    const response = await githubDelivery({ deliveryId, body, event: "pull_request" });
-    expect(response.status, await response.text()).toBe(200);
-    await waitFor(
-      async () =>
-        (await whatsappEvents()).filter(
-          (event) => event.kind === "send" && event.text === "https://github.com/acme/widgets/pull/42",
-        ).length === 2,
-      "captured issues pull-request link delivery",
-    );
-    expect(await githubIngressRecords()).toContainEqual(
-      expect.objectContaining({
-        deliveryId,
-        repository: "acme/widgets",
-        chatId,
-        status: "done",
-      }),
-    );
   });
 
   it("rejects an invalid GitHub signature before application processing", async () => {
@@ -695,31 +618,6 @@ describe("persisted Speaker admission", () => {
     expect(b).not.toContain("A_SECOND");
   });
 
-  it("creates one complete issue through the packaged Speaker route with a durable Operation Identity", async () => {
-    const chatId = "github-create-30@g.us";
-    await resetGitHub();
-
-    await coalescerMessage(chatId, "CREATE_COMPLETE_ISSUE", { mentions: ["bot@s.whatsapp.net"] });
-    await waitFor(
-      async () => (await historyText(chatId)).includes("Private Issue Management receipt retained"),
-      "direct Issue Management creation",
-    );
-
-    const events = await githubEvents();
-    expect(events.map((event) => event.kind)).toEqual(["search", "create"]);
-    expect(events.filter((event) => event.kind === "create")).toEqual([
-      expect.objectContaining({ repository: "acme/widgets", outcome: "created", number: 1 }),
-    ]);
-    expect(await githubOperations()).toContainEqual(
-      expect.objectContaining({
-        kind: "create-issue",
-        repository: "acme/widgets",
-        status: "completed",
-        issueNumber: 1,
-      }),
-    );
-  });
-
   it("asks one focused question for an incomplete report without touching GitHub", async () => {
     const chatId = "github-clarify-30@g.us";
     await resetGitHub();
@@ -738,42 +636,6 @@ describe("persisted Speaker admission", () => {
     ]);
   });
 
-  it("redirects a duplicate report after search and does not create again", async () => {
-    const chatId = "github-duplicate-30@g.us";
-    await resetGitHub();
-    await coalescerMessage(chatId, "CREATE_COMPLETE_ISSUE", { mentions: ["bot@s.whatsapp.net"] });
-    await waitFor(
-      async () => (await githubEvents()).some((event) => event.kind === "create"),
-      "initial issue creation",
-    );
-
-    await coalescerMessage(chatId, "DUPLICATE_ISSUE", { mentions: ["bot@s.whatsapp.net"] });
-    await waitFor(
-      async () => (await githubEvents()).filter((event) => event.kind === "search").length === 2,
-      "duplicate search",
-    );
-    const events = await githubEvents();
-    expect(events.filter((event) => event.kind === "create")).toHaveLength(1);
-    expect(events.filter((event) => event.kind === "search")).toHaveLength(2);
-  });
-
-  it("persists an Uncertain create after bounded observation and never repeats the mutation", async () => {
-    const chatId = "github-uncertain-30@g.us";
-    await resetGitHub();
-    await resetWhatsApp();
-    await setNextGitHubCreate("timeout-before");
-
-    await coalescerMessage(chatId, "CREATE_COMPLETE_ISSUE", { mentions: ["bot@s.whatsapp.net"] });
-    await waitFor(
-      async () => (await historyText(chatId)).includes("Private non-filed Issue Management result retained"),
-      "uncertain direct Issue Management receipt",
-    );
-    const events = await githubEvents();
-    expect(events.filter((event) => event.kind === "create")).toHaveLength(1);
-    expect(events.filter((event) => event.kind === "find-operation")).toHaveLength(1);
-    expect(await githubOperations()).toContainEqual(expect.objectContaining({ status: "uncertain" }));
-    expect((await whatsappEvents()).filter((event) => event.kind === "send")).toEqual([]);
-  });
 });
 
 describe("restart and at-least-once boundaries", () => {

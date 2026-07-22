@@ -53,8 +53,7 @@ export const attachGraphContext = (input: SpeakerInput, options?: DigestOptions)
   const store = tryGetGraphStore();
   if (store === undefined) return input;
   // Best-effort push context (§5/§8): a graph read failure (SQLITE_BUSY, a corrupt row throwing
-  // in decode) must never fail the dispatch — that would settle EVERY broadcast delivery "failed"
-  // and permanently lose an already-ledger-settled specialist.result. Fall back to the raw input.
+  // in decode) must never fail a Speaker dispatch. Fall back to the raw input.
   try {
     const graphContext = computeGraphDigest(store, speakerDigestSeeds(input), options);
     return isEmptyDigest(graphContext) ? input : { ...input, graphContext };

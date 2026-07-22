@@ -15,14 +15,21 @@ export const DEFAULT_MAX_REVIEW_CYCLES = 2;
  * shipped issue-only `start_coder_job` request is normalized before workflow code sees
  * it. `review_continuation` is deliberately reserved for #211.
  */
-export const coderJobInputSchema = v.object({
+const coderJobRequestEntries = {
   mode: v.optional(v.literal("new_issue"), "new_issue"),
   repository: nonEmpty,
   issue: v.pipe(v.number(), v.integer(), v.minValue(1)),
   instructions: v.optional(nonEmpty),
   maxVerificationRounds: v.optional(maxVerificationRounds, DEFAULT_MAX_VERIFICATION_ROUNDS),
   maxReviewCycles: v.optional(maxReviewCycles, DEFAULT_MAX_REVIEW_CYCLES),
-  chatId: v.optional(nonEmpty),
+};
+
+export const coderJobRequestSchema = v.object(coderJobRequestEntries);
+
+export const coderJobInputSchema = v.object({
+  ...coderJobRequestEntries,
+  brainWorkId: v.optional(nonEmpty),
+  sourceSurfaceId: v.optional(nonEmpty),
   graphContext: v.optional(graphDigestSchema),
 });
 

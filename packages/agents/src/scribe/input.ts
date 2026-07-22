@@ -36,9 +36,6 @@ export const scribeEvidenceIds = (input: SpeakerInput): readonly string[] => {
       return evidenceId === undefined ? [] : [evidenceId];
     });
   }
-  if (input.type === "specialist.result" || input.type === "specialist.milestone") {
-    return [`${input.type}:${input.runId}`];
-  }
   if (input.type === "brain.directive") return input.directive.brief.evidenceIds;
   return [`github-delivery:${input.deliveryId}`];
 };
