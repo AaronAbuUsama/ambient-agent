@@ -42,7 +42,7 @@ describe("WhatsApp Participation capability", () => {
 
     expect(agent).toContain('import whatsappParticipation from "../capabilities/whatsapp-participation/SKILL.md"');
     expect(agent).toContain('with { type: "skill" }');
-    expect(agent).toContain("skills: [whatsappParticipation, issueManagement]");
+    expect(agent).toContain("skills: [whatsappParticipation]");
     expect(agent).not.toContain("when older chat context is needed");
 
     expect(skill).toMatch(/^---\nname: whatsapp-participation\n/m);

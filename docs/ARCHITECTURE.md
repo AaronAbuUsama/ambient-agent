@@ -58,6 +58,10 @@ sequenceDiagram
   DB->>FLUE: wake one Brain Batch on instance global
   FLUE->>BR: runs the continuing Brain
   BR->>DB: prompt one Surface or record deliberate silence
+  BR->>DB: reserve stable Brain work identity
+  DB->>FLUE: admit existing bounded Workflow
+  FLUE-->>DB: terminal result → durable Brain input
+  DB->>FLUE: wake result Batch for Brain reconciliation
   DB->>FLUE: dispatch Directive to the Surface's active Speaker binding
   FLUE->>SP: runs the continuing local Speaker
   SP->>DB: say_directive claims Surface Delivery before transport
@@ -67,12 +71,11 @@ sequenceDiagram
   FLUE-->>SP: lifecycle observations (dispatchId only)<br/>→ Window or Directive correlation
 ```
 
-The Speaker still mounts legacy issue-management and delegation capabilities; its Graph access
-is read-only. The Brain now considers Scribe proposal deltas and owns Graph rulings, but does not
-yet own bounded work or proactive time. The final cutover removes the Speaker's remaining global
-capabilities after their authority moves to the Brain. The diagram above is
-the replacement conversation path that exists now, not a claim that the remaining work loop has
-already moved.
+The Speaker now mounts conversation, Intent escalation, Directive Saying, and read-only Graph
+tools only. The Brain owns Coder launch, stable work identity, Flue admission reconciliation,
+terminal-result admission, and the independent choice of reporting Surface. GitHub webhook ingress
+and proactive time remain at the next frontier. The diagram above is the replacement path that
+exists now; its live GitHub-to-WhatsApp scenario is still a separate proof obligation.
 
 ## Where things live — quick answers
 

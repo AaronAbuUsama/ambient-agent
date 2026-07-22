@@ -5,7 +5,6 @@ import { DatabaseSync } from "node:sqlite";
 
 import { Octokit } from "@octokit/rest";
 import { describe, expect, it } from "vite-plus/test";
-import * as v from "valibot";
 
 import speaker from "../../packages/agents/src/speaker/agent.ts";
 import {
@@ -14,7 +13,6 @@ import {
 } from "../../packages/agents/src/capabilities/issue-management/runtime.ts";
 import {
   isUncertainIssueMutationError,
-  MAX_PUBLIC_COMMENT_BODY_LENGTH,
   MAX_PUBLIC_ISSUE_BODY_LENGTH,
 } from "../../packages/agents/src/capabilities/issue-management/issue-repository.ts";
 import { createIssueManagementTools } from "../../packages/agents/src/capabilities/issue-management/tools.ts";
@@ -996,10 +994,10 @@ describe("production Issue Management tools", () => {
     expect(repository.events().filter((event) => event.kind === "set-issue-state")).toEqual([]);
   });
 
-  it("registers only bounded direct issue tools without model-controlled Operation Identity or administration", async () => {
+  it("keeps the Speaker a local mouth with no issue-management or delegation tools", async () => {
     configured();
     const config = await speaker.initialize({ id: CHAT, env: {} });
-    expect(config.skills?.map((skill) => skill.name)).toEqual(["whatsapp-participation", "issue-management"]);
+    expect(config.skills?.map((skill) => skill.name)).toEqual(["whatsapp-participation"]);
     await expect(
       readFile(join(process.cwd(), "packages/agents/src/capabilities/issue-management/SKILL.md"), "utf8"),
     ).resolves.toContain('version: "2.0.0"');
@@ -1010,58 +1008,8 @@ describe("production Issue Management tools", () => {
       "whatsapp_search",
       "say_directive",
       "escalate_intent",
-      "github_search_issues",
-      "github_read_issue",
-      "github_list_issue_options",
-      "github_create_issue",
-      "github_update_issue",
-      "github_read_issue_discussion",
-      "github_create_issue_comment",
-      "github_update_issue_comment",
-      "github_delete_issue_comment",
-      "github_set_issue_state",
       "lookup_graph",
-      "start_coder_job",
-      "check_jobs",
     ]);
-    expect(config.tools?.some((tool) => tool.name === "github_delete_issue")).toBe(false);
-    const create = config.tools?.find((tool) => tool.name === "github_create_issue");
-    expect(create).toBeDefined();
-    if (create === undefined) throw new Error("Expected the Issue Management create Tool");
-    expect(
-      v.parse(create.input as v.GenericSchema, {
-        operationId: "model-injected",
-        title: "x",
-        body: "y",
-        kind: "bug",
-      }),
-    ).not.toHaveProperty("operationId");
-    expect(JSON.stringify(create.input)).not.toContain("operationId");
-    const update = config.tools?.find((tool) => tool.name === "github_update_issue");
-    expect(update).toBeDefined();
-    if (update === undefined) throw new Error("Expected the Issue Management update Tool");
-    expect(
-      v.parse(update.input as v.GenericSchema, {
-        number: 1,
-        body: "",
-        operationId: "model-injected",
-      }),
-    ).toEqual({ number: 1, body: "" });
-    expect(() =>
-      v.parse(update.input as v.GenericSchema, {
-        number: 1,
-        body: "x".repeat(MAX_PUBLIC_ISSUE_BODY_LENGTH + 1),
-      }),
-    ).toThrow();
-    const createComment = config.tools?.find((tool) => tool.name === "github_create_issue_comment");
-    expect(createComment).toBeDefined();
-    if (createComment === undefined) throw new Error("Expected the Issue Management create-comment Tool");
-    expect(() =>
-      v.parse(createComment.input as v.GenericSchema, {
-        number: 1,
-        body: "x".repeat(MAX_PUBLIC_COMMENT_BODY_LENGTH + 1),
-      }),
-    ).toThrow();
   });
 
   it("deletes the discarded proof workflow and provider path", async () => {

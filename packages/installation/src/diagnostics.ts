@@ -157,7 +157,7 @@ const LEGACY_APPLICATION_OPTIONAL_SCHEMA = [
     ],
   ],
   ["graph_projection_meta", ["singleton", "version", "rebuilt_at"]],
-  // The delegation run ledger (MEMORY-STATE-SPEC §8) — launch memory beside the archive.
+  // Pre-Brain delegation launch memory remains readable on upgraded installations.
   ["delegation_launches", ["run_id", "chat_id", "workflow", "launched_at", "settled_at"]],
   // One-way compatibility: runtime migrates this cursor table into Historical Replay and drops it.
   [
@@ -221,6 +221,37 @@ const LEGACY_APPLICATION_OPTIONAL_SCHEMA = [
       "accepted_at",
       "completed_at",
       "created_at",
+    ],
+  ],
+  [
+    "brain_specialist_launches",
+    [
+      "work_id",
+      "batch_id",
+      "source_surface_id",
+      "evidence_ids_json",
+      "specialist",
+      "input_json",
+      "requested_at",
+      "status",
+      "run_id",
+      "accepted_at",
+    ],
+  ],
+  [
+    "brain_specialist_results",
+    [
+      "result_id",
+      "work_id",
+      "run_id",
+      "source_batch_id",
+      "source_surface_id",
+      "evidence_ids_json",
+      "specialist",
+      "transport_status",
+      "result_json",
+      "admitted_at",
+      "batch_id",
     ],
   ],
   [

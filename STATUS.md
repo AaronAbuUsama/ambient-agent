@@ -17,22 +17,21 @@ forward from `SYSTEM-ARCHITECTURE.md`. **One instance, one operator — not mult
 **Already built in reusable form** (§13): the append-only Graph Attestation log and derived
 Belief Projection (including the typed query surface), the live Digest
 pull side, the reactive Brain conversation loop (Intent → Batch → Directive/silence → Outcome),
-stable account-scoped Surfaces, async delegation with durable return, modelless coalescing,
+stable account-scoped Surfaces, Brain-owned async delegation with durable return, modelless coalescing,
 the durable global Scribe clock shared by live and Historical Replay, and the Coder / Reviewer /
 Planner Specialists as distinct GitHub identities. Scribe retries now receive trusted Evidence
 Sets plus a fresh bounded/versioned Belief Projection and append retry-idempotent proposals;
-proposal deltas durably enter the Brain, which now mounts evidence-bounded Graph rulings. Speaker
-and Specialist Graph access remains read-only.
+proposal deltas durably enter the Brain, which now mounts evidence-bounded Graph rulings. The Brain
+also owns stable Coder work identity, Flue admission reconciliation, terminal-result intake, and
+the independent reporting-Surface choice. Speaker and Specialist Graph access remains read-only.
 
 **The distance to close is concentration of authority, not new machinery:**
 
-- Finish concentrating authority in the **Brain** — route GitHub/work through its existing
-  durable up-inbox and add its proactive clock. Ontology proposal integration/rulings are built.
-- Reduce the **Speaker** to a dumb mouth — remove issue management and delegation; Intent
-  escalation and Directive-only Saying are already built.
+- Finish concentrating authority in the **Brain** — route GitHub ingress through its existing
+  durable up-inbox and add its proactive clock. Knowledge and Coder work ownership are built.
 - Replace GitHub webhook broadcast + drop with the single up-inbox.
 - Complete **Surface** routing by resolving known-Person DM targets through the existing
-  stable registry and removing the remaining first-chat/provider-id shortcuts.
+  stable registry and removing the remaining provider-id shortcut.
 - Compose bounded Brain-selected seeds over the existing versioned `graphContext` channel.
 
 ## The reset — where the code stands (2026-07-21)

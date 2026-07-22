@@ -31,11 +31,41 @@ export interface KnowledgeDelta extends KnowledgeDeltaDraft {
   readonly admittedAt: string;
 }
 
+export interface SpecialistLaunch {
+  readonly id: string;
+  readonly batchId: string;
+  readonly sourceSurfaceId: string;
+  readonly evidenceIds: readonly string[];
+  readonly specialist: string;
+  readonly input: Readonly<Record<string, unknown>>;
+  readonly requestedAt: string;
+  readonly status: "pending" | "accepted";
+  readonly runId?: string;
+  readonly acceptedAt?: string;
+}
+
+export interface SpecialistResultDraft {
+  readonly workId: string;
+  readonly runId: string;
+  readonly status: "ok" | "interrupted";
+  readonly result?: unknown;
+}
+
+export interface SpecialistResult extends SpecialistResultDraft {
+  readonly id: string;
+  readonly sourceBatchId: string;
+  readonly sourceSurfaceId: string;
+  readonly evidenceIds: readonly string[];
+  readonly specialist: string;
+  readonly admittedAt: string;
+}
+
 export interface BrainBatch {
   readonly id: string;
   readonly createdAt: string;
   readonly intents: readonly Intent[];
   readonly knowledgeDeltas: readonly KnowledgeDelta[];
+  readonly specialistResults: readonly SpecialistResult[];
   readonly dispatch?: DispatchReceipt;
 }
 
@@ -93,6 +123,33 @@ interface KnowledgeDeltaRow {
   admitted_at: string;
 }
 
+interface SpecialistLaunchRow {
+  work_id: string;
+  batch_id: string;
+  source_surface_id: string;
+  evidence_ids_json: string;
+  specialist: string;
+  input_json: string;
+  requested_at: string;
+  status: "pending" | "accepted";
+  run_id: string | null;
+  accepted_at: string | null;
+}
+
+interface SpecialistResultRow {
+  result_id: string;
+  work_id: string;
+  run_id: string;
+  source_batch_id: string;
+  source_surface_id: string;
+  evidence_ids_json: string;
+  specialist: string;
+  transport_status: "ok" | "interrupted";
+  result_json: string | null;
+  admitted_at: string;
+  batch_id: string | null;
+}
+
 interface BatchRow {
   batch_id: string;
   created_at: string;
@@ -118,6 +175,20 @@ export interface BrainInbox {
   pendingIntents(): readonly Intent[];
   pendingKnowledgeDeltas(): readonly KnowledgeDelta[];
   knowledgeCaughtUp(deltaIds: readonly string[]): boolean;
+  reserveSpecialistLaunch(input: {
+    readonly batchId: string;
+    readonly sourceSurfaceId: string;
+    readonly specialist: string;
+    readonly input: Readonly<Record<string, unknown>>;
+  }): SpecialistLaunch;
+  markSpecialistLaunchAccepted(workId: string, runId: string, acceptedAt?: string): SpecialistLaunch;
+  specialistLaunch(workId: string): SpecialistLaunch | undefined;
+  specialistLaunchByRunId(runId: string): SpecialistLaunch | undefined;
+  pendingSpecialistLaunches(): readonly SpecialistLaunch[];
+  acceptedSpecialistLaunchesWithoutResult(): readonly SpecialistLaunch[];
+  admitSpecialistResult(draft: SpecialistResultDraft): SpecialistResult;
+  specialistResultForWork(workId: string): SpecialistResult | undefined;
+  pendingSpecialistResults(): readonly SpecialistResult[];
   claimBatch(limit?: number): BrainBatch | undefined;
   markBatchDispatched(batchId: string, receipt: DispatchReceipt): BrainBatch;
   recordPrompt(input: {
@@ -157,6 +228,32 @@ const hydrateKnowledgeDelta = (row: KnowledgeDeltaRow): KnowledgeDelta => ({
   admittedAt: row.admitted_at,
 });
 
+const hydrateSpecialistLaunch = (row: SpecialistLaunchRow): SpecialistLaunch => ({
+  id: row.work_id,
+  batchId: row.batch_id,
+  sourceSurfaceId: row.source_surface_id,
+  evidenceIds: JSON.parse(row.evidence_ids_json) as string[],
+  specialist: row.specialist,
+  input: JSON.parse(row.input_json) as Record<string, unknown>,
+  requestedAt: row.requested_at,
+  status: row.status,
+  ...(row.run_id === null ? {} : { runId: row.run_id }),
+  ...(row.accepted_at === null ? {} : { acceptedAt: row.accepted_at }),
+});
+
+const hydrateSpecialistResult = (row: SpecialistResultRow): SpecialistResult => ({
+  id: row.result_id,
+  workId: row.work_id,
+  runId: row.run_id,
+  sourceBatchId: row.source_batch_id,
+  sourceSurfaceId: row.source_surface_id,
+  evidenceIds: JSON.parse(row.evidence_ids_json) as string[],
+  specialist: row.specialist,
+  status: row.transport_status,
+  ...(row.result_json === null ? {} : { result: JSON.parse(row.result_json) as unknown }),
+  admittedAt: row.admitted_at,
+});
+
 const required = (value: string, name: string): string => {
   const normalized = value.trim();
   if (normalized.length === 0) throw new Error(`${name} must not be empty.`);
@@ -186,6 +283,19 @@ const knowledgeDeltaId = (draft: Omit<KnowledgeDelta, "id" | "admittedAt">): str
   `knowledge-delta:${createHash("sha256")
     .update(JSON.stringify([draft.scribeBatchId, draft.attestationIds, draft.evidenceIds, draft.projectionVersion]))
     .digest("hex")}`;
+
+const specialistWorkId = (
+  batch: string,
+  sourceSurfaceId: string,
+  specialist: string,
+  input: Readonly<Record<string, unknown>>,
+): string =>
+  `brain-work:${createHash("sha256")
+    .update(JSON.stringify([batch, sourceSurfaceId, specialist, input]))
+    .digest("hex")}`;
+
+const specialistResultId = (workId: string, runId: string): string =>
+  `specialist-result:${createHash("sha256").update(JSON.stringify([workId, runId])).digest("hex")}`;
 
 const batchId = (inputIds: readonly string[]): string =>
   `brain-batch:${createHash("sha256").update(JSON.stringify(inputIds)).digest("hex")}`;
@@ -236,6 +346,31 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
       admitted_at TEXT NOT NULL,
       batch_id TEXT REFERENCES brain_batches(batch_id)
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS brain_specialist_launches (
+      work_id TEXT PRIMARY KEY,
+      batch_id TEXT NOT NULL REFERENCES brain_batches(batch_id),
+      source_surface_id TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      specialist TEXT NOT NULL,
+      input_json TEXT NOT NULL,
+      requested_at TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'accepted')),
+      run_id TEXT UNIQUE,
+      accepted_at TEXT
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS brain_specialist_results (
+      result_id TEXT PRIMARY KEY,
+      work_id TEXT NOT NULL UNIQUE REFERENCES brain_specialist_launches(work_id),
+      run_id TEXT NOT NULL UNIQUE,
+      source_batch_id TEXT NOT NULL,
+      source_surface_id TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      specialist TEXT NOT NULL,
+      transport_status TEXT NOT NULL CHECK (transport_status IN ('ok', 'interrupted')),
+      result_json TEXT,
+      admitted_at TEXT NOT NULL,
+      batch_id TEXT REFERENCES brain_batches(batch_id)
+    ) STRICT;
     CREATE TABLE IF NOT EXISTS brain_effects (
       effect_id TEXT PRIMARY KEY,
       batch_id TEXT NOT NULL REFERENCES brain_batches(batch_id),
@@ -276,6 +411,41 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
   const selectPendingKnowledge = database.prepare(`
     SELECT * FROM brain_knowledge_deltas WHERE batch_id IS NULL ORDER BY admitted_at, rowid
   `);
+  const selectSpecialistLaunch = database.prepare("SELECT * FROM brain_specialist_launches WHERE work_id = ?");
+  const selectSpecialistLaunchByRunId = database.prepare(
+    "SELECT * FROM brain_specialist_launches WHERE run_id = ?",
+  );
+  const selectPendingSpecialistLaunches = database.prepare(
+    "SELECT * FROM brain_specialist_launches WHERE status = 'pending' ORDER BY requested_at, work_id",
+  );
+  const selectUnreturnedSpecialistLaunches = database.prepare(`
+    SELECT launch.* FROM brain_specialist_launches AS launch
+     LEFT JOIN brain_specialist_results AS result ON result.work_id = launch.work_id
+     WHERE launch.status = 'accepted' AND result.work_id IS NULL
+     ORDER BY launch.accepted_at, launch.work_id
+  `);
+  const insertSpecialistLaunch = database.prepare(`
+    INSERT OR IGNORE INTO brain_specialist_launches
+      (work_id, batch_id, source_surface_id, evidence_ids_json, specialist, input_json, requested_at, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+  `);
+  const acceptSpecialistLaunch = database.prepare(`
+    UPDATE brain_specialist_launches SET status = 'accepted', run_id = ?, accepted_at = ?
+     WHERE work_id = ? AND status = 'pending'
+  `);
+  const insertSpecialistResult = database.prepare(`
+    INSERT OR IGNORE INTO brain_specialist_results
+      (result_id, work_id, run_id, source_batch_id, source_surface_id, evidence_ids_json,
+       specialist, transport_status, result_json, admitted_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const selectSpecialistResult = database.prepare("SELECT * FROM brain_specialist_results WHERE result_id = ?");
+  const selectSpecialistResultForWork = database.prepare(
+    "SELECT * FROM brain_specialist_results WHERE work_id = ?",
+  );
+  const selectPendingSpecialistResults = database.prepare(`
+    SELECT * FROM brain_specialist_results WHERE batch_id IS NULL ORDER BY admitted_at, rowid
+  `);
   const selectOpenBatch = database.prepare(`
     SELECT batch_id, created_at, dispatch_id, accepted_at, settled_at FROM brain_batches
      WHERE settled_at IS NULL
@@ -292,6 +462,9 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
   const selectBatchKnowledge = database.prepare(`
     SELECT * FROM brain_knowledge_deltas WHERE batch_id = ? ORDER BY admitted_at, rowid
   `);
+  const selectBatchSpecialistResults = database.prepare(`
+    SELECT * FROM brain_specialist_results WHERE batch_id = ? ORDER BY admitted_at, rowid
+  `);
   const selectReadyInputIds = database.prepare(`
     SELECT input_id, kind FROM (
       SELECT input_id, 'speaker_intent' AS kind, admitted_at, rowid AS input_order
@@ -299,12 +472,18 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
       UNION ALL
       SELECT delta_id AS input_id, 'knowledge_delta' AS kind, admitted_at, rowid AS input_order
         FROM brain_knowledge_deltas WHERE batch_id IS NULL
+      UNION ALL
+      SELECT result_id AS input_id, 'specialist_result' AS kind, admitted_at, rowid AS input_order
+        FROM brain_specialist_results WHERE batch_id IS NULL
     ) ORDER BY admitted_at, kind, input_order LIMIT ?
   `);
   const insertBatch = database.prepare("INSERT INTO brain_batches (batch_id, created_at) VALUES (?, ?)");
   const claimInput = database.prepare("UPDATE brain_inbox_inputs SET batch_id = ? WHERE input_id = ? AND batch_id IS NULL");
   const claimKnowledge = database.prepare(
     "UPDATE brain_knowledge_deltas SET batch_id = ? WHERE delta_id = ? AND batch_id IS NULL",
+  );
+  const claimSpecialistResult = database.prepare(
+    "UPDATE brain_specialist_results SET batch_id = ? WHERE result_id = ? AND batch_id IS NULL",
   );
   const updateBatchDispatch = database.prepare(`
     UPDATE brain_batches SET dispatch_id = ?, accepted_at = ?
@@ -336,6 +515,12 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
     SELECT count(*) AS count FROM brain_effects WHERE batch_id = ? AND status = 'pending'
   `);
   const effectCount = database.prepare("SELECT count(*) AS count FROM brain_effects WHERE batch_id = ?");
+  const specialistLaunchCount = database.prepare(
+    "SELECT count(*) AS count FROM brain_specialist_launches WHERE batch_id = ?",
+  );
+  const pendingSpecialistLaunchCount = database.prepare(
+    "SELECT count(*) AS count FROM brain_specialist_launches WHERE batch_id = ? AND status = 'pending'",
+  );
   const hydrateEffect = (row: EffectRow): BrainEffect => {
     const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
     if (row.kind === "stay_silent") {
@@ -366,6 +551,9 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
     knowledgeDeltas: (selectBatchKnowledge.all(row.batch_id) as unknown as KnowledgeDeltaRow[]).map(
       hydrateKnowledgeDelta,
     ),
+    specialistResults: (
+      selectBatchSpecialistResults.all(row.batch_id) as unknown as SpecialistResultRow[]
+    ).map(hydrateSpecialistResult),
     ...(row.dispatch_id === null || row.accepted_at === null
       ? {}
       : { dispatch: { dispatchId: row.dispatch_id, acceptedAt: row.accepted_at } }),
@@ -436,6 +624,88 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
       `);
       return (statement.get(...deltaIds) as { count: number }).count === deltaIds.length;
     },
+    reserveSpecialistLaunch: ({ batchId: rawBatchId, sourceSurfaceId: rawSurfaceId, specialist: rawSpecialist, input }) => {
+      const requestedBatchId = required(rawBatchId, "Specialist launch Brain Batch id");
+      const sourceSurfaceId = required(rawSurfaceId, "Specialist launch source Surface id");
+      const specialist = required(rawSpecialist, "Specialist name");
+      const batch = selectOpenBatchById.get(requestedBatchId) as BatchRow | undefined;
+      if (batch === undefined || batch.dispatch_id === null) {
+        throw new Error(`Brain Batch ${requestedBatchId} is not open and dispatched.`);
+      }
+      const sourceIntents = (selectBatchIntents.all(requestedBatchId) as unknown as IntentRow[])
+        .map(hydrate)
+        .filter((intent) => intent.sourceSurfaceId === sourceSurfaceId);
+      if (sourceIntents.length === 0) {
+        throw new Error(`Surface ${sourceSurfaceId} is not provenance for Brain Batch ${requestedBatchId}.`);
+      }
+      const evidenceIds = canonicalIds(
+        sourceIntents.flatMap((intent) => [...intent.evidenceIds]),
+        "Specialist launch evidence ids",
+      );
+      const canonicalInput = JSON.parse(JSON.stringify(input)) as Record<string, unknown>;
+      const id = specialistWorkId(requestedBatchId, sourceSurfaceId, specialist, canonicalInput);
+      insertSpecialistLaunch.run(
+        id,
+        requestedBatchId,
+        sourceSurfaceId,
+        JSON.stringify(evidenceIds),
+        specialist,
+        JSON.stringify(canonicalInput),
+        options.now?.() ?? new Date().toISOString(),
+      );
+      return hydrateSpecialistLaunch(selectSpecialistLaunch.get(id) as unknown as SpecialistLaunchRow);
+    },
+    markSpecialistLaunchAccepted: (rawWorkId, rawRunId, acceptedAt) => {
+      const workId = required(rawWorkId, "Specialist work id");
+      const runId = required(rawRunId, "Specialist run id");
+      const current = selectSpecialistLaunch.get(workId) as SpecialistLaunchRow | undefined;
+      if (current === undefined) throw new Error(`Specialist work ${workId} does not exist.`);
+      if (current.run_id !== null && current.run_id !== runId) {
+        throw new Error(`Specialist work ${workId} is already bound to run ${current.run_id}.`);
+      }
+      acceptSpecialistLaunch.run(runId, acceptedAt ?? options.now?.() ?? new Date().toISOString(), workId);
+      return hydrateSpecialistLaunch(selectSpecialistLaunch.get(workId) as unknown as SpecialistLaunchRow);
+    },
+    specialistLaunch: (workId) => {
+      const row = selectSpecialistLaunch.get(workId) as SpecialistLaunchRow | undefined;
+      return row === undefined ? undefined : hydrateSpecialistLaunch(row);
+    },
+    specialistLaunchByRunId: (runId) => {
+      const row = selectSpecialistLaunchByRunId.get(runId) as SpecialistLaunchRow | undefined;
+      return row === undefined ? undefined : hydrateSpecialistLaunch(row);
+    },
+    pendingSpecialistLaunches: () =>
+      (selectPendingSpecialistLaunches.all() as unknown as SpecialistLaunchRow[]).map(hydrateSpecialistLaunch),
+    acceptedSpecialistLaunchesWithoutResult: () =>
+      (selectUnreturnedSpecialistLaunches.all() as unknown as SpecialistLaunchRow[]).map(hydrateSpecialistLaunch),
+    admitSpecialistResult: (draft) => {
+      const workId = required(draft.workId, "Specialist result work id");
+      const runId = required(draft.runId, "Specialist result run id");
+      const launch = selectSpecialistLaunch.get(workId) as SpecialistLaunchRow | undefined;
+      if (launch === undefined || launch.status !== "accepted" || launch.run_id !== runId) {
+        throw new Error(`Specialist result ${runId} does not match accepted work ${workId}.`);
+      }
+      const id = specialistResultId(workId, runId);
+      insertSpecialistResult.run(
+        id,
+        workId,
+        runId,
+        launch.batch_id,
+        launch.source_surface_id,
+        launch.evidence_ids_json,
+        launch.specialist,
+        draft.status,
+        draft.result === undefined ? null : JSON.stringify(draft.result),
+        options.now?.() ?? new Date().toISOString(),
+      );
+      return hydrateSpecialistResult(selectSpecialistResult.get(id) as unknown as SpecialistResultRow);
+    },
+    specialistResultForWork: (workId) => {
+      const row = selectSpecialistResultForWork.get(workId) as SpecialistResultRow | undefined;
+      return row === undefined ? undefined : hydrateSpecialistResult(row);
+    },
+    pendingSpecialistResults: () =>
+      (selectPendingSpecialistResults.all() as unknown as SpecialistResultRow[]).map(hydrateSpecialistResult),
     claimBatch: (limit = 50) => {
       database.exec("BEGIN IMMEDIATE");
       try {
@@ -446,7 +716,7 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
         }
         const ready = selectReadyInputIds.all(Math.max(1, Math.min(Math.trunc(limit), 100))) as unknown as Array<{
           input_id: string;
-          kind: "speaker_intent" | "knowledge_delta";
+          kind: "speaker_intent" | "knowledge_delta" | "specialist_result";
         }>;
         if (ready.length === 0) {
           database.exec("COMMIT");
@@ -456,7 +726,11 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
         const createdAt = options.now?.() ?? new Date().toISOString();
         insertBatch.run(id, createdAt);
         for (const { input_id, kind } of ready) {
-          const result = kind === "speaker_intent" ? claimInput.run(id, input_id) : claimKnowledge.run(id, input_id);
+          const result = kind === "speaker_intent"
+            ? claimInput.run(id, input_id)
+            : kind === "knowledge_delta"
+              ? claimKnowledge.run(id, input_id)
+              : claimSpecialistResult.run(id, input_id);
           if (result.changes !== 1) throw new Error(`Brain input ${input_id} lost its Batch assignment.`);
         }
         database.exec("COMMIT");
@@ -532,9 +806,13 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
           database.exec("COMMIT");
           return { batchId: id, status: "settled" as const, settledAt: row.settled_at };
         }
-        const total = (effectCount.get(id) as { count: number }).count;
+        const total = (effectCount.get(id) as { count: number }).count
+          + (specialistLaunchCount.get(id) as { count: number }).count;
         const pending = (unsettledEffectCount.get(id) as { count: number }).count;
-        if (total === 0 || pending > 0) throw new Error(`Brain Batch ${id} has effects that are not durably accepted.`);
+        const pendingWork = (pendingSpecialistLaunchCount.get(id) as { count: number }).count;
+        if (total === 0 || pending + pendingWork > 0) {
+          throw new Error(`Brain Batch ${id} has effects that are not durably accepted.`);
+        }
         const settledAt = options.now?.() ?? new Date().toISOString();
         settle.run(settledAt, id);
         database.exec("COMMIT");

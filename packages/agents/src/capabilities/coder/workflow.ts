@@ -17,6 +17,7 @@ import type { SpecialistSpec } from "../delegation/tools.ts";
 import { getCoderRuntime } from "./runtime.ts";
 import {
   coderJobInputSchema,
+  coderJobRequestSchema,
   coderResultSchema,
   planArtifactSchema,
   verificationReceiptSchema,
@@ -345,12 +346,12 @@ export const coder = defineWorkflow({
 export const START_CODER_JOB_DESCRIPTION =
   "Start a background coding workflow for one GitHub issue: Planner produces an ordered plan, Coder implements it, " +
   "Verifier drives the result within a bounded budget, and Coder opens one rich ready or draft pull request. Returns " +
-  "immediately with a run id; the finished result reports back to this chat on its own.";
+  "immediately with a stable Brain work id and Flue run id; the finished result returns to the global Brain.";
 
-export const coderSpecialistSpec: SpecialistSpec<typeof coderJobInputSchema> = {
+export const coderSpecialistSpec: SpecialistSpec<typeof coderJobRequestSchema> = {
   name: "coder",
   toolName: "start_coder_job",
   description: START_CODER_JOB_DESCRIPTION,
-  input: coderJobInputSchema,
+  input: coderJobRequestSchema,
   workflow: coder,
 };
