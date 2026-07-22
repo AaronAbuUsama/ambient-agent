@@ -40,7 +40,8 @@ Aaron's phone can resurrect a dead session.
 
 ## Build → deploy
 
-From the repo on the branch under test (normally `integration/coworker-replacement`),
+From the repo on the branch under test — while #299 is open that is
+`integration/coworker-replacement`; after its atomic cutover, `main` per AGENTS.md —
 deploy only **merged, CI-green** commits:
 
 ```bash
