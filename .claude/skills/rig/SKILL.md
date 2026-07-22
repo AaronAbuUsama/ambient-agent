@@ -47,9 +47,10 @@ deploy only **merged, CI-green** commits:
 pnpm install && pnpm run typecheck && pnpm test && pnpm run build:runtime
 npm pack   # → ambient-agent-<v>.tgz; rename with the short SHA
 scp ambient-agent-<v>-<sha>.tgz capxul-vps:~/
-ssh capxul-vps 'set -e; \
-  sqlite3 ~/.ambient-agent/application.sqlite ".backup ~/backups/application-$(date +%Y%m%dT%H%M%SZ).sqlite" 2>/dev/null || cp ~/.ambient-agent/application.sqlite ~/backups/; \
-  cp ~/.ambient-agent/flue.sqlite ~/backups/flue-$(date +%Y%m%dT%H%M%SZ).sqlite; \
+ssh capxul-vps 'set -e; TS=$(date +%Y%m%dT%H%M%SZ); \
+  cp ~/.ambient-agent/application.sqlite ~/backups/application-$TS.sqlite; \
+  cp ~/.ambient-agent/flue.sqlite ~/backups/flue-$TS.sqlite; \
+  tar -C ~/.ambient-agent -czf ~/backups/whatsapp-$TS.tgz whatsapp; \
   npm i -g ~/ambient-agent-<v>-<sha>.tgz --prefix ~/.local/npm-global && \
   sudo systemctl restart ambient-agent'
 ssh capxul-vps 'sleep 5; curl -s localhost:3737/health'
@@ -109,6 +110,13 @@ sudo systemctl restart ambient-agent             # config changes need a restart
 
 Gotchas that have already burned us:
 
+- **Never run `config` (or any WhatsApp-touching CLI command) while the service is
+  running** (#311): it opens a second client on the live session store — the server kicks
+  the service's stream (`conflict: replaced`) and a crash can destroy `whatsapp/` on disk.
+  `systemctl stop ambient-agent` → config → `start`. Model/repo-only flags are safe
+  non-interactively, but stopping first costs one minute and risks nothing.
+- Do not trust `/health` while diagnosing WhatsApp: it can report `online` after the
+  stream is dead (#312). Check `ss -tnp` for the process's TCP connections or the journal.
 - The agent's WhatsApp account must already be a **member** of a group before
   `config --chat` can select it (it must appear in the account's synchronized chats).
 - Adding a repo requires the three GitHub Apps to be **installed on that repo** first —
