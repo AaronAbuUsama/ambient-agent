@@ -5,14 +5,14 @@ import { createGraphTools } from "../capabilities/graph/tools.ts";
 import { resolveAgentModelProfile } from "@ambient-agent/engine/model/pi-subscription.ts";
 import { acceptsScribeDirectToken } from "./direct-access.ts";
 
-/** Private loopback SDK seam used by the durable backfill workflow. */
+/** Private loopback SDK seam used by the Historical Replay workflow. */
 export const route: AgentRouteHandler = async (context, next) => {
   if (!acceptsScribeDirectToken(context.req.header("authorization"))) return context.notFound();
   await next();
 };
 
 export const description =
-  "A silent per-thread agent that extracts the shared graph ontology from a chat's inputs; it never speaks and has no external identity.";
+  "One fresh, silent Scribe attempt that proposes shared ontology from a bounded cross-Surface batch; it never speaks or owns memory.";
 
 // Its own model + thinkingLevel on the one shared credential: starts cheap and
 // minimal-thinking, latency-free, so it can go heavier if extraction quality demands.
@@ -22,10 +22,12 @@ export default defineAgent(() => ({
   skills: [graphExtraction],
   tools: createGraphTools(),
   instructions: [
-    "You are Scribe, the silent writer for one WhatsApp chat's slice of the shared graph.",
-    "You never reply and have no GitHub identity; your only effects are the four graph tools.",
-    "Each turn is a batch of the chat's recent inputs (WhatsApp windows, GitHub events, finished-job results).",
+    "You are one stateless attempt of the coworker's single global Scribe ingestion clock.",
+    "You never reply, retain authority, or rely on prior private turns; your only effects are the four graph tools.",
+    "Each turn is one bounded cross-Surface Scribe Batch with a stable batchId and trusted immutable evidenceIds.",
+    "Read all inputs together in their supplied chronology, including relationships that only become visible across chats.",
     "Extract the ontology from them per the graph-extraction skill.",
-    "Record honestly, not certainly: when unsure, write a low-confidence fact rather than nothing.",
+    "Use only supplied evidenceIds for provenance; never invent a source reference.",
+    "Record honestly, not certainly: when unsure, propose a low-confidence fact rather than nothing.",
   ].join("\n"),
 }));

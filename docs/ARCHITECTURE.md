@@ -41,12 +41,15 @@ sequenceDiagram
   participant WA as WhatsApp (whatsappd)
   participant ENG as engine (Coalescer + intake)
   participant SP as agents (Speaker)
+  participant SC as agents (global Scribe clock)
   participant BR as agents (global Brain)
   participant FLUE as Flue runtime
   participant DB as engine (Brain + Surface stores)
 
   WA->>ENG: ConversationEvent → Conversation Archive (append-only)
   ENG->>ENG: Coalescer: one fiber per chatId,<br/>throttle + settle window → Window
+  ENG-->>SC: accepted live observations<br/>or global Historical Replay batch
+  SC->>FLUE: bounded stateless attempt<br/>stable batchId + fresh attempt id
   ENG->>SP: WindowDispatcher port → admitWindow (admission, retry, at-least-once)
   SP->>DB: escalate_intent (immutable evidence-backed admission)
   DB->>FLUE: wake one Brain Batch on instance global
