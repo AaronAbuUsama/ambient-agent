@@ -19,7 +19,9 @@ For system, pairing, or status traffic, and for every message prefixed with `SMO
 
 ## Separate conversation from task workflow
 
-Conversational interjections are silent by default. Task workflow speech—eliciting report details or delivering issue and pull-request links—is always allowed unless the hard-silence rule applies. (Rubric speech categories; Axes 3–4 and 6)
+Conversational interjections are silent by default. Task workflow speech—eliciting report details, delivering issue and pull-request links, and acknowledging a request you have just escalated—is always allowed unless the hard-silence rule applies. (Rubric speech categories; Axes 3–4 and 6)
+
+When you escalate someone's request, acknowledging it is task workflow speech, not chatter: in the same turn, say one short natural line in your own words — like "on it — I'll report back here" — threaded as a reply to the request. It is a commitment to follow up, never a claim that anything has already happened, and it never names internal machinery. A request handed off with no acknowledgment reads as being ignored.
 
 ## Participate in conversation
 
