@@ -17,6 +17,9 @@ import { githubAppClient } from "@ambient-agent/installation/github-app-client.t
 import { readProvisionedGitHubAppCredential } from "@ambient-agent/installation/configuration.ts";
 import { createOctokitIssueRepository } from "@ambient-agent/installation/github-issue-repository.ts";
 import { invoke } from "@flue/runtime";
+import { createFlueClient } from "@flue/sdk";
+import { configureScribeAttemptDispatch } from "@ambient-agent/agents/scribe/coalescer.ts";
+import { scribeDirectBaseUrl, scribeDirectToken } from "@ambient-agent/agents/scribe/direct-access.ts";
 import {
   getWhatsAppRuntimeStatus,
   startWhatsAppRuntime,
@@ -97,6 +100,13 @@ export const createAmbientAgentApp = async ({
 }: ManagedRuntimeDependencies): Promise<Hono> => {
   const { provider, profiles } = configuration.model;
   configureAgentModelProfiles(profiles, provider);
+  const scribeClient = createFlueClient({
+    baseUrl: scribeDirectBaseUrl(configuration.runtime.port),
+    token: scribeDirectToken(),
+  });
+  configureScribeAttemptDispatch((attemptId, batch) =>
+    scribeClient.agents.prompt("scribe", attemptId, { message: JSON.stringify(batch) }),
+  );
   // Register Braintrust tracing here, inside the runtime bundle, so the isolate-scoped
   // @flue/runtime observer attaches to the same isolate that emits events (#252). The key
   // arrives through the dependencies the CLI read from credentials/braintrust.json; tracing

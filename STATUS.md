@@ -17,7 +17,8 @@ forward from `SYSTEM-ARCHITECTURE.md`. **One instance, one operator — not mult
 **Already built in reusable form** (§13): the Graph's typed query surface, the live Digest
 pull side, the reactive Brain conversation loop (Intent → Batch → Directive/silence → Outcome),
 stable account-scoped Surfaces, async delegation with durable return, modelless coalescing,
-and the Coder / Reviewer / Planner Specialists as distinct GitHub identities. The current Graph write model
+the global Scribe batch shape and shared bounded-attempt gate, and the Coder / Reviewer /
+Planner Specialists as distinct GitHub identities. The current Graph write model
 is **not** definitive: mutable entity/relation upserts must become append-only Attestations
 with the same read shape derived as the Belief Projection.
 
@@ -25,8 +26,9 @@ with the same read shape derived as the Belief Projection.
 
 - Finish concentrating authority in the **Brain** — route GitHub/work/ontology through its
   existing durable up-inbox and add its proactive clock.
-- Consolidate the **Scribe** to one global ingestion clock with bounded stateless attempts and
-  explicit Evidence Sets.
+- Finish the **Scribe** clock and write side: durably admit live and Historical Replay evidence
+  through one retry-idempotent queue, turn trusted batch evidence into append-only Attestations,
+  inject a fresh bounded Belief Projection into every attempt, and return proposal deltas to the Brain.
 - Replace mutable Graph writes with the append-only Attestation log + derived Belief Projection.
 - Reduce the **Speaker** to a dumb mouth — remove issue/delegation/ontology-write; Intent
   escalation and Directive-only Saying are already built.

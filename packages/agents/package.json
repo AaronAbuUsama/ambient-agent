@@ -16,6 +16,7 @@
     "./capabilities/directive-delivery/runtime.ts": "./src/capabilities/directive-delivery/runtime.ts",
     "./capabilities/intent-escalation/runtime.ts": "./src/capabilities/intent-escalation/runtime.ts",
     "./scribe/agent.ts": "./src/scribe/agent.ts",
+    "./scribe/coalescer.ts": "./src/scribe/coalescer.ts",
     "./scribe/direct-access.ts": "./src/scribe/direct-access.ts",
     "./scribe/input.ts": "./src/scribe/input.ts",
     "./capabilities/issue-management/issue-repository.ts": "./src/capabilities/issue-management/issue-repository.ts",
