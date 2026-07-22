@@ -71,6 +71,10 @@ _Avoid_: Managed-chat history, mutable transcript, listener log
 An immutable, normalized fact about a WhatsApp message: its arrival, edit, revocation, reaction, or delivery receipt. Later facts supersede earlier state in projections but never erase the original fact.
 _Avoid_: Database row, raw provider event, message snapshot
 
+**Historical Replay**:
+The initial reconstruction of the coworker's understanding from archived observations across all Surfaces, ordered by when the observations occurred and fed through the same Scribe-to-Brain loop as live ingestion.
+_Avoid_: Per-chat backfill, transcript import
+
 **Managed Chat**:
 A WhatsApp chat the coworker is explicitly configured to participate in. Events from other chats remain in the Conversation Archive but are not admitted to the coworker, fail-closed.
 _Avoid_: Allowed group, whitelisted chat
@@ -93,25 +97,41 @@ _Avoid_: Reply, respond, send
 ### Shared graph
 
 **The Graph**:
-The shared, cross-thread, cross-agent memory of the multi-agent suite — a typed knowledge graph in `application.sqlite`, beside the Conversation Archive. A *derived-meaning layer* above two raw sources (the Conversation Archive locally, GitHub remotely), never a store of truth and never a mirror of either. It holds only what agents need cheaply that those layers can't answer: who is who across platforms, what connects to what, and the social facts GitHub never records. The Scribe *proposes* to it (low-Confidence, provenanced writes); the Brain *owns and curates* it (the single authority — confirm, merge, promote, overwrite); the Digest *reads* it live for each Speaker turn.
-_Avoid_: Knowledge base, cache, GitHub mirror, second transcript
+The shared, cross-thread memory of the coworker: an append-only Attestation log plus its derived Belief Projection. Raw sources remain truth; Scribe proposals and Brain rulings remain permanently attributable and never overwrite one another.
+_Avoid_: Knowledge base, mutable fact table, GitHub mirror, second transcript
 
 **Scribe**:
-The coworker's single, silent, *global* ingestion clock. It reads the fact-stream from all Surfaces through one shared Coalescer, batches it, and on each settled batch proposes Entities and Relations as low-Confidence facts, each tagged with its Provenance. It never speaks and holds no external identity; it writes *proposals*, not verdicts — the Brain owns curation. It records *honestly* rather than *certainly*: an ambiguity it cannot resolve at write time becomes a low-Confidence fact, not a blocked write. (Sharpened from the former silent *per-thread* agent; scope is now system-wide.)
-_Avoid_: Extractor, indexer, logger, second Speaker
+The coworker's single, silent, global ingestion arm. Stateless Scribe attempts may run concurrently to turn cross-Surface Scribe Batches into low-Confidence Attestations; they hold no memory or authority, and the Brain integrates their proposals.
+_Avoid_: Per-thread Scribe, second mind, logger, second Speaker
+
+**Scribe Batch**:
+A bounded, cross-Surface group of raw observations presented to one stateless Scribe attempt with a fresh relevant Digest and immutable evidence references. It is one extraction context, not a conversation or an authority boundary.
+_Avoid_: Chat window, Scribe memory, ontology transaction
+
+**Attestation**:
+An immutable claim by an identified author, carrying that author's Confidence, a non-empty Evidence Set, and when it was made. Correction or disagreement creates another Attestation; it never edits an earlier one.
+_Avoid_: Graph row, mutable fact, verdict
+
+**Evidence Set**:
+The non-empty set of immutable raw-source references that jointly support one Attestation.
+_Avoid_: Optional metadata, model-authored source id
+
+**Belief Projection**:
+The coworker's current ontology, deterministically folded from Attestations and rebuilt whenever needed. It is the Graph's read surface, not another source of truth.
+_Avoid_: Truth table, mutable Graph, model memory
 
 **Entity**:
 A typed node in the Graph — one of Person, Agent, Thread, Topic, Commitment, Repository, Issue, PullRequest, Project, Milestone, Goal. Carries typed properties, a Confidence, and Provenance.
 
 **Relation**:
-A typed, directed edge between two Entities (e.g. `discusses`, `made_by`, `blocks`). An edge is a single fact, stated once; restating it updates its Confidence. Every relation exists to power a named consumer query — facts GitHub already serves fresh are not edges.
+A typed, directed connection between two Entities (e.g. `discusses`, `made_by`, `blocks`) represented by claims in the Attestation log and resolved in the Belief Projection. Every Relation exists to power a named read; facts a raw source already serves fresh are not Relations.
 
 **Confidence**:
-A 0–1 score on every Entity and Relation recording how sure the Scribe is of a derived fact. The Graph is deliberately tentative: an uncertain memory is not a hazard but a question the Speaker may raise in conversation, and the answer raises the Confidence.
+A 0–1 score expressing one author's certainty in one Attestation; the Belief Projection derives its current confidence without treating repeated use of the same Evidence Set as independent support.
 _Avoid_: Certainty, weight, score (unqualified)
 
 **Provenance**:
-The pointer from a Graph row back to the raw fact that produced it — a Conversation Archive message (`source_chat_id`, `source_message_id`) or a GitHub webhook delivery (`source_delivery_id`). The Graph derives; provenance keeps the derivation traceable to its source.
+The permanent evidence trail from an Attestation back to the raw observations that support it, represented by its Evidence Set.
 
 **Commitment**:
 A *social* fact in the Graph — a person told the group they would do something (status open/done/dropped, made by exactly one Person or Agent, optionally about an Issue, PR, or Topic). Distinct from an Issue: a Commitment is conversational and may never touch GitHub; it may *link* to an Issue but is never the same thing.
