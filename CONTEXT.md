@@ -26,10 +26,11 @@ _Avoid_: Orchestrator (implies it only routes), the coworker (it is the mind, no
 
 **Speaker**:
 A local, fast, reactive conversational agent bound to exactly one Surface. Its whole job is
-to converse well in its own room; it is *dumb about the wider world* — it never creates
-issues, launches work, or writes the ontology. When conversation implies work or a
-cross-surface consequence it escalates an Intent up to the Brain. (Sharpens the former
-per–Managed-Chat "Ambience" instance: now explicitly a mouth, not the whole, and explicitly dumb.)
+to converse well in its own room. It may retrieve specific facts, but it holds no global
+authority: it never creates issues, launches work, writes the ontology, or decides a
+cross-Surface consequence. When conversation warrants global judgment it escalates an
+Intent to the Brain. (Sharpens the former per–Managed-Chat "Ambience" instance: now
+explicitly a mouth, not the whole.)
 _Avoid_: Ambience, the voice, sub-bot, one-to-one assistant
 
 **Surface**:
@@ -39,11 +40,16 @@ grows — it can open a Surface (start a DM) and speak through a freshly-bound S
 Generalizes Managed Chat to any place with a Speaker.
 _Avoid_: Channel plumbing, allowed group
 
+**Intent**:
+An immutable, evidence-backed request from a Speaker for the Brain to exercise global
+judgment. It records the originating Surface and the Speaker's bounded interpretation, but
+selects neither an action nor a return Surface and is not itself a work item.
+_Avoid_: Command, action, task, work item, mutable request
+
 **Intent escalation**:
-A Speaker signalling the Brain that conversation implies work or a cross-surface
-consequence, *without acting on it*. The one seam that keeps Speakers dumb: an upward signal
-in place of a direct tool call.
-_Avoid_: Command, dispatch (the Speaker does neither)
+Durably admitting an Intent to the Brain's up-inbox without waiting for the Brain to decide.
+The Speaker remains free to converse locally, but cannot claim that any global action happened.
+_Avoid_: Dispatch, delegation, synchronous hand-off
 
 **Digest**:
 A read-projection of the Graph, filtered to what a turn needs, delivered over one
