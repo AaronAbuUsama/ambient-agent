@@ -87,11 +87,7 @@ const isOverdue = (due: unknown, nowMs: number): boolean => {
   return !Number.isNaN(dueMs) && dueMs < nowMs;
 };
 
-export const computeGraphDigest = (
-  store: GraphStore,
-  seeds: DigestSeeds,
-  options: DigestOptions = {},
-): GraphDigest => {
+export const computeGraphDigest = (store: GraphStore, seeds: DigestSeeds, options: DigestOptions = {}): GraphDigest => {
   const nowMs = (options.now?.() ?? new Date()).getTime();
   const threshold = options.lowConfidenceThreshold ?? DEFAULT_LOW_CONFIDENCE;
   const low = (confidence: number): boolean => confidence <= threshold;
@@ -99,7 +95,7 @@ export const computeGraphDigest = (
   // 1. Resolve seed keys → entity ids through graph_identities.
   const seedIds = new Set<string>();
   if (seeds.chatId !== undefined) {
-    const thread = store.resolveIdentity("whatsapp", seeds.chatId);
+    const thread = store.resolveIdentity("whatsapp", seeds.chatId, "thread");
     if (thread !== undefined) seedIds.add(thread.entityId);
   }
   for (const seed of seeds.identities) {
@@ -115,7 +111,13 @@ export const computeGraphDigest = (
   };
   const edgeKey = (fromId: string, relation: string, toId: string): string => `${fromId}\u0000${relation}\u0000${toId}`;
   const record = (fromId: string, relation: GraphRelationType, toId: string, confidence: number): void => {
-    relations.set(edgeKey(fromId, relation, toId), { fromId, relation, toId, confidence, lowConfidence: low(confidence) });
+    relations.set(edgeKey(fromId, relation, toId), {
+      fromId,
+      relation,
+      toId,
+      confidence,
+      lowConfidence: low(confidence),
+    });
   };
 
   for (const seedId of seedIds) remember(store.getEntity(seedId));

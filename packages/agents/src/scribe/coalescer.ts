@@ -20,6 +20,7 @@ import { debounceActor, type DebounceParams } from "@ambient-agent/engine/coales
 import scribe from "./agent.ts";
 import { scribeBatchInput, type ScribeBatchInput, type ScribeOffer } from "./input.ts";
 import { scribeCoalescerConfig } from "./config.ts";
+import { withScribeAttemptContext } from "./attempt-context.ts";
 
 /** Why a batch fired. Unused downstream (extraction is uniform) but keeps the actor typed. */
 type ScribeFireReason = "debounce" | "maximum-wait" | "capacity";
@@ -66,7 +67,16 @@ export const dispatchScribeAttempt = (attemptId: string, batch: ScribeBatchInput
   Effect.runPromise(
     productionAttempts.withPermits(1)(
       Effect.tryPromise({
-        try: () => (runtimeDispatchBatch ?? defaultDispatchBatch)(attemptId, batch),
+        try: () =>
+          withScribeAttemptContext(
+            attemptId,
+            {
+              author: { kind: "scribe", id: "scribe" },
+              evidenceIds: batch.evidenceIds,
+              batchId: batch.batchId,
+            },
+            () => (runtimeDispatchBatch ?? defaultDispatchBatch)(attemptId, batch),
+          ),
         catch: (cause) => cause,
       }),
     ),

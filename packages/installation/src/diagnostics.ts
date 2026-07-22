@@ -141,6 +141,22 @@ const LEGACY_APPLICATION_OPTIONAL_SCHEMA = [
     ],
   ],
   ["graph_identities", ["platform", "external_id", "entity_id", "display_name"]],
+  [
+    "graph_attestations",
+    [
+      "attestation_id",
+      "author_kind",
+      "author_id",
+      "claim_kind",
+      "claim_json",
+      "confidence",
+      "evidence_set_id",
+      "evidence_ids_json",
+      "batch_id",
+      "attested_at",
+    ],
+  ],
+  ["graph_projection_meta", ["singleton", "version", "rebuilt_at"]],
   // The delegation run ledger (MEMORY-STATE-SPEC §8) — launch memory beside the archive.
   ["delegation_launches", ["run_id", "chat_id", "workflow", "launched_at", "settled_at"]],
   // One-way compatibility: runtime migrates this cursor table into Historical Replay and drops it.
