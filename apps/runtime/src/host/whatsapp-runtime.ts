@@ -11,6 +11,7 @@ import { configureIntentEscalationRuntime } from "@ambient-agent/agents/capabili
 import { configureDirectiveDeliveryRuntime } from "@ambient-agent/agents/capabilities/directive-delivery/runtime.ts";
 import { wakeBrain } from "@ambient-agent/agents/brain/dispatch.ts";
 import { configureBrainEffectsRuntime, recoverPendingPrompts } from "@ambient-agent/agents/brain/effects-runtime.ts";
+import { configureScribeInbox } from "@ambient-agent/agents/scribe/coalescer.ts";
 import { invoke } from "@flue/runtime";
 import historicalReplayWorkflow from "../workflows/historical-replay.ts";
 import type { SpeakerDispatchEvent, SpeakerObserver } from "@ambient-agent/agents/speaker/observer.ts";
@@ -29,6 +30,7 @@ import { botIdsOf, whatsappEventSource } from "@ambient-agent/engine/coalescer/w
 import { createConversationArchive } from "@ambient-agent/engine/intake/conversation-archive.ts";
 import { createBrainInbox } from "@ambient-agent/engine/brain/inbox.ts";
 import { createHistoricalReplayStore } from "@ambient-agent/engine/intake/historical-replay.ts";
+import { createScribeInbox } from "@ambient-agent/engine/scribe/inbox.ts";
 import {
   createManagedChatInbox,
   managedChatWindowStore,
@@ -257,6 +259,11 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   configureDirectiveDeliveryRuntime({ deliveries });
   const historicalReplay = createHistoricalReplayStore(options.applicationDatabase);
   configureHistoricalReplayGate(historicalReplay);
+  const scribeInbox = createScribeInbox(options.applicationDatabase, { recoverInterruptedAttempts: true });
+  const restoreScribeInbox = configureScribeInbox(scribeInbox, async (draft) => {
+    brainInbox.admitKnowledgeDelta(draft);
+    await wakeBrain(brainInbox);
+  });
   const inbox = createManagedChatInbox(archive, { allowed: gate.allowed });
   speakerActivity.recoverWith((dispatchId) => {
     const window = inbox.windowForDispatch(dispatchId);
@@ -300,6 +307,12 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
     yield* Effect.addFinalizer(() => Effect.sync(() => deliveries.close()));
     yield* Effect.addFinalizer(() => Effect.sync(unsubscribeDirectiveOutcomes));
     yield* Effect.addFinalizer(() => Effect.sync(() => historicalReplay.close()));
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        restoreScribeInbox();
+        scribeInbox.close();
+      }),
+    );
     yield* Effect.addFinalizer(() => Effect.promise(() => account.stop()));
     if (!gate.hasTarget) {
       yield* Effect.logWarning("No managed WhatsApp chat is configured; ingress remains fail-closed.");

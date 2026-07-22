@@ -198,6 +198,18 @@ const LEGACY_APPLICATION_OPTIONAL_SCHEMA = [
   ["brain_batches", ["batch_id", "created_at", "dispatch_id", "accepted_at", "settled_at"]],
   ["brain_inbox_inputs", ["input_id", "kind", "intent_id", "admitted_at", "batch_id"]],
   [
+    "brain_knowledge_deltas",
+    [
+      "delta_id",
+      "scribe_batch_id",
+      "attestation_ids_json",
+      "evidence_ids_json",
+      "projection_version",
+      "admitted_at",
+      "batch_id",
+    ],
+  ],
+  [
     "brain_effects",
     [
       "effect_id",
@@ -226,6 +238,23 @@ const LEGACY_APPLICATION_OPTIONAL_SCHEMA = [
       "attempted_at",
       "settled_at",
     ],
+  ],
+  ["scribe_batches", ["batch_id", "created_at_ms", "active_attempt_id", "completed_at_ms"]],
+  [
+    "scribe_observations",
+    [
+      "observation_sequence",
+      "evidence_id",
+      "occurred_at_ms",
+      "source",
+      "input_json",
+      "admitted_at_ms",
+      "batch_id",
+    ],
+  ],
+  [
+    "scribe_attempts",
+    ["attempt_id", "batch_id", "status", "started_at_ms", "finished_at_ms", "error"],
   ],
   [
     "directive_outcomes",

@@ -19,10 +19,23 @@ export interface Intent {
   readonly admittedAt: string;
 }
 
+export interface KnowledgeDeltaDraft {
+  readonly scribeBatchId: string;
+  readonly attestationIds: readonly string[];
+  readonly evidenceIds: readonly string[];
+  readonly projectionVersion: string;
+}
+
+export interface KnowledgeDelta extends KnowledgeDeltaDraft {
+  readonly id: string;
+  readonly admittedAt: string;
+}
+
 export interface BrainBatch {
   readonly id: string;
   readonly createdAt: string;
   readonly intents: readonly Intent[];
+  readonly knowledgeDeltas: readonly KnowledgeDelta[];
   readonly dispatch?: DispatchReceipt;
 }
 
@@ -71,6 +84,15 @@ interface IntentRow {
   admitted_at: string;
 }
 
+interface KnowledgeDeltaRow {
+  delta_id: string;
+  scribe_batch_id: string;
+  attestation_ids_json: string;
+  evidence_ids_json: string;
+  projection_version: string;
+  admitted_at: string;
+}
+
 interface BatchRow {
   batch_id: string;
   created_at: string;
@@ -91,8 +113,11 @@ interface EffectRow {
 
 export interface BrainInbox {
   admitIntent(draft: IntentDraft): Intent;
+  admitKnowledgeDelta(draft: KnowledgeDeltaDraft): KnowledgeDelta;
   intent(intentId: string): Intent | undefined;
   pendingIntents(): readonly Intent[];
+  pendingKnowledgeDeltas(): readonly KnowledgeDelta[];
+  knowledgeCaughtUp(deltaIds: readonly string[]): boolean;
   claimBatch(limit?: number): BrainBatch | undefined;
   markBatchDispatched(batchId: string, receipt: DispatchReceipt): BrainBatch;
   recordPrompt(input: {
@@ -123,6 +148,15 @@ const hydrate = (row: IntentRow): Intent => ({
   admittedAt: row.admitted_at,
 });
 
+const hydrateKnowledgeDelta = (row: KnowledgeDeltaRow): KnowledgeDelta => ({
+  id: row.delta_id,
+  scribeBatchId: row.scribe_batch_id,
+  attestationIds: JSON.parse(row.attestation_ids_json) as string[],
+  evidenceIds: JSON.parse(row.evidence_ids_json) as string[],
+  projectionVersion: row.projection_version,
+  admittedAt: row.admitted_at,
+});
+
 const required = (value: string, name: string): string => {
   const normalized = value.trim();
   if (normalized.length === 0) throw new Error(`${name} must not be empty.`);
@@ -135,12 +169,23 @@ const canonicalEvidence = (evidenceIds: readonly string[]): readonly string[] =>
   return ids;
 };
 
+const canonicalIds = (values: readonly string[], name: string): readonly string[] => {
+  const ids = [...new Set(values.map((id) => required(id, name)))].sort();
+  if (ids.length === 0) throw new Error(`${name} requires at least one value.`);
+  return ids;
+};
+
 const intentId = (sourceSurfaceId: string, interpretation: string, evidenceIds: readonly string[]): string => {
   const digest = createHash("sha256")
     .update(JSON.stringify([sourceSurfaceId, interpretation, evidenceIds]))
     .digest("hex");
   return `intent:${digest}`;
 };
+
+const knowledgeDeltaId = (draft: Omit<KnowledgeDelta, "id" | "admittedAt">): string =>
+  `knowledge-delta:${createHash("sha256")
+    .update(JSON.stringify([draft.scribeBatchId, draft.attestationIds, draft.evidenceIds, draft.projectionVersion]))
+    .digest("hex")}`;
 
 const batchId = (inputIds: readonly string[]): string =>
   `brain-batch:${createHash("sha256").update(JSON.stringify(inputIds)).digest("hex")}`;
@@ -182,6 +227,15 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
       admitted_at TEXT NOT NULL,
       batch_id TEXT REFERENCES brain_batches(batch_id)
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS brain_knowledge_deltas (
+      delta_id TEXT PRIMARY KEY,
+      scribe_batch_id TEXT NOT NULL,
+      attestation_ids_json TEXT NOT NULL,
+      evidence_ids_json TEXT NOT NULL,
+      projection_version TEXT NOT NULL,
+      admitted_at TEXT NOT NULL,
+      batch_id TEXT REFERENCES brain_batches(batch_id)
+    ) STRICT;
     CREATE TABLE IF NOT EXISTS brain_effects (
       effect_id TEXT PRIMARY KEY,
       batch_id TEXT NOT NULL REFERENCES brain_batches(batch_id),
@@ -205,6 +259,12 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
     INSERT OR IGNORE INTO brain_inbox_inputs (input_id, kind, intent_id, admitted_at)
     VALUES (?, 'speaker_intent', ?, ?)
   `);
+  const insertKnowledgeDelta = database.prepare(`
+    INSERT OR IGNORE INTO brain_knowledge_deltas
+      (delta_id, scribe_batch_id, attestation_ids_json, evidence_ids_json, projection_version, admitted_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  const selectKnowledgeDelta = database.prepare("SELECT * FROM brain_knowledge_deltas WHERE delta_id = ?");
   const selectIntent = database.prepare("SELECT * FROM brain_intents WHERE intent_id = ?");
   const selectPending = database.prepare(`
     SELECT intent.*
@@ -212,6 +272,9 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
       JOIN brain_intents AS intent ON intent.intent_id = input.intent_id
      WHERE input.batch_id IS NULL
      ORDER BY input.admitted_at, input.rowid
+  `);
+  const selectPendingKnowledge = database.prepare(`
+    SELECT * FROM brain_knowledge_deltas WHERE batch_id IS NULL ORDER BY admitted_at, rowid
   `);
   const selectOpenBatch = database.prepare(`
     SELECT batch_id, created_at, dispatch_id, accepted_at, settled_at FROM brain_batches
@@ -226,14 +289,23 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
      WHERE input.batch_id = ?
      ORDER BY input.admitted_at, input.rowid
   `);
+  const selectBatchKnowledge = database.prepare(`
+    SELECT * FROM brain_knowledge_deltas WHERE batch_id = ? ORDER BY admitted_at, rowid
+  `);
   const selectReadyInputIds = database.prepare(`
-    SELECT input_id FROM brain_inbox_inputs
-     WHERE batch_id IS NULL
-     ORDER BY admitted_at, rowid
-     LIMIT ?
+    SELECT input_id, kind FROM (
+      SELECT input_id, 'speaker_intent' AS kind, admitted_at, rowid AS input_order
+        FROM brain_inbox_inputs WHERE batch_id IS NULL
+      UNION ALL
+      SELECT delta_id AS input_id, 'knowledge_delta' AS kind, admitted_at, rowid AS input_order
+        FROM brain_knowledge_deltas WHERE batch_id IS NULL
+    ) ORDER BY admitted_at, kind, input_order LIMIT ?
   `);
   const insertBatch = database.prepare("INSERT INTO brain_batches (batch_id, created_at) VALUES (?, ?)");
   const claimInput = database.prepare("UPDATE brain_inbox_inputs SET batch_id = ? WHERE input_id = ? AND batch_id IS NULL");
+  const claimKnowledge = database.prepare(
+    "UPDATE brain_knowledge_deltas SET batch_id = ? WHERE delta_id = ? AND batch_id IS NULL",
+  );
   const updateBatchDispatch = database.prepare(`
     UPDATE brain_batches SET dispatch_id = ?, accepted_at = ?
      WHERE batch_id = ? AND dispatch_id IS NULL
@@ -291,6 +363,9 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
     id: row.batch_id,
     createdAt: row.created_at,
     intents: (selectBatchIntents.all(row.batch_id) as unknown as IntentRow[]).map(hydrate),
+    knowledgeDeltas: (selectBatchKnowledge.all(row.batch_id) as unknown as KnowledgeDeltaRow[]).map(
+      hydrateKnowledgeDelta,
+    ),
     ...(row.dispatch_id === null || row.accepted_at === null
       ? {}
       : { dispatch: { dispatchId: row.dispatch_id, acceptedAt: row.accepted_at } }),
@@ -326,11 +401,41 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
 
       return hydrate(selectIntent.get(id) as unknown as IntentRow);
     },
+    admitKnowledgeDelta: (draft) => {
+      const scribeBatchId = required(draft.scribeBatchId, "Scribe Batch id");
+      const attestationIds = canonicalIds(draft.attestationIds, "Knowledge Delta Attestation ids");
+      const evidenceIds = canonicalIds(draft.evidenceIds, "Knowledge Delta Evidence ids");
+      const projectionVersion = required(draft.projectionVersion, "Knowledge Delta Projection version");
+      const value = { scribeBatchId, attestationIds, evidenceIds, projectionVersion };
+      const id = knowledgeDeltaId(value);
+      const admittedAt = options.now?.() ?? new Date().toISOString();
+      insertKnowledgeDelta.run(
+        id,
+        scribeBatchId,
+        JSON.stringify(attestationIds),
+        JSON.stringify(evidenceIds),
+        projectionVersion,
+        admittedAt,
+      );
+      return hydrateKnowledgeDelta(selectKnowledgeDelta.get(id) as unknown as KnowledgeDeltaRow);
+    },
     intent: (id) => {
       const row = selectIntent.get(id) as unknown as IntentRow | undefined;
       return row === undefined ? undefined : hydrate(row);
     },
     pendingIntents: () => (selectPending.all() as unknown as IntentRow[]).map(hydrate),
+    pendingKnowledgeDeltas: () =>
+      (selectPendingKnowledge.all() as unknown as KnowledgeDeltaRow[]).map(hydrateKnowledgeDelta),
+    knowledgeCaughtUp: (rawDeltaIds) => {
+      const deltaIds = [...new Set(rawDeltaIds.map((id) => required(id, "Knowledge Delta id")))];
+      if (deltaIds.length === 0) return true;
+      const statement = database.prepare(`
+        SELECT count(*) AS count FROM brain_knowledge_deltas AS delta
+          JOIN brain_batches AS batch ON batch.batch_id = delta.batch_id
+         WHERE delta.delta_id IN (${deltaIds.map(() => "?").join(",")}) AND batch.settled_at IS NOT NULL
+      `);
+      return (statement.get(...deltaIds) as { count: number }).count === deltaIds.length;
+    },
     claimBatch: (limit = 50) => {
       database.exec("BEGIN IMMEDIATE");
       try {
@@ -339,17 +444,21 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
           database.exec("COMMIT");
           return hydrateBatch(open);
         }
-        const ready = selectReadyInputIds.all(Math.max(1, Math.min(Math.trunc(limit), 100))) as unknown as {
+        const ready = selectReadyInputIds.all(Math.max(1, Math.min(Math.trunc(limit), 100))) as unknown as Array<{
           input_id: string;
-        }[];
+          kind: "speaker_intent" | "knowledge_delta";
+        }>;
         if (ready.length === 0) {
           database.exec("COMMIT");
           return undefined;
         }
-        const id = batchId(ready.map(({ input_id }) => input_id));
+        const id = batchId(ready.map(({ input_id, kind }) => `${kind}:${input_id}`));
         const createdAt = options.now?.() ?? new Date().toISOString();
         insertBatch.run(id, createdAt);
-        for (const { input_id } of ready) claimInput.run(id, input_id);
+        for (const { input_id, kind } of ready) {
+          const result = kind === "speaker_intent" ? claimInput.run(id, input_id) : claimKnowledge.run(id, input_id);
+          if (result.changes !== 1) throw new Error(`Brain input ${input_id} lost its Batch assignment.`);
+        }
         database.exec("COMMIT");
         return hydrateBatch({
           batch_id: id,

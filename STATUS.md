@@ -18,25 +18,22 @@ forward from `SYSTEM-ARCHITECTURE.md`. **One instance, one operator — not mult
 Belief Projection (including the typed query surface), the live Digest
 pull side, the reactive Brain conversation loop (Intent → Batch → Directive/silence → Outcome),
 stable account-scoped Surfaces, async delegation with durable return, modelless coalescing,
-the global Scribe batch shape and shared bounded-attempt gate, and the Coder / Reviewer /
-Planner Specialists as distinct GitHub identities. Scribe write attempts now receive trusted
-Evidence Sets and append retry-idempotent proposals; Speaker and Specialist Graph access is
-read-only. Brain rulings and proposal-delta integration are not wired yet.
+the durable global Scribe clock shared by live and Historical Replay, and the Coder / Reviewer /
+Planner Specialists as distinct GitHub identities. Scribe retries now receive trusted Evidence
+Sets plus a fresh bounded/versioned Belief Projection and append retry-idempotent proposals;
+proposal deltas durably enter the Brain, which now mounts evidence-bounded Graph rulings. Speaker
+and Specialist Graph access remains read-only.
 
 **The distance to close is concentration of authority, not new machinery:**
 
-- Finish concentrating authority in the **Brain** — route GitHub/work/ontology through its
-  existing durable up-inbox and add its proactive clock.
-- Finish the **Scribe** clock: durably admit live and Historical Replay evidence through one
-  retry-idempotent queue, inject a fresh bounded Belief Projection into every attempt, and
-  return durable proposal deltas to the Brain.
+- Finish concentrating authority in the **Brain** — route GitHub/work through its existing
+  durable up-inbox and add its proactive clock. Ontology proposal integration/rulings are built.
 - Reduce the **Speaker** to a dumb mouth — remove issue management and delegation; Intent
   escalation and Directive-only Saying are already built.
 - Replace GitHub webhook broadcast + drop with the single up-inbox.
 - Complete **Surface** routing by resolving known-Person DM targets through the existing
   stable registry and removing the remaining first-chat/provider-id shortcuts.
-- Extend the existing live Digest projector with Projection version/evidence/bounds and compose
-  bounded Brain-selected seeds over the same `graphContext` channel.
+- Compose bounded Brain-selected seeds over the existing versioned `graphContext` channel.
 
 ## The reset — where the code stands (2026-07-21)
 

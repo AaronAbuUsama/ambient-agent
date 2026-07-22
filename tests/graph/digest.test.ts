@@ -6,12 +6,13 @@ import {
   type GraphStore,
   type RelationUpsert,
 } from "../../packages/engine/src/graph/store.ts";
-import { computeGraphDigest } from "../../packages/engine/src/graph/digest.ts";
+import { computeGraphDigest, MAX_GRAPH_DIGEST_BYTES } from "../../packages/engine/src/graph/digest.ts";
 import { speakerDigestSeeds } from "../../packages/engine/src/inputs.ts";
 import {
   createSpeakerGraphTools,
   createSpecialistGraphTools,
   createScribeGraphTools,
+  createBrainGraphTools,
   createGraphTools,
 } from "../../packages/agents/src/capabilities/graph/tools.ts";
 import { attachGraphContext } from "../../packages/agents/src/capabilities/graph/digest.ts";
@@ -93,6 +94,34 @@ const seed = (store: GraphStore) => {
 };
 
 describe("computeGraphDigest — seed resolution and the one-hop walk", () => {
+  it("is explicitly versioned, provenance-bearing, and bounded", () => {
+    const store = createGraphStore(":memory:");
+    const graph = seed(store);
+    const digest = computeGraphDigest(store, { chatId: CHAT, identities: [] });
+    expect(digest.schemaVersion).toBe("graph-digest.v1");
+    expect(digest.projectionVersion).toBe(store.projectionVersion());
+    expect(digest.entities.find(({ entityId }) => entityId === graph.thread.entityId)?.supportingAttestationIds).toEqual(
+      graph.thread.attestationIds,
+    );
+    expect(
+      [...digest.entities, ...digest.commitments, ...digest.relations].every(
+        ({ supportingAttestationIds }) => supportingAttestationIds.length <= 8,
+      ),
+    ).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(digest))).toBeLessThanOrEqual(MAX_GRAPH_DIGEST_BYTES);
+  });
+
+  it("drops oversized tail items rather than exceeding the 64 KiB input contract", () => {
+    const store = createGraphStore(":memory:");
+    attestEntity(store, {
+      type: "thread",
+      properties: { chatId: CHAT, notes: "x".repeat(MAX_GRAPH_DIGEST_BYTES * 2) },
+      identity: { platform: "whatsapp", externalId: CHAT },
+    });
+    const digest = computeGraphDigest(store, { chatId: CHAT, identities: [] });
+    expect(Buffer.byteLength(JSON.stringify(digest))).toBeLessThanOrEqual(MAX_GRAPH_DIGEST_BYTES);
+  });
+
   it("resolves the thread and a whatsapp participant into the neighbourhood", () => {
     const store = createGraphStore(":memory:");
     const g = seed(store);
@@ -241,6 +270,17 @@ describe("graph tool subsets", () => {
   it("exposes merge rulings only on the Brain-capable surface", () => {
     const context = { author: { kind: "brain" as const, id: "brain" }, evidenceIds: ["test:brain"] };
     expect(names(createGraphTools(createGraphStore(":memory:"), context))).toEqual([
+      "lookup_graph",
+      "merge_entities",
+      "record_entity",
+      "record_relation",
+      "rule_attestation",
+    ]);
+  });
+
+  it("resolves the Brain's trusted Batch context at tool execution time", () => {
+    const context = { author: { kind: "brain" as const, id: "brain" }, evidenceIds: ["test:brain"] };
+    expect(names(createBrainGraphTools(() => context, createGraphStore(":memory:")))).toEqual([
       "lookup_graph",
       "merge_entities",
       "record_entity",

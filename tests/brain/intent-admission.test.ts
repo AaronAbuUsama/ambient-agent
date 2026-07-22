@@ -118,6 +118,7 @@ describe("Speaker Intent admission", () => {
       id: expect.stringMatching(/^brain-batch:[a-f0-9]{64}$/u),
       createdAt: "2026-07-22T12:00:00.000Z",
       intents: [firstIntent],
+      knowledgeDeltas: [],
     });
     expect(inbox.pendingIntents()).toEqual([secondIntent]);
     inbox.close();
@@ -149,6 +150,7 @@ describe("Speaker Intent admission", () => {
           id: expect.stringMatching(/^brain-batch:[a-f0-9]{64}$/u),
           createdAt: "2026-07-22T12:00:00.000Z",
           intents: [intent],
+          knowledgeDeltas: [],
         },
       },
     }]);
@@ -160,6 +162,76 @@ describe("Speaker Intent admission", () => {
     expect(await wakeBrain(inbox, async () => {
       throw new Error("an admitted wake must not be dispatched twice");
     })).toEqual(first);
+    inbox.close();
+  });
+
+  it("serializes concurrent wake requests so one open Brain Batch is dispatched once", async () => {
+    const inbox = openInbox(fixture());
+    inbox.admitKnowledgeDelta({
+      scribeBatchId: "scribe-batch:concurrent",
+      attestationIds: ["attestation:concurrent"],
+      evidenceIds: ["evidence:1"],
+      projectionVersion: "projection:concurrent",
+    });
+    let calls = 0;
+    const deliver = async () => {
+      calls++;
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      return { dispatchId: "dispatch:brain:once", acceptedAt: "2026-07-22T12:01:00.000Z" };
+    };
+    const [first, second] = await Promise.all([wakeBrain(inbox, deliver), wakeBrain(inbox, deliver)]);
+    expect(calls).toBe(1);
+    expect(second).toEqual(first);
+    inbox.close();
+  });
+
+  it("admits one retry-idempotent Scribe proposal delta into the same global Brain Batch frontier", () => {
+    const databasePath = fixture();
+    const firstInbox = openInbox(databasePath);
+    const delta = firstInbox.admitKnowledgeDelta({
+      scribeBatchId: "scribe-batch:one",
+      attestationIds: ["attestation:two", "attestation:one"],
+      evidenceIds: ["evidence:2", "evidence:1"],
+      projectionVersion: "projection:one",
+    });
+    expect(
+      firstInbox.admitKnowledgeDelta({
+        scribeBatchId: "scribe-batch:one",
+        attestationIds: ["attestation:one", "attestation:two", "attestation:one"],
+        evidenceIds: ["evidence:1", "evidence:2"],
+        projectionVersion: "projection:one",
+      }),
+    ).toEqual(delta);
+    firstInbox.close();
+
+    const reopened = openInbox(databasePath, () => "2099-01-01T00:00:00.000Z");
+    expect(reopened.pendingKnowledgeDeltas()).toEqual([delta]);
+    expect(reopened.claimBatch()).toEqual({
+      id: expect.stringMatching(/^brain-batch:[a-f0-9]{64}$/u),
+      createdAt: "2099-01-01T00:00:00.000Z",
+      intents: [],
+      knowledgeDeltas: [delta],
+    });
+    reopened.close();
+  });
+
+  it("does not call replay knowledge caught up until the owning Brain Batch is settled", () => {
+    const inbox = openInbox(fixture());
+    const delta = inbox.admitKnowledgeDelta({
+      scribeBatchId: "scribe-batch:catch-up",
+      attestationIds: ["attestation:catch-up"],
+      evidenceIds: ["evidence:1"],
+      projectionVersion: "projection:catch-up",
+    });
+    const batch = inbox.claimBatch()!;
+    inbox.markBatchDispatched(batch.id, {
+      dispatchId: "dispatch:brain:knowledge",
+      acceptedAt: "2026-07-22T12:01:00.000Z",
+    });
+    expect(inbox.knowledgeCaughtUp([delta.id])).toBe(false);
+    inbox.recordSilence(batch.id, "Knowledge was considered; no external message is warranted.");
+    inbox.settleBatch(batch.id);
+    expect(inbox.knowledgeCaughtUp([delta.id])).toBe(true);
     inbox.close();
   });
 

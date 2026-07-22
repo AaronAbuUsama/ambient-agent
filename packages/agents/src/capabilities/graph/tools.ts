@@ -78,7 +78,11 @@ const claimContext = (
  * The ontology tools share one implementation, but every write receives its author and
  * Evidence Set from the trusted runtime context. The model cannot supply provenance.
  */
-const graphToolsByName = (store: GraphStore, context: GraphAttestationContext) => ({
+type GraphContextSource = GraphAttestationContext | (() => GraphAttestationContext);
+const contextFrom = (source: GraphContextSource): GraphAttestationContext =>
+  typeof source === "function" ? source() : source;
+
+const graphToolsByName = (store: GraphStore, context: GraphContextSource) => ({
   record_entity: defineTool({
     name: "record_entity",
     description:
@@ -89,7 +93,7 @@ const graphToolsByName = (store: GraphStore, context: GraphAttestationContext) =
     output: v.object({ entityId: v.string(), type: v.string(), confidence: v.number() }),
     run: ({ input }) => {
       const result = store.attest({
-        context: claimContext(context, input.evidenceIds),
+        context: claimContext(contextFrom(context), input.evidenceIds),
         claim: { kind: "entity", input: toEntityUpsert(input.entity) },
       });
       if (result.kind === "entity") {
@@ -111,7 +115,7 @@ const graphToolsByName = (store: GraphStore, context: GraphAttestationContext) =
     run: ({ input }) => {
       const edge = input.edge;
       const result = store.attest({
-        context: claimContext(context, input.evidenceIds),
+        context: claimContext(contextFrom(context), input.evidenceIds),
         claim: { kind: "relation", input: toRelationUpsert(edge) },
       });
       if (result.kind === "relation") {
@@ -132,7 +136,7 @@ const graphToolsByName = (store: GraphStore, context: GraphAttestationContext) =
     output: v.object({ survivorId: v.string() }),
     run: ({ input }) => {
       const result = store.attest({
-        context: claimContext(context, input.evidenceIds),
+        context: claimContext(contextFrom(context), input.evidenceIds),
         claim: { kind: "merge", survivorId: input.survivorId, loserId: input.loserId },
       });
       if (result.kind === "merge") return { survivorId: result.survivor.entityId };
@@ -153,7 +157,7 @@ const graphToolsByName = (store: GraphStore, context: GraphAttestationContext) =
     output: v.object({ attestationId: v.string(), action: v.picklist(["confirm", "overrule"]) }),
     run: ({ input }) => {
       const result = store.attest({
-        context: claimContext(context, input.evidenceIds),
+        context: claimContext(contextFrom(context), input.evidenceIds),
         claim: {
           kind: "ruling",
           action: input.action,
@@ -217,6 +221,12 @@ const graphToolsByName = (store: GraphStore, context: GraphAttestationContext) =
 /** Brain-capable surface. Its trusted context is explicit at construction. */
 export const createGraphTools = (store: GraphStore, context: GraphAttestationContext): ToolDefinition[] =>
   Object.values(graphToolsByName(store, context));
+
+/** Brain write authority with trusted context resolved from its currently claimed durable Batch. */
+export const createBrainGraphTools = (
+  context: () => GraphAttestationContext,
+  store: GraphStore = lazyGraphStore,
+): ToolDefinition[] => Object.values(graphToolsByName(store, context));
 
 /** Scribe proposal surface: read plus Entity/Relation Attestations, never merge rulings. */
 export const createScribeGraphTools = (
