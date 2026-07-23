@@ -6,6 +6,7 @@ import { dispatchSpeaker } from "@ambient-agent/agents/speaker/dispatch.ts";
 import { createIssueManagementPolicy } from "@ambient-agent/agents/capabilities/issue-management/runtime.ts";
 import { createIssueOperationStore } from "@ambient-agent/engine/github/operation-store.ts";
 import { createGraphStore } from "@ambient-agent/engine/graph/store.ts";
+import { seedRepositoryFacts } from "@ambient-agent/agents/capabilities/graph/seed-repositories.ts";
 import { installDelegationBridge } from "@ambient-agent/agents/capabilities/delegation/bridge.ts";
 import { configureCoderRuntime } from "@ambient-agent/agents/capabilities/coder/runtime.ts";
 import { configureReviewerRuntime } from "@ambient-agent/agents/capabilities/reviewer/runtime.ts";
@@ -141,6 +142,15 @@ export const createAmbientAgentApp = async ({
   // {owner, repo}, so we route through the repo-installation lookup, which works for both User and
   // Organization owners. A single transient lookup failure falls back to the stored installation id.
   const plannerResolver = createInstallationResolver(githubCredential);
+  // S2 (#19): seed the authorized repositories and surface→repository relations as Graph facts
+  // with provenance, so the Brain resolves the target repository from the Graph per decision
+  // instead of guessing (F4). Authorization stays in config; this is the relation, not the
+  // permission boundary. Idempotent — a re-run against unchanged config is a no-op.
+  const graph = createGraphStore(paths.applicationDatabase);
+  seedRepositoryFacts(graph, {
+    allowedRepositories: configuration.github.allowedRepositories,
+    surfaceRepositories: configuration.github.surfaceRepositories,
+  });
   const app = composeSpeaker({
     issues: createOctokitIssueRepository((repository) =>
       plannerResolver.octokitFor(repository.owner, repository.repo),
@@ -180,7 +190,7 @@ export const createAmbientAgentApp = async ({
         },
       } : {}),
     },
-    graph: createGraphStore(paths.applicationDatabase),
+    graph,
     // The WhatsApp participation port is wired later by runWhatsAppSession, once the
     // live socket exists.
     health: () => {
