@@ -423,20 +423,37 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
   // existing install is migrated by rename-copy-drop (operation-store.ts template) to admit 'file_issue'.
   // brain_effects is also the FK target of surface_deliveries and directive_outcomes (surfaces/delivery.ts):
   // SQLite repoints a child table's FK clause to follow a RENAME, so renaming brain_effects away would
-  // otherwise leave those two tables referencing the dropped `_legacy` table. Rebuild them too, in
-  // dependency order (surface_deliveries before directive_outcomes, which references both), in the same
-  // transaction, only if they already exist on this install.
-  const existingEffects = database
-    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'brain_effects'")
-    .get() as { sql: string } | undefined;
-  if (existingEffects !== undefined && !existingEffects.sql.includes("'file_issue'")) {
-    const tableExists = (name: string): boolean =>
-      database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== undefined;
-    const hasSurfaceDeliveries = tableExists("surface_deliveries");
-    const hasDirectiveOutcomes = tableExists("directive_outcomes");
+  // otherwise leave those two tables referencing the dropped `_legacy` table. Rebuild whichever of the
+  // three tables actually need it, independently: a child can be left dangling on a `_legacy` name from an
+  // earlier partial run even after brain_effects itself is already widened (e.g. a prior attempt whose
+  // DROP happened to succeed because no rows referenced it yet), so "brain_effects already has
+  // 'file_issue'" alone is not sufficient to skip repairing the children.
+  const tableSql = (name: string): string | undefined =>
+    (database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) as
+      | { sql: string }
+      | undefined)?.sql;
+  const effectsSql = tableSql("brain_effects");
+  const surfaceDeliveriesSql = tableSql("surface_deliveries");
+  const directiveOutcomesSql = tableSql("directive_outcomes");
+
+  const rebuildEffects = effectsSql !== undefined && !effectsSql.includes("'file_issue'");
+  const surfaceDeliveriesDangling = surfaceDeliveriesSql?.includes("brain_effects_legacy") === true;
+  const directiveOutcomesDangling =
+    directiveOutcomesSql?.includes("brain_effects_legacy") === true ||
+    directiveOutcomesSql?.includes("surface_deliveries_legacy") === true;
+  // Renaming surface_deliveries re-repoints directive_outcomes' FK on delivery_id, so directive_outcomes
+  // must be rebuilt whenever surface_deliveries is, even if directive_outcomes wasn't dangling on its own.
+  const rebuildSurfaceDeliveries = surfaceDeliveriesSql !== undefined && (rebuildEffects || surfaceDeliveriesDangling);
+  const rebuildDirectiveOutcomes =
+    directiveOutcomesSql !== undefined && (rebuildEffects || rebuildSurfaceDeliveries || directiveOutcomesDangling);
+
+  if (rebuildEffects || rebuildSurfaceDeliveries || rebuildDirectiveOutcomes) {
     try {
       database.exec(`
         BEGIN IMMEDIATE;
+        ${
+          rebuildEffects
+            ? `
         ALTER TABLE brain_effects RENAME TO brain_effects_legacy;
         CREATE TABLE brain_effects (
           effect_id TEXT PRIMARY KEY,
@@ -453,8 +470,11 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
           (effect_id, batch_id, kind, payload_json, status, dispatch_id, accepted_at, completed_at, created_at)
         SELECT effect_id, batch_id, kind, payload_json, status, dispatch_id, accepted_at, completed_at, created_at
           FROM brain_effects_legacy;
+        `
+            : ""
+        }
         ${
-          hasSurfaceDeliveries
+          rebuildSurfaceDeliveries
             ? `
         ALTER TABLE surface_deliveries RENAME TO surface_deliveries_legacy;
         CREATE TABLE surface_deliveries (
@@ -480,7 +500,7 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
             : ""
         }
         ${
-          hasDirectiveOutcomes
+          rebuildDirectiveOutcomes
             ? `
         ALTER TABLE directive_outcomes RENAME TO directive_outcomes_legacy;
         CREATE TABLE directive_outcomes (
@@ -501,8 +521,8 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
         `
             : ""
         }
-        ${hasSurfaceDeliveries ? "DROP TABLE surface_deliveries_legacy;" : ""}
-        DROP TABLE brain_effects_legacy;
+        ${rebuildSurfaceDeliveries ? "DROP TABLE surface_deliveries_legacy;" : ""}
+        ${rebuildEffects ? "DROP TABLE brain_effects_legacy;" : ""}
         COMMIT;
       `);
     } catch (cause) {
