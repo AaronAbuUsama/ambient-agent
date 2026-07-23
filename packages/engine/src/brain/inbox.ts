@@ -225,6 +225,7 @@ export interface BrainInbox {
   recordSilence(batchId: string, reason: string): StaySilentEffect;
   recordIssueFiling(input: {
     readonly batchId: string;
+    readonly sourceSurfaceId: string;
     readonly repository: string;
     readonly kind: "bug" | "feature";
     readonly title: string;
@@ -420,13 +421,39 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
 
   // The brain_effects kind CHECK is on a STRICT table — an in-place ALTER cannot widen it, so an
   // existing install is migrated by rename-copy-drop (operation-store.ts template) to admit 'file_issue'.
-  const existingEffects = database
-    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'brain_effects'")
-    .get() as { sql: string } | undefined;
-  if (existingEffects !== undefined && !existingEffects.sql.includes("'file_issue'")) {
+  // brain_effects is also the FK target of surface_deliveries and directive_outcomes (surfaces/delivery.ts):
+  // SQLite repoints a child table's FK clause to follow a RENAME, so renaming brain_effects away would
+  // otherwise leave those two tables referencing the dropped `_legacy` table. Rebuild whichever of the
+  // three tables actually need it, independently: a child can be left dangling on a `_legacy` name from an
+  // earlier partial run even after brain_effects itself is already widened (e.g. a prior attempt whose
+  // DROP happened to succeed because no rows referenced it yet), so "brain_effects already has
+  // 'file_issue'" alone is not sufficient to skip repairing the children.
+  const tableSql = (name: string): string | undefined =>
+    (database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) as
+      | { sql: string }
+      | undefined)?.sql;
+  const effectsSql = tableSql("brain_effects");
+  const surfaceDeliveriesSql = tableSql("surface_deliveries");
+  const directiveOutcomesSql = tableSql("directive_outcomes");
+
+  const rebuildEffects = effectsSql !== undefined && !effectsSql.includes("'file_issue'");
+  const surfaceDeliveriesDangling = surfaceDeliveriesSql?.includes("brain_effects_legacy") === true;
+  const directiveOutcomesDangling =
+    directiveOutcomesSql?.includes("brain_effects_legacy") === true ||
+    directiveOutcomesSql?.includes("surface_deliveries_legacy") === true;
+  // Renaming surface_deliveries re-repoints directive_outcomes' FK on delivery_id, so directive_outcomes
+  // must be rebuilt whenever surface_deliveries is, even if directive_outcomes wasn't dangling on its own.
+  const rebuildSurfaceDeliveries = surfaceDeliveriesSql !== undefined && (rebuildEffects || surfaceDeliveriesDangling);
+  const rebuildDirectiveOutcomes =
+    directiveOutcomesSql !== undefined && (rebuildEffects || rebuildSurfaceDeliveries || directiveOutcomesDangling);
+
+  if (rebuildEffects || rebuildSurfaceDeliveries || rebuildDirectiveOutcomes) {
     try {
       database.exec(`
         BEGIN IMMEDIATE;
+        ${
+          rebuildEffects
+            ? `
         ALTER TABLE brain_effects RENAME TO brain_effects_legacy;
         CREATE TABLE brain_effects (
           effect_id TEXT PRIMARY KEY,
@@ -443,7 +470,59 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
           (effect_id, batch_id, kind, payload_json, status, dispatch_id, accepted_at, completed_at, created_at)
         SELECT effect_id, batch_id, kind, payload_json, status, dispatch_id, accepted_at, completed_at, created_at
           FROM brain_effects_legacy;
-        DROP TABLE brain_effects_legacy;
+        `
+            : ""
+        }
+        ${
+          rebuildSurfaceDeliveries
+            ? `
+        ALTER TABLE surface_deliveries RENAME TO surface_deliveries_legacy;
+        CREATE TABLE surface_deliveries (
+          delivery_id TEXT PRIMARY KEY,
+          directive_id TEXT NOT NULL UNIQUE REFERENCES brain_effects(effect_id),
+          surface_id TEXT NOT NULL REFERENCES surfaces(surface_id),
+          provider_chat_id TEXT NOT NULL,
+          text TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('attempting', 'sent', 'failed', 'uncertain')),
+          provider_message_id TEXT,
+          conversation_event_id TEXT,
+          error TEXT,
+          attempted_at TEXT NOT NULL,
+          settled_at TEXT
+        ) STRICT;
+        INSERT INTO surface_deliveries
+          (delivery_id, directive_id, surface_id, provider_chat_id, text, status, provider_message_id,
+           conversation_event_id, error, attempted_at, settled_at)
+        SELECT delivery_id, directive_id, surface_id, provider_chat_id, text, status, provider_message_id,
+               conversation_event_id, error, attempted_at, settled_at
+          FROM surface_deliveries_legacy;
+        `
+            : ""
+        }
+        ${
+          rebuildDirectiveOutcomes
+            ? `
+        ALTER TABLE directive_outcomes RENAME TO directive_outcomes_legacy;
+        CREATE TABLE directive_outcomes (
+          directive_id TEXT PRIMARY KEY REFERENCES brain_effects(effect_id),
+          delivery_id TEXT UNIQUE REFERENCES surface_deliveries(delivery_id),
+          surface_id TEXT NOT NULL REFERENCES surfaces(surface_id),
+          status TEXT NOT NULL CHECK (status IN ('delivered', 'failed', 'uncertain', 'settled_without_say')),
+          provider_message_id TEXT,
+          conversation_event_id TEXT,
+          detail TEXT,
+          settled_at TEXT NOT NULL
+        ) STRICT;
+        INSERT INTO directive_outcomes
+          (directive_id, delivery_id, surface_id, status, provider_message_id, conversation_event_id, detail, settled_at)
+        SELECT directive_id, delivery_id, surface_id, status, provider_message_id, conversation_event_id, detail, settled_at
+          FROM directive_outcomes_legacy;
+        DROP TABLE directive_outcomes_legacy;
+        `
+            : ""
+        }
+        ${rebuildSurfaceDeliveries ? "DROP TABLE surface_deliveries_legacy;" : ""}
+        ${rebuildEffects ? "DROP TABLE brain_effects_legacy;" : ""}
         COMMIT;
       `);
     } catch (cause) {
@@ -877,10 +956,24 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
       insertEffect.run(id, claimedBatchId, "stay_silent", JSON.stringify(payload), "completed", completedAt, completedAt);
       return hydrateEffect(selectEffect.get(id) as unknown as EffectRow) as StaySilentEffect;
     },
-    recordIssueFiling: ({ batchId: rawBatchId, repository: rawRepository, kind, title: rawTitle, body: rawBody }) => {
+    recordIssueFiling: ({
+      batchId: rawBatchId,
+      sourceSurfaceId: rawSurfaceId,
+      repository: rawRepository,
+      kind,
+      title: rawTitle,
+      body: rawBody,
+    }) => {
       const claimedBatchId = required(rawBatchId, "Brain Batch id");
+      const sourceSurfaceId = required(rawSurfaceId, "File Issue source Surface id");
       const batch = selectOpenBatchById.get(claimedBatchId) as BatchRow | undefined;
       if (batch === undefined || batch.dispatch_id === null) throw new Error(`Brain Batch ${claimedBatchId} is not open and dispatched.`);
+      const sourceIntents = (selectBatchIntents.all(claimedBatchId) as unknown as IntentRow[])
+        .map(hydrate)
+        .filter((intent) => intent.sourceSurfaceId === sourceSurfaceId);
+      if (sourceIntents.length === 0) {
+        throw new Error(`Surface ${sourceSurfaceId} is not provenance for Brain Batch ${claimedBatchId}.`);
+      }
       const request: FileIssueRequest = {
         repository: required(rawRepository, "File Issue repository"),
         kind,
