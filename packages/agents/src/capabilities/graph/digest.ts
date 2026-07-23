@@ -14,21 +14,30 @@ import { tryGetDelegationRuntime } from "../delegation/runtime.ts";
 /**
  * Down-flow work state (S3): the active Bounded Workflows plus their latest streamed
  * Milestone, read from the Brain inbox. Empty when delegation is unwired or a read throws —
- * work-state can never fail a Speaker dispatch.
+ * work-state can never fail a Speaker dispatch. Scoped to the dispatching Surface's chat, so
+ * one chat's Speaker never sees another chat's work (a cross-surface leak, cf. #249).
  */
-const activeDigestWorkItems = (): DigestWorkItem[] => {
+const activeDigestWorkItems = (input: SpeakerInput): DigestWorkItem[] => {
   const runtime = tryGetDelegationRuntime();
   if (runtime === undefined) return [];
+  const currentChatId =
+    input.type === "brain.directive"
+      ? runtime.providerChatIdForSurface(input.directive.surfaceId)
+      : input.chatId;
+  if (currentChatId === undefined) return [];
   try {
-    return runtime.inbox.activeWorkItems().map((item) => ({
-      workId: item.workId,
-      specialist: item.specialist,
-      sourceSurfaceId: item.sourceSurfaceId,
-      startedAt: item.startedAt,
-      ...(item.latestMilestone === undefined
-        ? {}
-        : { latestMilestone: { note: item.latestMilestone.note, at: item.latestMilestone.at } }),
-    }));
+    return runtime.inbox
+      .activeWorkItems()
+      .filter((item) => runtime.providerChatIdForSurface(item.sourceSurfaceId) === currentChatId)
+      .map((item) => ({
+        workId: item.workId,
+        specialist: item.specialist,
+        sourceSurfaceId: item.sourceSurfaceId,
+        startedAt: item.startedAt,
+        ...(item.latestMilestone === undefined
+          ? {}
+          : { latestMilestone: { note: item.latestMilestone.note, at: item.latestMilestone.at } }),
+      }));
   } catch (cause) {
     console.error("[graph] active work-state read failed; digest omits work items", cause);
     return [];
@@ -84,7 +93,7 @@ export const attachGraphContext = (input: SpeakerInput, options?: DigestOptions)
   try {
     const base = computeGraphDigest(store, speakerDigestSeeds(input), options);
     // Compose active work state onto the graph projection — never replacing it (§5.4).
-    const graphContext = composeWorkItems(base, activeDigestWorkItems());
+    const graphContext = composeWorkItems(base, activeDigestWorkItems(input));
     return isEmptyDigest(graphContext) ? input : { ...input, graphContext };
   } catch (cause) {
     console.error("[graph] digest enrichment failed; dispatching with un-enriched input", cause);

@@ -83,10 +83,18 @@ export type DigestWorkItem = v.InferOutput<typeof digestWorkItemSchema>;
 
 /**
  * Compose active work items onto a computed graph digest, never replacing it (§5.4 — the
- * funnel composes rather than replaces). Returns the same digest when there is no work.
+ * funnel composes rather than replaces). Returns the same digest when there is no work. The
+ * appended items are held inside the same MAX_GRAPH_DIGEST_BYTES budget as the base digest:
+ * capped, then trimmed oldest-first until the whole graphContext fits.
  */
-export const composeWorkItems = (digest: GraphDigest, workItems: readonly DigestWorkItem[]): GraphDigest =>
-  workItems.length === 0 ? digest : { ...digest, workItems: [...workItems] };
+export const composeWorkItems = (digest: GraphDigest, workItems: readonly DigestWorkItem[]): GraphDigest => {
+  if (workItems.length === 0) return digest;
+  const composed = { ...digest, workItems: workItems.slice(0, MAX_WORK_ITEMS) };
+  while (Buffer.byteLength(JSON.stringify(composed)) > MAX_GRAPH_DIGEST_BYTES && composed.workItems.length > 0) {
+    composed.workItems.pop();
+  }
+  return composed.workItems.length === 0 ? digest : composed;
+};
 
 export type GraphDigest = v.InferOutput<typeof graphDigestSchema>;
 export type DigestEntity = v.InferOutput<typeof digestEntitySchema>;
@@ -106,6 +114,7 @@ const DEFAULT_LOW_CONFIDENCE = 0.75;
 const MAX_ENTITIES = 64;
 const MAX_RELATIONS = 128;
 const MAX_COMMITMENTS = 32;
+const MAX_WORK_ITEMS = 32;
 const MAX_SUPPORTING_ATTESTATIONS = 8;
 export const MAX_GRAPH_DIGEST_BYTES = 64 * 1024;
 

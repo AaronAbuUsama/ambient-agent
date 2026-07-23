@@ -11,6 +11,8 @@ import {
   composeWorkItems,
   computeGraphDigest,
   isEmptyDigest,
+  MAX_GRAPH_DIGEST_BYTES,
+  type DigestWorkItem,
   type GraphDigest,
 } from "../../packages/engine/src/graph/digest.ts";
 import { createGraphStore } from "../../packages/engine/src/graph/store.ts";
@@ -55,10 +57,10 @@ const fixture = (): { databasePath: string; inbox: BrainInbox; batchId: string }
   return { databasePath, inbox, batchId: batch.id };
 };
 
-const acceptedLaunch = (inbox: BrainInbox, batchId: string, runId = "run:1") => {
+const acceptedLaunch = (inbox: BrainInbox, batchId: string, runId = "run:1", sourceSurfaceId = SOURCE) => {
   const launch = inbox.reserveSpecialistLaunch({
     batchId,
-    sourceSurfaceId: SOURCE,
+    sourceSurfaceId,
     specialist: "coder",
     input: { repository: "acme/widgets", issue: 7 },
   });
@@ -161,6 +163,63 @@ describe("Digest composition (#319)", () => {
       { workId: launch.id, specialist: "coder", sourceSurfaceId: SOURCE, startedAt: launch.acceptedAt, latestMilestone: { note: "coder (round 1) started", at: expect.any(String) } },
     ]);
     inbox.close();
+  });
+
+  it("NEGATIVE — a Speaker never sees another chat's work items (no cross-surface leak)", () => {
+    const OTHER = "surface:other";
+    const OTHER_CHAT = "other@g.us";
+    // One batch carrying provenance for two Surfaces, so each can launch its own work.
+    const root = mkdtempSync(join(tmpdir(), "ambient-work-leak-"));
+    roots.push(root);
+    const databasePath = join(root, "application.sqlite");
+    const archive = createConversationArchive(databasePath);
+    for (const [id, chatId] of [["arrival:source:r", CHAT], ["arrival:other:r", OTHER_CHAT]] as const) {
+      archive.append({
+        id, kind: "arrival", providerMessageId: id, chatId, senderId: "a@s.whatsapp.net", senderName: "A",
+        direction: "inbound", occurredAt: 1_000,
+        payload: { live: true, isGroup: true, messageKind: "text", text: "Implement issue 7." },
+      } satisfies ConversationArrival);
+    }
+    archive.close();
+    const chatFor = (surfaceId: string) => (surfaceId === SOURCE ? CHAT : surfaceId === OTHER ? OTHER_CHAT : undefined);
+    const inbox = createBrainInbox(databasePath, { providerChatIdForSurface: chatFor });
+    inbox.admitIntent({ sourceSurfaceId: SOURCE, interpretation: "Implement issue 7.", evidenceIds: ["arrival:source:r"] });
+    inbox.admitIntent({ sourceSurfaceId: OTHER, interpretation: "Implement issue 7.", evidenceIds: ["arrival:other:r"] });
+    const batchId = inbox.claimBatch()!.id;
+    inbox.markBatchDispatched(batchId, { dispatchId: "d", acceptedAt: "2026-07-22T16:00:01.000Z" });
+    const mine = acceptedLaunch(inbox, batchId, "run:mine", SOURCE);
+    const theirs = acceptedLaunch(inbox, batchId, "run:theirs", OTHER);
+    configureGraphStore(createGraphStore(":memory:"));
+    configureDelegationRuntime({ inbox, wake: async () => undefined, providerChatIdForSurface: chatFor });
+
+    // A whatsapp window in CHAT only sees CHAT's work; the other chat's work id never appears.
+    const input: SpeakerInput = {
+      type: "whatsapp.window",
+      windowId: "w",
+      chatId: CHAT,
+      reason: "debounce",
+      messages: [],
+      updates: [],
+    };
+    const workItems = attachGraphContext(input).graphContext?.workItems ?? [];
+    expect(workItems.map((item) => item.workId)).toEqual([mine.id]);
+    expect(workItems.some((item) => item.workId === theirs.id)).toBe(false);
+    inbox.close();
+  });
+
+  it("keeps graphContext within the byte budget with many active work items", () => {
+    const base = computeGraphDigest(createGraphStore(":memory:"), { identities: [] });
+    const many: DigestWorkItem[] = Array.from({ length: 200 }, (_, i) => ({
+      workId: `brain-work:${"a".repeat(64)}:${i}`,
+      specialist: "coder",
+      sourceSurfaceId: SOURCE,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      latestMilestone: { note: "verifier (round 1) started ".repeat(120), at: "2026-01-01T00:00:00.000Z" },
+    }));
+    const composed = composeWorkItems(base, many);
+    expect(Buffer.byteLength(JSON.stringify(composed))).toBeLessThanOrEqual(MAX_GRAPH_DIGEST_BYTES);
+    expect(composed.workItems!.length).toBeGreaterThan(0);
+    expect(composed.workItems!.length).toBeLessThan(many.length); // trimmed to fit
   });
 });
 
