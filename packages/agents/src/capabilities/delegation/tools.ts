@@ -11,6 +11,10 @@ export interface SpecialistSpec<TInput extends ActionInputSchema = ActionInputSc
   readonly description: string;
   readonly input: TInput;
   readonly workflow: WorkflowDefinition;
+  // Throws before any launch is reserved when this Specialist is mounted but unprovisioned, so the
+  // Brain hears 'unprovisioned' as a tool error instead of admitting a Flue run doomed to error at
+  // getRuntime(). Absent for Specialists that fail boot loudly (Coder) and are always provisioned.
+  readonly ensureAvailable?: () => void;
 }
 
 const nonEmptyString = v.pipe(v.string(), v.minLength(1));
@@ -55,6 +59,7 @@ export const launchSpecialistWork = async <TInput extends ActionInputSchema>(
   input: Record<string, unknown> & { batchId: string; sourceSurfaceId: string },
   spec: SpecialistSpec<TInput>,
 ): Promise<{ workId: string; runId: string }> => {
+  spec.ensureAvailable?.();
   const runtime = getDelegationRuntime();
   const { batchId, sourceSurfaceId, ...specialistInput } = input;
   const launch = runtime.inbox.reserveSpecialistLaunch({

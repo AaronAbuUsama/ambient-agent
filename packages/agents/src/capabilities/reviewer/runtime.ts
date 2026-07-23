@@ -18,3 +18,4 @@ const runtimeSlot = createFlueGlobal<ReviewerRuntime>(
 
 export const configureReviewerRuntime = (runtime: ReviewerRuntime): void => runtimeSlot.set(runtime);
 export const getReviewerRuntime = (): ReviewerRuntime => runtimeSlot.get();
+export const reviewerRuntimeConfigured = (): boolean => runtimeSlot.peek() !== undefined;

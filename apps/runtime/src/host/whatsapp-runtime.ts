@@ -13,6 +13,7 @@ import { configureDelegationRuntime } from "@ambient-agent/agents/capabilities/d
 import { reconcileSpecialistWorkAtBoot } from "@ambient-agent/agents/capabilities/delegation/bridge.ts";
 import { recoverPendingSpecialistLaunches } from "@ambient-agent/agents/capabilities/delegation/tools.ts";
 import { coderSpecialistSpec } from "@ambient-agent/agents/capabilities/coder/workflow.ts";
+import { reviewerSpecialistSpec } from "@ambient-agent/agents/capabilities/reviewer/workflow.ts";
 import { wakeBrain } from "@ambient-agent/agents/brain/dispatch.ts";
 import {
   configureBrainEffectsRuntime,
@@ -438,8 +439,13 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
       afterParticipationReady: async () => {
         await recoverPendingPrompts();
         await recoverPendingIssueFilings();
-        await recoverPendingSpecialistLaunches([coderSpecialistSpec]);
+        // Reconcile prior-process accepted work FIRST: those runs cannot still be executing, so an
+        // active/missing record is a genuine interrupt. Only then re-invoke launches that were
+        // pending (reserved but never Flue-admitted) at crash time — re-invoking them makes their
+        // runs active in THIS process, and reconciling after would wrongly interrupt live work whose
+        // real result the admit guard (bridge.ts) would then silently drop.
         await reconcileSpecialistWorkAtBoot({ inbox: brainInbox, wake: () => wakeBrain(brainInbox), getRun });
+        await recoverPendingSpecialistLaunches([coderSpecialistSpec, reviewerSpecialistSpec]);
         await wakeBrain(brainInbox);
         await options.afterParticipationReady?.();
       },
