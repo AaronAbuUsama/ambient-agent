@@ -137,11 +137,14 @@ export const createAmbientAgentApp = async ({
   const reviewerProvisioned = await configureReviewerRuntimeBinding(paths, agentSandbox);
   let whatsappControl: WhatsAppRuntimeControl | undefined;
   // The Speaker/Planner file one identity, but issues may be filed across orgs — resolve the
-  // installation-scoped client per issue owner (multi-org). Owner-only lookup: issue ops carry
-  // an owner but not always a repo. Falls back to the stored installation id on lookup failure.
+  // installation-scoped client per issue repository (multi-org). Every issue op carries a full
+  // {owner, repo}, so we route through the repo-installation lookup, which works for both User and
+  // Organization owners. A single transient lookup failure falls back to the stored installation id.
   const plannerResolver = createInstallationResolver(githubCredential);
   const app = composeSpeaker({
-    issues: createOctokitIssueRepository((owner) => plannerResolver.octokitForOwner(owner)),
+    issues: createOctokitIssueRepository((repository) =>
+      plannerResolver.octokitFor(repository.owner, repository.repo),
+    ),
     operations: issueOperations,
     policy: createIssueManagementPolicy(
       configuration.github.defaultRepository,

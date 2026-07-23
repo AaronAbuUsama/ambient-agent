@@ -220,7 +220,7 @@ describe("production Issue Management tools", () => {
   });
 
   it("resolves the installation-scoped client per issue owner when given a resolver (multi-org)", async () => {
-    // Each owner gets its own Octokit; the resolver stands in for createInstallationResolver.octokitForOwner.
+    // Each owner gets its own Octokit; the resolver stands in for createInstallationResolver.octokitFor.
     const seen: string[] = [];
     const clientFor = (owner: string) => {
       const requestFetch: typeof fetch = async (input) => {
@@ -238,9 +238,9 @@ describe("production Issue Management tools", () => {
       };
       return new Octokit({ request: { fetch: requestFetch } });
     };
-    const resolve = async (owner: string): Promise<Octokit> => {
-      seen.push(owner);
-      return clientFor(owner);
+    const resolve = async (repository: { owner: string; repo: string }): Promise<Octokit> => {
+      seen.push(repository.owner);
+      return clientFor(repository.owner);
     };
     const repository = createOctokitIssueRepository(resolve);
 

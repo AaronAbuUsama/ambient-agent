@@ -31,7 +31,7 @@ describe("createInstallationResolver — multi-org installation resolution", () 
     expect(resolveInstallationId).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to the stored installationId when the lookup fails", async () => {
+  it("falls back to the stored installationId for one call on lookup failure, without caching it", async () => {
     const resolveInstallationId = vi.fn(async () => {
       throw new Error("installation lookup unavailable");
     });
@@ -39,18 +39,26 @@ describe("createInstallationResolver — multi-org installation resolution", () 
 
     // The home account (or a transient outage) still resolves a usable client rather than throwing.
     await expect(resolver.octokitFor("home-owner", "repo")).resolves.toBeDefined();
-    expect(resolveInstallationId).toHaveBeenCalledTimes(1);
+    // The failed lookup is NOT pinned: a second call retries the lookup rather than reusing the
+    // fallback client, so a transient blip cannot permanently wedge the owner on the wrong client.
+    await expect(resolver.octokitFor("home-owner", "repo")).resolves.toBeDefined();
+    expect(resolveInstallationId).toHaveBeenCalledTimes(2);
   });
 
-  it("resolves owner-only (issue ops) through the org-installation lookup, cached per owner", async () => {
-    const resolveOwnerInstallationId = vi.fn(async () => 999);
-    const resolver = createInstallationResolver(CREDENTIAL, { resolveOwnerInstallationId });
+  it("caches the successful lookup after a transient failure recovers", async () => {
+    let attempt = 0;
+    const resolveInstallationId = vi.fn(async () => {
+      attempt += 1;
+      if (attempt === 1) throw new Error("transient");
+      return 424242;
+    });
+    const resolver = createInstallationResolver(CREDENTIAL, { resolveInstallationId });
 
-    const first = await resolver.octokitForOwner("TheCallApp");
-    const second = await resolver.octokitForOwner("thecallapp");
+    await resolver.octokitFor("TheCallApp", "widgets"); // fails → fallback, uncached
+    const recovered = await resolver.octokitFor("TheCallApp", "widgets"); // succeeds → cached
+    const cached = await resolver.octokitFor("TheCallApp", "widgets"); // reuses cache, no lookup
 
-    expect(first).toBe(second);
-    expect(resolveOwnerInstallationId).toHaveBeenCalledTimes(1);
-    expect(resolveOwnerInstallationId).toHaveBeenCalledWith("TheCallApp");
+    expect(recovered).toBe(cached);
+    expect(resolveInstallationId).toHaveBeenCalledTimes(2);
   });
 });

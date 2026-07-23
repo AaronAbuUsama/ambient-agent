@@ -118,7 +118,9 @@ export const createInspectionReporter = ({
       }
       return createUncertainWorkController({
         operations: createIssueOperationStore(paths.applicationDatabase),
-        repository: createOctokitIssueRepository((owner) => resolver.octokitForOwner(owner)),
+        repository: createOctokitIssueRepository((repository) =>
+          resolver.octokitFor(repository.owner, repository.repo),
+        ),
       });
     });
 
