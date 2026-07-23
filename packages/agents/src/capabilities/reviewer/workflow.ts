@@ -4,8 +4,8 @@ import * as v from "valibot";
 import { resolveAgentModelProfile } from "@ambient-agent/engine/model/pi-subscription.ts";
 import { parseGitHubRepository } from "@ambient-agent/engine/github/repository.ts";
 import reviewerSkill from "./SKILL.md" with { type: "skill" };
-import { archiveBytes, findReviewForHead, listChangedFiles, missingVerdictReviewEvent, renderReviewSubmission, reviewEvent, reviewHeadEligible, reviewerHeadMarker, reviewerLogin, validInlineLocations } from "./github.ts";
-import { getReviewerRuntime } from "./runtime.ts";
+import { archiveBytes, findReviewForHead, listChangedFiles, missingVerdictReviewEvent, renderReviewSubmission, reviewEvent, reviewIneligibilityReason, reviewerHeadMarker, reviewerLogin, validInlineLocations } from "./github.ts";
+import { getReviewerRuntime, reviewerRuntimeConfigured } from "./runtime.ts";
 import { reviewFindingSchema, reviewerJobInputSchema, reviewerJobRequestSchema, reviewerResultSchema, type ReviewerJobInput, type ReviewerResult } from "./schemas.ts";
 import type { SpecialistSpec } from "../delegation/tools.ts";
 
@@ -67,8 +67,9 @@ const run = async ({ harness, input, log }: { harness: FlueHarness; input: Revie
   const github = await resolveGithub(repo);
   log.info("reviewer.fetching-live-head", { repository: input.repository, pullRequest: input.pullRequest });
   const { data: pr } = await github.pulls.get({ owner: repo.owner, repo: repo.repo, pull_number: input.pullRequest });
-  if (!reviewHeadEligible(pr, input.expectedHeadSha)) {
-    return { status: "blocked", prNumber: pr.number, headSha: pr.head.sha, summary: "Review skipped because the admitted pull-request head is no longer the live eligible head." };
+  const ineligible = reviewIneligibilityReason(pr, input.expectedHeadSha);
+  if (ineligible !== undefined) {
+    return { status: "blocked", prNumber: pr.number, headSha: pr.head.sha, summary: ineligible };
   }
   const login = await reviewerLogin(github);
   const existing = await findReviewForHead(github, repo, pr.number, pr.head.sha, login);
@@ -172,4 +173,15 @@ export const reviewerSpecialistSpec: SpecialistSpec<typeof reviewerJobRequestSch
   description: START_REVIEWER_JOB_DESCRIPTION,
   input: reviewerJobRequestSchema,
   workflow: reviewer,
+  // Reviewer provisioning may soft-fail at boot (a transient App-slug lookup blip leaves the runtime
+  // unset by design, so the Coder path survives a GitHub blip). Refuse the launch honestly here
+  // rather than admitting a Flue run that would only error in getReviewerRuntime() and come back
+  // 'interrupted' — the Brain relays 'reviewer unprovisioned' to the human.
+  ensureAvailable: () => {
+    if (!reviewerRuntimeConfigured()) {
+      throw new Error(
+        "The Reviewer is unprovisioned: its GitHub App identity did not resolve at boot, so on-request PR review is unavailable until the runtime restarts and resolves it.",
+      );
+    }
+  },
 };

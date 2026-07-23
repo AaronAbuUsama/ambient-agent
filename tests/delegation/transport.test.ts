@@ -10,6 +10,7 @@ import { configureDelegationRuntime } from "../../packages/agents/src/capabiliti
 import { launchSpecialistWork } from "../../packages/agents/src/capabilities/delegation/tools.ts";
 import { coderSpecialistSpec } from "../../packages/agents/src/capabilities/coder/workflow.ts";
 import { reviewerSpecialistSpec } from "../../packages/agents/src/capabilities/reviewer/workflow.ts";
+import { configureReviewerRuntime } from "../../packages/agents/src/capabilities/reviewer/runtime.ts";
 import brain from "../../packages/agents/src/brain/agent.ts";
 import { createBrainInbox, type BrainInbox } from "../../packages/engine/src/brain/inbox.ts";
 import { createConversationArchive } from "../../packages/engine/src/intake/conversation-archive.ts";
@@ -71,6 +72,7 @@ describe("Brain-owned Specialist work", () => {
 
   it("reserves a reviewer launch keyed by pull request and an exact retry admits the workflow once", async () => {
     const { inbox, batchId } = fixture();
+    configureReviewerRuntime({ github: async () => ({}) as never, sandbox: (() => ({})) as never, workspacesRoot: "/tmp" });
     let admissions = 0;
     configureDelegationRuntime({
       inbox,
