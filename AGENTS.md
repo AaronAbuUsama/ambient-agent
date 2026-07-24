@@ -55,3 +55,11 @@ pnpm test
 
 Separate mechanically-green from runtime-proven from human-only proof; never imply a claim
 passed when it was not verified.
+
+## DAG suite
+
+Issues live on GitHub; native blocking is confirmed working. Labels: `dag:map` (map issue),
+`dag:preflighted` (pre-flight signed), `dag:needs-grilling` / `dag:needs-research` /
+`dag:needs-prototype` (readiness — absent means clear).
+Domain docs: single-context, see [`CONTEXT.md`](CONTEXT.md) and [`docs/adr/`](docs/adr/).
+Run `/dag:plan` for the suite's terms and skills — it names the next move from the chart's state.
