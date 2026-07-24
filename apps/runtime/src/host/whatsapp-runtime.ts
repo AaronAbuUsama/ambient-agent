@@ -316,6 +316,11 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   // Set once the account authenticates; a live gate reload needs it to activate a new chat's Surface
   // (#179). Undefined until online, so a reload before pairing only opens the gate — as intended.
   let authenticatedJid: string | undefined;
+  // The single source of truth for the managed-chat set, seeded from the static boot config and
+  // advanced by every reload (#179). The post-auth boot path reads THIS, not the original
+  // `options.managedChats` closure — so a reload that arrives while still pairing is not reverted
+  // when authentication completes and applies the (then-stale) startup set.
+  let currentManagedChats: readonly string[] = options.managedChats;
   const account = createWhatsAppAccount({
     storeDirectory: storeDir,
     archive: inbox.recorder,
@@ -381,7 +386,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
       }),
     );
     authenticatedJid = authenticatedAccount.jid;
-    yield* Effect.sync(() => surfaces.activateConfigured(authenticatedAccount.jid, options.managedChats));
+    yield* Effect.sync(() => surfaces.activateConfigured(authenticatedAccount.jid, currentManagedChats));
     yield* Effect.sync(() =>
       configureIntentEscalationRuntime({
         inbox: brainInbox,
@@ -428,9 +433,9 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
     if (account.initialArchiveReady !== undefined && options.sessionFactory === undefined) {
       yield* Effect.promise(() => account.initialArchiveReady!());
       for (const state of historicalReplay.states()) {
-        if (!options.managedChats.includes(state.chatId)) historicalReplay.disable(state.chatId);
+        if (!currentManagedChats.includes(state.chatId)) historicalReplay.disable(state.chatId);
       }
-      for (const chatId of options.managedChats) {
+      for (const chatId of currentManagedChats) {
         const state = historicalReplay.get(chatId);
         if (state === undefined) historicalReplay.admit(chatId);
         else if (state.mode === "disabled") historicalReplay.retry(chatId);
@@ -512,6 +517,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   });
   return {
     reloadManagedChats: (chatIds) => {
+      currentManagedChats = chatIds;
       gate.reload(chatIds);
       // Re-run the SAME boot operation against the new set (#179): activateConfigured retires every
       // active Surface not in the set and (re)activates the ones in it, preserving surface_ids for
@@ -529,7 +535,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
       if (chatId === undefined) {
         throw new WhatsAppSmokeCanaryError(409, "No dedicated smoke canary group is configured.");
       }
-      if (!options.managedChats.some((managed) => managed.toLowerCase() === chatId.toLowerCase())) {
+      if (!currentManagedChats.some((managed) => managed.toLowerCase() === chatId.toLowerCase())) {
         throw new WhatsAppSmokeCanaryError(400, "The configured smoke canary group is not a Managed Chat.");
       }
       if (activeCanary !== undefined) {

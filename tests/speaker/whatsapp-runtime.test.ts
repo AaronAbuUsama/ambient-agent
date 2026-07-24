@@ -677,6 +677,57 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
     await runtime.stop();
   });
 
+  it("applies a reload that arrived during pairing once auth completes, not the startup set (#179)", async () => {
+    const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
+    archive.close();
+    // A session that stays pre-online until released — the pairing/authenticating window in which a
+    // reload can arrive before the post-auth Surface activation runs.
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const statusListeners = new Set<(status: Status) => void | Promise<void>>();
+    const session = {
+      onStatus(listener: (status: Status) => void | Promise<void>) {
+        statusListeners.add(listener);
+        return () => statusListeners.delete(listener);
+      },
+      onMessage: () => () => undefined,
+      onUpdate: () => () => undefined,
+      onConversationSync: () => () => undefined,
+      async start() {
+        await barrier;
+        for (const listener of statusListeners) await listener({ phase: "online" });
+      },
+      async stop() {},
+      identity: () => ({ jid: "15550000000:7@s.whatsapp.net" }),
+    } as unknown as WhatsAppSession;
+
+    const runtime = startWhatsAppRuntime({
+      storeDirectory,
+      applicationDatabase,
+      managedChats: [CHAT],
+      sessionFactory: () => session,
+    });
+    const jid = "15550000000:7@s.whatsapp.net";
+
+    // The reload lands WHILE still pairing — auth has not completed, so no Surface exists yet.
+    runtime.reloadManagedChats([CHAT, OTHER_CHAT]);
+    const midPairing = createSurfaceRegistry(applicationDatabase);
+    expect(midPairing.activeSurface(jid, OTHER_CHAT)).toBeUndefined();
+    midPairing.close();
+
+    // Let authentication finish: the post-auth activation must apply the RELOADED set, not the
+    // original [CHAT] the runtime was constructed with.
+    release();
+    await vi.waitFor(() => expect(getWhatsAppRuntimeStatus().phase).toBe("online"));
+    const afterAuth = createSurfaceRegistry(applicationDatabase);
+    await vi.waitFor(() => expect(afterAuth.activeSurface(jid, OTHER_CHAT)).toMatchObject({ providerChatId: OTHER_CHAT }));
+    expect(afterAuth.activeSurface(jid, CHAT)).toMatchObject({ providerChatId: CHAT });
+    afterAuth.close();
+    await runtime.stop();
+  });
+
   it("opens a reaction-only Window and carries it into Speaker while excluding receipts", async () => {
     const { archive, storeDirectory } = temporaryArchive();
     const fake = fakeSession();
