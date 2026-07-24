@@ -552,6 +552,91 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
     archive.close();
   });
 
+  it("engages a chat added by a live gate reload mid-stream, with no restart (#179 L6)", async () => {
+    const { archive, storeDirectory } = temporaryArchive();
+    const fake = fakeSession();
+    const gate = makeManagedChatGate([CHAT]);
+    const inbox = createManagedChatInbox(archive, { allowed: gate.allowed });
+    const account = createWhatsAppAccount({
+      storeDirectory,
+      archive: inbox.recorder,
+      sessionFactory: () => fake.session,
+    });
+    await account.authenticate({});
+    const dispatches: SpeakerDispatchRequest[] = [];
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* Effect.forkScoped(
+            runWhatsAppSession(account.session(), {
+              gate,
+              history: archive,
+              inbox,
+              coalescer: { debounceWindow: Duration.millis(10), maxWait: Duration.millis(20) },
+              dispatch: async (request) => {
+                dispatches.push(request);
+                return { dispatchId: `dispatch-${dispatches.length}`, acceptedAt: "2026-07-24T00:00:00.000Z" };
+              },
+            }),
+          );
+          yield* Effect.yieldNow;
+
+          // Before the reload the added chat is gated out — its message never dispatches.
+          yield* Effect.promise(async () => {
+            for (const listener of fake.messageListeners) {
+              await listener(inbound({ id: "pre-reload-other", chatId: OTHER_CHAT, text: "still gated out" }));
+            }
+          });
+          yield* Effect.sleep(Duration.millis(40));
+          expect(dispatches).toEqual([]);
+
+          // Live reload of the gate — no restart, the same session and stream stay up.
+          gate.reload([CHAT, OTHER_CHAT]);
+
+          // The previously-managed chat still works AND the newly added chat now engages.
+          yield* Effect.promise(async () => {
+            for (const listener of fake.messageListeners) {
+              await listener(inbound({ id: "post-reload-managed", chatId: CHAT, text: "unchanged path" }));
+              await listener(inbound({ id: "post-reload-other", chatId: OTHER_CHAT, text: "now admitted" }));
+            }
+          });
+          yield* Effect.sleep(Duration.millis(60));
+
+          const chats = dispatches.map((request) => request.id).sort();
+          expect(chats).toEqual([CHAT, OTHER_CHAT]);
+        }),
+      ),
+    );
+
+    await account.stop();
+    archive.close();
+  });
+
+  it("reloadManagedChats updates the gate without re-establishing the WhatsApp connection (#179)", async () => {
+    const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
+    archive.close();
+    let sessionsCreated = 0;
+    const runtime = startWhatsAppRuntime({
+      storeDirectory,
+      applicationDatabase,
+      managedChats: [CHAT],
+      sessionFactory: () => {
+        sessionsCreated += 1;
+        return fakeSession().session;
+      },
+    });
+    await vi.waitFor(() => expect(getWhatsAppRuntimeStatus().phase).toBe("online"));
+    expect(sessionsCreated).toBe(1);
+
+    // A reload rebuilds the authorization Set only — it never spins up a second session or re-pairs.
+    runtime.reloadManagedChats([CHAT, OTHER_CHAT]);
+
+    expect(sessionsCreated).toBe(1);
+    expect(getWhatsAppRuntimeStatus().phase).toBe("online");
+    await runtime.stop();
+  });
+
   it("opens a reaction-only Window and carries it into Speaker while excluding receipts", async () => {
     const { archive, storeDirectory } = temporaryArchive();
     const fake = fakeSession();

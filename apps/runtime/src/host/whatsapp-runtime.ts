@@ -217,6 +217,12 @@ export const getWhatsAppRuntimeStatus = (): WhatsAppRuntimeStatus => structuredC
 
 export interface WhatsAppRuntimeControl {
   readonly stop: () => Promise<void>;
+  /**
+   * Live-reload the managed-chat authorization gate in place (#179): the newly added chats engage the
+   * gate with no restart and the WhatsApp stream is untouched. Only the authorization Set changes —
+   * the session, model, and port are restart-only and are never reached from here.
+   */
+  readonly reloadManagedChats: (chatIds: readonly string[]) => void;
   readonly synchronizedChats: () => Promise<readonly ChatCandidate[]>;
   readonly smokeCanary: (
     nonce: string,
@@ -501,6 +507,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
     }
   });
   return {
+    reloadManagedChats: (chatIds) => gate.reload(chatIds),
     synchronizedChats: async () => await account.synchronizedChats(),
     smokeCanary: async (nonce, timeoutMillis) => {
       const chatId = options.canaryChat;

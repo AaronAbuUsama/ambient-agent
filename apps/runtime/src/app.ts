@@ -1,3 +1,5 @@
+import { dirname, join } from "node:path";
+
 import type { Hono } from "hono";
 
 import { configureBraintrustTracing } from "@ambient-agent/engine/braintrust.ts";
@@ -19,6 +21,8 @@ import {
   type InstallationResolver,
 } from "@ambient-agent/installation/github-app-client.ts";
 import { readProvisionedGitHubAppCredential } from "@ambient-agent/installation/configuration.ts";
+import { createManagedConfigStore } from "@ambient-agent/installation/managed-config-store.ts";
+import { applyManagedAuthorization, reloadAuthorizationOnSignal } from "./host/authorization-reload.ts";
 import { createOctokitIssueRepository } from "@ambient-agent/installation/github-issue-repository.ts";
 import { invoke } from "@flue/runtime";
 import { createFlueClient } from "@flue/sdk";
@@ -151,15 +155,29 @@ export const createAmbientAgentApp = async ({
     allowedRepositories: configuration.github.allowedRepositories,
     surfaceRepositories: configuration.github.surfaceRepositories,
   });
+  // S8 (#179): the DB-backed live source for authorization-knob reloads. Re-seeded from config.json
+  // (the durable source of truth) at every boot; a live change writes both, then a SIGHUP reload
+  // rebuilds the gate Set and repo allowlists in place — no restart, WhatsApp stream untouched. It is
+  // its own SQLite file, deliberately NOT a table in the audited application database: that schema is
+  // migration-governed and rejects unknown tables, and this store is ephemeral (rebuilt from config).
+  const managedConfigStore = createManagedConfigStore(
+    join(dirname(paths.applicationDatabase), "managed-config.sqlite"),
+  );
+  managedConfigStore.replace(configuration);
+  // Hoisted so the SIGHUP reload can rebuild them in place. `reviewRepositories` is the exact mutable
+  // array the ingress reads live (see ingress `review.repositories`), so splicing it updates the
+  // Reviewer allowlist with no re-wiring.
+  const policy = createIssueManagementPolicy(
+    configuration.github.defaultRepository,
+    configuration.github.allowedRepositories,
+  );
+  const reviewRepositories = [...configuration.github.reviewRepositories];
   const app = composeSpeaker({
     issues: createOctokitIssueRepository((repository) =>
       plannerResolver.octokitFor(repository.owner, repository.repo),
     ),
     operations: issueOperations,
-    policy: createIssueManagementPolicy(
-      configuration.github.defaultRepository,
-      configuration.github.allowedRepositories,
-    ),
+    policy,
     ingress: {
       settings: {
         databasePath: paths.applicationDatabase,
@@ -170,7 +188,7 @@ export const createAmbientAgentApp = async ({
       admit: (event) => admitGitHubEventToBrain(event),
       ...(reviewerProvisioned ? {
         review: {
-          repositories: configuration.github.reviewRepositories,
+          repositories: reviewRepositories,
           launch: async (input) => {
             const admitted = await invoke(reviewer, { input });
             return admitted;
@@ -228,6 +246,16 @@ export const createAmbientAgentApp = async ({
     whatsappControl = whatsapp;
     stopRuntimeOnSignal(whatsapp);
   });
+
+  // S8 (#179): reload the authorization knobs in place on SIGHUP. Only the gate Set and the two repo
+  // allowlists are rebuilt; the WhatsApp session, model provider, port and sandbox stay restart-only.
+  reloadAuthorizationOnSignal(() =>
+    applyManagedAuthorization(managedConfigStore.current(), {
+      reloadManagedChats: (chatIds) => whatsappControl?.reloadManagedChats(chatIds),
+      policy,
+      reviewRepositories,
+    }),
+  );
 
   return app;
 };
