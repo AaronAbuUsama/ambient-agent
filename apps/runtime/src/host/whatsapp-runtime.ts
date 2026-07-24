@@ -40,6 +40,7 @@ import { configLayer, type CoalescerConfigValues } from "@ambient-agent/engine/c
 import { botIdsOf, whatsappEventSource } from "@ambient-agent/engine/coalescer/whatsapp.ts";
 import { createConversationArchive } from "@ambient-agent/engine/intake/conversation-archive.ts";
 import { createBrainInbox } from "@ambient-agent/engine/brain/inbox.ts";
+import { configureGitHubUpInbox } from "@ambient-agent/engine/github/up-inbox.ts";
 import { createHistoricalReplayStore } from "@ambient-agent/engine/intake/historical-replay.ts";
 import { createScribeInbox } from "@ambient-agent/engine/scribe/inbox.ts";
 import {
@@ -254,8 +255,6 @@ export interface WhatsAppRuntimeOptions {
   readonly observeActivity?: (observer: SpeakerObserver) => () => void;
   /** Run once after the participation port is wired — e.g. the delegation boot sweep. */
   readonly afterParticipationReady?: () => void;
-  /** Resolve which repository a managed chat's Brain-filed issues land in (#317). */
-  readonly repositoryForChat?: (providerChatId: string) => string;
 }
 
 export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppRuntimeControl => {
@@ -265,6 +264,28 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   const surfaces = createSurfaceRegistry(options.applicationDatabase);
   const brainInbox = createBrainInbox(options.applicationDatabase, {
     providerChatIdForSurface: (surfaceId) => surfaces.activeBinding(surfaceId)?.providerChatId,
+  });
+  // GitHub events flow UP into the single Brain up-inbox (§4). Admission is the durable step and is
+  // always safe. Waking the Brain is gated on `brainReady`: dispatching a Batch before the Brain's
+  // Effects/participation runtime exists would mark the Batch dispatched, then fail its tools, and the
+  // wake-guard would never re-dispatch it — a wedge. Until ready, admitted events wait for the boot
+  // sweep in afterParticipationReady (which wakes once everything is configured); after ready, each
+  // admission wakes directly.
+  let brainReady = false;
+  // Flipped false when this runtime tears down (fiber failure, reconnect, logged_out) while the HTTP app
+  // may keep serving. Without it the port's captured brainInbox is a finalized SQLite handle: admit would
+  // throw, the ingress would settle 'failed' → 200, and the delivery would be lost with no retry. Deferring
+  // (undefined → 503) lets GitHub redeliver to the next live runtime instead.
+  let brainAlive = true;
+  configureGitHubUpInbox(async (event) => {
+    if (!brainAlive) return undefined;
+    const admitted = brainInbox.admitGitHubEvent(event);
+    if (brainReady) {
+      void wakeBrain(brainInbox).catch((cause) =>
+        getLogger("github").error({ event: "github.up-inbox.wake-failed", error: errorMessage(cause) }, "wake"),
+      );
+    }
+    return { id: admitted.id, admittedAt: admitted.admittedAt };
   });
   const deliveries = createSurfaceDeliveryStore(options.applicationDatabase, {
     providerChatIdForSurface: (surfaceId) => surfaces.activeBinding(surfaceId)?.providerChatId,
@@ -316,7 +337,14 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   const program = Effect.gen(function* () {
     yield* Effect.addFinalizer(() => Effect.sync(() => archive.close()));
     yield* Effect.addFinalizer(() => Effect.sync(() => surfaces.close()));
-    yield* Effect.addFinalizer(() => Effect.sync(() => brainInbox.close()));
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        // Stop the up-inbox port before the handle is finalized, so a webhook in flight during teardown
+        // defers (503) rather than throwing on a closed SQLite handle and being lost.
+        brainAlive = false;
+        brainInbox.close();
+      }),
+    );
     yield* Effect.addFinalizer(() => Effect.sync(() => deliveries.close()));
     yield* Effect.addFinalizer(() => Effect.sync(unsubscribeDirectiveOutcomes));
     yield* Effect.addFinalizer(() => Effect.sync(() => historicalReplay.close()));
@@ -358,14 +386,10 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
         // Resolved lazily at file time: composeSpeaker configures the issue-management runtime
         // process-global at app boot, well before any Batch files an issue.
         fileIssue: (request, effectId) => createIssueFiler(getIssueManagementRuntime())(request, effectId),
-        repositoryForSurface: (surfaceId) => {
-          if (options.repositoryForChat === undefined) {
-            throw new Error("Issue-filing repository routing is not configured.");
-          }
-          const binding = surfaces.activeBinding(surfaceId);
-          if (binding === undefined) throw new Error(`Surface ${surfaceId} has no active provider binding.`);
-          return options.repositoryForChat(binding.providerChatId);
-        },
+        // Bridge a Graph thread's chatId → its active Surface id, so the Brain can notify the Surface
+        // that works_on a GitHub event's repository (§4 affirmative routing).
+        resolveSurfaceForChat: (providerChatId) =>
+          surfaces.activeSurface(authenticatedAccount.jid, providerChatId)?.id,
         deliverPrompt: (effect) => {
           const binding = surfaces.activeBinding(effect.directive.surfaceId);
           if (binding === undefined) {
@@ -446,6 +470,9 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
         // real result the admit guard (bridge.ts) would then silently drop.
         await reconcileSpecialistWorkAtBoot({ inbox: brainInbox, wake: () => wakeBrain(brainInbox), getRun });
         await recoverPendingSpecialistLaunches([coderSpecialistSpec, reviewerSpecialistSpec]);
+        // Everything the Brain's tools need is now configured. Open the GitHub up-inbox wake gate, then
+        // sweep — this dispatches any event admitted during boot, and future admissions wake directly.
+        brainReady = true;
         await wakeBrain(brainInbox);
         await options.afterParticipationReady?.();
       },

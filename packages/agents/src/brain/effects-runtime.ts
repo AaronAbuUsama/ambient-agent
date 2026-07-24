@@ -18,8 +18,13 @@ export interface BrainEffectsRuntime {
   /** File one GitHub issue durably. Absent when this runtime carries no GitHub write binding.
    * `effectId` scopes the filing's Operation Identity so a recovered attempt reconciles, not re-creates. */
   readonly fileIssue?: (request: FileIssueRequest, effectId: string) => Promise<FileIssueOutcome>;
-  /** Resolve the repository a Surface's issues are filed into. Absent without a GitHub binding. */
-  readonly repositoryForSurface?: (surfaceId: string) => string;
+  /**
+   * Resolve a provider chat id (as it appears on a Graph `thread` entity) to its active Surface id.
+   * The bridge the Brain needs to notify the Surface that works_on a GitHub event's repository:
+   * `lookup_graph(repository) → works_on → thread.chatId → resolveSurfaceForChat → prompt_speaker`.
+   * Returns undefined for an unknown/unbound chat (fail-closed — no participation is granted).
+   */
+  readonly resolveSurfaceForChat?: (providerChatId: string) => string | undefined;
 }
 
 const runtimeSlot = createFlueGlobal<BrainEffectsRuntime>(

@@ -13,10 +13,14 @@ import {
 import {
   createFileIssueTool,
   createPromptSpeakerTool,
+  createResolveSurfaceTool,
   createSettleBrainBatchTool,
   createStaySilentTool,
 } from "../../packages/agents/src/brain/tools.ts";
 import { createIssueFiler } from "../../packages/agents/src/brain/issue-filing.ts";
+import { brainGraphContext } from "../../packages/agents/src/brain/agent.ts";
+import { createGraphTools } from "../../packages/agents/src/capabilities/graph/tools.ts";
+import { createGraphStore } from "../../packages/engine/src/graph/store.ts";
 import { createIssueManagementPolicy } from "../../packages/agents/src/capabilities/issue-management/runtime.ts";
 import { createIssueOperationStore } from "../../packages/engine/src/github/operation-store.ts";
 import { createFakeIssueRepository } from "../../packages/test-support/src/fake-issue-repository.ts";
@@ -107,6 +111,151 @@ describe("Brain Effects and settlement", () => {
     inbox.close();
   });
 
+  it("lets the Brain notify a Surface about a GitHub-only Batch, citing the event's own id as evidence", () => {
+    const root = mkdtempSync(join(tmpdir(), "ambient-brain-github-evidence-"));
+    roots.push(root);
+    const databasePath = join(root, "application.sqlite");
+    // A binding exists so the Surface can be prompted, but there is NO conversation_events row —
+    // the only evidence is the GitHub event itself, which must be accepted (S1: the Brain must be
+    // able to speak about a GitHub event, not only stay silent).
+    const archive = createConversationArchive(databasePath);
+    archive.close();
+    const inbox = createBrainInbox(databasePath, {
+      providerChatIdForSurface: (surfaceId) => (surfaceId === SURFACE ? CHAT : undefined),
+      now: () => "2026-07-22T12:00:00.000Z",
+    });
+    const event = inbox.admitGitHubEvent({
+      githubAppId: "app-planner",
+      deliveryId: "gh-delivery-1",
+      eventName: "issues",
+      action: "opened",
+      repository: "acme/widgets",
+      summary: "Issue #7 opened in acme/widgets",
+      detail: { issue: { number: 7 } },
+    });
+    const claimed = inbox.claimBatch();
+    if (claimed === undefined) throw new Error("Expected a GitHub-only Brain Batch");
+    expect(claimed.githubEvents).toEqual([event]);
+    inbox.markBatchDispatched(claimed.id, { dispatchId: "dispatch:brain", acceptedAt: "2026-07-22T12:00:01.000Z" });
+
+    expect(() =>
+      inbox.recordPrompt({
+        batchId: claimed.id,
+        surfaceId: SURFACE,
+        objective: "Tell the team a new issue was opened.",
+        brief: { summary: "acme/widgets#7 was opened.", evidenceIds: [event.id] },
+      }),
+    ).not.toThrow();
+    // A fabricated evidence id that resolves in neither table is still rejected — the check stays strict.
+    expect(() =>
+      inbox.recordPrompt({
+        batchId: claimed.id,
+        surfaceId: SURFACE,
+        objective: "Invalid.",
+        brief: { summary: "bad.", evidenceIds: ["github-event:does-not-exist"] },
+      }),
+    ).toThrow(/does not exist/);
+    inbox.close();
+  });
+
+  it("bridges a repo-correlated thread's chatId to a Surface the Brain can prompt about a GitHub event", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ambient-brain-github-notify-"));
+    roots.push(root);
+    const databasePath = join(root, "application.sqlite");
+    const archive = createConversationArchive(databasePath);
+    archive.close();
+    const inbox = createBrainInbox(databasePath, {
+      providerChatIdForSurface: (surfaceId) => (surfaceId === SURFACE ? CHAT : undefined),
+      now: () => "2026-07-22T12:00:00.000Z",
+    });
+    const event = inbox.admitGitHubEvent({
+      githubAppId: "app-planner",
+      deliveryId: "gh-notify-1",
+      eventName: "issues",
+      action: "opened",
+      repository: "acme/widgets",
+      summary: "Issue #7 opened in acme/widgets",
+      detail: { issue: { number: 7 } },
+    });
+    const claimed = inbox.claimBatch();
+    if (claimed === undefined) throw new Error("Expected a GitHub-only Brain Batch");
+    inbox.markBatchDispatched(claimed.id, { dispatchId: "dispatch:brain", acceptedAt: "2026-07-22T12:00:01.000Z" });
+
+    const delivered: unknown[] = [];
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async (effect) => {
+        delivered.push(effect.directive);
+        return { dispatchId: "dispatch:speaker:gh", acceptedAt: "2026-07-22T12:00:02.000Z" };
+      },
+      // The bridge under test: the Graph thread's chatId (CHAT) resolves to its Surface UUID.
+      resolveSurfaceForChat: (providerChatId) => (providerChatId === CHAT ? SURFACE : undefined),
+    });
+
+    // 1) resolve_surface turns the thread's chatId into a Surface id (not a chatId).
+    const resolution = createResolveSurfaceTool().run({ input: { providerChatId: CHAT } });
+    expect(resolution).toEqual({ resolved: true, surfaceId: SURFACE });
+    // 2) prompt_speaker accepts that Surface id and the GitHub event's own id as evidence.
+    const prompt = await createPromptSpeakerTool().run({ input: {
+      batchId: claimed.id,
+      surfaceId: (resolution as { surfaceId: string }).surfaceId,
+      objective: "Tell the team a new issue was opened.",
+      brief: { summary: "acme/widgets#7 was opened.", evidenceIds: [event.id] },
+    } });
+    expect(prompt).toMatchObject({ kind: "prompt_speaker", status: "accepted" });
+    expect(delivered).toHaveLength(1);
+    // An unknown chat resolves to no Surface — observation never grants participation.
+    expect(createResolveSurfaceTool().run({ input: { providerChatId: "stranger@g.us" } })).toEqual({ resolved: false });
+    inbox.close();
+  });
+
+  it("allow-lists a GitHub event's own id as Graph-write evidence for a GitHub-only Batch", () => {
+    const root = mkdtempSync(join(tmpdir(), "ambient-brain-github-graph-"));
+    roots.push(root);
+    const databasePath = join(root, "application.sqlite");
+    createConversationArchive(databasePath).close();
+    const inbox = createBrainInbox(databasePath, {
+      providerChatIdForSurface: () => undefined,
+      now: () => "2026-07-22T12:00:00.000Z",
+    });
+    const event = inbox.admitGitHubEvent({
+      githubAppId: "app-planner",
+      deliveryId: "gh-graph-1",
+      eventName: "issues",
+      action: "opened",
+      repository: "acme/widgets",
+      summary: "Issue #7 opened in acme/widgets",
+      detail: { issue: { number: 7 } },
+    });
+    const claimed = inbox.claimBatch();
+    if (claimed === undefined) throw new Error("Expected a GitHub-only Brain Batch");
+    inbox.markBatchDispatched(claimed.id, { dispatchId: "dispatch:brain", acceptedAt: "2026-07-22T12:00:01.000Z" });
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async () => { throw new Error("not expected"); },
+    });
+
+    // The Brain's Graph-write context allow-lists the GitHub event's own id.
+    const context = brainGraphContext();
+    expect(context.evidenceIds).toContain(event.id);
+
+    // So a record_entity ruling citing that id is accepted (not rejected by the evidence gate).
+    const graph = createGraphStore(":memory:");
+    const recordEntity = createGraphTools(graph, context).find((tool) => tool.name === "record_entity")!;
+    const result = recordEntity.run({
+      input: { entity: { type: "topic", label: "acme/widgets issue #7", confidence: 0.9 }, evidenceIds: [event.id] },
+    });
+    expect(result).toMatchObject({ type: "topic" });
+    // A fabricated id outside the Batch is still rejected — the gate stays strict.
+    expect(() =>
+      recordEntity.run({ input: { entity: { type: "topic", label: "x", confidence: 0.9 }, evidenceIds: ["not-in-batch"] } }),
+    ).toThrow();
+    graph.close();
+    inbox.close();
+  });
+
   it("records deliberate silence as a completed local effect before settlement", async () => {
     const { inbox, batchId } = openFixture();
     configureBrainEffectsRuntime({
@@ -176,12 +325,12 @@ describe("Brain Effects and settlement", () => {
       wake: async () => undefined,
       deliverPrompt: async () => { throw new Error("not expected"); },
       fileIssue: filer,
-      repositoryForSurface: () => REPOSITORY,
     });
 
     const filed = await createFileIssueTool().run({ input: {
       batchId,
       surfaceId: SURFACE,
+      repository: REPOSITORY,
       kind: "bug",
       title: "The scheduler drops a queued job",
       body: "Expected the queued job to run; it disappears after restart.",
@@ -195,6 +344,34 @@ describe("Brain Effects and settlement", () => {
       url: "https://github.com/acme/widgets/issues/1",
     });
     await expect(createSettleBrainBatchTool().run({ input: { batchId } })).resolves.toMatchObject({ status: "settled" });
+    operations.close();
+    inbox.close();
+  });
+
+  it("fails closed when file_issue omits the repository — never silently files into a default", async () => {
+    const { inbox, batchId } = openFixture();
+    const { repository, operations, filer } = filingRuntime();
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async () => { throw new Error("not expected"); },
+      fileIssue: filer,
+    });
+
+    // A chat with no resolvable Graph relation must NOT silently misfile into defaultRepository —
+    // routing is the Brain's, never a config default (§8). The omission surfaces a clear error.
+    await expect(
+      createFileIssueTool().run({ input: {
+        batchId,
+        surfaceId: SURFACE,
+        kind: "bug",
+        title: "Unmapped chat needs a repository",
+        body: "No Graph relation resolves a repository for this chat.",
+      } }),
+    ).rejects.toThrow(/requires an explicit repository/);
+    // No issue was created and no filing effect was recorded.
+    expect(repository.events().some((event) => event.kind === "create")).toBe(false);
+    expect(inbox.effects(batchId).filter((effect) => effect.kind === "file_issue")).toHaveLength(0);
     operations.close();
     inbox.close();
   });
@@ -221,7 +398,6 @@ describe("Brain Effects and settlement", () => {
       wake: async () => undefined,
       deliverPrompt: async () => { throw new Error("not expected"); },
       fileIssue: filer,
-      repositoryForSurface: () => REPOSITORY,
     });
 
     const recovered = await deliverIssueFilingEffect(pending);
@@ -241,7 +417,6 @@ describe("Brain Effects and settlement", () => {
       wake: async () => undefined,
       deliverPrompt: async () => { throw new Error("not expected"); },
       fileIssue: filer,
-      repositoryForSurface: () => REPOSITORY,
     });
     const pending = inbox.recordIssueFiling({
       batchId,
@@ -274,13 +449,13 @@ describe("Brain Effects and settlement", () => {
       wake: async () => undefined,
       deliverPrompt: async () => { throw new Error("not expected"); },
       fileIssue: filer,
-      repositoryForSurface: () => REPOSITORY,
     });
     repository.failNextCreate(Object.assign(new Error("Not Found"), { status: 404 }));
 
     const filed = await createFileIssueTool().run({ input: {
       batchId,
       surfaceId: SURFACE,
+      repository: REPOSITORY,
       kind: "bug",
       title: "Filing into an archived repository",
       body: "The repository was archived after this chat was mapped.",
@@ -307,7 +482,6 @@ describe("Brain Effects and settlement", () => {
       wake: async () => undefined,
       deliverPrompt: async () => { throw new Error("not expected"); },
       fileIssue: async () => { throw Object.assign(new Error("ETIMEDOUT"), { code: "ETIMEDOUT" }); },
-      repositoryForSurface: () => REPOSITORY,
     });
     // A rejection here would be an Effect defect that kills the WhatsApp fiber; recovery must swallow it.
     await expect(recoverPendingIssueFilings()).resolves.toBeUndefined();
