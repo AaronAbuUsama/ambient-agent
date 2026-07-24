@@ -513,12 +513,15 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   return {
     reloadManagedChats: (chatIds) => {
       gate.reload(chatIds);
-      // Additively register a Surface for each authorized chat so a newly-allowed chat can escalate
-      // an intent and reach an active Surface — not merely pass the gate (#179). Idempotent for chats
-      // that already have one; never retires others. A no-op until the account is authenticated.
-      if (authenticatedJid !== undefined) {
-        for (const chatId of chatIds) surfaces.activate(authenticatedJid, chatId);
-      }
+      // Re-run the SAME boot operation against the new set (#179): activateConfigured retires every
+      // active Surface not in the set and (re)activates the ones in it, preserving surface_ids for
+      // chats that remain. So a newly-authorized chat gains a Surface it can escalate through, AND a
+      // de-authorized chat's outbound Surface is retired — closing outbound Brain delivery in lockstep
+      // with the gate closing inbound. A no-op until the account is authenticated.
+      // ponytail: correct because every Surface binding originates from managedChats (boot + this
+      // reload are the only writers). If a Brain-opened DM binding outside managedChats is ever added,
+      // switch this to a configured-only retirement so it isn't swept.
+      if (authenticatedJid !== undefined) surfaces.activateConfigured(authenticatedJid, chatIds);
     },
     synchronizedChats: async () => await account.synchronizedChats(),
     smokeCanary: async (nonce, timeoutMillis) => {

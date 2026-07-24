@@ -637,7 +637,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
     await runtime.stop();
   });
 
-  it("activates a Surface for a chat added by a live reload, so it can escalate an intent (#179 fix 2)", async () => {
+  it("adds a Surface for a newly-authorized chat and retires it for a de-authorized one (#179 fix 2)", async () => {
     const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
     archive.close();
     const runtime = startWhatsAppRuntime({
@@ -654,14 +654,26 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
     expect(before.activeSurface(jid, OTHER_CHAT)).toBeUndefined();
     before.close();
 
+    // ADD: both chats authorized → both have an active Surface; the pre-existing one keeps its id.
     runtime.reloadManagedChats([CHAT, OTHER_CHAT]);
+    const added = createSurfaceRegistry(applicationDatabase);
+    const originalSurfaceId = added.activeSurface(jid, CHAT)?.id;
+    const otherSurfaceId = added.activeSurface(jid, OTHER_CHAT)?.id;
+    expect(otherSurfaceId).toBeDefined();
+    expect(originalSurfaceId).toBeDefined();
+    added.close();
 
-    // The reload registered a Surface additively — the new chat can now reach an active Surface, and
-    // the pre-existing chat's Surface is untouched (never retired).
-    const after = createSurfaceRegistry(applicationDatabase);
-    expect(after.activeSurface(jid, OTHER_CHAT)).toMatchObject({ providerChatId: OTHER_CHAT });
-    expect(after.activeSurface(jid, CHAT)).toMatchObject({ providerChatId: CHAT });
-    after.close();
+    // REMOVE: drop OTHER_CHAT → its Surface is retired. Brain directive delivery resolves through
+    // `activeBinding(surfaceId)` (whatsapp-runtime.ts), so a retired binding means outbound delivery
+    // can no longer resolve — enforcement closes outbound in lockstep with the gate closing inbound.
+    // CHAT is untouched and keeps its surface_id.
+    runtime.reloadManagedChats([CHAT]);
+    const removed = createSurfaceRegistry(applicationDatabase);
+    expect(removed.activeSurface(jid, OTHER_CHAT)).toBeUndefined();
+    expect(removed.activeBinding(otherSurfaceId!)).toBeUndefined();
+    expect(removed.activeSurface(jid, CHAT)).toMatchObject({ id: originalSurfaceId, providerChatId: CHAT });
+    expect(removed.activeBinding(originalSurfaceId!)).toMatchObject({ providerChatId: CHAT });
+    removed.close();
     await runtime.stop();
   });
 
