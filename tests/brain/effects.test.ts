@@ -18,6 +18,9 @@ import {
   createStaySilentTool,
 } from "../../packages/agents/src/brain/tools.ts";
 import { createIssueFiler } from "../../packages/agents/src/brain/issue-filing.ts";
+import { brainGraphContext } from "../../packages/agents/src/brain/agent.ts";
+import { createGraphTools } from "../../packages/agents/src/capabilities/graph/tools.ts";
+import { createGraphStore } from "../../packages/engine/src/graph/store.ts";
 import {
   configureIssueManagementRuntime,
   createIssueManagementPolicy,
@@ -207,6 +210,52 @@ describe("Brain Effects and settlement", () => {
     expect(delivered).toHaveLength(1);
     // An unknown chat resolves to no Surface — observation never grants participation.
     expect(createResolveSurfaceTool().run({ input: { providerChatId: "stranger@g.us" } })).toEqual({ resolved: false });
+    inbox.close();
+  });
+
+  it("allow-lists a GitHub event's own id as Graph-write evidence for a GitHub-only Batch", () => {
+    const root = mkdtempSync(join(tmpdir(), "ambient-brain-github-graph-"));
+    roots.push(root);
+    const databasePath = join(root, "application.sqlite");
+    createConversationArchive(databasePath).close();
+    const inbox = createBrainInbox(databasePath, {
+      providerChatIdForSurface: () => undefined,
+      now: () => "2026-07-22T12:00:00.000Z",
+    });
+    const event = inbox.admitGitHubEvent({
+      githubAppId: "app-planner",
+      deliveryId: "gh-graph-1",
+      eventName: "issues",
+      action: "opened",
+      repository: "acme/widgets",
+      summary: "Issue #7 opened in acme/widgets",
+      detail: { issue: { number: 7 } },
+    });
+    const claimed = inbox.claimBatch();
+    if (claimed === undefined) throw new Error("Expected a GitHub-only Brain Batch");
+    inbox.markBatchDispatched(claimed.id, { dispatchId: "dispatch:brain", acceptedAt: "2026-07-22T12:00:01.000Z" });
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async () => { throw new Error("not expected"); },
+    });
+
+    // The Brain's Graph-write context allow-lists the GitHub event's own id.
+    const context = brainGraphContext();
+    expect(context.evidenceIds).toContain(event.id);
+
+    // So a record_entity ruling citing that id is accepted (not rejected by the evidence gate).
+    const graph = createGraphStore(":memory:");
+    const recordEntity = createGraphTools(graph, context).find((tool) => tool.name === "record_entity")!;
+    const result = recordEntity.run({
+      input: { entity: { type: "topic", label: "acme/widgets issue #7", confidence: 0.9 }, evidenceIds: [event.id] },
+    });
+    expect(result).toMatchObject({ type: "topic" });
+    // A fabricated id outside the Batch is still rejected — the gate stays strict.
+    expect(() =>
+      recordEntity.run({ input: { entity: { type: "topic", label: "x", confidence: 0.9 }, evidenceIds: ["not-in-batch"] } }),
+    ).toThrow();
+    graph.close();
     inbox.close();
   });
 

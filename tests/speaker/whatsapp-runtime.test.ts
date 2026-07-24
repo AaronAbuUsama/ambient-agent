@@ -301,6 +301,33 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
     }
   });
 
+  it("defers a webhook that arrives after the runtime tore down (stale port never throws or loses it)", async () => {
+    const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
+    archive.close();
+    const runtime = startWhatsAppRuntime({
+      storeDirectory,
+      applicationDatabase,
+      managedChats: [CHAT],
+      sessionFactory: () => fakeSession().session,
+    });
+    await vi.waitFor(() => expect(getWhatsAppRuntimeStatus().phase).toBe("online"));
+    await runtime.stop();
+
+    // The port's captured brainInbox is now finalized. Admission must resolve to undefined (→ the
+    // ingress defers → 503 → GitHub retries), never throw on the closed handle and be lost as a 200.
+    await expect(
+      admitGitHubEventToBrain({
+        githubAppId: "app-planner",
+        deliveryId: "post-teardown-1",
+        eventName: "issues",
+        action: "opened",
+        repository: "acme/widgets",
+        summary: "Issue #7 opened in acme/widgets",
+        detail: { issue: { number: 7 } },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("runs afterParticipationReady only after the participation port is wired (the boot-sweep seam)", async () => {
     const { archive, storeDirectory } = temporaryArchive();
     const fake = fakeSession();

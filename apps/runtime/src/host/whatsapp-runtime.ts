@@ -272,7 +272,13 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   // sweep in afterParticipationReady (which wakes once everything is configured); after ready, each
   // admission wakes directly.
   let brainReady = false;
+  // Flipped false when this runtime tears down (fiber failure, reconnect, logged_out) while the HTTP app
+  // may keep serving. Without it the port's captured brainInbox is a finalized SQLite handle: admit would
+  // throw, the ingress would settle 'failed' → 200, and the delivery would be lost with no retry. Deferring
+  // (undefined → 503) lets GitHub redeliver to the next live runtime instead.
+  let brainAlive = true;
   configureGitHubUpInbox(async (event) => {
+    if (!brainAlive) return undefined;
     const admitted = brainInbox.admitGitHubEvent(event);
     if (brainReady) {
       void wakeBrain(brainInbox).catch((cause) =>
@@ -331,7 +337,14 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   const program = Effect.gen(function* () {
     yield* Effect.addFinalizer(() => Effect.sync(() => archive.close()));
     yield* Effect.addFinalizer(() => Effect.sync(() => surfaces.close()));
-    yield* Effect.addFinalizer(() => Effect.sync(() => brainInbox.close()));
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        // Stop the up-inbox port before the handle is finalized, so a webhook in flight during teardown
+        // defers (503) rather than throwing on a closed SQLite handle and being lost.
+        brainAlive = false;
+        brainInbox.close();
+      }),
+    );
     yield* Effect.addFinalizer(() => Effect.sync(() => deliveries.close()));
     yield* Effect.addFinalizer(() => Effect.sync(unsubscribeDirectiveOutcomes));
     yield* Effect.addFinalizer(() => Effect.sync(() => historicalReplay.close()));

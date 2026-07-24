@@ -7,13 +7,11 @@ export interface GitHubUpInboxAdmission {
   readonly admittedAt: string;
 }
 
-/** The configured admission function, once the Brain inbox exists. Always yields a receipt. */
-export type GitHubUpInboxAdmit = (event: GitHubEventDraft) => Promise<GitHubUpInboxAdmission>;
-
 /**
- * What the ingress accepts. `undefined` means the up-inbox port is not wired yet (the boot window
- * between the webhook route going live and the Brain inbox being created) — the ingress must then
- * DEFER the delivery for provider redelivery, never drop it (§10 — No silent drop).
+ * What the ingress accepts (and what the runtime configures). `undefined` means the delivery must
+ * DEFER for provider redelivery, never drop (§10 — No silent drop). The runtime returns undefined in
+ * two cases: the up-inbox port is not wired yet (boot window), or the owning runtime has torn down
+ * (its Brain inbox handle is finalized). A live runtime always yields a receipt.
  */
 export type GitHubIngressAdmit = (event: GitHubEventDraft) => Promise<GitHubUpInboxAdmission | undefined>;
 
@@ -22,12 +20,12 @@ export type GitHubIngressAdmit = (event: GitHubEventDraft) => Promise<GitHubUpIn
  * configures it once the Brain inbox exists; the ingress is composed earlier, so it resolves
  * lazily — the same pattern as the Brain Effects runtime.
  */
-const port = createFlueGlobal<GitHubUpInboxAdmit>(
+const port = createFlueGlobal<GitHubIngressAdmit>(
   "github-up-inbox",
   "GitHub up-inbox admission is not configured",
 );
 
-export const configureGitHubUpInbox = (admit: GitHubUpInboxAdmit): void => port.set(admit);
+export const configureGitHubUpInbox = (admit: GitHubIngressAdmit): void => port.set(admit);
 // Returns undefined (rather than throwing) when unconfigured, so an early delivery defers and retries.
 export const admitGitHubEventToBrain: GitHubIngressAdmit = (event) => {
   const admit = port.peek();

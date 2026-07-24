@@ -378,6 +378,12 @@ export const createGitHubIngress = (options: {
       id: payload.repository.id,
       url: payload.repository.html_url,
     };
+    // The canonical `owner/repo` in GitHub's own casing. This is what the Brain feeds lookup_graph:
+    // the Graph `repository` entity (seed-repositories.ts / graph-extraction) keys its identity on the
+    // configured casing, and resolveIdentity is an exact match — the lower-cased `repository` key used
+    // for the review allowlist and issue-correlation would never resolve a mixed-case repo like
+    // TheCallApp/ios-app. Casing only collapses where it's an internal comparison, never for Graph identity.
+    const canonicalRepository = `${repositoryDetail.owner}/${repositoryDetail.repo}`;
     let event: GitHubEventDraft;
     if (isIssueOpened && "issue" in payload) {
       event = {
@@ -385,8 +391,8 @@ export const createGitHubIngress = (options: {
         deliveryId: delivery.deliveryId,
         eventName: delivery.name,
         action: "opened",
-        repository,
-        summary: `Issue #${payload.issue.number} opened in ${repository}: ${payload.issue.title}`,
+        repository: canonicalRepository,
+        summary: `Issue #${payload.issue.number} opened in ${canonicalRepository}: ${payload.issue.title}`,
         detail: {
           ...(payload.installation ? { installationId: payload.installation.id } : {}),
           repository: repositoryDetail,
@@ -405,8 +411,8 @@ export const createGitHubIngress = (options: {
         deliveryId: delivery.deliveryId,
         eventName: delivery.name,
         action: "submitted",
-        repository,
-        summary: `Review ${payload.review.state} on ${repository}#${payload.pull_request.number}`,
+        repository: canonicalRepository,
+        summary: `Review ${payload.review.state} on ${canonicalRepository}#${payload.pull_request.number}`,
         detail: {
           ...(payload.installation ? { installationId: payload.installation.id } : {}),
           repository: repositoryDetail,
@@ -458,9 +464,9 @@ export const createGitHubIngress = (options: {
         deliveryId: delivery.deliveryId,
         eventName: delivery.name,
         action: String(payload.action),
-        repository,
+        repository: canonicalRepository,
         summary:
-          `Pull request #${payload.pull_request.number} ${String(payload.action)} in ${repository}: ` +
+          `Pull request #${payload.pull_request.number} ${String(payload.action)} in ${canonicalRepository}: ` +
           payload.pull_request.title +
           (closes.length > 0 ? ` (closes ${closes.map((issue) => `#${issue.number}`).join(", ")})` : ""),
         detail: {

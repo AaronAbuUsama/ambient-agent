@@ -1,5 +1,6 @@
 import { defineAgent } from "@flue/runtime";
 
+import type { GraphAttestationContext } from "@ambient-agent/engine/graph/store.ts";
 import { resolveAgentModelProfile } from "@ambient-agent/engine/model/pi-subscription.ts";
 import {
   createFileIssueTool,
@@ -16,26 +17,34 @@ import { getBrainEffectsRuntime } from "./effects-runtime.ts";
 
 export const description = "The one continuing global Brain: the coworker's silent mind and decision owner.";
 
+/**
+ * The Brain's Graph-write authority for its currently claimed durable Batch. The Evidence Set
+ * allow-lists every id the Batch carries — including each GitHub event's own id, so a GitHub-origin
+ * Batch can make provenance-bearing Graph rulings citing that event (mirrors the recordPrompt check).
+ */
+export const brainGraphContext = (): GraphAttestationContext => {
+  const batch = getBrainEffectsRuntime().inbox.claimBatch();
+  if (batch === undefined || batch.dispatch === undefined) {
+    throw new Error("The Brain has no dispatched durable Batch for Graph authority.");
+  }
+  return {
+    author: { kind: "brain", id: "brain" },
+    evidenceIds: [
+      ...new Set([
+        ...batch.intents.flatMap(({ evidenceIds }) => evidenceIds),
+        ...batch.knowledgeDeltas.flatMap(({ evidenceIds }) => evidenceIds),
+        ...batch.specialistResults.flatMap(({ evidenceIds }) => evidenceIds),
+        ...batch.githubEvents.map(({ id }) => id),
+      ]),
+    ],
+    batchId: batch.id,
+  };
+};
+
 export default defineAgent(() => ({
   ...resolveAgentModelProfile("brain"),
   tools: [
-    ...createBrainGraphTools(() => {
-      const batch = getBrainEffectsRuntime().inbox.claimBatch();
-      if (batch === undefined || batch.dispatch === undefined) {
-        throw new Error("The Brain has no dispatched durable Batch for Graph authority.");
-      }
-      return {
-        author: { kind: "brain", id: "brain" },
-        evidenceIds: [
-          ...new Set([
-            ...batch.intents.flatMap(({ evidenceIds }) => evidenceIds),
-            ...batch.knowledgeDeltas.flatMap(({ evidenceIds }) => evidenceIds),
-            ...batch.specialistResults.flatMap(({ evidenceIds }) => evidenceIds),
-          ]),
-        ],
-        batchId: batch.id,
-      };
-    }),
+    ...createBrainGraphTools(brainGraphContext),
     ...createDelegationTools([coderSpecialistSpec, reviewerSpecialistSpec]),
     createPromptSpeakerTool(),
     createResolveSurfaceTool(),

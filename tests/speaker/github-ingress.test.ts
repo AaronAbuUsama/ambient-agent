@@ -10,6 +10,8 @@ import type { GitHubEventDraft } from "../../packages/engine/src/brain/inbox.ts"
 import { createIssueOperationStore } from "../../packages/engine/src/github/operation-store.ts";
 import { createGitHubIngress } from "../../packages/engine/src/github/ingress.ts";
 import { createGitHubIngressStore } from "../../packages/engine/src/github/ingress-store.ts";
+import { createGraphStore } from "../../packages/engine/src/graph/store.ts";
+import { seedRepositoryFacts } from "../../packages/agents/src/capabilities/graph/seed-repositories.ts";
 import { serializeReviewerSubmission } from "../../packages/agents/src/capabilities/reviewer/workflow.ts";
 
 // A recording Brain up-inbox admission port. The ingress hands each event here; the Brain — never
@@ -156,6 +158,32 @@ describe("GitHub events route through the single Brain up-inbox", () => {
       // No routing target: the Brain, not the ledger, decides which Surface hears it.
       expect(record?.chatId).toBeUndefined();
     } finally {
+      store.close();
+    }
+  });
+
+  it("carries canonical repository casing so the Brain's Graph lookup resolves a mixed-case repo", async () => {
+    const store = createGitHubIngressStore(":memory:");
+    const graph = createGraphStore(":memory:");
+    const { admit, events } = admitRecorder();
+    try {
+      // #19 seeds the Graph repository entity in its configured casing; resolveIdentity is exact-match.
+      seedRepositoryFacts(graph, {
+        allowedRepositories: ["TheCallApp/ios-app"],
+        surfaceRepositories: [{ chat: "team@g.us", repository: "TheCallApp/ios-app" }],
+      });
+      const ingress = createGitHubIngress({ store, admit, logger: quietLogger });
+      await expect(ingress(issueOpenedDelivery("mixed-case", "ios-app", "TheCallApp"))).resolves.toMatchObject({
+        status: "done",
+      });
+      // The event carries GitHub's canonical casing, not the lower-cased internal key.
+      expect(events[0]!.repository).toBe("TheCallApp/ios-app");
+      // So the Brain's lookup_graph on it resolves the seeded entity — the routing chain works.
+      expect(graph.resolveIdentity("github", events[0]!.repository, "repository")).toBeDefined();
+      // The lower-cased key would NOT resolve — the casing fix is load-bearing.
+      expect(graph.resolveIdentity("github", events[0]!.repository.toLowerCase(), "repository")).toBeUndefined();
+    } finally {
+      graph.close();
       store.close();
     }
   });
