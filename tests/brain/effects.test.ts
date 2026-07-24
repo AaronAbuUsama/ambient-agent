@@ -8,16 +8,23 @@ import * as v from "valibot";
 import {
   configureBrainEffectsRuntime,
   deliverIssueFilingEffect,
+  deliverIssueMutationEffect,
   recoverPendingIssueFilings,
   recoverPendingPrompts,
 } from "../../packages/agents/src/brain/effects-runtime.ts";
 import {
+  createCreateIssueCommentTool,
+  createDeleteIssueCommentTool,
   createFileIssueTool,
   createPromptSpeakerTool,
+  createSetIssueStateTool,
   createSettleBrainBatchTool,
   createStaySilentTool,
+  createUpdateIssueCommentTool,
+  createUpdateIssueTool,
 } from "../../packages/agents/src/brain/tools.ts";
 import { createIssueFiler } from "../../packages/agents/src/brain/issue-filing.ts";
+import { createIssueMutator } from "../../packages/agents/src/brain/issue-mutation.ts";
 import { brainGraphContext } from "../../packages/agents/src/brain/agent.ts";
 import { createGraphTools } from "../../packages/agents/src/capabilities/graph/tools.ts";
 import { createGraphStore } from "../../packages/engine/src/graph/store.ts";
@@ -631,6 +638,207 @@ describe("Brain Effects and settlement", () => {
       }),
     ).toThrow(/is not provenance for Brain Batch/);
     expect(inbox.effects(batchId).filter((effect) => effect.kind === "file_issue")).toHaveLength(0);
+    inbox.close();
+  });
+
+  const REPO_REF = { owner: "acme", repo: "widgets" } as const;
+  const mutationRuntime = () => {
+    const repository = createFakeIssueRepository();
+    const operations = createIssueOperationStore(":memory:");
+    const policy = createIssueManagementPolicy(REPOSITORY, [REPOSITORY]);
+    return { repository, operations, mutator: createIssueMutator({ repository, operations, policy }) };
+  };
+
+  it("posts a comment as a durable down-flow effect, completes it, and lets the Batch settle", async () => {
+    const { inbox, batchId } = openFixture();
+    const { repository, operations, mutator } = mutationRuntime();
+    const issue = repository.seed({ repository: REPO_REF, title: "A real issue", body: "Body" });
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async () => { throw new Error("not expected"); },
+      mutateIssue: mutator,
+    });
+
+    const commented = await createCreateIssueCommentTool().run({ input: {
+      batchId,
+      surfaceId: SURFACE,
+      repository: REPOSITORY,
+      number: issue.number,
+      body: "Working on this now.",
+    } });
+    expect(commented).toMatchObject({
+      kind: "create_issue_comment",
+      effectId: expect.stringMatching(/^brain-effect:[a-f0-9]{64}$/u),
+      outcome: { status: "applied", commentId: expect.any(Number) },
+    });
+    await expect(createSettleBrainBatchTool().run({ input: { batchId } })).resolves.toMatchObject({ status: "settled" });
+    operations.close();
+    inbox.close();
+  });
+
+  it("closes an issue with a reason and reopens it as durable state-change effects", async () => {
+    const { inbox, batchId } = openFixture();
+    const { repository, operations, mutator } = mutationRuntime();
+    const issue = repository.seed({ repository: REPO_REF, title: "Closeable", body: "Body" });
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async () => { throw new Error("not expected"); },
+      mutateIssue: mutator,
+    });
+
+    const closed = await createSetIssueStateTool().run({ input: {
+      batchId, surfaceId: SURFACE, repository: REPOSITORY, number: issue.number, state: "closed", reason: "completed",
+    } });
+    expect(closed).toMatchObject({ kind: "set_issue_state", outcome: { status: "applied", state: "closed" } });
+    operations.close();
+    inbox.close();
+  });
+
+  it("updates an existing issue's title and body as a durable mutation effect", async () => {
+    const { inbox, batchId } = openFixture();
+    const { repository, operations, mutator } = mutationRuntime();
+    const issue = repository.seed({ repository: REPO_REF, title: "Old title", body: "Old body" });
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async () => { throw new Error("not expected"); },
+      mutateIssue: mutator,
+    });
+
+    const updated = await createUpdateIssueTool().run({ input: {
+      batchId, surfaceId: SURFACE, repository: REPOSITORY, number: issue.number, title: "New title", body: "New body",
+    } });
+    expect(updated).toMatchObject({
+      kind: "update_issue",
+      outcome: { status: "applied", issueNumber: issue.number, state: "open" },
+    });
+    operations.close();
+    inbox.close();
+  });
+
+  it("fails closed when an issue mutation omits the repository — never silently targets a default", async () => {
+    const { inbox, batchId } = openFixture();
+    const { repository, operations, mutator } = mutationRuntime();
+    repository.seed({ repository: REPO_REF, title: "Needs a repo", body: "Body" });
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async () => { throw new Error("not expected"); },
+      mutateIssue: mutator,
+    });
+
+    await expect(
+      createCreateIssueCommentTool().run({ input: { batchId, surfaceId: SURFACE, number: 1, body: "No repo." } }),
+    ).rejects.toThrow(/requires an explicit repository/);
+    // No mutation effect was recorded and no comment was posted.
+    expect(inbox.effects(batchId).filter((effect) => effect.kind === "issue_mutation")).toHaveLength(0);
+    expect(repository.events().some((event) => event.kind === "create-comment")).toBe(false);
+    operations.close();
+    inbox.close();
+  });
+
+  it("refuses to delete or edit a human's comment; a hallucinated commentId never records a destructive effect", async () => {
+    const { inbox, batchId } = openFixture();
+    const { repository, operations, mutator } = mutationRuntime();
+    const issue = repository.seed({ repository: REPO_REF, title: "Has a human comment", body: "Body" });
+    const human = repository.seedComment({ repository: REPO_REF, number: issue.number, body: "A maintainer note", author: "maintainer" });
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async () => { throw new Error("not expected"); },
+      mutateIssue: mutator,
+    });
+
+    // Delete of a comment the Brain never created is refused at admission — no effect, no provider call.
+    await expect(
+      createDeleteIssueCommentTool().run({ input: {
+        batchId, surfaceId: SURFACE, repository: REPOSITORY, number: issue.number, commentId: human.id,
+      } }),
+    ).rejects.toThrow(/restricted to the Brain's own prior comments/i);
+    // Edit of a human's comment is refused the same way.
+    await expect(
+      createUpdateIssueCommentTool().run({ input: {
+        batchId, surfaceId: SURFACE, repository: REPOSITORY, number: issue.number, commentId: human.id, body: "Rewritten.",
+      } }),
+    ).rejects.toThrow(/restricted to the Brain's own prior comments/i);
+    expect(inbox.effects(batchId).filter((effect) => effect.kind === "issue_mutation")).toHaveLength(0);
+    expect(repository.events().some((event) => event.kind === "delete-comment" || event.kind === "update-comment")).toBe(false);
+    operations.close();
+    inbox.close();
+  });
+
+  it("lets the Brain delete a comment it itself created, verified against recorded filing history", async () => {
+    const { inbox, batchId } = openFixture();
+    const { repository, operations, mutator } = mutationRuntime();
+    const issue = repository.seed({ repository: REPO_REF, title: "Brain will self-delete", body: "Body" });
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async () => { throw new Error("not expected"); },
+      mutateIssue: mutator,
+    });
+
+    const commented = await createCreateIssueCommentTool().run({ input: {
+      batchId, surfaceId: SURFACE, repository: REPOSITORY, number: issue.number, body: "Temporary note.",
+    } });
+    const commentId = (commented.outcome as { commentId: number }).commentId;
+    const deleted = await createDeleteIssueCommentTool().run({ input: {
+      batchId, surfaceId: SURFACE, repository: REPOSITORY, number: issue.number, commentId,
+    } });
+    expect(deleted).toMatchObject({ kind: "delete_issue_comment", outcome: { status: "applied", commentId } });
+    operations.close();
+    inbox.close();
+  });
+
+  it("reconciles a recovered comment mutation by Operation Identity without posting a second comment", async () => {
+    const { inbox, batchId } = openFixture();
+    const { repository, operations, mutator } = mutationRuntime();
+    const issue = repository.seed({ repository: REPO_REF, title: "Reconcilable", body: "Body" });
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async () => { throw new Error("not expected"); },
+      mutateIssue: mutator,
+    });
+    const pending = inbox.recordIssueMutation({
+      batchId,
+      sourceSurfaceId: SURFACE,
+      mutation: { kind: "create-comment", repository: REPOSITORY, number: issue.number, body: "Once only." },
+    });
+    // First attempt posts the comment and completes its Operation, then the Effect completion is lost to a crash.
+    await mutator(pending.mutation, pending.id);
+    expect(repository.events().filter((event) => event.kind === "create-comment")).toHaveLength(1);
+    repository.resetEvents();
+
+    const recovered = await deliverIssueMutationEffect(pending);
+    expect(recovered.status).toBe("completed");
+    expect(recovered.outcome).toMatchObject({ status: "reconciled", commentId: expect.any(Number) });
+    // Dedup came from strongly-consistent Operation Identity — no second comment was ever posted.
+    expect(repository.events().some((event) => event.kind === "create-comment")).toBe(false);
+    operations.close();
+    inbox.close();
+  });
+
+  it("settles a non-retryable issue-mutation failure as uncertain so the Batch is not wedged", async () => {
+    const { inbox, batchId } = openFixture();
+    const { repository, operations, mutator } = mutationRuntime();
+    const issue = repository.seed({ repository: REPO_REF, title: "Will fail", body: "Body" });
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async () => { throw new Error("not expected"); },
+      mutateIssue: mutator,
+    });
+    repository.failNextLifecycleMutation("create-comment", Object.assign(new Error("Not Found"), { status: 404 }));
+
+    const commented = await createCreateIssueCommentTool().run({ input: {
+      batchId, surfaceId: SURFACE, repository: REPOSITORY, number: issue.number, body: "Doomed.",
+    } });
+    expect(commented).toMatchObject({ kind: "create_issue_comment", outcome: { status: "uncertain" } });
+    await expect(createSettleBrainBatchTool().run({ input: { batchId } })).resolves.toMatchObject({ status: "settled" });
+    operations.close();
     inbox.close();
   });
 
