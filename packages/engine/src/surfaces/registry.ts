@@ -14,6 +14,13 @@ export interface SurfaceRegistry {
     providerAccountId: string,
     providerChatIds: readonly string[],
   ) => readonly SurfaceBinding[];
+  /**
+   * Find-or-create one active Surface bound to a single chat, without retiring any other binding.
+   * Unlike `activateConfigured` (the operator's whole authorized set), this opens exactly one
+   * Surface on demand — the seam for the Brain deliberately reaching a known Person's DM. It is
+   * never called from ingress, so it grants no participation to an observed/discovered chat.
+   */
+  readonly activateDirect: (providerAccountId: string, providerChatId: string) => SurfaceBinding;
   readonly activeSurface: (providerAccountId: string, providerChatId: string) => SurfaceBinding | undefined;
   readonly activeBinding: (surfaceId: string) => SurfaceBinding | undefined;
   readonly close: () => void;
@@ -110,6 +117,28 @@ export const createSurfaceRegistry = (databasePath: string): SurfaceRegistry => 
         }
         database.exec("COMMIT");
         return active;
+      } catch (cause) {
+        database.exec("ROLLBACK");
+        throw cause;
+      }
+    },
+    activateDirect: (rawAccountId, rawChatId) => {
+      const providerAccountId = required(rawAccountId, "Provider account id");
+      const providerChatId = required(rawChatId, "Provider chat id");
+      const now = new Date().toISOString();
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        const existing = selectAny.get(providerAccountId, providerChatId) as BindingRow | undefined;
+        if (existing !== undefined) {
+          reactivate.run(now, existing.surface_id); // NULLs retired_at if retired; a no-op when already active.
+          database.exec("COMMIT");
+          return hydrate(existing);
+        }
+        const surfaceId = `surface:${randomUUID()}`;
+        insertSurface.run(surfaceId, now);
+        insertBinding.run(surfaceId, providerAccountId, providerChatId, now);
+        database.exec("COMMIT");
+        return { id: surfaceId, providerAccountId, providerChatId };
       } catch (cause) {
         database.exec("ROLLBACK");
         throw cause;

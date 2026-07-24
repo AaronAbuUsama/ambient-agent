@@ -13,7 +13,6 @@ import {
 import {
   createFileIssueTool,
   createPromptSpeakerTool,
-  createResolveSurfaceTool,
   createSettleBrainBatchTool,
   createStaySilentTool,
 } from "../../packages/agents/src/brain/tools.ts";
@@ -85,7 +84,7 @@ describe("Brain Effects and settlement", () => {
 
     const prompt = await createPromptSpeakerTool().run({ input: {
       batchId,
-      surfaceId: SURFACE,
+      target: { surfaceId: SURFACE },
       objective: "Ask which deployment failed.",
       brief: { summary: "Alice requested help but did not identify a deployment.", evidenceIds: [EVIDENCE] },
     } });
@@ -158,7 +157,7 @@ describe("Brain Effects and settlement", () => {
     inbox.close();
   });
 
-  it("bridges a repo-correlated thread's chatId to a Surface the Brain can prompt about a GitHub event", async () => {
+  it("resolves a Brain-chosen target entity (thread/person) to a Surface, and stays fail-closed for an unknown one", async () => {
     const root = mkdtempSync(join(tmpdir(), "ambient-brain-github-notify-"));
     roots.push(root);
     const databasePath = join(root, "application.sqlite");
@@ -181,6 +180,7 @@ describe("Brain Effects and settlement", () => {
     if (claimed === undefined) throw new Error("Expected a GitHub-only Brain Batch");
     inbox.markBatchDispatched(claimed.id, { dispatchId: "dispatch:brain", acceptedAt: "2026-07-22T12:00:01.000Z" });
 
+    const THREAD_ENTITY = "thread:acme-widgets";
     const delivered: unknown[] = [];
     configureBrainEffectsRuntime({
       inbox,
@@ -189,24 +189,30 @@ describe("Brain Effects and settlement", () => {
         delivered.push(effect.directive);
         return { dispatchId: "dispatch:speaker:gh", acceptedAt: "2026-07-22T12:00:02.000Z" };
       },
-      // The bridge under test: the Graph thread's chatId (CHAT) resolves to its Surface UUID.
-      resolveSurfaceForChat: (providerChatId) => (providerChatId === CHAT ? SURFACE : undefined),
+      // The seam under test: a known target entity resolves to its Surface UUID; anything else does not.
+      resolveSurfaceForEntity: (entityId) => (entityId === THREAD_ENTITY ? SURFACE : undefined),
     });
 
-    // 1) resolve_surface turns the thread's chatId into a Surface id (not a chatId).
-    const resolution = createResolveSurfaceTool().run({ input: { providerChatId: CHAT } });
-    expect(resolution).toEqual({ resolved: true, surfaceId: SURFACE });
-    // 2) prompt_speaker accepts that Surface id and the GitHub event's own id as evidence.
+    // prompt_speaker takes the thread's entity id directly (no chatId hop) and resolves it in admission.
     const prompt = await createPromptSpeakerTool().run({ input: {
       batchId: claimed.id,
-      surfaceId: (resolution as { surfaceId: string }).surfaceId,
+      target: { entityId: THREAD_ENTITY },
       objective: "Tell the team a new issue was opened.",
       brief: { summary: "acme/widgets#7 was opened.", evidenceIds: [event.id] },
     } });
     expect(prompt).toMatchObject({ kind: "prompt_speaker", status: "accepted" });
     expect(delivered).toHaveLength(1);
-    // An unknown chat resolves to no Surface — observation never grants participation.
-    expect(createResolveSurfaceTool().run({ input: { providerChatId: "stranger@g.us" } })).toEqual({ resolved: false });
+    // An unknown/unaddressable entity resolves to no Surface — observation never grants participation,
+    // so prompt_speaker fails closed rather than dispatching anything.
+    await expect(
+      createPromptSpeakerTool().run({ input: {
+        batchId: claimed.id,
+        target: { entityId: "person:stranger" },
+        objective: "Should never send.",
+        brief: { summary: "unknown person.", evidenceIds: [event.id] },
+      } }),
+    ).rejects.toThrow(/resolves to no Surface/);
+    expect(delivered).toHaveLength(1);
     inbox.close();
   });
 
@@ -301,7 +307,7 @@ describe("Brain Effects and settlement", () => {
     await recoverPendingPrompts();
     await createPromptSpeakerTool().run({ input: {
       batchId,
-      surfaceId: SURFACE,
+      target: { surfaceId: SURFACE },
       objective: "Ask which deployment failed.",
       brief: { summary: "Missing deployment identity.", evidenceIds: [EVIDENCE] },
     } });

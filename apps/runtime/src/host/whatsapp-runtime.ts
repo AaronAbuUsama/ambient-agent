@@ -22,6 +22,7 @@ import {
 } from "@ambient-agent/agents/brain/effects-runtime.ts";
 import { createIssueFiler } from "@ambient-agent/agents/brain/issue-filing.ts";
 import { getIssueManagementRuntime } from "@ambient-agent/agents/capabilities/issue-management/runtime.ts";
+import { tryGetGraphStore } from "@ambient-agent/agents/capabilities/graph/runtime.ts";
 import { configureScribeInbox } from "@ambient-agent/agents/scribe/coalescer.ts";
 import { getRun, invoke } from "@flue/runtime";
 import historicalReplayWorkflow from "../workflows/historical-replay.ts";
@@ -54,7 +55,8 @@ import type { WhatsAppRuntimeStatus } from "@ambient-agent/installation/runtime-
 import { errorMessage } from "@ambient-agent/engine/shared/errors.ts";
 import { renderQr } from "@ambient-agent/installation/qr.ts";
 import { isGroupJid } from "@ambient-agent/engine/shared/whatsapp-jid.ts";
-import { createSurfaceRegistry } from "@ambient-agent/engine/surfaces/registry.ts";
+import { createSurfaceRegistry, type SurfaceRegistry } from "@ambient-agent/engine/surfaces/registry.ts";
+import type { GraphStore } from "@ambient-agent/engine/graph/store.ts";
 import { createSurfaceDeliveryStore } from "@ambient-agent/engine/surfaces/delivery.ts";
 import {
   createWhatsAppAccount,
@@ -70,6 +72,34 @@ const deliveryFailure = (
   return { delivery: isKnownTransportRejection(deliveryError) ? "failed" : "unknown", deliveryError };
 };
 const TYPING_LEAD_MS = 750;
+
+/**
+ * Resolve a Brain-chosen target entity to its Surface id (§8: "DM someone" and "reply in the group"
+ * share one prompt operation, resolved through the ordinary Surface registry during prompt admission).
+ *
+ * A `thread` is an operator-authorized group: it resolves only to an already-active Surface, so a merely
+ * discovered/observed group never gains participation. A known `person` is a deliberate Brain reach: their
+ * DM Surface is opened on demand (find-or-create). Any other entity type — or an entity with no WhatsApp
+ * identity, or an unknown id — is not an addressable Surface and returns undefined, and the Brain stays
+ * silent. This is the fail-closed boundary: only a Person the coworker already knows (a Graph entity met in
+ * an authorized surface) is DM-addressable; an unknown DMer has no entity here and so grants no participation.
+ */
+export const resolveEntitySurface = (
+  deps: {
+    readonly graph: Pick<GraphStore, "getEntity" | "whatsappExternalId">;
+    readonly surfaces: Pick<SurfaceRegistry, "activeSurface" | "activateDirect">;
+    readonly accountJid: string;
+  },
+  entityId: string,
+): string | undefined => {
+  const entity = deps.graph.getEntity(entityId);
+  if (entity === undefined) return undefined;
+  const chatId = deps.graph.whatsappExternalId(entityId);
+  if (chatId === undefined) return undefined;
+  if (entity.type === "thread") return deps.surfaces.activeSurface(deps.accountJid, chatId)?.id;
+  if (entity.type === "person") return deps.surfaces.activateDirect(deps.accountJid, chatId).id;
+  return undefined;
+};
 
 /** The sole real implementation behind Speaker's outbound participation tools. */
 export const createWhatsAppHost = (
@@ -386,10 +416,14 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
         // Resolved lazily at file time: composeSpeaker configures the issue-management runtime
         // process-global at app boot, well before any Batch files an issue.
         fileIssue: (request, effectId) => createIssueFiler(getIssueManagementRuntime())(request, effectId),
-        // Bridge a Graph thread's chatId → its active Surface id, so the Brain can notify the Surface
-        // that works_on a GitHub event's repository (§4 affirmative routing).
-        resolveSurfaceForChat: (providerChatId) =>
-          surfaces.activeSurface(authenticatedAccount.jid, providerChatId)?.id,
+        // Resolve a Brain-chosen target entity to its Surface during prompt admission (§8) — see
+        // resolveEntitySurface. No graph wired (boot/tests) means nothing resolves: fail-closed.
+        resolveSurfaceForEntity: (entityId) => {
+          const graph = tryGetGraphStore();
+          return graph === undefined
+            ? undefined
+            : resolveEntitySurface({ graph, surfaces, accountJid: authenticatedAccount.jid }, entityId);
+        },
         deliverPrompt: (effect) => {
           const binding = surfaces.activeBinding(effect.directive.surfaceId);
           if (binding === undefined) {
