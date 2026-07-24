@@ -33,6 +33,7 @@ import { createGraphStore } from "../../packages/engine/src/graph/store.ts";
 import { createSurfaceRegistry } from "../../packages/engine/src/surfaces/registry.ts";
 import { resolveEntitySurface } from "../../apps/runtime/src/host/whatsapp-runtime.ts";
 import { createIssueManagementPolicy } from "../../packages/agents/src/capabilities/issue-management/runtime.ts";
+import { createIssueReadTools } from "../../packages/agents/src/capabilities/issue-management/tools.ts";
 import { createIssueOperationStore } from "../../packages/engine/src/github/operation-store.ts";
 import { createFakeIssueRepository } from "../../packages/test-support/src/fake-issue-repository.ts";
 import { wakeBrain } from "../../packages/agents/src/brain/dispatch.ts";
@@ -390,6 +391,14 @@ describe("Brain Effects and settlement", () => {
     ]) {
       expect(toolNames).toContain(name);
     }
+  });
+
+  it("fails the read tools closed when the repository is omitted — same no-default discipline as mutations", async () => {
+    // A read that silently defaulted the repo would hand back numbers from the WRONG repo that then flow
+    // into a real mutation, bypassing the no-default-routing discipline (S1/#249). Both reads fail closed.
+    const [readIssue, readDiscussion] = createIssueReadTools();
+    await expect(readIssue!.run({ input: { number: 1 } })).rejects.toThrow(/requires an explicit repository/);
+    await expect(readDiscussion!.run({ input: { number: 1 } })).rejects.toThrow(/requires an explicit repository/);
   });
 
   it("records deliberate silence as a completed local effect before settlement", async () => {
