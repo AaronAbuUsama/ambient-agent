@@ -892,6 +892,86 @@ describe("Brain Effects and settlement", () => {
     inbox.close();
   });
 
+  it("reconciles a recovered issue update GitHub already applied even when completion was lost to a crash", async () => {
+    const { inbox, batchId } = openFixture();
+    const { repository, operations, mutator } = mutationRuntime();
+    const issue = repository.seed({ repository: REPO_REF, title: "Old title", body: "Old body" });
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async () => { throw new Error("not expected"); },
+      mutateIssue: mutator,
+    });
+    const pending = inbox.recordIssueMutation({
+      batchId,
+      sourceSurfaceId: SURFACE,
+      mutation: { kind: "update-issue", repository: REPOSITORY, number: issue.number, title: "New title", body: "New body" },
+    });
+    const operationId = `issue-mutation:${pending.id}`;
+    // GitHub applied the update, but the local completion write was lost to a crash: the issue already
+    // reflects the requested title/body, yet the Operation is left non-completed (uncertain).
+    await repository.update({
+      repository: REPO_REF,
+      number: issue.number,
+      changes: { title: "New title", body: "New body" },
+      operation: { id: `${operationId}:provider` },
+    });
+    repository.resetEvents();
+    operations.begin({
+      operationId,
+      kind: "update-issue",
+      repository: REPOSITORY,
+      issueNumber: issue.number,
+      target: { title: "New title", body: "New body" },
+      startedAt: "2026-07-22T12:00:00.000Z",
+    });
+    operations.uncertain(operationId, "Process restarted after the provider mutation began", "2026-07-22T12:00:01.000Z");
+
+    const recovered = await deliverIssueMutationEffect(pending);
+    // Recovery observes the issue and reconciles because it already reflects the request — not blind uncertain.
+    expect(recovered.status).toBe("completed");
+    expect(recovered.outcome).toMatchObject({ status: "reconciled", issueNumber: issue.number });
+    // No second update was issued — the observed end-state was proof enough.
+    expect(repository.events().some((event) => event.kind === "update")).toBe(false);
+    operations.close();
+    inbox.close();
+  });
+
+  it("settles a recovered issue update as uncertain when the issue does not reflect the requested change", async () => {
+    const { inbox, batchId } = openFixture();
+    const { repository, operations, mutator } = mutationRuntime();
+    const issue = repository.seed({ repository: REPO_REF, title: "Unchanged title", body: "Unchanged body" });
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async () => { throw new Error("not expected"); },
+      mutateIssue: mutator,
+    });
+    const pending = inbox.recordIssueMutation({
+      batchId,
+      sourceSurfaceId: SURFACE,
+      mutation: { kind: "update-issue", repository: REPOSITORY, number: issue.number, title: "Never applied" },
+    });
+    const operationId = `issue-mutation:${pending.id}`;
+    // The mutation began but GitHub never applied it (the issue still shows the old title) and the crash
+    // left the Operation non-completed — recovery has no evidence of success, so it stays uncertain.
+    operations.begin({
+      operationId,
+      kind: "update-issue",
+      repository: REPOSITORY,
+      issueNumber: issue.number,
+      target: { title: "Never applied" },
+      startedAt: "2026-07-22T12:00:00.000Z",
+    });
+    operations.uncertain(operationId, "Process restarted after the provider mutation began", "2026-07-22T12:00:01.000Z");
+
+    const recovered = await deliverIssueMutationEffect(pending);
+    expect(recovered.status).toBe("completed");
+    expect(recovered.outcome).toMatchObject({ status: "uncertain" });
+    operations.close();
+    inbox.close();
+  });
+
   it("settles a non-retryable issue-mutation failure as uncertain so the Batch is not wedged", async () => {
     const { inbox, batchId } = openFixture();
     const { repository, operations, mutator } = mutationRuntime();

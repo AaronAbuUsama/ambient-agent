@@ -1,8 +1,30 @@
 import type { IssueMutation, IssueMutationOutcome } from "@ambient-agent/engine/brain/inbox.ts";
 import { errorMessage } from "@ambient-agent/engine/shared/errors.ts";
 import { createIssueManagementTools } from "../capabilities/issue-management/tools.ts";
-import { isUncertainIssueMutationError } from "../capabilities/issue-management/issue-repository.ts";
+import { isUncertainIssueMutationError, type Issue } from "../capabilities/issue-management/issue-repository.ts";
 import type { IssueManagementRuntime } from "../capabilities/issue-management/runtime.ts";
+
+const sameSet = (left: readonly string[], right: readonly string[]): boolean => {
+  const normalize = (values: readonly string[]) => [...values].map((value) => value.toLowerCase()).sort();
+  return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+};
+
+/** Does the observed issue already reflect the requested mutation? Used only for crash recovery, to
+ * reconcile an update/state-change GitHub already applied when the local completion write was lost. Every
+ * requested field must match (same equality the capability's own reconcile uses); a partial-field update
+ * reconciles when its present fields match. Bodies compared are public (footer already stripped by get). */
+const issueReflects = (mutation: IssueMutation, issue: Issue): boolean => {
+  if (mutation.kind === "set-issue-state") return issue.state === mutation.state;
+  if (mutation.kind !== "update-issue") return false;
+  return (
+    (mutation.title === undefined || issue.title === mutation.title) &&
+    (mutation.body === undefined || issue.body === mutation.body) &&
+    (mutation.labels === undefined || sameSet(issue.labels, mutation.labels)) &&
+    (mutation.assignees === undefined || sameSet(issue.assignees, mutation.assignees)) &&
+    (mutation.milestone === undefined ||
+      (mutation.milestone === null ? issue.milestone === null : issue.milestone?.number === mutation.milestone))
+  );
+};
 
 /** The Operation Identity a mutation carries across crashes: derived from the durable Effect id, so a
  * recovered attempt reconciles the same Operation (strongly-consistent) instead of re-mutating. */
@@ -111,15 +133,26 @@ export const createIssueMutator =
             reason: `A prior attempt to ${mutation.kind} for this Effect did not complete and no matching comment was observed.`,
           };
         }
-        if (prior.status !== "completed") {
+        if (mutation.kind === "delete-comment") {
+          // A delete has no atomic provider-identity channel to observe (the record is gone), so only a
+          // durably completed prior proves it landed; otherwise stay honestly uncertain.
+          if (prior.status === "completed") return { status: "reconciled", commentId: mutation.commentId };
           return {
             status: "uncertain",
             reason: `A prior attempt to ${mutation.kind} for this Effect did not complete; its outcome is unresolved.`,
           };
         }
-        if (mutation.kind === "delete-comment") return { status: "reconciled", commentId: mutation.commentId };
+        // update-issue / set-issue-state: observe the issue. A completed prior is proof it landed; for a
+        // non-completed prior (completion write lost to a crash), an exact end-state match is proof enough
+        // — these mutations are idempotent, so the requested state already being present reconciles them.
         const issue = await runtime.repository.get({ repository, number: mutation.number });
-        return { status: "reconciled", issueNumber: issue.number, url: issue.url, state: issue.state };
+        if (prior.status === "completed" || issueReflects(mutation, issue)) {
+          return { status: "reconciled", issueNumber: issue.number, url: issue.url, state: issue.state };
+        }
+        return {
+          status: "uncertain",
+          reason: `A prior attempt to ${mutation.kind} for this Effect did not complete and the issue does not reflect it.`,
+        };
       }
 
       const tool = createIssueManagementTools({ ...runtime, createOperationId: () => operationId, now }).find(
