@@ -1,5 +1,9 @@
 # ambient-agent
 
+## Unreleased
+
+- TST-WORKLOOP-a070353-R1 proof entry
+
 ## 0.4.0
 
 ### Minor Changes
