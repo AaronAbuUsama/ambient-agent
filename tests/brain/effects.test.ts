@@ -13,11 +13,15 @@ import {
 import {
   createFileIssueTool,
   createPromptSpeakerTool,
+  createResolveSurfaceTool,
   createSettleBrainBatchTool,
   createStaySilentTool,
 } from "../../packages/agents/src/brain/tools.ts";
 import { createIssueFiler } from "../../packages/agents/src/brain/issue-filing.ts";
-import { createIssueManagementPolicy } from "../../packages/agents/src/capabilities/issue-management/runtime.ts";
+import {
+  configureIssueManagementRuntime,
+  createIssueManagementPolicy,
+} from "../../packages/agents/src/capabilities/issue-management/runtime.ts";
 import { createIssueOperationStore } from "../../packages/engine/src/github/operation-store.ts";
 import { createFakeIssueRepository } from "../../packages/test-support/src/fake-issue-repository.ts";
 import { wakeBrain } from "../../packages/agents/src/brain/dispatch.ts";
@@ -154,6 +158,58 @@ describe("Brain Effects and settlement", () => {
     inbox.close();
   });
 
+  it("bridges a repo-correlated thread's chatId to a Surface the Brain can prompt about a GitHub event", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ambient-brain-github-notify-"));
+    roots.push(root);
+    const databasePath = join(root, "application.sqlite");
+    const archive = createConversationArchive(databasePath);
+    archive.close();
+    const inbox = createBrainInbox(databasePath, {
+      providerChatIdForSurface: (surfaceId) => (surfaceId === SURFACE ? CHAT : undefined),
+      now: () => "2026-07-22T12:00:00.000Z",
+    });
+    const event = inbox.admitGitHubEvent({
+      githubAppId: "app-planner",
+      deliveryId: "gh-notify-1",
+      eventName: "issues",
+      action: "opened",
+      repository: "acme/widgets",
+      summary: "Issue #7 opened in acme/widgets",
+      detail: { issue: { number: 7 } },
+    });
+    const claimed = inbox.claimBatch();
+    if (claimed === undefined) throw new Error("Expected a GitHub-only Brain Batch");
+    inbox.markBatchDispatched(claimed.id, { dispatchId: "dispatch:brain", acceptedAt: "2026-07-22T12:00:01.000Z" });
+
+    const delivered: unknown[] = [];
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async (effect) => {
+        delivered.push(effect.directive);
+        return { dispatchId: "dispatch:speaker:gh", acceptedAt: "2026-07-22T12:00:02.000Z" };
+      },
+      // The bridge under test: the Graph thread's chatId (CHAT) resolves to its Surface UUID.
+      resolveSurfaceForChat: (providerChatId) => (providerChatId === CHAT ? SURFACE : undefined),
+    });
+
+    // 1) resolve_surface turns the thread's chatId into a Surface id (not a chatId).
+    const resolution = createResolveSurfaceTool().run({ input: { providerChatId: CHAT } });
+    expect(resolution).toEqual({ resolved: true, surfaceId: SURFACE });
+    // 2) prompt_speaker accepts that Surface id and the GitHub event's own id as evidence.
+    const prompt = await createPromptSpeakerTool().run({ input: {
+      batchId: claimed.id,
+      surfaceId: (resolution as { surfaceId: string }).surfaceId,
+      objective: "Tell the team a new issue was opened.",
+      brief: { summary: "acme/widgets#7 was opened.", evidenceIds: [event.id] },
+    } });
+    expect(prompt).toMatchObject({ kind: "prompt_speaker", status: "accepted" });
+    expect(delivered).toHaveLength(1);
+    // An unknown chat resolves to no Surface — observation never grants participation.
+    expect(createResolveSurfaceTool().run({ input: { providerChatId: "stranger@g.us" } })).toEqual({ resolved: false });
+    inbox.close();
+  });
+
   it("records deliberate silence as a completed local effect before settlement", async () => {
     const { inbox, batchId } = openFixture();
     configureBrainEffectsRuntime({
@@ -242,6 +298,40 @@ describe("Brain Effects and settlement", () => {
       url: "https://github.com/acme/widgets/issues/1",
     });
     await expect(createSettleBrainBatchTool().run({ input: { batchId } })).resolves.toMatchObject({ status: "settled" });
+    operations.close();
+    inbox.close();
+  });
+
+  it("falls back to the configured default repository when file_issue omits one (no Graph relation)", async () => {
+    const { inbox, batchId } = openFixture();
+    const { repository, operations, filer } = filingRuntime();
+    // The tool resolves the default via the issue-management policy when no repository is supplied.
+    configureIssueManagementRuntime({
+      repository,
+      operations,
+      policy: createIssueManagementPolicy(REPOSITORY, [REPOSITORY]),
+    });
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async () => { throw new Error("not expected"); },
+      fileIssue: filer,
+    });
+
+    // A chat with no works_on Graph relation files with no repository argument at all.
+    const filed = await createFileIssueTool().run({ input: {
+      batchId,
+      surfaceId: SURFACE,
+      kind: "bug",
+      title: "Unmapped chat still needs to file a bug",
+      body: "No Graph relation resolves a repository for this chat.",
+    } });
+    expect(filed).toMatchObject({
+      kind: "file_issue",
+      status: "created",
+      url: "https://github.com/acme/widgets/issues/1",
+    });
+    expect(repository.events().some((event) => event.kind === "create")).toBe(true);
     operations.close();
     inbox.close();
   });

@@ -25,6 +25,7 @@ import {
 } from "../../apps/runtime/src/host/whatsapp-runtime.ts";
 import { createConversationArchive } from "../../packages/engine/src/intake/conversation-archive.ts";
 import { createBrainInbox } from "../../packages/engine/src/brain/inbox.ts";
+import { admitGitHubEventToBrain } from "../../packages/engine/src/github/up-inbox.ts";
 import { conversationArrival } from "../../packages/engine/src/intake/conversation-event.ts";
 import { createSurfaceRegistry } from "../../packages/engine/src/surfaces/registry.ts";
 import { createSurfaceDeliveryStore } from "../../packages/engine/src/surfaces/delivery.ts";
@@ -236,6 +237,68 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
     ]);
     await account.stop();
     archive.close();
+  });
+
+  it("admits a GitHub event during boot without prematurely waking the Brain (no wedge)", async () => {
+    const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
+    archive.close();
+    // A session that stays pre-online until released, so the runtime never reaches the point that
+    // configures the Brain's Effects runtime and flips brainReady — the exact boot-race window.
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    const statusListeners = new Set<(status: Status) => void | Promise<void>>();
+    const session = {
+      onStatus(listener: (status: Status) => void | Promise<void>) {
+        statusListeners.add(listener);
+        return () => statusListeners.delete(listener);
+      },
+      onMessage: () => () => undefined,
+      onUpdate: () => () => undefined,
+      onConversationSync: () => () => undefined,
+      async start() {
+        await barrier;
+        for (const listener of statusListeners) await listener({ phase: "online" });
+      },
+      async stop() {},
+      identity: () => ({ jid: "15550000000:7@s.whatsapp.net" }),
+    } as unknown as WhatsAppSession;
+
+    const runtime = startWhatsAppRuntime({
+      storeDirectory,
+      applicationDatabase,
+      managedChats: [CHAT],
+      sessionFactory: () => session,
+    });
+    try {
+      // The up-inbox port is configured synchronously in startWhatsAppRuntime, so admission works
+      // immediately — long before the async boot reaches readiness.
+      const admitted = await admitGitHubEventToBrain({
+        githubAppId: "app-planner",
+        deliveryId: "boot-race-1",
+        eventName: "issues",
+        action: "opened",
+        repository: "acme/widgets",
+        summary: "Issue #7 opened in acme/widgets",
+        detail: { issue: { number: 7 } },
+      });
+      expect(admitted?.id).toMatch(/^github-event:/u);
+
+      // Durable AND not prematurely dispatched: the event is still an unbatched pending input, so no
+      // Batch was created-and-dispatched (which would have wedged, since the Brain runtime isn't up).
+      const probe = createBrainInbox(applicationDatabase, { providerChatIdForSurface: () => undefined });
+      expect(probe.pendingGitHubEvents().map((event) => event.deliveryId)).toContain("boot-race-1");
+      // Neutralize the teardown boot-sweep: claim + mark dispatched so wakeBrain early-returns and no
+      // real Brain agent runs during shutdown (this test has no model provider).
+      const batch = probe.claimBatch();
+      if (batch !== undefined) {
+        probe.markBatchDispatched(batch.id, { dispatchId: "dispatch:test", acceptedAt: "2026-01-01T00:00:00.000Z" });
+      }
+      probe.close();
+    } finally {
+      release();
+      await vi.waitFor(() => expect(getWhatsAppRuntimeStatus().phase).toBe("online"));
+      await runtime.stop();
+    }
   });
 
   it("runs afterParticipationReady only after the participation port is wired (the boot-sweep seam)", async () => {

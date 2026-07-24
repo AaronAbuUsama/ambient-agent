@@ -265,14 +265,20 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   const brainInbox = createBrainInbox(options.applicationDatabase, {
     providerChatIdForSurface: (surfaceId) => surfaces.activeBinding(surfaceId)?.providerChatId,
   });
-  // GitHub events flow UP into the single Brain up-inbox (§4). Admission is the durable step;
-  // waking the Brain is best-effort and non-blocking — the boot sweep re-claims any open Batch,
-  // so a transient Flue hiccup on wake never loses an already-admitted event.
+  // GitHub events flow UP into the single Brain up-inbox (§4). Admission is the durable step and is
+  // always safe. Waking the Brain is gated on `brainReady`: dispatching a Batch before the Brain's
+  // Effects/participation runtime exists would mark the Batch dispatched, then fail its tools, and the
+  // wake-guard would never re-dispatch it — a wedge. Until ready, admitted events wait for the boot
+  // sweep in afterParticipationReady (which wakes once everything is configured); after ready, each
+  // admission wakes directly.
+  let brainReady = false;
   configureGitHubUpInbox(async (event) => {
     const admitted = brainInbox.admitGitHubEvent(event);
-    void wakeBrain(brainInbox).catch((cause) =>
-      getLogger("github").error({ event: "github.up-inbox.wake-failed", error: errorMessage(cause) }, "wake"),
-    );
+    if (brainReady) {
+      void wakeBrain(brainInbox).catch((cause) =>
+        getLogger("github").error({ event: "github.up-inbox.wake-failed", error: errorMessage(cause) }, "wake"),
+      );
+    }
     return { id: admitted.id, admittedAt: admitted.admittedAt };
   });
   const deliveries = createSurfaceDeliveryStore(options.applicationDatabase, {
@@ -367,6 +373,10 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
         // Resolved lazily at file time: composeSpeaker configures the issue-management runtime
         // process-global at app boot, well before any Batch files an issue.
         fileIssue: (request, effectId) => createIssueFiler(getIssueManagementRuntime())(request, effectId),
+        // Bridge a Graph thread's chatId → its active Surface id, so the Brain can notify the Surface
+        // that works_on a GitHub event's repository (§4 affirmative routing).
+        resolveSurfaceForChat: (providerChatId) =>
+          surfaces.activeSurface(authenticatedAccount.jid, providerChatId)?.id,
         deliverPrompt: (effect) => {
           const binding = surfaces.activeBinding(effect.directive.surfaceId);
           if (binding === undefined) {
@@ -447,6 +457,9 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
         // real result the admit guard (bridge.ts) would then silently drop.
         await reconcileSpecialistWorkAtBoot({ inbox: brainInbox, wake: () => wakeBrain(brainInbox), getRun });
         await recoverPendingSpecialistLaunches([coderSpecialistSpec, reviewerSpecialistSpec]);
+        // Everything the Brain's tools need is now configured. Open the GitHub up-inbox wake gate, then
+        // sweep — this dispatches any event admitted during boot, and future admissions wake directly.
+        brainReady = true;
         await wakeBrain(brainInbox);
         await options.afterParticipationReady?.();
       },

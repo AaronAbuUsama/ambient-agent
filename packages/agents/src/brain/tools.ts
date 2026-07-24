@@ -2,6 +2,7 @@ import { defineTool } from "@flue/runtime";
 import * as v from "valibot";
 
 import { MAX_PUBLIC_ISSUE_BODY_LENGTH } from "../capabilities/issue-management/issue-repository.ts";
+import { getIssueManagementRuntime, repositoryName } from "../capabilities/issue-management/runtime.ts";
 import { deliverIssueFilingEffect, deliverPromptEffect, getBrainEffectsRuntime } from "./effects-runtime.ts";
 
 const nonEmptyString = v.pipe(v.string(), v.minLength(1));
@@ -42,6 +43,30 @@ export const createPromptSpeakerTool = () =>
     },
   });
 
+export const createResolveSurfaceTool = () =>
+  defineTool({
+    name: "resolve_surface",
+    description:
+      "Resolve a provider chat id — as it appears on a Graph `thread` entity's chatId — to the stable " +
+      "application Surface id you pass to prompt_speaker. Use it to bridge a repository's works_on thread " +
+      "to a Surface. Returns no surface for an unknown or unbound chat; then that chat hears nothing.",
+    // ponytail: the Brain touches a provider chatId here only because #19 keys the Graph `thread`
+    // entity by chatId; S5 (#329) subsumes this into prompt admission and removes the intermediate.
+    input: v.object({ providerChatId: nonEmptyString }),
+    output: v.union([
+      v.object({ resolved: v.literal(true), surfaceId: nonEmptyString }),
+      v.object({ resolved: v.literal(false) }),
+    ]),
+    run: ({ input }) => {
+      const runtime = getBrainEffectsRuntime();
+      if (runtime.resolveSurfaceForChat === undefined) {
+        throw new Error("Surface resolution is not configured for this Brain runtime.");
+      }
+      const surfaceId = runtime.resolveSurfaceForChat(input.providerChatId);
+      return surfaceId === undefined ? { resolved: false as const } : { resolved: true as const, surfaceId };
+    },
+  });
+
 export const createStaySilentTool = () =>
   defineTool({
     name: "stay_silent",
@@ -61,11 +86,11 @@ export const createFileIssueTool = () =>
   defineTool({
     name: "file_issue",
     description:
-      "Durably file one GitHub issue in the repository you choose, resolved from Graph relations. Supply the current Batch id and the originating Surface as provenance, and the target repository as `owner/repo`. This creates the issue; report the outcome back separately with prompt_speaker.",
+      "Durably file one GitHub issue in the repository you choose, resolved from Graph relations. Supply the current Batch id and the originating Surface as provenance, and the target repository as `owner/repo`. Omit the repository to file into the configured default repository when the Graph resolves none. This creates the issue; report the outcome back separately with prompt_speaker.",
     input: v.object({
       batchId: nonEmptyString,
       surfaceId: nonEmptyString,
-      repository: v.pipe(nonEmptyString, v.regex(/^[^/\s]+\/[^/\s]+$/u, "repository must be owner/repo")),
+      repository: v.optional(v.pipe(nonEmptyString, v.regex(/^[^/\s]+\/[^/\s]+$/u, "repository must be owner/repo"))),
       kind: v.union([v.literal("bug"), v.literal("feature")]),
       title: v.pipe(nonEmptyString, v.maxLength(256)),
       body: v.pipe(nonEmptyString, v.maxLength(MAX_PUBLIC_ISSUE_BODY_LENGTH)),
@@ -91,11 +116,14 @@ export const createFileIssueTool = () =>
       if (runtime.fileIssue === undefined) {
         throw new Error("Issue filing is not configured for this Brain runtime.");
       }
+      // No Graph relation resolved a repo → fall back to the configured default. policy.authorize()
+      // with no argument returns defaultRepository and still enforces the fail-closed allowlist.
+      const repository = input.repository ?? repositoryName(getIssueManagementRuntime().policy.authorize());
       const effect = await deliverIssueFilingEffect(
         runtime.inbox.recordIssueFiling({
           batchId: input.batchId,
           sourceSurfaceId: input.surfaceId,
-          repository: input.repository,
+          repository,
           kind: input.kind,
           title: input.title,
           body: input.body,
