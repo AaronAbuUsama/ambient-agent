@@ -318,7 +318,13 @@ export interface WhatsAppRuntimeOptions {
   readonly observeActivity?: (observer: SpeakerObserver) => () => void;
   /** Run once after the participation port is wired — e.g. the delegation boot sweep. */
   readonly afterParticipationReady?: () => void;
+  /** The proactive clock's cron-floor cadence (§6). Default 5 min; 0 disables the interval (boot sweep only). */
+  readonly proactiveClockIntervalMs?: number;
 }
+
+// ponytail: a single fixed process interval is the whole cron floor — the DB is the source of truth and
+// boot reconciles, so a missed tick only delays, never drops. Per-wake precise timers only if latency bites.
+const DEFAULT_PROACTIVE_CLOCK_INTERVAL_MS = 5 * 60 * 1_000;
 
 export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppRuntimeControl => {
   const storeDir = options.storeDirectory;
@@ -351,6 +357,24 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   // sweep in afterParticipationReady (which wakes once everything is configured); after ready, each
   // admission wakes directly.
   let brainReady = false;
+  let proactiveClockTimer: ReturnType<typeof setInterval> | undefined;
+  // The cron/boot due scan (§6): admit a coalesced Proactive Sweep + every due Scheduled Wake, then wake.
+  // Idempotent and durable — safe on boot and on every tick. Always wake, even when the scan admitted
+  // nothing new: wakeBrain re-claims and re-dispatches an already-open Batch (its claimBatch returns the
+  // open Batch first), so a Batch left claimed-but-undispatched by a prior transient wake failure is
+  // retried here instead of wedging the clock. Non-fatal by design: a wake we cannot dispatch now (like a
+  // boot issue-filing) must never kill the runtime fiber — the durable rows persist and retry next tick.
+  const runProactiveClock = async (): Promise<void> => {
+    try {
+      brainInbox.runProactiveClock();
+      await wakeBrain(brainInbox);
+    } catch (cause) {
+      getLogger("brain").warn(
+        { event: "brain.proactive-clock.failed", error: errorMessage(cause) },
+        "Proactive clock tick could not dispatch; left durable to retry next tick",
+      );
+    }
+  };
   // Flipped false when this runtime tears down (fiber failure, reconnect, logged_out) while the HTTP app
   // may keep serving. Without it the port's captured brainInbox is a finalized SQLite handle: admit would
   // throw, the ingress would settle 'failed' → 200, and the delivery would be lost with no retry. Deferring
@@ -427,6 +451,11 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
         // defers (503) rather than throwing on a closed SQLite handle and being lost.
         brainAlive = false;
         brainInbox.close();
+      }),
+    );
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        if (proactiveClockTimer !== undefined) clearInterval(proactiveClockTimer);
       }),
     );
     yield* Effect.addFinalizer(() => Effect.sync(() => deliveries.close()));
@@ -566,6 +595,14 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
         // sweep — this dispatches any event admitted during boot, and future admissions wake directly.
         brainReady = true;
         await wakeBrain(brainInbox);
+        // Proactive clock cron floor (§6): run the due scan once at boot, then on a slow interval. Boot
+        // reconciliation admits any wake that came due while down; each fires exactly once (durable ledger).
+        await runProactiveClock();
+        const intervalMs = options.proactiveClockIntervalMs ?? DEFAULT_PROACTIVE_CLOCK_INTERVAL_MS;
+        if (intervalMs > 0) {
+          proactiveClockTimer = setInterval(() => void runProactiveClock(), intervalMs);
+          proactiveClockTimer.unref?.();
+        }
         await options.afterParticipationReady?.();
       },
     });
