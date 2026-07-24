@@ -25,8 +25,14 @@ export interface BrainEffectsRuntime {
    * only to an already-active operator-authorized Surface (discovery never grants participation), while a
    * known person's DM Surface is opened on demand. Returns undefined for an unknown/unaddressable entity
    * (fail-closed — the Brain then stays silent).
+   *
+   * `release` undoes a DM Surface this call newly opened, keeping materialization atomic with admission:
+   * the tool calls it iff the subsequent recordPrompt rejects, so no active binding is left behind a
+   * never-accepted prompt. It is a no-op for a stable Surface or an already-live DM.
    */
-  readonly resolveSurfaceForEntity?: (entityId: string) => string | undefined;
+  readonly resolveSurfaceForEntity?: (
+    entityId: string,
+  ) => { readonly surfaceId: string; readonly release: () => void } | undefined;
 }
 
 const runtimeSlot = createFlueGlobal<BrainEffectsRuntime>(

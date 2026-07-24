@@ -83,21 +83,44 @@ const TYPING_LEAD_MS = 750;
  * identity, or an unknown id — is not an addressable Surface and returns undefined, and the Brain stays
  * silent. This is the fail-closed boundary: only a Person the coworker already knows (a Graph entity met in
  * an authorized surface) is DM-addressable; an unknown DMer has no entity here and so grants no participation.
+ *
+ * Materialization is atomic with admission (§8): opening a person's DM Surface is a side effect that must
+ * NOT outlive a failed prompt admission, or the intake gate would then admit that chat with no accepted
+ * Prompt Effect behind it. So `release` undoes a DM binding this call newly opened (retiring it), while
+ * leaving an already-active DM (a live channel from a prior turn) untouched. The caller invokes `release`
+ * only if recordPrompt rejects.
  */
+export interface ResolvedTargetSurface {
+  readonly surfaceId: string;
+  readonly release: () => void;
+}
+
+const NO_RELEASE = () => undefined;
+
 export const resolveEntitySurface = (
   deps: {
     readonly graph: Pick<GraphStore, "getEntity" | "whatsappExternalId">;
-    readonly surfaces: Pick<SurfaceRegistry, "activeSurface" | "activateDirect">;
+    readonly surfaces: Pick<SurfaceRegistry, "activeSurface" | "activateDirect" | "retireDirect">;
     readonly accountJid: string;
   },
   entityId: string,
-): string | undefined => {
+): ResolvedTargetSurface | undefined => {
   const entity = deps.graph.getEntity(entityId);
   if (entity === undefined) return undefined;
   const chatId = deps.graph.whatsappExternalId(entityId);
   if (chatId === undefined) return undefined;
-  if (entity.type === "thread") return deps.surfaces.activeSurface(deps.accountJid, chatId)?.id;
-  if (entity.type === "person") return deps.surfaces.activateDirect(deps.accountJid, chatId).id;
+  if (entity.type === "thread") {
+    const surface = deps.surfaces.activeSurface(deps.accountJid, chatId);
+    return surface === undefined ? undefined : { surfaceId: surface.id, release: NO_RELEASE };
+  }
+  if (entity.type === "person") {
+    const alreadyLive = deps.surfaces.activeSurface(deps.accountJid, chatId) !== undefined;
+    const surface = deps.surfaces.activateDirect(deps.accountJid, chatId);
+    return {
+      surfaceId: surface.id,
+      release: alreadyLive ? NO_RELEASE : () => deps.surfaces.retireDirect(deps.accountJid, chatId),
+    };
+  }
   return undefined;
 };
 
@@ -296,6 +319,10 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   // deliberately opened its Surface — a known-Person DM via activateDirect (S5) — so a DM the coworker
   // started is genuinely two-way, not send-only. Everything else stays fail-closed: an unconfigured group
   // and an unknown person's unsolicited DM have no active binding, so admit is false for them.
+  // ponytail: accountJid is unknown until authenticate resolves, so a reply to an already-open DM that
+  // arrives in the brief pre-auth sync/replay window is archived but not proactively dispatched (admit
+  // sees no account yet). Narrow and non-lossy — the next live message re-triggers it. Seed accountJid
+  // from prior bindings only if this gap ever bites; that path must not defeat the account-change retirement.
   let accountJid: string | undefined;
   const admit = (chatId: string, isGroup: boolean): boolean =>
     gate.allowed(chatId, isGroup) ||

@@ -38,6 +38,7 @@ export const createPromptSpeakerTool = () =>
       // Resolve a known-Person / thread target to its Surface during prompt admission (§8). Fail closed:
       // an entity that resolves to no active/openable Surface never speaks — the Brain must stay_silent.
       let surfaceId: string;
+      let release = (): void => undefined;
       if ("surfaceId" in input.target) {
         surfaceId = input.target.surfaceId;
       } else {
@@ -51,11 +52,25 @@ export const createPromptSpeakerTool = () =>
               "Stay silent rather than participate; observation never grants participation.",
           );
         }
-        surfaceId = resolved;
+        surfaceId = resolved.surfaceId;
+        release = resolved.release;
       }
-      const effect = await deliverPromptEffect(
-        runtime.inbox.recordPrompt({ batchId: input.batchId, surfaceId, objective: input.objective, brief: input.brief }),
-      );
+      // Materialization is atomic with admission: if recordPrompt rejects (stale Batch, bad evidence), undo
+      // a DM Surface this call just opened so no active binding survives without an accepted Prompt Effect.
+      // deliverPromptEffect failures happen AFTER the Effect is durable → recovery re-delivers, keep the binding.
+      let pending;
+      try {
+        pending = runtime.inbox.recordPrompt({
+          batchId: input.batchId,
+          surfaceId,
+          objective: input.objective,
+          brief: input.brief,
+        });
+      } catch (cause) {
+        release();
+        throw cause;
+      }
+      const effect = await deliverPromptEffect(pending);
       if (effect.dispatch === undefined) throw new Error(`Prompt Effect ${effect.id} was not accepted.`);
       return {
         kind: "prompt_speaker" as const,

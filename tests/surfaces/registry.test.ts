@@ -89,4 +89,19 @@ describe("Surface registry", () => {
     expect(reopened.activateDirect("account:one", "204663831932940@lid")).toEqual(dm);
     reopened.close();
   });
+
+  it("retires a direct DM when the paired account is replaced, not merely restarted", () => {
+    const registry = createSurfaceRegistry(fixture());
+    registry.activateConfigured("account:A", ["team@g.us"]);
+    const dm = registry.activateDirect("account:A", "204663831932940@lid");
+    expect(registry.activeSurface("account:A", "204663831932940@lid")).toEqual(dm);
+
+    // Re-pairing to a DIFFERENT account retires the previous account's direct bindings (§8: replacing the
+    // account retires old bindings rather than silently moving them) — so a stale DM never delivers through
+    // the new session.
+    registry.activateConfigured("account:B", ["team@g.us"]);
+    expect(registry.activeSurface("account:A", "204663831932940@lid")).toBeUndefined();
+    expect(registry.activeBinding(dm.id)).toBeUndefined();
+    registry.close();
+  });
 });

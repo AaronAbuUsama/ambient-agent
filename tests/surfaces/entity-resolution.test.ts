@@ -39,18 +39,50 @@ describe("resolveEntitySurface — one prompt operation for group reply and know
 
     const deps = { graph: store, surfaces, accountJid: ACCOUNT };
 
-    // Group reply: resolves to the pre-existing operator-authorized Surface.
-    expect(resolveEntitySurface(deps, threadId)).toBe(groupSurface!.id);
+    // Group reply: resolves to the pre-existing operator-authorized Surface. A stable Surface never releases.
+    const group = resolveEntitySurface(deps, threadId);
+    expect(group?.surfaceId).toBe(groupSurface!.id);
+    group?.release(); // no-op — the configured group survives.
+    expect(surfaces.activeSurface(ACCOUNT, GROUP)?.id).toBe(groupSurface!.id);
 
     // Known-person DM: opens a distinct Surface on demand (find-or-create), idempotent on repeat.
-    const dmSurface = resolveEntitySurface(deps, personId);
-    expect(dmSurface).toBeDefined();
-    expect(dmSurface).not.toBe(groupSurface!.id);
-    expect(resolveEntitySurface(deps, personId)).toBe(dmSurface);
-    expect(surfaces.activeBinding(dmSurface!)?.providerChatId).toBe(PERSON_DM);
+    const dm = resolveEntitySurface(deps, personId);
+    expect(dm?.surfaceId).toBeDefined();
+    expect(dm?.surfaceId).not.toBe(groupSurface!.id);
+    expect(resolveEntitySurface(deps, personId)?.surfaceId).toBe(dm!.surfaceId);
+    expect(surfaces.activeBinding(dm!.surfaceId)?.providerChatId).toBe(PERSON_DM);
 
     // Opening the DM never retired the configured group binding.
     expect(surfaces.activeSurface(ACCOUNT, GROUP)?.id).toBe(groupSurface!.id);
+
+    store.close();
+    surfaces.close();
+  });
+
+  it("release() retires a DM this call newly opened, but leaves an already-live DM (and the group) intact", () => {
+    const store = createGraphStore(":memory:");
+    const surfaces = createSurfaceRegistry(":memory:");
+    surfaces.activateConfigured(ACCOUNT, [GROUP]);
+    const personId = attestEntity(store, {
+      type: "person",
+      properties: { name: "Aaron" },
+      identity: { platform: "whatsapp", externalId: PERSON_DM },
+    });
+    const deps = { graph: store, surfaces, accountJid: ACCOUNT };
+
+    // First resolution opens the DM; its release undoes exactly that (failed admission ⇒ no lingering binding).
+    const first = resolveEntitySurface(deps, personId);
+    expect(surfaces.activeSurface(ACCOUNT, PERSON_DM)).toBeDefined();
+    first!.release();
+    expect(surfaces.activeSurface(ACCOUNT, PERSON_DM)).toBeUndefined(); // rolled back — intake won't admit it.
+
+    // Re-open it and accept it (no release). A LATER resolution finds it already live: its release is a no-op,
+    // so a second failed prompt cannot tear down a legitimately-open two-way DM.
+    resolveEntitySurface(deps, personId); // opens again, kept.
+    const live = surfaces.activeSurface(ACCOUNT, PERSON_DM);
+    const again = resolveEntitySurface(deps, personId);
+    again!.release();
+    expect(surfaces.activeSurface(ACCOUNT, PERSON_DM)?.id).toBe(live?.id); // untouched.
 
     store.close();
     surfaces.close();

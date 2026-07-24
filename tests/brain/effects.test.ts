@@ -20,6 +20,8 @@ import { createIssueFiler } from "../../packages/agents/src/brain/issue-filing.t
 import { brainGraphContext } from "../../packages/agents/src/brain/agent.ts";
 import { createGraphTools } from "../../packages/agents/src/capabilities/graph/tools.ts";
 import { createGraphStore } from "../../packages/engine/src/graph/store.ts";
+import { createSurfaceRegistry } from "../../packages/engine/src/surfaces/registry.ts";
+import { resolveEntitySurface } from "../../apps/runtime/src/host/whatsapp-runtime.ts";
 import { createIssueManagementPolicy } from "../../packages/agents/src/capabilities/issue-management/runtime.ts";
 import { createIssueOperationStore } from "../../packages/engine/src/github/operation-store.ts";
 import { createFakeIssueRepository } from "../../packages/test-support/src/fake-issue-repository.ts";
@@ -190,7 +192,8 @@ describe("Brain Effects and settlement", () => {
         return { dispatchId: "dispatch:speaker:gh", acceptedAt: "2026-07-22T12:00:02.000Z" };
       },
       // The seam under test: a known target entity resolves to its Surface UUID; anything else does not.
-      resolveSurfaceForEntity: (entityId) => (entityId === THREAD_ENTITY ? SURFACE : undefined),
+      resolveSurfaceForEntity: (entityId) =>
+        entityId === THREAD_ENTITY ? { surfaceId: SURFACE, release: () => undefined } : undefined,
     });
 
     // prompt_speaker takes the thread's entity id directly (no chatId hop) and resolves it in admission.
@@ -214,6 +217,52 @@ describe("Brain Effects and settlement", () => {
     ).rejects.toThrow(/resolves to no Surface/);
     expect(delivered).toHaveLength(1);
     inbox.close();
+  });
+
+  it("rolls back a DM Surface opened during a prompt whose admission then fails — no orphaned binding", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ambient-brain-dm-rollback-"));
+    roots.push(root);
+    const databasePath = join(root, "application.sqlite");
+    createConversationArchive(databasePath).close();
+    const surfaces = createSurfaceRegistry(databasePath);
+    const graph = createGraphStore(databasePath);
+    const ACCOUNT = "15550000000@s.whatsapp.net";
+    const PERSON_DM = "person-dm-77@lid";
+    const attested = graph.attest({
+      context: { author: { kind: "brain", id: "brain" }, evidenceIds: ["test:dm"] },
+      claim: { kind: "entity", input: { type: "person", properties: {}, identity: { platform: "whatsapp", externalId: PERSON_DM } } },
+    });
+    if (attested.kind !== "entity") throw new Error("Expected a person Entity Attestation.");
+    const inbox = createBrainInbox(databasePath, {
+      providerChatIdForSurface: (surfaceId) => surfaces.activeBinding(surfaceId)?.providerChatId,
+    });
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async () => {
+        throw new Error("Delivery must never run: admission rejects first.");
+      },
+      resolveSurfaceForEntity: (entityId) => resolveEntitySurface({ graph, surfaces, accountJid: ACCOUNT }, entityId),
+    });
+
+    // The chat has no Surface yet. prompt_speaker targets the known person against a Batch that is not open
+    // and dispatched, so recordPrompt rejects — AFTER resolution opened the DM Surface.
+    expect(surfaces.activeSurface(ACCOUNT, PERSON_DM)).toBeUndefined();
+    await expect(
+      createPromptSpeakerTool().run({ input: {
+        batchId: "brain-batch:never-dispatched",
+        target: { entityId: attested.entity.entityId },
+        objective: "Should never be admitted.",
+        brief: { summary: "stale batch.", evidenceIds: [EVIDENCE] },
+      } }),
+    ).rejects.toThrow(/not open and dispatched/);
+    // Materialization stayed atomic with admission: the opened DM binding was rolled back, so the intake
+    // gate will NOT admit this chat behind a prompt that was never accepted.
+    expect(surfaces.activeSurface(ACCOUNT, PERSON_DM)).toBeUndefined();
+
+    inbox.close();
+    surfaces.close();
+    graph.close();
   });
 
   it("allow-lists a GitHub event's own id as Graph-write evidence for a GitHub-only Batch", () => {

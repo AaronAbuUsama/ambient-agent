@@ -21,6 +21,12 @@ export interface SurfaceRegistry {
    * never called from ingress, so it grants no participation to an observed/discovered chat.
    */
   readonly activateDirect: (providerAccountId: string, providerChatId: string) => SurfaceBinding;
+  /**
+   * Retire a direct DM binding — the compensating undo when prompt admission opened one but then failed
+   * to record the Prompt Effect, so an unaccepted DM never leaves an active binding that would admit
+   * inbound messages. Only ever touches `kind = 'direct'`; a configured binding is never retired here.
+   */
+  readonly retireDirect: (providerAccountId: string, providerChatId: string) => void;
   readonly activeSurface: (providerAccountId: string, providerChatId: string) => SurfaceBinding | undefined;
   readonly activeBinding: (surfaceId: string) => SurfaceBinding | undefined;
   readonly close: () => void;
@@ -76,8 +82,11 @@ export const createSurfaceRegistry = (databasePath: string): SurfaceRegistry => 
     database.exec("ALTER TABLE surface_bindings ADD COLUMN kind TEXT NOT NULL DEFAULT 'configured'");
   }
 
+  // Retire every active binding EXCEPT a direct DM of the account now being configured: a same-account
+  // restart preserves the DMs the Brain opened, but replacing the paired account retires its predecessor's
+  // direct bindings too (§8: replacing the account retires old bindings rather than silently moving them).
   const retireActive = database.prepare(
-    "UPDATE surface_bindings SET retired_at = ? WHERE retired_at IS NULL AND kind = 'configured'",
+    "UPDATE surface_bindings SET retired_at = ? WHERE retired_at IS NULL AND (kind = 'configured' OR provider_account_id != ?)",
   );
   const selectAny = database.prepare(`
     SELECT surface_id, provider_account_id, provider_chat_id
@@ -102,6 +111,9 @@ export const createSurfaceRegistry = (databasePath: string): SurfaceRegistry => 
   const reactivateAsConfigured = database.prepare(`
     UPDATE surface_bindings SET retired_at = NULL, bound_at = ?, kind = 'configured' WHERE surface_id = ?
   `);
+  const retireDirectBinding = database.prepare(
+    "UPDATE surface_bindings SET retired_at = ? WHERE provider_account_id = ? AND provider_chat_id = ? AND kind = 'direct' AND retired_at IS NULL",
+  );
   const insertSurface = database.prepare("INSERT INTO surfaces (surface_id, created_at) VALUES (?, ?)");
   const insertBinding = database.prepare(`
     INSERT INTO surface_bindings
@@ -118,7 +130,7 @@ export const createSurfaceRegistry = (databasePath: string): SurfaceRegistry => 
 
       database.exec("BEGIN IMMEDIATE");
       try {
-        retireActive.run(now);
+        retireActive.run(now, providerAccountId);
         for (const providerChatId of providerChatIds) {
           const existing = selectAny.get(providerAccountId, providerChatId) as BindingRow | undefined;
           if (existing !== undefined) {
@@ -161,6 +173,13 @@ export const createSurfaceRegistry = (databasePath: string): SurfaceRegistry => 
         database.exec("ROLLBACK");
         throw cause;
       }
+    },
+    retireDirect: (rawAccountId, rawChatId) => {
+      retireDirectBinding.run(
+        new Date().toISOString(),
+        required(rawAccountId, "Provider account id"),
+        required(rawChatId, "Provider chat id"),
+      );
     },
     activeSurface: (providerAccountId, providerChatId) => {
       const row = selectActiveSurface.get(
