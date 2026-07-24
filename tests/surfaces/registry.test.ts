@@ -67,4 +67,26 @@ describe("Surface registry", () => {
     expect(registry.activeBinding(removed!.id)).toBeUndefined();
     registry.close();
   });
+
+  it("keeps a Brain-opened direct DM alive across a boot re-activation, and stays fail-closed for others", () => {
+    const databasePath = fixture();
+    const registry = createSurfaceRegistry(databasePath);
+    registry.activateConfigured("account:one", ["team@g.us"]);
+    // The Brain deliberately opens a known person's DM (never a configured chat).
+    const dm = registry.activateDirect("account:one", "204663831932940@lid");
+    expect(registry.activeSurface("account:one", "204663831932940@lid")).toEqual(dm); // admit ⇒ two-way.
+    registry.close();
+
+    // Restart: activateConfigured re-runs before pending-prompt recovery. The direct DM must survive it —
+    // a configured chat that was removed does not, and a chat never opened stays closed.
+    const reopened = createSurfaceRegistry(databasePath);
+    reopened.activateConfigured("account:one", ["team@g.us"]);
+    expect(reopened.activeSurface("account:one", "204663831932940@lid")).toEqual(dm); // survived retirement.
+    expect(reopened.activeBinding(dm.id)).toEqual(dm); // recovery's deliverPrompt still resolves the Surface.
+    expect(reopened.activeSurface("account:one", "stranger@g.us")).toBeUndefined(); // never opened ⇒ rejected.
+
+    // activateDirect is idempotent and never downgrades a configured binding.
+    expect(reopened.activateDirect("account:one", "204663831932940@lid")).toEqual(dm);
+    reopened.close();
+  });
 });

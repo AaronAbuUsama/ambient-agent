@@ -64,8 +64,20 @@ export const createSurfaceRegistry = (databasePath: string): SurfaceRegistry => 
     ) STRICT;
   `);
 
+  // `kind` distinguishes an operator-configured binding from a Brain-opened direct DM. activateConfigured
+  // retires only 'configured' bindings on re-activation; a 'direct' DM the Brain deliberately opened must
+  // survive boot (else a pending direct-DM prompt loses its Surface during recovery). Existing rows predate
+  // direct DMs and are all 'configured'.
+  // ponytail: an orphaned 'direct' binding never reused lingers; add a retire-idle sweep only if they pile up.
+  const hasKind = (database.prepare("PRAGMA table_info(surface_bindings)").all() as { name: string }[]).some(
+    (column) => column.name === "kind",
+  );
+  if (!hasKind) {
+    database.exec("ALTER TABLE surface_bindings ADD COLUMN kind TEXT NOT NULL DEFAULT 'configured'");
+  }
+
   const retireActive = database.prepare(
-    "UPDATE surface_bindings SET retired_at = ? WHERE retired_at IS NULL",
+    "UPDATE surface_bindings SET retired_at = ? WHERE retired_at IS NULL AND kind = 'configured'",
   );
   const selectAny = database.prepare(`
     SELECT surface_id, provider_account_id, provider_chat_id
@@ -85,11 +97,16 @@ export const createSurfaceRegistry = (databasePath: string): SurfaceRegistry => 
   const reactivate = database.prepare(`
     UPDATE surface_bindings SET retired_at = NULL, bound_at = ? WHERE surface_id = ?
   `);
+  // activateConfigured (re)claims a binding as 'configured' — upgrading one first opened as a direct DM,
+  // so it re-enters the retire-able configured set once the operator authorizes its chat.
+  const reactivateAsConfigured = database.prepare(`
+    UPDATE surface_bindings SET retired_at = NULL, bound_at = ?, kind = 'configured' WHERE surface_id = ?
+  `);
   const insertSurface = database.prepare("INSERT INTO surfaces (surface_id, created_at) VALUES (?, ?)");
   const insertBinding = database.prepare(`
     INSERT INTO surface_bindings
-      (surface_id, provider_account_id, provider_chat_id, bound_at, retired_at)
-    VALUES (?, ?, ?, ?, NULL)
+      (surface_id, provider_account_id, provider_chat_id, bound_at, retired_at, kind)
+    VALUES (?, ?, ?, ?, NULL, ?)
   `);
 
   return {
@@ -105,14 +122,14 @@ export const createSurfaceRegistry = (databasePath: string): SurfaceRegistry => 
         for (const providerChatId of providerChatIds) {
           const existing = selectAny.get(providerAccountId, providerChatId) as BindingRow | undefined;
           if (existing !== undefined) {
-            reactivate.run(now, existing.surface_id);
+            reactivateAsConfigured.run(now, existing.surface_id);
             active.push(hydrate(existing));
             continue;
           }
 
           const surfaceId = `surface:${randomUUID()}`;
           insertSurface.run(surfaceId, now);
-          insertBinding.run(surfaceId, providerAccountId, providerChatId, now);
+          insertBinding.run(surfaceId, providerAccountId, providerChatId, now, "configured");
           active.push({ id: surfaceId, providerAccountId, providerChatId });
         }
         database.exec("COMMIT");
@@ -130,13 +147,14 @@ export const createSurfaceRegistry = (databasePath: string): SurfaceRegistry => 
       try {
         const existing = selectAny.get(providerAccountId, providerChatId) as BindingRow | undefined;
         if (existing !== undefined) {
+          // Reactivate without touching kind: never downgrade an operator-configured binding to 'direct'.
           reactivate.run(now, existing.surface_id); // NULLs retired_at if retired; a no-op when already active.
           database.exec("COMMIT");
           return hydrate(existing);
         }
         const surfaceId = `surface:${randomUUID()}`;
         insertSurface.run(surfaceId, now);
-        insertBinding.run(surfaceId, providerAccountId, providerChatId, now);
+        insertBinding.run(surfaceId, providerAccountId, providerChatId, now, "direct");
         database.exec("COMMIT");
         return { id: surfaceId, providerAccountId, providerChatId };
       } catch (cause) {

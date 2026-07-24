@@ -292,6 +292,14 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   const gate = makeManagedChatGate(options.managedChats);
   const archive = createConversationArchive(options.applicationDatabase);
   const surfaces = createSurfaceRegistry(options.applicationDatabase);
+  // Intake admission: a chat reaches the loop if it is operator-configured (the static gate) OR the Brain
+  // deliberately opened its Surface — a known-Person DM via activateDirect (S5) — so a DM the coworker
+  // started is genuinely two-way, not send-only. Everything else stays fail-closed: an unconfigured group
+  // and an unknown person's unsolicited DM have no active binding, so admit is false for them.
+  let accountJid: string | undefined;
+  const admit = (chatId: string, isGroup: boolean): boolean =>
+    gate.allowed(chatId, isGroup) ||
+    (accountJid !== undefined && chatId.trim() !== "" && surfaces.activeSurface(accountJid, chatId) !== undefined);
   const brainInbox = createBrainInbox(options.applicationDatabase, {
     providerChatIdForSurface: (surfaceId) => surfaces.activeBinding(surfaceId)?.providerChatId,
   });
@@ -328,7 +336,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
     brainInbox.admitKnowledgeDelta(draft);
     await wakeBrain(brainInbox);
   });
-  const inbox = createManagedChatInbox(archive, { allowed: gate.allowed });
+  const inbox = createManagedChatInbox(archive, { allowed: admit });
   speakerActivity.recoverWith((dispatchId) => {
     const window = inbox.windowForDispatch(dispatchId);
     return window === undefined
@@ -401,6 +409,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
         },
       }),
     );
+    accountJid = authenticatedAccount.jid; // Now `admit` can consult active direct bindings for this account.
     yield* Effect.sync(() => surfaces.activateConfigured(authenticatedAccount.jid, options.managedChats));
     yield* Effect.sync(() =>
       configureIntentEscalationRuntime({
@@ -488,7 +497,8 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
       ),
     );
     yield* runWhatsAppSession(session, {
-      gate,
+      // The event source admits via the same composite predicate, so a known-Person DM is two-way.
+      gate: { ...gate, allowed: admit },
       history: archive,
       inbox,
       botLid: options.botLid,
