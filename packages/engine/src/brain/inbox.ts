@@ -242,7 +242,16 @@ export type IssueMutationOutcome =
       readonly issueNumber?: number;
       readonly state?: "open" | "closed";
     }
-  | { readonly status: "uncertain"; readonly reason: string };
+  // Uncertain still carries what GitHub was observed to have done (e.g. a comment it created whose
+  // Operation completion could not be persisted), so the durable effect preserves provenance detail.
+  | {
+      readonly status: "uncertain";
+      readonly reason: string;
+      readonly url?: string;
+      readonly commentId?: number;
+      readonly issueNumber?: number;
+      readonly state?: "open" | "closed";
+    };
 
 export interface IssueMutationEffect {
   readonly id: string;
@@ -1509,12 +1518,14 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
       if (mutation.kind === "delete-comment" || mutation.kind === "update-comment") {
         const authored = (selectCompletedMutations.all() as unknown as { payload_json: string }[]).some((row) => {
           const payload = JSON.parse(row.payload_json) as IssueMutation & { outcome?: IssueMutationOutcome };
+          // A recorded commentId is proof the Brain's create landed (it is only ever set when GitHub
+          // actually created the comment) — so it authorizes even from an `uncertain`-with-detail
+          // outcome (GitHub made the comment but its Operation completion could not be persisted).
           return (
             payload.kind === "create-comment" &&
             payload.repository.toLowerCase() === repository.toLowerCase() &&
             payload.number === mutation.number &&
             payload.outcome !== undefined &&
-            (payload.outcome.status === "applied" || payload.outcome.status === "reconciled") &&
             payload.outcome.commentId === mutation.commentId
           );
         });

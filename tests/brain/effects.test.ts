@@ -1026,6 +1026,46 @@ describe("Brain Effects and settlement", () => {
     inbox.close();
   });
 
+  it("preserves a created comment's id on an uncertain result, so a later delete of it is authorized", async () => {
+    const { inbox, batchId } = openFixture();
+    const repository = createFakeIssueRepository();
+    const operations = createIssueOperationStore(":memory:");
+    // Fail only `complete`: GitHub really creates the comment, but its Operation Identity completion cannot
+    // be persisted — the capability honestly reports `uncertain` while still surfacing the created comment.
+    const flakyOperations = {
+      ...operations,
+      complete: () => { throw new Error("Operation ledger write failed"); },
+    } as typeof operations;
+    const policy = createIssueManagementPolicy(REPOSITORY, [REPOSITORY]);
+    const mutator = createIssueMutator({ repository, operations: flakyOperations, policy });
+    const issue = repository.seed({ repository: REPO_REF, title: "Uncertain create", body: "Body" });
+    configureBrainEffectsRuntime({
+      inbox,
+      wake: async () => undefined,
+      deliverPrompt: async () => { throw new Error("not expected"); },
+      mutateIssue: mutator,
+    });
+
+    const commented = await createCreateIssueCommentTool().run({ input: {
+      batchId, surfaceId: SURFACE, repository: REPOSITORY, number: issue.number, body: "Landed but uncertain.",
+    } });
+    // Uncertain — but the real commentId is preserved in the durable outcome, not discarded.
+    expect(commented.outcome.status).toBe("uncertain");
+    const commentId = (commented.outcome as { commentId: number }).commentId;
+    expect(commentId).toEqual(expect.any(Number));
+
+    // Because a completed effect now carries that commentId, deleting the Brain's own comment is authorized.
+    expect(() =>
+      inbox.recordIssueMutation({
+        batchId,
+        sourceSurfaceId: SURFACE,
+        mutation: { kind: "delete-comment", repository: REPOSITORY, number: issue.number, commentId },
+      }),
+    ).not.toThrow();
+    operations.close();
+    inbox.close();
+  });
+
   it("settles a non-retryable issue-mutation failure as uncertain so the Batch is not wedged", async () => {
     const { inbox, batchId } = openFixture();
     const { repository, operations, mutator } = mutationRuntime();

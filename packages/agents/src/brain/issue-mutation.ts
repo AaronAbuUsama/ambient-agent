@@ -82,18 +82,30 @@ const toolInput = (mutation: IssueMutation): Record<string, unknown> => {
   }
 };
 
-/** Normalize a capability tool result into the durable Effect's terminal outcome. */
+/** Normalize a capability tool result into the durable Effect's terminal outcome. The observed detail
+ * (commentId/url or issue number/url/state) is preserved even on an `uncertain` result: the capability
+ * reports uncertain-with-value when GitHub applied the mutation but its Operation Identity completion
+ * couldn't be persisted, so a created comment's real id must still be recorded — otherwise the delete/edit
+ * provenance check (recordIssueMutation) could never authorize acting on a comment the Brain truly made. */
 const toOutcome = (mutation: IssueMutation, result: Record<string, unknown>): IssueMutationOutcome => {
-  const status = result.status as string;
-  if (status === "uncertain") return { status: "uncertain", reason: result.reason as string };
-  const applied = status === "reconciled" ? ("reconciled" as const) : ("applied" as const);
-  if (mutation.kind === "create-comment" || mutation.kind === "update-comment") {
-    const comment = result.comment as { id: number; url: string };
-    return { status: applied, commentId: comment.id, url: comment.url };
-  }
-  if (mutation.kind === "delete-comment") return { status: applied, commentId: result.commentId as number };
-  const issue = result.issue as { number: number; url: string; state: "open" | "closed" };
-  return { status: applied, issueNumber: issue.number, url: issue.url, state: issue.state };
+  const detail = ((): {
+    url?: string;
+    commentId?: number;
+    issueNumber?: number;
+    state?: "open" | "closed";
+  } => {
+    if (mutation.kind === "create-comment" || mutation.kind === "update-comment") {
+      const comment = result.comment as { id: number; url: string } | undefined;
+      return comment === undefined ? {} : { commentId: comment.id, url: comment.url };
+    }
+    if (mutation.kind === "delete-comment") {
+      return result.commentId === undefined ? {} : { commentId: result.commentId as number };
+    }
+    const issue = result.issue as { number: number; url: string; state: "open" | "closed" } | undefined;
+    return issue === undefined ? {} : { issueNumber: issue.number, url: issue.url, state: issue.state };
+  })();
+  if (result.status === "uncertain") return { status: "uncertain", reason: result.reason as string, ...detail };
+  return { status: result.status === "reconciled" ? "reconciled" : "applied", ...detail };
 };
 
 /**

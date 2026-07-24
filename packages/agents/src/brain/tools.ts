@@ -51,7 +51,16 @@ const mutationOutcome = v.union([
     issueNumber: v.optional(issueNumber),
     state: v.optional(issueState),
   }),
-  v.object({ status: v.literal("uncertain"), reason: nonEmptyString }),
+  v.object({
+    status: v.literal("uncertain"),
+    reason: nonEmptyString,
+    // Preserved even when uncertain: GitHub may have applied the mutation (e.g. created the comment)
+    // while its Operation completion could not be persisted — the observed detail is still recorded.
+    url: v.optional(issueUrl),
+    commentId: v.optional(issueNumber),
+    issueNumber: v.optional(issueNumber),
+    state: v.optional(issueState),
+  }),
 ]);
 
 /** Record one issue mutation as a durable down-flow Effect (batch+surface provenance), run it, and return
