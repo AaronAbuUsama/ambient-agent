@@ -267,18 +267,48 @@ describe("the derived WhatsApp liveness (#374)", () => {
   it("maps every whatsappd connection phase, so no transport state is unaccounted for", () => {
     // Total by construction: an unmapped arm would fall back to the startup record, which is the
     // exact failure #312 was. `Status["phase"]` is whatsappd's closed union, so this list is it.
-    const mapped = (phase: string) => whatsappLiveness(booted, { phase } as never).phase;
+    // Read against a runtime that is still booting, which is where the raw table shows through:
+    // after boot the reconnect rule folds the `starting` arms into `degraded` (tested below).
+    const mapped = (phase: string) => whatsappLiveness({ phase: "starting" }, { phase } as never).phase;
 
     expect(mapped("disconnected")).toBe("starting");
     expect(mapped("connecting")).toBe("starting");
     expect(mapped("pairing")).toBe("pairing");
     // Authenticated is draining/syncing: whatsappd refuses every send here, so it is not online.
     expect(mapped("authenticated")).toBe("starting");
-    expect(mapped("online")).toBe("online");
     // Retrying on its own — degraded, not failed: telling an operator to re-pair would be a lie.
     expect(mapped("backing_off")).toBe("degraded");
     expect(mapped("logged_out")).toBe("failed");
     expect(mapped("suspended")).toBe("failed");
+    // `online` needs a booted runtime to show through — that is the floor rule, tested below.
+    expect(whatsappLiveness(booted, { phase: "online" }).phase).toBe("online");
+  });
+
+  it("reports an unknown future transport phase as degraded rather than as fine", () => {
+    // whatsappd is free to add a `Status` arm in a minor bump, and `transportObservation` is
+    // explicitly forward-compatible. An uninterpretable phase must not fall through to the
+    // optimistic answer — "we cannot tell" is not "healthy".
+    expect(whatsappLiveness(booted, { phase: "quantum_entangled" } as never).phase).toBe("degraded");
+  });
+
+  it("calls a reconnect after boot degraded, not starting", () => {
+    // whatsappd's outage cycle alternates backing_off → connecting → backing_off. Without this an
+    // hours-old process reports `starting` for roughly half of an outage — reading as a cold boot,
+    // and folding to AmbientRuntimeState "starting", which is the optimistic answer a down
+    // transport is never allowed to give.
+    expect(whatsappLiveness(booted, { phase: "connecting", retryAttempt: 3 } as never).phase).toBe("degraded");
+    expect(whatsappLiveness(booted, { phase: "disconnected" }).phase).toBe("degraded");
+    expect(
+      ambientRuntimeHealth(reportedWhatsAppStatus(whatsAppObservationOf(booted, { phase: "connecting" }))).state,
+    ).toBe("failed");
+    // Before boot, the same transport phase is exactly what it says: still starting.
+    expect(whatsappLiveness({ phase: "starting" }, { phase: "connecting" }).phase).toBe("starting");
+  });
+
+  it("carries whatsappd's retry counter, so a blip is distinguishable from a wedged loop", () => {
+    expect(
+      whatsappLiveness(booted, { phase: "backing_off", reason: "connection_lost", retryAttempt: 7 }).retryAttempt,
+    ).toBe(7);
   });
 
   it("lets the transport report worse than the runtime believes, but never better", () => {

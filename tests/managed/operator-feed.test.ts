@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 import { createRootLogger } from "../../packages/engine/src/logging/logging.ts";
 import {
   operatorFeed,
+  operatorFeedSink,
   OPERATOR_FEED_RETAINED,
   publishToOperatorFeed,
   resetOperatorFeed,
@@ -18,7 +19,7 @@ beforeEach(() => {
 const nonce = () => randomBytes(8).toString("hex");
 
 describe("the operator log feed", () => {
-  it("delivers what the root logger logs, without a second sink of its own", async () => {
+  it("delivers what the root logger logs, without a second sink of its own", () => {
     // The point of hanging this off the root's multistream rather than instrumenting call sites:
     // what a browser watches is the same record stream the console and the log files get.
     const minted = nonce();
@@ -28,11 +29,29 @@ describe("the operator log feed", () => {
 
     logger.info({ operatorEvent: "agent.say", text: minted }, "Speaker said a WhatsApp message");
 
+    // Located by its nonce rather than by position: another test's logger sharing this worker must
+    // not be able to turn this into a flake.
     const { records } = operatorFeed().recent();
-    expect(records.at(-1)).toMatchObject({ operatorEvent: "agent.say", text: minted, seq: expect.any(Number) });
+    expect(records.filter((record) => record.text === minted)).toMatchObject([
+      { operatorEvent: "agent.say", text: minted, seq: expect.any(Number) },
+    ]);
   });
 
-  it("gives a reconnecting client exactly what it missed, and says so when it missed more than the ring holds", async () => {
+  it("reassembles records split across writes, and drops a line that is not an object", () => {
+    // Pino hands the sink NDJSON in whatever chunks the stream gives it, so a record routinely
+    // arrives in two pieces. And `JSON.parse` happily returns `null` or `3` — spreading one of
+    // those into a record would hand subscribers a shape no renderer can read.
+    const sink = operatorFeedSink();
+    const minted = nonce();
+    sink.write(Buffer.from(`{"level":30,"msg":"${minted}"`));
+    sink.write(Buffer.from(`,"operatorEvent":"agent.say"}\nnot json\n`));
+    sink.write(Buffer.from(`null\n3\n"a string"\n`));
+
+    const { records } = operatorFeed().recent();
+    expect(records).toMatchObject([{ level: 30, msg: minted, operatorEvent: "agent.say" }]);
+  });
+
+  it("gives a reconnecting client exactly what it missed, and says so when it missed more than the ring holds", () => {
     // A browser tab that was closed, or a network that dropped, comes back with its last `seq`.
     // Log records are a sequence rather than one current value, so unlike the observation seam the
     // snapshot here is a short replay — bounded, and honest about its edge.
@@ -56,6 +75,19 @@ describe("the operator log feed", () => {
     // Told outright, rather than quietly under-served: the client can go to the log files for the
     // rest instead of believing it has a complete narrative.
     expect(stale.gap).toBe(true);
+  });
+
+  it("treats a cursor from a previous process as a gap, not as being up to date", () => {
+    // `seq` restarts at 0 on every boot, so a browser tab that reconnects across a restart arrives
+    // holding a cursor this process has never reached. Answering "nothing new, nothing missed"
+    // leaves it blank against a live, noisy runtime — #370's blank pairing page in a new costume,
+    // and the likeliest reconnect there is.
+    publishToOperatorFeed({ level: 30, msg: "first record after the restart" });
+
+    const resumed = operatorFeed().recent(4_210);
+
+    expect(resumed.records).toEqual([]);
+    expect(resumed.gap).toBe(true);
   });
 
   it("stays bounded whether or not anybody is subscribed", () => {

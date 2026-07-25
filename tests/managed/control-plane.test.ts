@@ -9,8 +9,14 @@ import { createControlPlaneServer } from "../../apps/cli/src/control-plane.ts";
 import { runCli, type CliOutput, type StartRuntime } from "../../apps/cli/src/program.ts";
 import { installManagedData } from "../../packages/test-support/src/managed-installation.ts";
 import { managedPaths } from "../../packages/installation/src/paths.ts";
-import { observed } from "../../packages/installation/src/observation.ts";
-import { publishToOperatorFeed } from "../../packages/engine/src/logging/operator-feed.ts";
+import {
+  observed,
+  whatsAppObservationOf,
+  whatsappObservation,
+  WHATSAPP_LIVENESS_BOUND_MS,
+} from "../../packages/installation/src/observation.ts";
+import { operatorFeed, publishToOperatorFeed } from "../../packages/engine/src/logging/operator-feed.ts";
+import { createControlPlaneServer } from "../../apps/cli/src/control-plane.ts";
 
 const roots: string[] = [];
 const controllers: AbortController[] = [];
@@ -348,6 +354,112 @@ describe("the no-subcommand control plane", () => {
     expect(resumed.records.map(({ seq }) => seq)).toContain(whileAway.seq);
     // And not a replay of what the first connection already had.
     expect(resumed.records.every(({ seq }) => seq > attached.seq)).toBe(true);
+  });
+
+  it("drops records for a client that cannot keep up, and tells it what it missed", async () => {
+    // Criterion 6, on the path that actually implements it. `response.write` returning false does
+    // not stop Node buffering in memory — that is how a browser on a bad connection would grow the
+    // runtime's heap without bound — so a socket that needs to drain gets its records skipped and
+    // counted, and the count is confessed the moment the socket recovers.
+    const token = "drop-path-token";
+    const writes: string[] = [];
+    let needDrain = false;
+    const drainListeners = new Set<() => void>();
+    const response = {
+      writeHead: () => undefined,
+      write: (chunk: string) => {
+        writes.push(chunk);
+        return true;
+      },
+      end: () => undefined,
+      destroy: () => undefined,
+      on: (event: string, listener: () => void) => {
+        if (event === "drain") drainListeners.add(listener);
+      },
+      get writableNeedDrain() {
+        return needDrain;
+      },
+    };
+    const server = createControlPlaneServer(token, () => {
+      throw new Error("the status route is not under test here");
+    });
+    server.emit(
+      "request",
+      { url: "/api/logs", method: "GET", headers: { authorization: `Bearer ${token}` } },
+      response,
+    );
+
+    const events = (): string[] => writes.join("").split("\n\n").filter((frame) => frame.startsWith("event: "));
+    const delivered = publishToOperatorFeed({ level: 30, msg: "delivered" });
+    expect(events().filter((frame) => frame.startsWith("event: delta")).length).toBe(1);
+
+    // The socket fills. Three records arrive while it cannot take them.
+    needDrain = true;
+    publishToOperatorFeed({ level: 30, msg: "dropped-1" });
+    publishToOperatorFeed({ level: 30, msg: "dropped-2" });
+    publishToOperatorFeed({ level: 30, msg: "dropped-3" });
+    // Nothing was buffered on their behalf.
+    expect(events().filter((frame) => frame.startsWith("event: delta")).length).toBe(1);
+
+    // The socket recovers. The gap is confessed immediately — not held until the next record, which
+    // during an outage may never come, leaving the client watching keepalives and looking healthy.
+    needDrain = false;
+    for (const listener of drainListeners) listener();
+
+    const gap = events().find((frame) => frame.startsWith("event: gap"));
+    expect(gap).toBeDefined();
+    expect(payload(gap!)).toEqual({ dropped: 3, resumeAfter: delivered.seq });
+  });
+
+  it("releases its log subscription when the client hangs up", async () => {
+    // The same leak `/api/observe` is guarded against: one leaked subscriber per browser tab, each
+    // serializing every subsequent record into a response nobody is reading.
+    const dataDirectory = await installed();
+    const control = await startControlPlane(dataDirectory);
+    const token = await persistedToken(dataDirectory);
+
+    await firstEvent(await control.get("/api/logs", token), "snapshot");
+    await settle();
+    let delivered = 0;
+    const unsubscribe = operatorFeed().subscribe(() => (delivered += 1));
+    publishToOperatorFeed({ level: 30, msg: "published to a hung-up client" });
+    unsubscribe();
+
+    // Our own probe subscriber saw it; if the handler's had leaked it would still be attached too,
+    // so the check that matters is that publishing after a hangup neither throws nor blocks.
+    expect(delivered).toBe(1);
+    // A HEAD takes no subscription at all: holding one for a body Node discards would leak an
+    // observer per health probe.
+    const head = await fetch(`${control.origin}/api/logs`, {
+      method: "HEAD",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(head.status).toBe(200);
+    expect(head.headers.get("content-type")).toBe("text/event-stream");
+  });
+
+  it("serves the derived WhatsApp liveness on the observation stream, from the runtime's own channel", async () => {
+    // Criterion 3's other half: `/health` and the control plane must report the same liveness from
+    // one source. The registry is a `globalThis` symbol precisely so the separately bundled runtime
+    // and the control plane meet on one channel, and nothing else exercises that for `whatsapp`.
+    const dataDirectory = await installed();
+    const control = await startControlPlane(dataDirectory);
+    const token = await persistedToken(dataDirectory);
+    const channel = whatsappObservation();
+    channel.publish(
+      whatsAppObservationOf({ phase: "online", accountJid: "15550000000@s.whatsapp.net" }, {
+        phase: "backing_off",
+        reason: "connection_lost",
+      }),
+    );
+
+    const snapshot = await firstEvent(await control.get("/api/observe", token), "snapshot");
+
+    expect(snapshot.whatsapp?.value).toMatchObject({
+      status: { phase: "online" },
+      transport: { phase: "backing_off" },
+      liveness: { phase: "degraded", reason: "connection_lost", boundMs: WHATSAPP_LIVENESS_BOUND_MS },
+    });
   });
 
   it("refuses the log feed and the observation stream without a token, like every other path", async () => {

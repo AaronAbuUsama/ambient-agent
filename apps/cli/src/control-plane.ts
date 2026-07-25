@@ -184,21 +184,47 @@ const streamLogs = (response: ServerResponse, after: number | undefined, headers
   const send = openEventStream(response, headersOnly);
   if (send === undefined) return;
   const feed = operatorFeed();
-  const initial = feed.recent(after);
-  send("snapshot", initial);
+  let lastDelivered = 0;
+  try {
+    const initial = feed.recent(after);
+    lastDelivered = initial.records.at(-1)?.seq ?? after ?? 0;
+    send("snapshot", initial);
+  } catch (cause) {
+    // Same reason `observe` guards its snapshot: this handler runs synchronously inside
+    // `createServer`, so an escape here is an uncaught exception and the operator's surface — the
+    // thing that exists to outlive what it diagnoses — is gone. `publishToOperatorFeed` is exported
+    // for non-Pino producers, so an unserializable record is reachable, and it must cost this one
+    // client its stream and nothing more.
+    process.emitWarning(cause instanceof Error ? cause : new Error(String(cause)), {
+      code: "AMBIENT_OPERATOR_FEED_THREW",
+      detail: "control plane log snapshot",
+    });
+    return void response.destroy();
+  }
   let dropped = 0;
+  /**
+   * Confess a drop the moment we can, which is not necessarily when the next record arrives. A
+   * burst around an outage is exactly what fills a socket buffer, and an outage is exactly when the
+   * traffic then stops — so waiting for a subsequent record to carry the `gap` would leave the
+   * client watching keepalives, looking healthy, permanently missing the only records that mattered.
+   */
+  const confessDrops = (): void => {
+    if (dropped === 0 || response.writableNeedDrain) return;
+    const missed = dropped;
+    dropped = 0;
+    send("gap", { dropped: missed, resumeAfter: lastDelivered });
+  };
   const deliver = (record: OperatorFeedRecord): void => {
     if (response.writableNeedDrain) {
       dropped += 1;
       return;
     }
-    if (dropped > 0) {
-      const missed = dropped;
-      dropped = 0;
-      send("gap", { dropped: missed, resumeAfter: record.seq - missed - 1 });
-    }
+    confessDrops();
+    lastDelivered = record.seq;
     send("delta", record);
   };
+  // The socket recovering is the earliest honest moment to report what was skipped while it did not.
+  response.on("drain", confessDrops);
   // Subscribed after the snapshot is written, so no record is both in the snapshot and in a delta.
   keepAlive(response, feed.subscribe(deliver));
 };

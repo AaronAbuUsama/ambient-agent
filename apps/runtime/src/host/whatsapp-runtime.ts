@@ -62,7 +62,9 @@ import {
   reportedWhatsAppStatus,
   transportObservation,
   whatsAppObservationOf,
+  whatsAppStatusUpdate,
   whatsappObservation,
+  type TransportObservation,
   type WhatsAppLiveness,
 } from "@ambient-agent/installation/observation.ts";
 import { isGroupJid } from "@ambient-agent/engine/shared/whatsapp-jid.ts";
@@ -85,15 +87,27 @@ const deliveryFailure = (
 const TYPING_LEAD_MS = 750;
 
 /**
- * The reported phase, as an operator-feed event (#374). Only the phases an operator should be told
- * about outright: `starting`/`pairing`/`disabled` are boot noise, and the feed already carries
- * pairing progress and the boot line.
+ * The reported phase, as an operator-feed event (#374).
+ *
+ * Total over the phase union rather than `Partial`, so a future phase is a compile error here
+ * instead of a transition nobody is told about. The `undefined` arms are deliberate:
+ *
+ * - `disabled` and `starting` are boot, which the feed already narrates with its own `agent.online`
+ *   line once participation is wired. (After boot, `starting` cannot occur — a booted runtime whose
+ *   transport is reconnecting reports `degraded`, see `whatsappLiveness`.)
+ * - `pairing` is **deliberately** not on the feed: pairing material rides the `setup` observation
+ *   channel precisely so that a QR or a pairing code never lands in a log file.
+ * - `stopped` is runtime-owned and published after this subscription is torn down, so it could
+ *   never arrive here; the runtime's own stop path is where an operator learns it stopped.
  */
-const OPERATOR_EVENT_FOR_PHASE: Partial<Record<WhatsAppRuntimePhase, OperatorEvent>> = {
+const OPERATOR_EVENT_FOR_PHASE: Record<WhatsAppRuntimePhase, OperatorEvent | undefined> = {
+  disabled: undefined,
+  starting: undefined,
+  pairing: undefined,
   online: "agent.online",
   degraded: "agent.degraded",
   failed: "agent.offline",
-  stopped: "agent.offline",
+  stopped: undefined,
 };
 
 /**
@@ -291,10 +305,13 @@ export const runWhatsAppSession = (
 // process-global slot. Same value, same consumers — but held where a browser can pull a snapshot
 // and subscribe to deltas, instead of being written to a field only `/health` knew how to find.
 const setRuntimeStatus = (status: WhatsAppRuntimeStatus): void => {
-  // The transport is deliberately not read here: the channel's projection reads it at *observation*
-  // time, so whatever this publishes for `liveness` is re-derived before anyone can see it. What
-  // this call actually records is the runtime's own startup fact.
-  whatsappObservation().publish(whatsAppObservationOf(status, undefined));
+  // What this records is the runtime's own startup fact, and *only* that. Liveness is carried
+  // forward rather than derived here: the projection re-derives it from the live transport on the
+  // very next read, and deriving it here — necessarily without the transport — would stamp `since`
+  // from a phase that was never true, resetting the operator's "degraded for how long" on every
+  // status write. See LIVENESS_SINCE in observation.ts.
+  const channel = whatsappObservation();
+  channel.publish(whatsAppStatusUpdate(channel.snapshot().value, status));
 };
 
 /**
@@ -465,9 +482,22 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   // never be a cached field that rotted. Push: one subscription for the life of the account, so a
   // transition *after* authentication reaches subscribers instead of vanishing.
   const liveness = whatsappObservation();
-  liveness.refreshWith((published) =>
-    whatsAppObservationOf(published.status, transportObservation(account.transport?.())),
-  );
+  liveness.refreshWith((published) => {
+    let transport: TransportObservation | undefined;
+    try {
+      transport = transportObservation(account.transport?.());
+    } catch (cause) {
+      // The seam isolates a throwing projection by falling back to the *published* value — whose
+      // liveness, for a booted runtime, is `online`. That fallback would be #312 again, with the
+      // health claim now coming from the error path itself. A transport whose state cannot be read
+      // is, to an operator, exactly a degraded transport, so say that instead.
+      return whatsAppObservationOf(
+        { ...published.status, error: `WhatsApp transport state is unreadable: ${errorMessage(cause)}` },
+        { phase: "backing_off", reason: "transport_unreadable" },
+      );
+    }
+    return whatsAppObservationOf(published.status, transport);
+  });
   // Both halves are optional on the interface only because the test seams predate them. A real
   // account always has them, and an account without them would silently reinstate exactly the
   // pre-#386 regime — status written at boot and never updated again — so say so out loud.
@@ -484,12 +514,21 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   let reportedPhase = liveness.snapshot().value.liveness.phase;
   const unsubscribeTransport =
     account.observeTransport?.(() => {
-      liveness.publish(whatsAppObservationOf(liveness.snapshot().value.status, undefined));
-      const current = liveness.snapshot().value.liveness;
+      // `snapshot()` runs the projection, which reads `session.status` — so this one call is where
+      // the new transport state enters the channel and where `since` is stamped. Publishing the
+      // result announces it to subscribers; it must not re-derive.
+      const observed = liveness.snapshot().value;
+      liveness.publish(observed);
+      const current = observed.liveness;
       if (current.phase === reportedPhase) return;
-      reportedPhase = current.phase;
       const event = OPERATOR_EVENT_FOR_PHASE[current.phase];
+      // `reportedPhase` advances only when we actually narrate. Advancing it for a phase with no
+      // operator event would defeat the dedupe: whatsappd's outage cycle is
+      // `backing_off → connecting → backing_off`, so treating the middle as "reported" makes the
+      // next tick look like a change and puts one `agent.degraded` line on the feed per retry —
+      // the spam this guard exists to prevent, burying the transition that matters.
       if (event === undefined) return;
+      reportedPhase = current.phase;
       log[current.phase === "online" ? "info" : "warn"](
         {
           operatorEvent: event,
@@ -714,7 +753,13 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
       // `awaiting_scan` would make a setup page infer failure from a QR going stale, one channel
       // over, when the seam has a `failed` state that says it outright.
       publishPairingSettled({ reason: String(exit.cause) });
-      log.error({ cause: String(exit.cause) }, "WhatsApp runtime failed");
+      // On the operator feed too, not only in the phase: the fiber dying is the other way the
+      // coworker goes offline, and a Logs screen that narrates transport faults but stays silent
+      // when the runtime itself fails would be telling half the story.
+      log.error(
+        { operatorEvent: "agent.offline", detail: "the WhatsApp runtime failed", cause: String(exit.cause) },
+        "WhatsApp runtime failed",
+      );
       const loggedOut = exit.cause.reasons
         .filter(Cause.isDieReason)
         .some(({ defect }) => defect instanceof WhatsAppAccountError && defect.code === "logged_out");

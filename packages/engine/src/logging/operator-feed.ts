@@ -111,13 +111,20 @@ export const publishToOperatorFeed = (record: OperatorLogRecord): OperatorFeedRe
 
 export const operatorFeed = (): OperatorFeed => ({
   recent: (after) => {
-    const { records } = state();
+    const { records, seq } = state();
     if (after === undefined) return { records: [...records], gap: false };
     const first = records[0]?.seq;
     return {
-      records: records.filter(({ seq }) => seq > after),
-      // The client asked to resume from a point the ring no longer reaches back to.
-      gap: first !== undefined && first > after + 1,
+      records: records.filter((record) => record.seq > after),
+      gap:
+        // The client asked to resume from a point the ring no longer reaches back to.
+        (first !== undefined && first > after + 1) ||
+        // Or from a point this process has not reached at all — which is what a cursor from a
+        // *previous* process looks like, because `seq` restarts at 0 on every boot. Without this a
+        // tab reconnecting across a restart is handed an empty snapshot and an explicit "you missed
+        // nothing", then sits blank against a live, noisy runtime. That is #370's blank pairing
+        // page in a new costume, and it is the likeliest reconnect there is.
+        after > seq,
     };
   },
   subscribe: (observer) => {
@@ -135,12 +142,20 @@ export const operatorFeedSink = (): Writable => {
   let buffered = "";
   const admit = (line: string): void => {
     if (line.length === 0) return;
+    let record: unknown;
     try {
-      publishToOperatorFeed(JSON.parse(line) as OperatorLogRecord);
+      record = JSON.parse(line);
     } catch {
       // Not a JSON line. The feed's contract is structured records; a malformed one is dropped
-      // rather than forwarded as a shape no consumer can read. It is still in the log files.
+      // rather than forwarded as a shape no consumer can read. Only the parse is guarded: wrapping
+      // the publish too would silently reinterpret a ring-bookkeeping failure as "bad input" and
+      // the feed would go quiet with nothing anywhere saying why.
+      return;
     }
+    // `JSON.parse` happily returns `null`, `3`, `"x"`. Spreading one of those into a record hands
+    // subscribers a shape no renderer can read, so require an object.
+    if (typeof record !== "object" || record === null || Array.isArray(record)) return;
+    publishToOperatorFeed(record as OperatorLogRecord);
   };
   return new Writable({
     write(chunk: Buffer, _encoding, callback) {
