@@ -53,13 +53,17 @@ import {
 } from "@ambient-agent/engine/intake/managed-chat-inbox.ts";
 import { speakerActivity } from "@ambient-agent/agents/speaker/activity-reporter.ts";
 import { effectLoggerLayer, getLogger, upstreamWhatsAppLogger } from "@ambient-agent/engine/logging/logging.ts";
-import type { WhatsAppRuntimeStatus } from "@ambient-agent/installation/runtime-health.ts";
+import type { WhatsAppRuntimePhase, WhatsAppRuntimeStatus } from "@ambient-agent/installation/runtime-health.ts";
+import type { OperatorEvent } from "@ambient-agent/engine/logging/operator-reporter.ts";
 import { errorMessage } from "@ambient-agent/engine/shared/errors.ts";
 import {
   publishPairingProgress,
   publishPairingSettled,
+  reportedWhatsAppStatus,
   transportObservation,
+  whatsAppObservationOf,
   whatsappObservation,
+  type WhatsAppLiveness,
 } from "@ambient-agent/installation/observation.ts";
 import { isGroupJid } from "@ambient-agent/engine/shared/whatsapp-jid.ts";
 import { createSurfaceRegistry, type SurfaceRegistry } from "@ambient-agent/engine/surfaces/registry.ts";
@@ -79,6 +83,18 @@ const deliveryFailure = (
   return { delivery: isKnownTransportRejection(deliveryError) ? "failed" : "unknown", deliveryError };
 };
 const TYPING_LEAD_MS = 750;
+
+/**
+ * The reported phase, as an operator-feed event (#374). Only the phases an operator should be told
+ * about outright: `starting`/`pairing`/`disabled` are boot noise, and the feed already carries
+ * pairing progress and the boot line.
+ */
+const OPERATOR_EVENT_FOR_PHASE: Partial<Record<WhatsAppRuntimePhase, OperatorEvent>> = {
+  online: "agent.online",
+  degraded: "agent.degraded",
+  failed: "agent.offline",
+  stopped: "agent.offline",
+};
 
 /**
  * Resolve a Brain-chosen target entity to its Surface id (§8: "DM someone" and "reply in the group"
@@ -275,10 +291,24 @@ export const runWhatsAppSession = (
 // process-global slot. Same value, same consumers — but held where a browser can pull a snapshot
 // and subscribe to deltas, instead of being written to a field only `/health` knew how to find.
 const setRuntimeStatus = (status: WhatsAppRuntimeStatus): void => {
-  whatsappObservation().publish({ status });
+  // The transport is deliberately not read here: the channel's projection reads it at *observation*
+  // time, so whatever this publishes for `liveness` is re-derived before anyone can see it. What
+  // this call actually records is the runtime's own startup fact.
+  whatsappObservation().publish(whatsAppObservationOf(status, undefined));
 };
+
+/**
+ * The reported WhatsApp status — the startup record with its phase replaced by derived liveness
+ * (#374). Every existing consumer (`/health` via `bridgeHealth`, the bridge pairing route, the CLI
+ * smoke gate, `ambient-agent doctor`) reads this one function, so all of them stopped lying at once
+ * and none of them had to learn a new shape.
+ */
 export const getWhatsAppRuntimeStatus = (): WhatsAppRuntimeStatus =>
-  structuredClone(whatsappObservation().snapshot().value.status);
+  structuredClone(reportedWhatsAppStatus(whatsappObservation().snapshot().value));
+
+/** The full liveness vocabulary, for a caller that wants more than a phase. */
+export const getWhatsAppLiveness = (): WhatsAppLiveness =>
+  structuredClone(whatsappObservation().snapshot().value.liveness);
 
 export interface WhatsAppRuntimeControl {
   readonly stop: () => Promise<void>;
@@ -435,10 +465,9 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   // never be a cached field that rotted. Push: one subscription for the life of the account, so a
   // transition *after* authentication reaches subscribers instead of vanishing.
   const liveness = whatsappObservation();
-  liveness.refreshWith((published) => {
-    const transport = transportObservation(account.transport?.());
-    return transport === undefined ? { status: published.status } : { status: published.status, transport };
-  });
+  liveness.refreshWith((published) =>
+    whatsAppObservationOf(published.status, transportObservation(account.transport?.())),
+  );
   // Both halves are optional on the interface only because the test seams predate them. A real
   // account always has them, and an account without them would silently reinstate exactly the
   // pre-#386 regime — status written at boot and never updated again — so say so out loud.
@@ -448,9 +477,31 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
       "This WhatsApp account exposes no live transport state; reported liveness is startup phase only",
     );
   }
+  // Every reported-phase change is announced on the operator feed as well as on the channel, so the
+  // outage is legible to someone reading logs (#382) and not only to something polling `/health`.
+  // Only *changes* are logged: whatsappd emits a transition per retry attempt, and one line per
+  // backoff tick would bury the transition that matters.
+  let reportedPhase = liveness.snapshot().value.liveness.phase;
   const unsubscribeTransport =
-    account.observeTransport?.(() => liveness.publish({ status: liveness.snapshot().value.status })) ??
-    (() => undefined);
+    account.observeTransport?.(() => {
+      liveness.publish(whatsAppObservationOf(liveness.snapshot().value.status, undefined));
+      const current = liveness.snapshot().value.liveness;
+      if (current.phase === reportedPhase) return;
+      reportedPhase = current.phase;
+      const event = OPERATOR_EVENT_FOR_PHASE[current.phase];
+      if (event === undefined) return;
+      log[current.phase === "online" ? "info" : "warn"](
+        {
+          operatorEvent: event,
+          detail: `WhatsApp ${current.phase}${current.reason === undefined ? "" : `: ${current.reason}`}`,
+          phase: current.phase,
+          ...(current.reason === undefined ? {} : { reason: current.reason }),
+          ...(current.retryAt === undefined ? {} : { retryAt: current.retryAt }),
+          ...(current.terminal === undefined ? {} : { terminal: current.terminal }),
+        },
+        `WhatsApp transport is ${current.phase}`,
+      );
+    }) ?? (() => undefined);
   const unsubscribeDirectiveOutcomes = speakerActivity.subscribeDirectives({
     dispatched: () => undefined,
     settledWithoutSay: ({ directiveId }) => {
@@ -495,7 +546,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
         // Drop the projection with the subscription. A stopped runtime has no transport, and a
         // channel that kept reading a dead account's getter would report the last thing it saw as
         // though it were live — the very shadowing this seam exists to prevent.
-        liveness.refreshWith((published) => ({ status: published.status }));
+        liveness.refreshWith((published) => whatsAppObservationOf(published.status, undefined));
       }),
     );
     yield* Effect.addFinalizer(() => Effect.sync(() => historicalReplay.close()));

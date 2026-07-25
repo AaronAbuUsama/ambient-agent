@@ -99,7 +99,7 @@ about a name.
 |---|---|---|
 | `instance` | `InstanceIdentity` — `{ id, startedAt, pid }`, minted per boot | control plane, before the port binds |
 | `runtime` | `RuntimeBoot` — `not-configured` / `starting` / `running` / `failed` | control plane |
-| `whatsapp` | `WhatsAppObservation` — `{ status, transport? }` | `apps/runtime/src/host/whatsapp-runtime.ts` |
+| `whatsapp` | `WhatsAppObservation` — `{ status, transport?, liveness }` | `apps/runtime/src/host/whatsapp-runtime.ts` |
 | `setup` | `SetupObservation` — `{ pairing, device }` | the runtime's `onPairing`, and the CLI's device-code callbacks |
 
 `instance.id` is what lets a client tell "the value I hold is current" from "the process restarted
@@ -141,10 +141,12 @@ data: {"channel":"whatsapp","value":{...},"at":...,"observedAt":...,"revision":7
 
 ## What downstream owes
 
-- **#374** consumes `whatsapp`, and owns *deriving* honest liveness from `transport` — the
-  `degraded` phase, the `since` timestamp, and the operator feed. This seam deliberately does not
-  pre-empt that mapping: it carries `status` (the runtime's own startup phase, unchanged in meaning)
-  and `transport` (whatsappd's truth) side by side, and lets #374 decide what an operator is told.
+- **#374** consumed `whatsapp` and derived honest liveness from `transport` — **done**. The channel
+  now carries a third field, `liveness`, computed at observation time from `status` and `transport`
+  together; `status` and `transport` are unchanged in meaning and still carried side by side, as
+  the raw inputs to that derivation. The vocabulary, the mapping, the stated bound, and the
+  operator log feed are documented at `docs/reference/operator-liveness-and-feed.md`, which is what
+  **#377** (Overview) and **#382** (Logs) quote.
 - **#371** consumes `setup`, and owns the first-run flow over HTTP. Pairing material is already
   retained with its rotation deadline as `freshUntil`, so a page can tell a live QR from one the
   client stopped rotating.

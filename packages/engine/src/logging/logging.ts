@@ -22,6 +22,7 @@ import type { LogLevel } from "effect/LogLevel";
 import { type DestinationStream, type Level, type Logger, multistream, pino, stdSerializers } from "pino";
 import roll from "pino-roll";
 
+import { operatorFeedSink } from "./operator-feed.ts";
 import { createOperatorConsoleSink } from "./operator-reporter.ts";
 
 export type { Logger } from "pino";
@@ -92,6 +93,11 @@ export const createRootLogger = (options: LoggingOptions, fileStream?: Destinati
   const format = options.format ?? (process.stderr.isTTY ? "pretty" : "json");
   const streams = [{ stream: summarizeRepeatedUpstream(consoleSink(format, destination)) as DestinationStream, level }];
   if (fileStream !== undefined) streams.push({ stream: fileStream, level });
+  // The third sink (#374): the operator feed. It is added unconditionally, including to the
+  // console-only fallback root, so that what a browser watches is the same record stream the
+  // console and the files get — not a second, differently-filtered narration of the same run.
+  // It never applies backpressure, so it cannot slow the subsystem that logged the record.
+  streams.push({ stream: operatorFeedSink() as DestinationStream, level });
   return pino(
     {
       level,

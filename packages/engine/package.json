@@ -31,6 +31,8 @@
     "./intake/managed-chat-inbox.ts": "./src/intake/managed-chat-inbox.ts",
     "./intake/historical-replay.ts": "./src/intake/historical-replay.ts",
     "./logging/logging.ts": "./src/logging/logging.ts",
+    "./logging/operator-feed.ts": "./src/logging/operator-feed.ts",
+    "./logging/operator-reporter.ts": "./src/logging/operator-reporter.ts",
     "./model/chatgpt-authentication.ts": "./src/model/chatgpt-authentication.ts",
     "./model/pi-subscription.ts": "./src/model/pi-subscription.ts",
     "./shared/errors.ts": "./src/shared/errors.ts",

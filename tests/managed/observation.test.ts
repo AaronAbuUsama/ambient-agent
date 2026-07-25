@@ -10,10 +10,15 @@ import {
   resetObservations,
   setupObservation,
   subscribeToAllObservations,
+  reportedWhatsAppStatus,
   transportObservation,
+  whatsAppObservationOf,
+  whatsappLiveness,
   whatsappObservation,
+  WHATSAPP_LIVENESS_BOUND_MS,
   type Observation,
 } from "../../packages/installation/src/observation.ts";
+import { ambientRuntimeHealth } from "../../packages/installation/src/runtime-health.ts";
 
 beforeEach(() => {
   resetObservations();
@@ -248,7 +253,88 @@ describe("the channels the seam is consolidating", () => {
   });
 
   it("starts liveness at disabled rather than at nothing", () => {
-    expect(whatsappObservation().snapshot().value).toEqual({ status: { phase: "disabled" } });
+    expect(whatsappObservation().snapshot().value).toMatchObject({
+      status: { phase: "disabled" },
+      liveness: { phase: "disabled", boundMs: WHATSAPP_LIVENESS_BOUND_MS },
+    });
     expect(whatsappObservation().snapshot().stale).toBe(false);
+  });
+});
+
+describe("the derived WhatsApp liveness (#374)", () => {
+  const booted = { phase: "online" } as const;
+
+  it("maps every whatsappd connection phase, so no transport state is unaccounted for", () => {
+    // Total by construction: an unmapped arm would fall back to the startup record, which is the
+    // exact failure #312 was. `Status["phase"]` is whatsappd's closed union, so this list is it.
+    const mapped = (phase: string) => whatsappLiveness(booted, { phase } as never).phase;
+
+    expect(mapped("disconnected")).toBe("starting");
+    expect(mapped("connecting")).toBe("starting");
+    expect(mapped("pairing")).toBe("pairing");
+    // Authenticated is draining/syncing: whatsappd refuses every send here, so it is not online.
+    expect(mapped("authenticated")).toBe("starting");
+    expect(mapped("online")).toBe("online");
+    // Retrying on its own — degraded, not failed: telling an operator to re-pair would be a lie.
+    expect(mapped("backing_off")).toBe("degraded");
+    expect(mapped("logged_out")).toBe("failed");
+    expect(mapped("suspended")).toBe("failed");
+  });
+
+  it("lets the transport report worse than the runtime believes, but never better", () => {
+    // The asymmetry that keeps #312's fix from becoming its mirror image. whatsappd says `online`
+    // the moment the socket is sendable, which is before history has drained and the participation
+    // port is wired — reporting healthy there would be a coworker that answers /health but not a
+    // message.
+    expect(whatsappLiveness({ phase: "starting" }, { phase: "online" }).phase).toBe("starting");
+    expect(whatsappLiveness(booted, { phase: "online" }).phase).toBe("online");
+    // Worse, always, in both directions.
+    expect(whatsappLiveness(booted, { phase: "backing_off" }).phase).toBe("degraded");
+    expect(whatsappLiveness({ phase: "starting" }, { phase: "backing_off" }).phase).toBe("degraded");
+  });
+
+  it("keeps the phases the runtime owns, which the transport cannot express", () => {
+    // A stopped runtime whose last-seen transport was backing off must not read `degraded` forever.
+    expect(whatsappLiveness({ phase: "stopped" }, { phase: "backing_off" }).phase).toBe("stopped");
+    expect(whatsappLiveness({ phase: "failed", error: "boom" }, { phase: "online" })).toMatchObject({
+      phase: "failed",
+      reason: "boom",
+    });
+    expect(whatsappLiveness({ phase: "disabled" }, undefined).phase).toBe("disabled");
+  });
+
+  it("carries the fault reason, the retry deadline, and whether re-pairing can help", () => {
+    const retryAt = Date.now() + 4_000;
+    expect(
+      whatsappLiveness(booted, { phase: "backing_off", reason: "connection_lost", nextRetryAt: retryAt }),
+    ).toMatchObject({ phase: "degraded", reason: "connection_lost", retryAt });
+    // `connection_replaced` wiped the credential store: terminal, and no countdown is offered.
+    const replaced = whatsappLiveness(booted, { phase: "logged_out", reason: "connection_replaced" });
+    expect(replaced).toMatchObject({ phase: "failed", reason: "connection_replaced", terminal: true });
+    expect(replaced.retryAt).toBeUndefined();
+  });
+
+  it("holds `since` across readings of an unchanged phase and moves it when the phase changes", () => {
+    // A screen says "online for 3h" off this, so it must not reset every time somebody looks.
+    const entered = whatsappLiveness(booted, { phase: "online" }, 1_000).since;
+    expect(whatsappLiveness(booted, { phase: "online" }, 9_000).since).toBe(entered);
+    expect(whatsappLiveness(booted, { phase: "backing_off" }, 9_000).since).toBe(9_000);
+  });
+
+  it("gives every existing consumer the derived phase without changing the shape they read", () => {
+    // The whole reason nothing downstream had to be rewritten: `/health`, the bridge and the CLI
+    // all read one field, so making that field honest is the entire fix.
+    const observation = whatsAppObservationOf({ phase: "online", accountJid: "15550000000@s.whatsapp.net" }, {
+      phase: "backing_off",
+      reason: "connection_lost",
+    });
+
+    expect(reportedWhatsAppStatus(observation)).toMatchObject({
+      phase: "degraded",
+      accountJid: "15550000000@s.whatsapp.net",
+      error: "connection_lost",
+    });
+    // A dead transport is never healthy, and never merely "starting".
+    expect(ambientRuntimeHealth(reportedWhatsAppStatus(observation)).state).toBe("failed");
   });
 });

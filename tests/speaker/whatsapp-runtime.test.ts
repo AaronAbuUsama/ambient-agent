@@ -28,7 +28,13 @@ import { createBrainInbox } from "../../packages/engine/src/brain/inbox.ts";
 import { admitGitHubEventToBrain } from "../../packages/engine/src/github/up-inbox.ts";
 import { conversationArrival } from "../../packages/engine/src/intake/conversation-event.ts";
 import { createSurfaceRegistry } from "../../packages/engine/src/surfaces/registry.ts";
-import { setupObservation, whatsappObservation } from "../../packages/installation/src/observation.ts";
+import {
+  setupObservation,
+  whatsappObservation,
+  WHATSAPP_LIVENESS_BOUND_MS,
+} from "../../packages/installation/src/observation.ts";
+import { bridgeHealth } from "../../packages/installation/src/bridge-contract.ts";
+import { operatorFeed, resetOperatorFeed } from "../../packages/engine/src/logging/operator-feed.ts";
 import { createSurfaceDeliveryStore } from "../../packages/engine/src/surfaces/delivery.ts";
 import { createTestManagedChatInbox as createManagedChatInbox } from "../../packages/test-support/src/managed-chat-inbox.ts";
 import {
@@ -1229,6 +1235,154 @@ describe("runtime pairing and bridge control", () => {
       expect(whatsappObservation().snapshot().stale).toBe(false);
     } finally {
       unsubscribe();
+      await runtime.stop();
+    }
+  });
+
+  it("flips the reported phase within the stated bound when the stream is killed, and recovers when it returns", async () => {
+    // #374's acceptance criterion, and #312's incident end to end: a killed stream must stop being
+    // reported as `online` within WHATSAPP_LIVENESS_BOUND_MS, and the operator feed must narrate it.
+    //
+    // What is under test is *this repository's* contribution to that bound, which is zero: the
+    // reported phase is derived from `session.status` at read time, so it moves in the same tick the
+    // transport does. The other 65 s of the bound is baileys' own keep-alive detecting a silent
+    // socket death, which is upstream source (`docs/research/whatsapp-liveness.md` §"Stated bound"),
+    // not something a fake session can honestly simulate. So: assert the flip happens, and assert it
+    // happens inside the budget we publish.
+    const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
+    archive.close();
+    resetOperatorFeed();
+    const statusListeners = new Set<(status: Status) => void | Promise<void>>();
+    let current: Status = { phase: "connecting" };
+    const transition = async (next: Status): Promise<void> => {
+      current = next;
+      for (const listener of [...statusListeners]) await listener(next);
+    };
+    const session = {
+      get status() {
+        return current;
+      },
+      onStatus(listener: (status: Status) => void | Promise<void>) {
+        statusListeners.add(listener);
+        return () => statusListeners.delete(listener);
+      },
+      onMessage: () => () => undefined,
+      onUpdate: () => () => undefined,
+      onConversationSync: () => () => undefined,
+      async start() {
+        await transition({ phase: "online" });
+      },
+      async stop() {},
+      identity: () => ({ jid: "15550000000:7@s.whatsapp.net" }),
+    } as unknown as WhatsAppSession;
+
+    const runtime = startWhatsAppRuntime({
+      storeDirectory,
+      applicationDatabase,
+      managedChats: [CHAT],
+      sessionFactory: () => session,
+    });
+    const narrated: string[] = [];
+    const unsubscribe = operatorFeed().subscribe((record) => {
+      if (typeof record.operatorEvent === "string") narrated.push(record.operatorEvent);
+    });
+
+    try {
+      // An explicit budget, comfortably clear of the flip we expect (which is same-tick) so that a
+      // loaded runner cannot turn a real regression into a timeout or a pass into a flake.
+      // Both the derived phase and the runtime's own startup record: the #312 state is precisely
+      // the one where the startup record has reached `online`, because that is what used to be
+      // reported forever afterwards.
+      await vi.waitFor(() => expect(whatsappObservation().snapshot().value.status.phase).toBe("online"), {
+        timeout: 4_000,
+      });
+      expect(getWhatsAppRuntimeStatus().phase).toBe("online");
+      expect(bridgeHealth("runtime-374", getWhatsAppRuntimeStatus()).ok).toBe(true);
+
+      // Sever the stream. This is the #312 shape: the transport is gone and the runtime's own
+      // startup record still says the boot reached `online`, which is where the lie used to live.
+      const severedAt = Date.now();
+      await transition({ phase: "backing_off", reason: "connection_lost", retryAttempt: 1, nextRetryAt: severedAt + 1_000 });
+      await vi.waitFor(() => expect(getWhatsAppRuntimeStatus().phase).toBe("degraded"), { timeout: 4_000 });
+      const flippedAt = Date.now();
+
+      // The bound, asserted against the constant that is published in the code, on the wire, and in
+      // the PR body — not against a number this test invented.
+      expect(flippedAt - severedAt).toBeLessThan(WHATSAPP_LIVENESS_BOUND_MS);
+      // The startup record is untouched: what changed is what is *derived* from it plus transport.
+      expect(whatsappObservation().snapshot().value.status.phase).toBe("online");
+
+      // /health and the control plane agree, because they read the same derivation.
+      const liveness = whatsappObservation().snapshot().value.liveness;
+      expect(liveness).toMatchObject({ phase: "degraded", reason: "connection_lost", boundMs: WHATSAPP_LIVENESS_BOUND_MS });
+      expect(liveness.retryAt).toBe(severedAt + 1_000);
+      expect(bridgeHealth("runtime-374", getWhatsAppRuntimeStatus())).toMatchObject({
+        ok: false,
+        runtime: { state: "failed", whatsapp: { phase: "degraded" } },
+      });
+      // The operator feed shows the transition — this is what tier 3 reads off the rig.
+      expect(narrated).toContain("agent.degraded");
+
+      // And it recovers on its own when the stream returns, with no restart and no re-pair.
+      await transition({ phase: "connecting", retryAttempt: 1 });
+      expect(getWhatsAppRuntimeStatus().phase).toBe("starting");
+      await transition({ phase: "online" });
+      await vi.waitFor(() => expect(getWhatsAppRuntimeStatus().phase).toBe("online"), { timeout: 4_000 });
+      expect(bridgeHealth("runtime-374", getWhatsAppRuntimeStatus()).ok).toBe(true);
+      expect(narrated.filter((event) => event === "agent.online").length).toBeGreaterThanOrEqual(1);
+    } finally {
+      unsubscribe();
+      await runtime.stop();
+    }
+  });
+
+  it("reports a terminal logged_out as failed rather than as something that will retry", async () => {
+    // `connection_replaced` wipes whatsappd's credential store, so "reconnecting…" would be a second
+    // lie on top of the first. It is terminal, and the reported phase says so (#373 §3).
+    const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
+    archive.close();
+    const statusListeners = new Set<(status: Status) => void | Promise<void>>();
+    let current: Status = { phase: "connecting" };
+    const transition = async (next: Status): Promise<void> => {
+      current = next;
+      for (const listener of [...statusListeners]) await listener(next);
+    };
+    const session = {
+      get status() {
+        return current;
+      },
+      onStatus(listener: (status: Status) => void | Promise<void>) {
+        statusListeners.add(listener);
+        return () => statusListeners.delete(listener);
+      },
+      onMessage: () => () => undefined,
+      onUpdate: () => () => undefined,
+      onConversationSync: () => () => undefined,
+      async start() {
+        await transition({ phase: "online" });
+      },
+      async stop() {},
+      identity: () => ({ jid: "15550000000:7@s.whatsapp.net" }),
+    } as unknown as WhatsAppSession;
+
+    const runtime = startWhatsAppRuntime({
+      storeDirectory,
+      applicationDatabase,
+      managedChats: [CHAT],
+      sessionFactory: () => session,
+    });
+    try {
+      await vi.waitFor(() => expect(getWhatsAppRuntimeStatus().phase).toBe("online"), { timeout: 4_000 });
+      await transition({ phase: "logged_out", reason: "connection_replaced" });
+      await vi.waitFor(() => expect(getWhatsAppRuntimeStatus().phase).toBe("failed"), { timeout: 4_000 });
+      expect(whatsappObservation().snapshot().value.liveness).toMatchObject({
+        phase: "failed",
+        reason: "connection_replaced",
+        terminal: true,
+      });
+      // No retry countdown is offered, because there is nothing to count down to.
+      expect(whatsappObservation().snapshot().value.liveness.retryAt).toBeUndefined();
+    } finally {
       await runtime.stop();
     }
   });

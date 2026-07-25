@@ -2,15 +2,30 @@ import { Writable } from "node:stream";
 
 import { formatDuration } from "../shared/format-duration.ts";
 
+/**
+ * The operator vocabulary: what the feed says about itself, rendered to one glyph-prefixed line
+ * each. #382 renders these on the Logs screen and #377 on the Overview, so this union is a
+ * published contract, not a private enum — an event that is emitted but missing here still reaches
+ * the feed, it just falls through to the generic renderer unstyled.
+ *
+ * `agent.degraded` / `agent.offline` are #374's: the moment the WhatsApp transport changes what an
+ * operator is told, said out loud. Before them the feed had no way to narrate an outage at all —
+ * which is why #312's ten-minute lie was invisible in the log as well as on `/health`.
+ */
 export type OperatorEvent =
   | "agent.online"
+  | "agent.degraded"
+  | "agent.offline"
   | "chat.received"
   | "agent.processing"
   | "agent.say"
+  | "agent.react"
   | "agent.settled_silent"
   | "agent.final"
   | "agent.completed"
   | "agent.retrying"
+  | "agent.directive_processing"
+  | "agent.directive_failed"
   | "agent.failed";
 
 export interface OperatorLogRecord {
@@ -100,6 +115,13 @@ const semanticBody = (record: OperatorLogRecord): { readonly color: keyof typeof
   switch (record.operatorEvent) {
     case "agent.online":
       return { color: "green", body: `◆ [AGENT] Online: ${oneLine(record.detail)}` };
+    case "agent.degraded":
+      return {
+        color: "yellow",
+        body: `⚠ [AGENT] Degraded: ${oneLine(record.detail)}${record.retryAt ? ` (retry ${formatTime(Number(record.retryAt))})` : ""}`,
+      };
+    case "agent.offline":
+      return { color: "red", body: `○ [AGENT] Offline: ${oneLine(record.detail)}` };
     case "chat.received":
       return { color: "cyan", body: `← [${actor}] ${oneLine(record.text)}` };
     case "agent.processing": {
@@ -108,6 +130,12 @@ const semanticBody = (record: OperatorLogRecord): { readonly color: keyof typeof
     }
     case "agent.say":
       return { color: "blue", body: `→ [AGENT] Response: ${oneLine(record.text)}` };
+    case "agent.react":
+      return { color: "blue", body: `☺ [AGENT] Reacted: ${oneLine(record.emoji)}` };
+    case "agent.directive_processing":
+      return { color: "yellow", body: "▶ [AGENT] Processing: a Brain directive" };
+    case "agent.directive_failed":
+      return { color: "red", body: `× [AGENT] Directive failed: ${oneLine(record.detail)}` };
     case "agent.settled_silent":
       return { color: "dim", body: "— settled silent" };
     case "agent.final":

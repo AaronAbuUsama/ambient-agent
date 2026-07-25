@@ -3,7 +3,23 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { PairingProgress } from "./whatsapp-account.ts";
 
 export type AmbientRuntimeState = "stopped" | "starting" | "healthy" | "failed";
-export type WhatsAppRuntimePhase = "disabled" | "starting" | "pairing" | "online" | "failed" | "stopped";
+/**
+ * The reported WhatsApp phase. `degraded` is #374's addition: the transport is down and whatsappd
+ * is retrying on its own (`backing_off`). It exists because the alternative was reporting a dead
+ * stream as `online` — the six values before it could only say "startup got this far", never "the
+ * socket is gone", so a dead transport had to borrow whichever startup phase happened to be last.
+ *
+ * The mapping from whatsappd's connection state onto these values lives in
+ * `observation.ts#whatsappLiveness`, and is settled by `docs/research/whatsapp-liveness.md`.
+ */
+export type WhatsAppRuntimePhase =
+  | "disabled"
+  | "starting"
+  | "pairing"
+  | "online"
+  | "degraded"
+  | "failed"
+  | "stopped";
 export interface WhatsAppRuntimeStatus {
   readonly phase: WhatsAppRuntimePhase;
   /** Runtime-authenticated account identity; never populated from user input or pairing material. */
@@ -59,7 +75,11 @@ export const ambientRuntimeHealth = (whatsapp: WhatsAppRuntimeStatus): AmbientRu
   state:
     whatsapp.phase === "online"
       ? "healthy"
-      : whatsapp.phase === "failed"
+      : // `degraded` folds into `failed` here deliberately (#373 §"Derived aggregates"): this union
+        // has four members and none of them means "retrying", and the one thing that must never
+        // happen is a down transport reading `healthy` or `starting`. The unfolded phase is one
+        // field over in `whatsapp.phase`, and the full liveness value is on the observation channel.
+        whatsapp.phase === "failed" || whatsapp.phase === "degraded"
         ? "failed"
         : whatsapp.phase === "stopped"
           ? "stopped"
@@ -74,6 +94,10 @@ const whatsappPhases = new Set<WhatsAppRuntimeStatus["phase"]>([
   "starting",
   "pairing",
   "online",
+  // Omitting `degraded` here would turn an honestly-reported dead stream into "the health response
+  // is malformed" — i.e. into `failed` with no reason — one layer up. Every phase the runtime can
+  // report must be a phase this parser accepts.
+  "degraded",
   "failed",
   "stopped",
 ]);

@@ -10,6 +10,7 @@ import { runCli, type CliOutput, type StartRuntime } from "../../apps/cli/src/pr
 import { installManagedData } from "../../packages/test-support/src/managed-installation.ts";
 import { managedPaths } from "../../packages/installation/src/paths.ts";
 import { observed } from "../../packages/installation/src/observation.ts";
+import { publishToOperatorFeed } from "../../packages/engine/src/logging/operator-feed.ts";
 
 const roots: string[] = [];
 const controllers: AbortController[] = [];
@@ -315,10 +316,46 @@ describe("the no-subcommand control plane", () => {
     expect(channel.snapshot().value).toBe("published to nobody");
   });
 
-  it("refuses the observation stream without a token, like every other path", async () => {
+  it("streams the operator log feed, and resumes a reconnecting client from where it left off", async () => {
+    // #374's feed, end to end: subscribable in-process, streamed to a client, and a disconnect is
+    // not a reset — the client comes back with its last `seq` and is given exactly what it missed.
+    const dataDirectory = await installed();
+    const control = await startControlPlane(dataDirectory);
+    const token = await persistedToken(dataDirectory);
+    const minted = `feed-${Date.now()}`;
+
+    const reader = sseReader(await control.get("/api/logs", token));
+    // Published after the handler wrote its snapshot and took its subscription, so this is a delta.
+    const attached = publishToOperatorFeed({ level: 30, operatorEvent: "agent.degraded", detail: minted });
+    const seen = await frames(reader, (candidates) => candidates.some((frame) => frame.startsWith("event: delta")));
+    await reader.cancel();
+
+    const delta = payload(seen.find((frame) => frame.startsWith("event: delta"))!) as unknown as {
+      readonly detail: string;
+      readonly seq: number;
+    };
+    expect(delta).toMatchObject({ operatorEvent: "agent.degraded", detail: minted, seq: attached.seq });
+
+    // The client is gone. The runtime keeps logging regardless — nothing is waiting on a reader.
+    const whileAway = publishToOperatorFeed({ level: 40, operatorEvent: "agent.offline", detail: `${minted}-away` });
+
+    const resumed = (await firstEvent(await control.get(`/api/logs?after=${attached.seq}`, token), "snapshot")) as unknown as {
+      readonly records: readonly { readonly detail?: string; readonly seq: number }[];
+      readonly gap: boolean;
+    };
+
+    expect(resumed.gap).toBe(false);
+    expect(resumed.records.map(({ seq }) => seq)).toContain(whileAway.seq);
+    // And not a replay of what the first connection already had.
+    expect(resumed.records.every(({ seq }) => seq > attached.seq)).toBe(true);
+  });
+
+  it("refuses the log feed and the observation stream without a token, like every other path", async () => {
     const dataDirectory = await installed();
     const control = await startControlPlane(dataDirectory);
 
+    expect((await control.get("/api/logs")).status).toBe(401);
+    expect((await control.get("/api/logs", "wrong-token")).status).toBe(401);
     expect((await control.get("/api/observe")).status).toBe(401);
     expect((await control.get("/api/observe", "wrong-token")).status).toBe(401);
   });
