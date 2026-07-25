@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import * as v from "valibot";
@@ -98,6 +98,10 @@ interface SecretRow {
 export const createManagedConfigStore = (databasePath: string): ManagedConfigStore => {
   if (databasePath !== ":memory:") mkdirSync(dirname(databasePath), { recursive: true });
   const database = new DatabaseSync(databasePath);
+  // Owner-only, the same mode every credential file carries — this file now holds secrets, and the
+  // live rig's store was found at 0644 before #365. Applied after open, so it also tightens the
+  // database an earlier, config-only build left behind.
+  if (databasePath !== ":memory:") chmodSync(databasePath, 0o600);
   database.exec("PRAGMA busy_timeout = 5000");
   database.exec(`
     CREATE TABLE IF NOT EXISTS managed_configuration (

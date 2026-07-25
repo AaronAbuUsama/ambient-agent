@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -129,6 +129,22 @@ describe("the managed configuration store holds the runtime's secrets (#365)", (
       store.close();
     });
   }
+
+  it("keeps the database owner-only, like every credential file it now mirrors", () => {
+    const directory = mkdtempSync(join(tmpdir(), "managed-secret-"));
+    const databasePath = join(directory, "managed-config.sqlite");
+    try {
+      createManagedConfigStore(databasePath).close();
+      expect(statSync(databasePath).mode & 0o777).toBe(0o600);
+
+      // A store left at 0644 by an earlier, config-only build is tightened on the next open.
+      chmodSync(databasePath, 0o644);
+      createManagedConfigStore(databasePath).close();
+      expect(statSync(databasePath).mode & 0o777).toBe(0o600);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 
   it("refuses a stored row that no longer validates rather than returning it", () => {
     const directory = mkdtempSync(join(tmpdir(), "managed-secret-"));
