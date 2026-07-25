@@ -7,6 +7,9 @@
 **base:** `origin/main` `60eae01`
 **Date (UTC):** 2026-07-25 · **Surface:** backend
 
+`da972c3` is the last commit that changes product code. Commits after it on this branch add only
+this receipt, so they are what the evidence is *about*, never part of what it proves.
+
 Every run below is against a **scratch data directory** under `$TMPDIR`. `~/.ambient-agent` was
 never read, written, or copied — no `whatsapp/` store was touched, and this machine has none.
 
@@ -39,6 +42,7 @@ It is what shows the reclaimed lock names the second run (`f1ff9a51…`) and not
 |---|---|---|---|
 | 1 mechanical | **PROVEN** | `pnpm run typecheck && pnpm test` — typecheck clean, 83 files, **832 passed**, 4 skipped | [`tier1-typecheck-and-suite.txt`](artifacts/tier1-typecheck-and-suite.txt) |
 | 1 mechanical (the node's own tests) | **PROVEN** | 7 tests, covering reclaim-after-death and refuse-while-live by name | [`tier1-setup-lock-tests.txt`](artifacts/tier1-setup-lock-tests.txt) |
+| 1 mechanical (CI, authoritative) | **PROVEN** | the full suite on Node 22 and Node 24, on the pushed branch | run [30159819677](https://github.com/AaronAbuUsama/ambient-agent/actions/runs/30159819677) — Node 22 job `89683201799` (1m34s), Node 24 job `89683201786` (1m44s), both pass |
 | 2 integrated | **N/A** | — | No agent behaviour changes: nothing in the Brain, Speaker, Scribe, or any Surface path is touched. The contract records this tier as N/A. |
 | 3 live (branch) | **PROVEN** | both runs the contract names, as real OS processes running the committed head | [`tier3-both-runs.txt`](artifacts/tier3-both-runs.txt) |
 | 4 readback | **PROVEN** | the lock's recorded owner before and after the reclaim, with exact ids | [`tier4-readback.txt`](artifacts/tier4-readback.txt) |
