@@ -12,6 +12,7 @@ import {
   type DeviceCodeCallbacks,
 } from "../../packages/engine/src/model/chatgpt-authentication.ts";
 import { createManagedChatGptAuthentication } from "../../packages/installation/src/chatgpt-authentication.ts";
+import { openManagedConfigurationSource } from "../../packages/installation/src/configuration-source.ts";
 import { managedPaths } from "../../packages/installation/src/paths.ts";
 
 const roots: string[] = [];
@@ -230,7 +231,7 @@ describe("ChatGPT authentication", () => {
       { mode: 0o600 },
     );
     await writeFile(paths.legacyPiAuthCredential, JSON.stringify({ "openai-codex": credential() }), { mode: 0o600 });
-    const authentication = createManagedChatGptAuthentication(paths, adapter());
+    const authentication = createManagedChatGptAuthentication(await openManagedConfigurationSource(paths), adapter());
     const beforeEntries = await readdir(credentials);
     const beforeConfig = await readFile(paths.config, "utf8");
     const beforeLegacy = await readFile(paths.legacyPiAuthCredential, "utf8");
@@ -267,7 +268,7 @@ describe("ChatGPT authentication", () => {
     });
     await symlink(outside, join(root, "credentials"));
     const paths = managedPaths({ dataDirectory: root });
-    const authentication = createManagedChatGptAuthentication(paths, adapter());
+    const authentication = createManagedChatGptAuthentication(await openManagedConfigurationSource(paths), adapter());
 
     await expect(authentication.authorization()).rejects.toMatchObject({ code: "persistence-failed" });
     expect((await lstat(outside)).mode & 0o777).toBe(0o755);

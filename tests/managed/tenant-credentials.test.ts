@@ -19,6 +19,7 @@ import {
   type ChatGptOAuthAdapter,
 } from "../../packages/engine/src/model/chatgpt-authentication.ts";
 import { createManagedChatGptAuthentication } from "../../packages/installation/src/chatgpt-authentication.ts";
+import { openManagedConfigurationSource } from "../../packages/installation/src/configuration-source.ts";
 import { inspectWhatsAppSession } from "../../packages/installation/src/diagnostics.ts";
 import { managedPaths } from "../../packages/installation/src/paths.ts";
 import { createWhatsAppAccount } from "../../packages/installation/src/whatsapp-account.ts";
@@ -209,7 +210,11 @@ describe("tenant credential storage", () => {
     const { root, url } = await fixture("configured-model-libsql");
     const paths = managedPaths({ dataDirectory: join(root, "managed") });
     const environment = { TENANT_DB_URL: url, TENANT_DB_TOKEN: "local-test-token" };
-    const authentication = createManagedChatGptAuthentication(paths, oauthAdapter(), environment);
+    const authentication = createManagedChatGptAuthentication(
+      await openManagedConfigurationSource(paths),
+      oauthAdapter(),
+      environment,
+    );
 
     await authentication.authenticate({ onDeviceCode: vi.fn() });
 

@@ -103,6 +103,13 @@ export interface ManagedConfigStore {
    * (SEC-WO) can make: #381 renders "set / not set" from this without the secret leaving the box.
    */
   storedSecretKinds(): readonly ManagedSecretKind[];
+  /**
+   * Forget this kind's row. Idempotent. The file is authoritative until #367, so the store must be
+   * able to give a value up: `openManagedConfigurationSource` calls this when a credential file no
+   * longer reads, which is what stops a row from a previous boot outliving the file it came from
+   * and being served as if it were current (#366).
+   */
+  deleteSecret(kind: ManagedSecretKind): void;
   close(): void;
 }
 
@@ -146,6 +153,7 @@ export const createManagedConfigStore = (databasePath: string): ManagedConfigSto
   const selectRow = database.prepare("SELECT config_json FROM managed_configuration WHERE id = 1");
   const selectSecret = database.prepare("SELECT secret_json FROM managed_secret WHERE kind = ?");
   const selectSecretKinds = database.prepare("SELECT kind FROM managed_secret ORDER BY kind");
+  const deleteSecretRow = database.prepare("DELETE FROM managed_secret WHERE kind = ?");
   const upsertSecret = database.prepare(`
     INSERT INTO managed_secret (kind, secret_json, updated_at) VALUES (?, ?, ?)
     ON CONFLICT (kind) DO UPDATE SET secret_json = excluded.secret_json, updated_at = excluded.updated_at
@@ -182,6 +190,10 @@ export const createManagedConfigStore = (databasePath: string): ManagedConfigSto
         database.exec("ROLLBACK");
         throw cause;
       }
+    },
+    deleteSecret: (kind) => {
+      if (!isManagedSecretKind(kind)) throw new Error(`There is no managed secret kind ${String(kind)}.`);
+      deleteSecretRow.run(kind);
     },
     // `writeSecret` cannot create a row of an unknown kind, so the filter only ever drops a row left
     // by a kind that has since been renamed — which #367 must migrate rather than orphan.

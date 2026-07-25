@@ -40,7 +40,7 @@ const writeChatGptCredential = async (paths: ManagedPaths): Promise<void> => {
 const setup = (events: string[]) => {
   const reviews: SetupReview[] = [];
   const services: FirstRunServices = {
-    chatGptFor: (paths) => ({
+    chatGptFor: async (paths: ManagedPaths) => ({
       inspect: async () => ({ state: "missing" }),
       authenticate: async (callbacks) => {
         events.push("chatgpt.authenticate");
@@ -319,7 +319,7 @@ describe("transactional first-run setup", () => {
     const authenticate = vi.fn(async () => undefined);
     const reusedServices: FirstRunServices = {
       ...services,
-      chatGptFor: (managed) => ({
+      chatGptFor: async (managed) => ({
         inspect: async () => {
           await writeChatGptCredential(managed);
           return { state: "ready" };
@@ -369,7 +369,7 @@ describe("transactional first-run setup", () => {
       if (stage === "chatgpt") {
         services = {
           ...services,
-          chatGptFor: () => ({
+          chatGptFor: async () => ({
             inspect: async () => ({ state: "missing" }),
             authenticate: async () => {
               throw new Error("cancelled during ChatGPT setup");

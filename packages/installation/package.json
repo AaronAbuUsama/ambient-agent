@@ -9,6 +9,7 @@
     "./bridge-contract.ts": "./src/bridge-contract.ts",
     "./chatgpt-authentication.ts": "./src/chatgpt-authentication.ts",
     "./configuration.ts": "./src/configuration.ts",
+    "./configuration-source.ts": "./src/configuration-source.ts",
     "./diagnostics.ts": "./src/diagnostics.ts",
     "./e2b-sandbox.ts": "./src/e2b-sandbox.ts",
     "./github-app-client.ts": "./src/github-app-client.ts",

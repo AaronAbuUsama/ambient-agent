@@ -27,6 +27,7 @@ import { createBrainInbox } from "../../../../packages/engine/src/brain/inbox.ts
 import { conversationArrival } from "../../../../packages/engine/src/intake/conversation-event.ts";
 import { createManagedChatInbox, managedChatWindowStore } from "../../../../packages/engine/src/intake/managed-chat-inbox.ts";
 import { createManagedChatGptAuthentication } from "../../../../packages/installation/src/chatgpt-authentication.ts";
+import { openManagedConfigurationSource } from "../../../../packages/installation/src/configuration-source.ts";
 import { managedPaths } from "../../../../packages/installation/src/paths.ts";
 import {
   configureAgentModelProfiles,
@@ -34,10 +35,6 @@ import {
   connectPiChatGptSubscription,
   SUBSCRIPTION_PROVIDER_ID,
 } from "../../../../packages/engine/src/model/pi-subscription.ts";
-import {
-  readManagedConfig,
-  readManagedModelApiKey,
-} from "../../../../packages/installation/src/configuration.ts";
 
 const liveModel = process.env.SPEAKER_FIXTURE_LIVE_MODEL === "true";
 const provider = liveModel ? undefined : registerFauxProvider({ provider: "speaker-fixture" });
@@ -240,16 +237,17 @@ if (provider === undefined) {
   // config, so a live fixture run exercises the production provider binding rather than a
   // parallel one.
   const paths = managedPaths({ dataDirectory });
-  const configuration = await readManagedConfig(paths.config);
+  const source = await openManagedConfigurationSource(paths);
+  const configuration = source.config();
   const { provider: modelProvider, profiles } = configuration.model;
   configureAgentModelProfiles(profiles, modelProvider);
   if (modelProvider === SUBSCRIPTION_PROVIDER_ID) {
     await connectPiChatGptSubscription({
-      authentication: createManagedChatGptAuthentication(paths),
+      authentication: createManagedChatGptAuthentication(source),
       profiles,
     });
   } else {
-    const credential = await readManagedModelApiKey(paths.modelApiKeyCredential);
+    const credential = source.secret("model-api-key");
     if (credential.provider !== modelProvider) {
       throw new Error(`The managed API key was issued for ${credential.provider}, not ${modelProvider}.`);
     }

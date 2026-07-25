@@ -29,6 +29,12 @@ export interface ManagedPaths {
   /** The control-plane bearer token, minted on the first boot that has a data directory (#364). */
   readonly controlPlaneCredential: string;
   readonly applicationDatabase: string;
+  /**
+   * The managed configuration and secret store (#179, #365) — the single resolution seam's backing
+   * database (#366). Owner-only (0600), and deliberately NOT a table in {@link applicationDatabase},
+   * whose migration-governed schema rejects unknown tables.
+   */
+  readonly managedConfigDatabase: string;
   readonly flueDatabase: string;
   readonly whatsapp: string;
   /** Per-issue Specialist workspaces — the Coder extracts a repo tarball here (#158, §8). */
@@ -101,6 +107,7 @@ export const managedPaths = (options: ManagedPathEnvironment = {}): ManagedPaths
     braintrustCredential: paths.join(credentials, "braintrust.json"),
     controlPlaneCredential: paths.join(credentials, "control-plane.json"),
     applicationDatabase: paths.join(root, "application.sqlite"),
+    managedConfigDatabase: paths.join(root, "managed-config.sqlite"),
     flueDatabase: paths.join(root, "flue.sqlite"),
     whatsapp: paths.join(root, "whatsapp"),
     workspaces: paths.join(root, "workspaces"),

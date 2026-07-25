@@ -1,10 +1,17 @@
 import type { ChatGptAuthentication } from "@ambient-agent/engine/model/chatgpt-authentication.ts";
 import type { AgentSandbox } from "./agent-sandbox.ts";
+import type { ManagedConfigurationSource } from "./configuration-source.ts";
 import type { ManagedPaths } from "./paths.ts";
 import type { GitHubAppCredential, ManagedConfig } from "./schema.ts";
 
 export interface ManagedRuntimeDependencies {
   readonly authentication: ChatGptAuthentication;
+  /**
+   * The single resolution seam (#366), already opened and seeded from the files by the CLI. Every
+   * value below was resolved through it, and the runtime keeps it to resolve the two Specialist
+   * App credentials and to refresh configuration on SIGHUP — it never reads a credential path.
+   */
+  readonly source: ManagedConfigurationSource;
   readonly configuration: ManagedConfig;
   /** The Planner App credential — the runtime's issue-filing identity and webhook-secret owner (#135). */
   readonly githubCredential: GitHubAppCredential & { readonly webhookSecret: string };

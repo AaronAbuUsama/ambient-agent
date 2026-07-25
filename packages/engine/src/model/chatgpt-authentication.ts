@@ -128,7 +128,13 @@ const pathExists = async (path: string | undefined): Promise<boolean> => {
   }
 };
 
-const assertManagedCredentialDirectory = async (path: string, managedRoot: string): Promise<void> => {
+/**
+ * Refuse a credentials directory that has been swapped for a symlink or moved outside the managed
+ * root — the credential-substitution check that runs before every managed read. Exported since #366:
+ * the installation package's store-backed reader serves the credential from the store, so it must
+ * run this itself rather than inheriting it from the file read it no longer performs.
+ */
+export const assertManagedCredentialDirectory = async (path: string, managedRoot: string): Promise<void> => {
   if (resolve(path) !== resolve(join(managedRoot, "credentials"))) {
     throw new Error("The managed ChatGPT credential path escapes the managed data root.");
   }
@@ -207,7 +213,14 @@ const readPrivateJson = async (path: string): Promise<unknown | undefined> => {
       offset += bytesRead;
     }
     if (offset !== opened.size) throw new Error("The managed ChatGPT credential changed while it was read.");
-    return JSON.parse(bytes.toString("utf8"));
+    // V8's `SyntaxError` quotes the opening bytes of the source it choked on, so a credential file
+    // holding a bare pasted token instead of its JSON envelope would put that token in the message
+    // (SEC-WO). Refused by hand, carrying nothing of the value — the shape #365 shipped and proved.
+    try {
+      return JSON.parse(bytes.toString("utf8"));
+    } catch {
+      throw new Error("The managed ChatGPT credential is malformed.");
+    }
   } catch (cause) {
     if (errorCode(cause) === "ENOENT") return undefined;
     throw cause;

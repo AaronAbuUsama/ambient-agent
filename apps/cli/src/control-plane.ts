@@ -38,10 +38,8 @@ import { mkdir, readFile } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  atomicWriteManagedConfig,
-  readManagedControlPlaneCredential,
-} from "@ambient-agent/installation/configuration.ts";
+import { atomicWriteManagedConfig } from "@ambient-agent/installation/configuration.ts";
+import { withManagedConfigurationSource } from "@ambient-agent/installation/configuration-source.ts";
 import { inspectManagedData, type InstallationInspection } from "@ambient-agent/installation/installation.ts";
 import { controlPlaneCredentialFrom } from "@ambient-agent/installation/schema.ts";
 import {
@@ -294,7 +292,8 @@ const controlPlaneToken = async (
   persistable: boolean,
 ): Promise<{ readonly token: string; readonly persisted: boolean }> => {
   try {
-    return { token: (await readManagedControlPlaneCredential(paths.controlPlaneCredential)).token, persisted: true };
+    const token = await withManagedConfigurationSource(paths, (source) => source.secret("control-plane").token);
+    return { token, persisted: true };
   } catch (cause) {
     // Absent is first-boot. Anything else — malformed, unreadable, a symlink — fails closed:
     // silently minting a replacement over a damaged token file would revoke live access unasked.

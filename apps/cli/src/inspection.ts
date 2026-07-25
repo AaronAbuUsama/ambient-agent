@@ -5,10 +5,10 @@ import { createManagedChatInbox, inspectWindowDeliveryCounts } from "@ambient-ag
 import { createIssueOperationStore } from "@ambient-agent/engine/github/operation-store.ts";
 import { createManagedChatGptAuthentication } from "@ambient-agent/installation/chatgpt-authentication.ts";
 import {
-  readManagedConfig,
-  readManagedGitHubAppCredential,
-  readManagedModelApiKey,
-} from "@ambient-agent/installation/configuration.ts";
+  openManagedConfigurationSource,
+  withManagedConfigurationSource,
+  type ManagedConfigurationSource,
+} from "@ambient-agent/installation/configuration-source.ts";
 import { errorCode } from "@ambient-agent/engine/shared/errors.ts";
 import { inspectManagedServices } from "@ambient-agent/installation/diagnostics.ts";
 import { inspectManagedData } from "@ambient-agent/installation/installation.ts";
@@ -47,7 +47,7 @@ interface InspectionReporterOptions {
   readonly dataDirectory: () => string | undefined;
   readonly output: CliOutput;
   readonly dependencies: CliDependencies;
-  readonly authenticationFor?: (paths: ManagedPaths) => ChatGptAuthentication;
+  readonly authenticationFor?: (source: ManagedConfigurationSource) => ChatGptAuthentication;
   readonly operationSignal: (timeoutMillis: number) => AbortSignal;
 }
 
@@ -56,9 +56,10 @@ interface InspectionReporterOptions {
  * A key issued for a different provider than the config names is `unusable` rather than
  * `ready`, which is the same mismatch the runtime refuses to boot on.
  */
-const inspectModelApiKey = async (paths: ManagedPaths, provider: string): Promise<ChatGptAuthenticationStatus> => {
+const inspectModelApiKey = (source: ManagedConfigurationSource, provider: string): ChatGptAuthenticationStatus => {
+  const { paths } = source;
   try {
-    const credential = await readManagedModelApiKey(paths.modelApiKeyCredential);
+    const credential = source.secret("model-api-key");
     return credential.provider === provider
       ? { state: "ready" }
       : {
@@ -84,8 +85,8 @@ export const createInspectionReporter = ({
 }: InspectionReporterOptions) => {
   const authenticationFor =
     authenticationOverride ??
-    ((paths: ManagedPaths) =>
-      createManagedChatGptAuthentication(paths, dependencies.chatGptOAuth, dependencies.environment ?? process.env));
+    ((source: ManagedConfigurationSource) =>
+      createManagedChatGptAuthentication(source, dependencies.chatGptOAuth, dependencies.environment ?? process.env));
   const inspectUncertainWork = dependencies.inspectUncertainWork ?? inspectUncertainWorkStatus;
   const inspectWindowDeliveries = dependencies.inspectWindowDeliveries ?? inspectWindowDeliveryCounts;
   const readinessSignal = (): AbortSignal => operationSignal(dependencies.readinessTimeoutMillis ?? 60_000);
@@ -95,9 +96,13 @@ export const createInspectionReporter = ({
   const runtimeHealthFor =
     dependencies.runtimeHealthFor ??
     (async (paths: ManagedPaths) => {
-      const configuration = await readManagedConfig(paths.config);
-      const credential = await readManagedGitHubAppCredential(paths.githubAppCredentials.planner);
-      if (credential.webhookSecret === undefined) return { state: "stopped", whatsapp: { phase: "stopped" } } as const;
+      const { configuration, credential } = await withManagedConfigurationSource(paths, (source) => ({
+        configuration: source.config(),
+        credential: source.secret("github-app:planner"),
+      }));
+      if (credential.webhookSecret === undefined) {
+        return { state: "stopped", whatsapp: { phase: "stopped" } } as const;
+      }
       return await probeAmbientRuntimeHealth({
         port: configuration.runtime.port,
         installationId: runtimeInstallationId(credential.webhookSecret),
@@ -107,7 +112,9 @@ export const createInspectionReporter = ({
   const uncertainWorkFor =
     dependencies.uncertainWorkFor ??
     (async (paths: ManagedPaths): Promise<UncertainWorkController> => {
-      const credential = await readManagedGitHubAppCredential(paths.githubAppCredentials.planner);
+      const credential = await withManagedConfigurationSource(paths, (source) =>
+        source.secret("github-app:planner"),
+      );
       const resolver = createInstallationResolver(credential);
       const archive = createConversationArchive(paths.applicationDatabase);
       try {
@@ -133,163 +140,170 @@ export const createInspectionReporter = ({
     emit: boolean = true,
   ): Promise<InspectionReport> => {
     const paths = managedPaths({ dataDirectory: dataDirectory() });
-    const inspection = await inspectManagedData({ dataDirectory: paths.root });
-    const ready = inspection.state === "ready";
-    const configuration = ready ? await readManagedConfig(paths.config) : undefined;
-    const checks = ready ? [...(await inspectManagedServices(paths, dependencies.environment ?? process.env))] : [];
-    const githubCredentialReady = checks.some(
-      ({ name, state }) => name === "github-credential" && state === "ready",
-    );
-    const managedGitHubCredential =
-      ready && githubCredentialReady
-        ? await readManagedGitHubAppCredential(paths.githubAppCredentials.planner)
-        : undefined;
-    if (managedGitHubCredential !== undefined && managedGitHubCredential.webhookSecret === undefined) {
-      checks.push({
-        name: "github-webhook-secret",
-        state: "warning",
-        code: "github.webhook-secret-migration-pending",
-        message: "The valid predecessor GitHub credential needs the app-owned webhook-secret migration.",
-        remediation: "Run ambient-agent start once; startup performs the supported atomic migration before listening.",
-      });
-    }
-    if (live && managedGitHubCredential !== undefined) {
-      try {
-        await verifyGitHub(managedGitHubCredential, configuration!.github.defaultRepository, readinessSignal());
+    // One seam per report run (#366): configuration, the planner credential and the model key
+    // all resolve through it, and the ChatGPT credential store is backed by it too.
+    const source = await openManagedConfigurationSource(paths);
+    try {
+      const inspection = await inspectManagedData({ dataDirectory: paths.root });
+      const ready = inspection.state === "ready";
+      const configuration = ready ? source.config() : undefined;
+      const checks = ready ? [...(await inspectManagedServices(paths, dependencies.environment ?? process.env))] : [];
+      const githubCredentialReady = checks.some(
+        ({ name, state }) => name === "github-credential" && state === "ready",
+      );
+      const managedGitHubCredential =
+        ready && githubCredentialReady
+          ? source.secret("github-app:planner")
+          : undefined;
+      if (managedGitHubCredential !== undefined && managedGitHubCredential.webhookSecret === undefined) {
         checks.push({
-          name: "github-access",
-          state: "ready",
-          code: "github.ready",
-          message: `GitHub authenticated and can access ${configuration!.github.defaultRepository}.`,
-        });
-      } catch {
-        checks.push({
-          name: "github-access",
-          state: "failed",
-          code: "github.access-failed",
-          message: `GitHub authentication or repository access failed for ${configuration!.github.defaultRepository}.`,
-          remediation: "Run ambient-agent config --github-app <coder|reviewer|planner> with a fresh App triple, then run doctor --live again.",
+          name: "github-webhook-secret",
+          state: "warning",
+          code: "github.webhook-secret-migration-pending",
+          message: "The valid predecessor GitHub credential needs the app-owned webhook-secret migration.",
+          remediation: "Run ambient-agent start once; startup performs the supported atomic migration before listening.",
         });
       }
-    }
-    const authentication = ready ? authenticationFor(paths) : undefined;
-    // The default probe derives its correlation ID from the GitHub credential's webhook
-    // secret; when that is unreadable the runtime is honestly unobservable, not stopped.
-    const observedRuntime: AmbientRuntimeHealth | undefined =
-      observeRuntime && ready ? await runtimeHealthFor(paths).catch(() => undefined) : undefined;
-    if (observedRuntime?.whatsapp.phase === "online") {
-      // "online" comes only from live observation; static store evidence caps at "paired".
-      const online = checks.findIndex(({ name }) => name === "whatsapp-session");
-      if (online !== -1) {
-        checks[online] = {
-          name: "whatsapp-session",
-          state: "online",
-          code: "whatsapp.online",
-          message: "The running Ambient Agent runtime observes the WhatsApp session online.",
-        };
-      }
-    }
-    // Model auth is an API key OR a subscription. Inspecting the ChatGPT credential on an
-    // API-key install would report a missing file the install does not use, and mark a
-    // working installation unusable.
-    const apiKeyProvider =
-      ready && configuration !== undefined && configuration.model.provider !== SUBSCRIPTION_PROVIDER_ID;
-    let authenticationStatus: ChatGptAuthenticationStatus =
-      inspection.state === "absent"
-        ? { state: "missing" }
-        : !ready
-          ? {
-              state: "unusable",
-              message: `Model authentication was not inspected because the managed installation is ${inspection.state}.`,
-            }
-          : apiKeyProvider
-            ? await inspectModelApiKey(paths, configuration!.model.provider)
-            : await authentication!.inspect();
-    if (refresh && authenticationStatus.state === "expired-refreshable") {
-      try {
-        await authentication!.authorization(readinessSignal());
-      } catch {
-        // inspect() reports the sanitized unusable state from the same service instance.
-      }
-      authenticationStatus = await authentication!.inspect();
-    }
-    let liveCheck: ChatGptReadinessReceipt | undefined;
-    // The readiness probe is Codex-specific (it drives the Codex Responses api directly), so
-    // it is not run for an API-key provider. Its live equivalent is the pre-flight in
-    // tests/speaker/pi-subscription.test.ts, not the doctor.
-    if (live && !apiKeyProvider && authenticationStatus.state === "ready") {
-      try {
-        liveCheck = await (
-          dependencies.readinessCheck ??
-          ((service, signal) =>
-            runChatGptReadinessCheck(service, {
-              profiles: configuration!.model.profiles,
-              signal,
-            }))
-        )(authentication!, readinessSignal());
-      } catch (cause) {
-        const failure =
-          cause instanceof ChatGptReadinessError
-            ? cause
-            : new ChatGptReadinessError(
-                "request-failed",
-                "The ChatGPT live readiness request failed; retry when the service is reachable.",
-                { cause },
-              );
-        const { profiles, provider } = configuration!.model;
-        liveCheck = {
-          model: modelSpecifier(provider, profiles.speaker.id),
-          models: configuredModelIds(profiles).map((id) => modelSpecifier(provider, id)),
-          request: "failed",
-          reason: failure.code,
-        };
-        if (failure.code === "credential-rejected") {
-          authenticationStatus = { state: "unusable", message: failure.message };
-        }
-      }
-    }
-    let uncertainWork: UncertainWorkStatus | undefined;
-    let windowDeliveries: WindowDeliveryCounts | undefined;
-    let uncertainDoctor: InspectionReport["uncertainDoctor"];
-    let uncertainAction: InspectionReport["uncertainAction"];
-    const applicationDatabaseReady = checks.some(
-      ({ name, state }) => name === "application-database" && state === "ready",
-    );
-    if (ready && applicationDatabaseReady && uncertainty !== undefined) {
-      if (uncertainty.mode === "status") {
-        uncertainWork = inspectUncertainWork(paths.applicationDatabase);
-        windowDeliveries = inspectWindowDeliveries(paths.applicationDatabase);
-      } else {
-        if (!githubCredentialReady) {
-          throw new Error(
-            "Uncertain-work actions need a usable GitHub credential. Run ambient-agent config --github-app <coder|reviewer|planner> and paste a fresh App triple.",
-          );
-        }
-        const controller = await uncertainWorkFor(paths);
+      if (live && managedGitHubCredential !== undefined) {
         try {
-          if (uncertainty.retry !== undefined) uncertainAction = await controller.retry(uncertainty.retry);
-          else if (uncertainty.abandon !== undefined) uncertainAction = controller.abandon(uncertainty.abandon);
-          else if (uncertainty.acceptObserved !== undefined) {
-            uncertainAction = await controller.acceptObserved(uncertainty.acceptObserved);
-          } else uncertainDoctor = await controller.diagnose();
-          uncertainWork = controller.status();
-        } finally {
-          controller.close();
+          await verifyGitHub(managedGitHubCredential, configuration!.github.defaultRepository, readinessSignal());
+          checks.push({
+            name: "github-access",
+            state: "ready",
+            code: "github.ready",
+            message: `GitHub authenticated and can access ${configuration!.github.defaultRepository}.`,
+          });
+        } catch {
+          checks.push({
+            name: "github-access",
+            state: "failed",
+            code: "github.access-failed",
+            message: `GitHub authentication or repository access failed for ${configuration!.github.defaultRepository}.`,
+            remediation: "Run ambient-agent config --github-app <coder|reviewer|planner> with a fresh App triple, then run doctor --live again.",
+          });
         }
       }
+      const authentication = ready ? authenticationFor(source) : undefined;
+      // The default probe derives its correlation ID from the GitHub credential's webhook
+      // secret; when that is unreadable the runtime is honestly unobservable, not stopped.
+      const observedRuntime: AmbientRuntimeHealth | undefined =
+        observeRuntime && ready ? await runtimeHealthFor(paths).catch(() => undefined) : undefined;
+      if (observedRuntime?.whatsapp.phase === "online") {
+        // "online" comes only from live observation; static store evidence caps at "paired".
+        const online = checks.findIndex(({ name }) => name === "whatsapp-session");
+        if (online !== -1) {
+          checks[online] = {
+            name: "whatsapp-session",
+            state: "online",
+            code: "whatsapp.online",
+            message: "The running Ambient Agent runtime observes the WhatsApp session online.",
+          };
+        }
+      }
+      // Model auth is an API key OR a subscription. Inspecting the ChatGPT credential on an
+      // API-key install would report a missing file the install does not use, and mark a
+      // working installation unusable.
+      const apiKeyProvider =
+        ready && configuration !== undefined && configuration.model.provider !== SUBSCRIPTION_PROVIDER_ID;
+      let authenticationStatus: ChatGptAuthenticationStatus =
+        inspection.state === "absent"
+          ? { state: "missing" }
+          : !ready
+            ? {
+                state: "unusable",
+                message: `Model authentication was not inspected because the managed installation is ${inspection.state}.`,
+              }
+            : apiKeyProvider
+              ? inspectModelApiKey(source, configuration!.model.provider)
+              : await authentication!.inspect();
+      if (refresh && authenticationStatus.state === "expired-refreshable") {
+        try {
+          await authentication!.authorization(readinessSignal());
+        } catch {
+          // inspect() reports the sanitized unusable state from the same service instance.
+        }
+        authenticationStatus = await authentication!.inspect();
+      }
+      let liveCheck: ChatGptReadinessReceipt | undefined;
+      // The readiness probe is Codex-specific (it drives the Codex Responses api directly), so
+      // it is not run for an API-key provider. Its live equivalent is the pre-flight in
+      // tests/speaker/pi-subscription.test.ts, not the doctor.
+      if (live && !apiKeyProvider && authenticationStatus.state === "ready") {
+        try {
+          liveCheck = await (
+            dependencies.readinessCheck ??
+            ((service, signal) =>
+              runChatGptReadinessCheck(service, {
+                profiles: configuration!.model.profiles,
+                signal,
+              }))
+          )(authentication!, readinessSignal());
+        } catch (cause) {
+          const failure =
+            cause instanceof ChatGptReadinessError
+              ? cause
+              : new ChatGptReadinessError(
+                  "request-failed",
+                  "The ChatGPT live readiness request failed; retry when the service is reachable.",
+                  { cause },
+                );
+          const { profiles, provider } = configuration!.model;
+          liveCheck = {
+            model: modelSpecifier(provider, profiles.speaker.id),
+            models: configuredModelIds(profiles).map((id) => modelSpecifier(provider, id)),
+            request: "failed",
+            reason: failure.code,
+          };
+          if (failure.code === "credential-rejected") {
+            authenticationStatus = { state: "unusable", message: failure.message };
+          }
+        }
+      }
+      let uncertainWork: UncertainWorkStatus | undefined;
+      let windowDeliveries: WindowDeliveryCounts | undefined;
+      let uncertainDoctor: InspectionReport["uncertainDoctor"];
+      let uncertainAction: InspectionReport["uncertainAction"];
+      const applicationDatabaseReady = checks.some(
+        ({ name, state }) => name === "application-database" && state === "ready",
+      );
+      if (ready && applicationDatabaseReady && uncertainty !== undefined) {
+        if (uncertainty.mode === "status") {
+          uncertainWork = inspectUncertainWork(paths.applicationDatabase);
+          windowDeliveries = inspectWindowDeliveries(paths.applicationDatabase);
+        } else {
+          if (!githubCredentialReady) {
+            throw new Error(
+              "Uncertain-work actions need a usable GitHub credential. Run ambient-agent config --github-app <coder|reviewer|planner> and paste a fresh App triple.",
+            );
+          }
+          const controller = await uncertainWorkFor(paths);
+          try {
+            if (uncertainty.retry !== undefined) uncertainAction = await controller.retry(uncertainty.retry);
+            else if (uncertainty.abandon !== undefined) uncertainAction = controller.abandon(uncertainty.abandon);
+            else if (uncertainty.acceptObserved !== undefined) {
+              uncertainAction = await controller.acceptObserved(uncertainty.acceptObserved);
+            } else uncertainDoctor = await controller.diagnose();
+            uncertainWork = controller.status();
+          } finally {
+            controller.close();
+          }
+        }
+      }
+      const report: InspectionReport = {
+        installation: inspection,
+        authentication: authenticationStatus,
+        checks,
+        observedRuntime,
+        liveCheck,
+        uncertainWork,
+        windowDeliveries,
+        uncertainDoctor,
+        uncertainAction,
+      };
+      if (emit) output.stdout(renderInspection(report, json));
+      return report;
+    } finally {
+      source.close();
     }
-    const report: InspectionReport = {
-      installation: inspection,
-      authentication: authenticationStatus,
-      checks,
-      observedRuntime,
-      liveCheck,
-      uncertainWork,
-      windowDeliveries,
-      uncertainDoctor,
-      uncertainAction,
-    };
-    if (emit) output.stdout(renderInspection(report, json));
-    return report;
   };
 };

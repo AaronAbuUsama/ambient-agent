@@ -21,8 +21,10 @@ import {
   githubAppJwtClient,
   type InstallationResolver,
 } from "@ambient-agent/installation/github-app-client.ts";
-import { readManagedConfig, readProvisionedGitHubAppCredential } from "@ambient-agent/installation/configuration.ts";
-import { createManagedConfigStore } from "@ambient-agent/installation/managed-config-store.ts";
+import {
+  readProvisionedGitHubAppCredential,
+  type ManagedConfigurationSource,
+} from "@ambient-agent/installation/configuration-source.ts";
 import { applyManagedAuthorization, reloadAuthorizationOnSignal } from "./host/authorization-reload.ts";
 import { createOctokitIssueRepository } from "@ambient-agent/installation/github-issue-repository.ts";
 import { invoke } from "@flue/runtime";
@@ -58,12 +60,12 @@ import {
  * identity — the configured-but-inert failure the one-box plan bans for the Speaker and Coder alike.
  */
 const configureCoderRuntimeBinding = async (
-  paths: ManagedRuntimeDependencies["paths"],
+  source: ManagedConfigurationSource,
   agentSandbox: ManagedRuntimeDependencies["agentSandbox"],
   registry: ReturnType<typeof createCodingJobRegistry>,
   reviewerAppSlug: string | undefined,
 ): Promise<void> => {
-  const credential = await readProvisionedGitHubAppCredential(paths.githubAppCredentials.coder, "coder");
+  const credential = readProvisionedGitHubAppCredential(source, "coder");
   const resolver = createInstallationResolver(credential);
   // #211 round-4: resolve the Coder App's own slug (App-identity JWT route) so the over-budget lifecycle
   // comment is only ever matched to OUR bot's comment. Best-effort — a boot GitHub blip must not take the
@@ -94,10 +96,10 @@ const configureCoderRuntimeBinding = async (
  * off until a deployment opts repositories into `reviewRepositories` (T5b, #254).
  */
 const configureReviewerRuntimeBinding = async (
-  paths: ManagedRuntimeDependencies["paths"],
+  source: ManagedConfigurationSource,
   agentSandbox: ManagedRuntimeDependencies["agentSandbox"],
 ): Promise<{ resolver: InstallationResolver; appSlug: string } | undefined> => {
-  const credential = await readProvisionedGitHubAppCredential(paths.githubAppCredentials.reviewer, "reviewer");
+  const credential = readProvisionedGitHubAppCredential(source, "reviewer");
   const resolver = createInstallationResolver(credential);
   try {
     // The App slug is App-identity (a JWT route), the same across every installation, so it is
@@ -117,6 +119,7 @@ const configureReviewerRuntimeBinding = async (
 
 export const createAmbientAgentApp = async ({
   authentication,
+  source,
   configuration,
   githubCredential,
   paths,
@@ -158,8 +161,8 @@ export const createAmbientAgentApp = async ({
   // migration-governed application database), rebuilt lazily; it holds no GitHub-owned review state.
   const codingJobRegistry = createCodingJobRegistry(join(dirname(paths.applicationDatabase), "coding-jobs.sqlite"));
   // Resolve the Reviewer App first so its slug can authorize repair reviews in the Coder runtime (#211).
-  const reviewerProvisioned = await configureReviewerRuntimeBinding(paths, agentSandbox);
-  await configureCoderRuntimeBinding(paths, agentSandbox, codingJobRegistry, reviewerProvisioned?.appSlug);
+  const reviewerProvisioned = await configureReviewerRuntimeBinding(source, agentSandbox);
+  await configureCoderRuntimeBinding(source, agentSandbox, codingJobRegistry, reviewerProvisioned?.appSlug);
   let whatsappControl: WhatsAppRuntimeControl | undefined;
   // The Speaker/Planner file one identity, but issues may be filed across orgs — resolve the
   // installation-scoped client per issue repository (multi-org). Every issue op carries a full
@@ -175,15 +178,9 @@ export const createAmbientAgentApp = async ({
     allowedRepositories: configuration.github.allowedRepositories,
     surfaceRepositories: configuration.github.surfaceRepositories,
   });
-  // S8 (#179): the DB-backed live source for authorization-knob reloads. Re-seeded from config.json
-  // (the durable source of truth) at every boot; a live change writes both, then a SIGHUP reload
-  // rebuilds the gate Set and repo allowlists in place — no restart, WhatsApp stream untouched. It is
-  // its own SQLite file, deliberately NOT a table in the audited application database: that schema is
-  // migration-governed and rejects unknown tables, and this store is ephemeral (rebuilt from config).
-  const managedConfigStore = createManagedConfigStore(
-    join(dirname(paths.applicationDatabase), "managed-config.sqlite"),
-  );
-  managedConfigStore.replace(configuration);
+  // S8 (#179): the DB-backed live source for authorization-knob reloads is now the same seam every
+  // credential resolves through (#366) — the CLI opened it and seeded it from config.json (the
+  // durable source of truth) before boot, so there is no second store to open here.
   // Hoisted so the SIGHUP reload can rebuild them in place. `reviewRepositories` is the exact mutable
   // array the ingress reads live (see ingress `review.repositories`), so splicing it updates the
   // Reviewer allowlist with no re-wiring.
@@ -273,9 +270,7 @@ export const createAmbientAgentApp = async ({
   // (+ each authorized chat's Surface), the two repo allowlists, and the repository Graph facts all
   // catch up with no restart. The WhatsApp session, model provider, port and sandbox stay restart-only.
   reloadAuthorizationOnSignal(async () => {
-    const next = await readManagedConfig(paths.config);
-    managedConfigStore.replace(next);
-    applyManagedAuthorization(managedConfigStore.current(), {
+    applyManagedAuthorization(await source.refreshConfig(), {
       reloadManagedChats: (chatIds) => whatsappControl?.reloadManagedChats(chatIds),
       policy,
       reviewRepositories,
