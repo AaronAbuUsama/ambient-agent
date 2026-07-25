@@ -28,6 +28,7 @@ import { createBrainInbox } from "../../packages/engine/src/brain/inbox.ts";
 import { admitGitHubEventToBrain } from "../../packages/engine/src/github/up-inbox.ts";
 import { conversationArrival } from "../../packages/engine/src/intake/conversation-event.ts";
 import { createSurfaceRegistry } from "../../packages/engine/src/surfaces/registry.ts";
+import { setupObservation, whatsappObservation } from "../../packages/installation/src/observation.ts";
 import { createSurfaceDeliveryStore } from "../../packages/engine/src/surfaces/delivery.ts";
 import { createTestManagedChatInbox as createManagedChatInbox } from "../../packages/test-support/src/managed-chat-inbox.ts";
 import {
@@ -1052,7 +1053,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
 });
 
 describe("runtime pairing and bridge control", () => {
-  it("captures pairing for HTTP polling, preserves stdout pairing, and exposes synchronized chats", async () => {
+  it("captures pairing for HTTP polling, retains it off the terminal, and exposes synchronized chats", async () => {
     const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
     archive.close();
     const statusListeners = new Set<(status: Status) => void | Promise<void>>();
@@ -1115,9 +1116,16 @@ describe("runtime pairing and bridge control", () => {
           pairing: { method: "pairing_code", code: "ABCD-EFGH", expiresAt: 60_000 },
         }),
       );
-      expect(stdoutSpy.mock.calls.map(([chunk]) => String(chunk)).join("")).toContain(
-        "WhatsApp pairing code: ABCD-EFGH",
-      );
+      // #386: the terminal render is deleted, not adapted. The material is retained on the setup
+      // channel, so a page that connects after the code was issued still finds it — and nothing is
+      // written to a stdout that, under a service manager, is the journal.
+      expect(stdoutSpy.mock.calls.map(([chunk]) => String(chunk)).join("")).not.toContain("ABCD-EFGH");
+      expect(setupObservation().snapshot().value.pairing).toMatchObject({
+        kind: "awaiting_scan",
+        method: "pairing_code",
+        code: "ABCD-EFGH",
+        expiresAt: 60_000,
+      });
 
       continueStart();
       await vi.waitFor(() => expect(getWhatsAppRuntimeStatus().phase).toBe("online"));
@@ -1125,6 +1133,12 @@ describe("runtime pairing and bridge control", () => {
         accountJid: "15550000000:7@s.whatsapp.net",
       });
       expect(getWhatsAppRuntimeStatus()).not.toHaveProperty("pairing");
+      // Pairing material is retired the moment it stops being true, so a page opened afterwards
+      // renders "paired" rather than a QR nobody will ever scan.
+      expect(setupObservation().snapshot().value.pairing).toEqual({
+        kind: "paired",
+        jid: "15550000000:7@s.whatsapp.net",
+      });
       const surfaces = createSurfaceRegistry(applicationDatabase);
       expect(surfaces.activeSurface("15550000000:7@s.whatsapp.net", CHAT)).toMatchObject({
         id: expect.stringMatching(/^surface:[0-9a-f-]{36}$/u),
@@ -1139,6 +1153,73 @@ describe("runtime pairing and bridge control", () => {
       continueStart();
       await runtime.stop();
       stdoutSpy.mockRestore();
+    }
+  });
+
+  it("reports a transport transition that happens after authentication settles", async () => {
+    // #373's incident, as a test. `authenticate` tears its own status subscription down the instant
+    // auth settles (`whatsapp-account.ts:335`), so every transition after that reached nobody and
+    // `/health` said `online` for ten minutes against a dead stream. The seam keeps one long-lived
+    // subscription and reads `session.status` at observation time, so both halves now move.
+    const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
+    archive.close();
+    const statusListeners = new Set<(status: Status) => void | Promise<void>>();
+    let current: Status = { phase: "connecting" };
+    const transition = async (next: Status): Promise<void> => {
+      current = next;
+      for (const listener of [...statusListeners]) await listener(next);
+    };
+    const session = {
+      get status() {
+        return current;
+      },
+      onStatus(listener: (status: Status) => void | Promise<void>) {
+        statusListeners.add(listener);
+        return () => statusListeners.delete(listener);
+      },
+      onMessage: () => () => undefined,
+      onUpdate: () => () => undefined,
+      onConversationSync: () => () => undefined,
+      async start() {
+        await transition({ phase: "online" });
+      },
+      async stop() {},
+      identity: () => ({ jid: "15550000000:7@s.whatsapp.net" }),
+    } as unknown as WhatsAppSession;
+
+    const runtime = startWhatsAppRuntime({
+      storeDirectory,
+      applicationDatabase,
+      managedChats: [CHAT],
+      sessionFactory: () => session,
+    });
+    const deltas: string[] = [];
+    const unsubscribe = whatsappObservation().subscribe((observation) => {
+      const phase = observation.value.transport?.phase;
+      if (phase !== undefined) deltas.push(phase);
+    });
+
+    try {
+      await vi.waitFor(() => expect(getWhatsAppRuntimeStatus().phase).toBe("online"));
+      expect(whatsappObservation().snapshot().value.transport).toEqual({ phase: "online" });
+
+      // The stream dies well after authentication is done and its subscription is gone.
+      await transition({ phase: "backing_off", reason: "connection_replaced", retryAttempt: 2, nextRetryAt: 1_000 });
+
+      // Pull sees it, because the pull reads the live getter rather than a cached field...
+      expect(whatsappObservation().snapshot().value.transport).toEqual({
+        phase: "backing_off",
+        reason: "connection_replaced",
+        retryAttempt: 2,
+        nextRetryAt: 1_000,
+      });
+      // ...and so does push, because the subscription outlives authentication.
+      expect(deltas.at(-1)).toBe("backing_off");
+      // Idle is not stale: a healthy quiet socket promised no renewal, so nothing expires under it.
+      expect(whatsappObservation().snapshot().stale).toBe(false);
+    } finally {
+      unsubscribe();
+      await runtime.stop();
     }
   });
 

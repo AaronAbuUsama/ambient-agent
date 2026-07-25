@@ -65,6 +65,18 @@ export interface WhatsAppAccountSetup {
 
 export interface ManagedWhatsAppAccount extends WhatsAppAccountSetup {
   session(): WhatsAppSession;
+  /**
+   * The transport's live connection state — whatsappd's `session.status` getter, unguarded and
+   * uncached (#386). `session()` refuses before authentication, which is exactly the window an
+   * operator most needs to see, so liveness reads this instead.
+   */
+  transport?(): Status | undefined;
+  /**
+   * A process-lifetime status subscription. Unlike the one `authenticate` registers, this one is
+   * *not* torn down when authentication settles (`:335`) — that teardown is why every transition
+   * after going online was delivered to nobody and `/health` lied for ten minutes (#373).
+   */
+  observeTransport?(handler: (status: Status) => void): () => void;
   /** Resolves only after provider sync completion and every queued archive batch write. */
   initialArchiveReady?(signal?: AbortSignal): Promise<void>;
   /** Send the live smoke stimulus, then admit that exact provider-acknowledged message as the canary input. */
@@ -385,6 +397,9 @@ export const createWhatsAppAccount = (options: CreateWhatsAppAccountOptions): Ma
 
   return {
     authenticate,
+    transport: () => session.status,
+    observeTransport: (handler) =>
+      typeof session.onStatus === "function" ? session.onStatus(handler) : () => undefined,
     synchronizedChats: async (signal) => {
       throwIfAborted(signal);
       if (authenticated === undefined) {

@@ -9,6 +9,7 @@ import {
 } from "@ambient-agent/installation/schema.ts";
 import type { FirstRunPrompts, SetupReview } from "./setup/first-run.ts";
 import { resolvePrivateKey } from "./private-key.ts";
+import { publishDeviceObservation, publishPairingProgress } from "@ambient-agent/installation/observation.ts";
 import { renderQr } from "@ambient-agent/installation/qr.ts";
 import type { CliOutput } from "./program.ts";
 
@@ -151,24 +152,43 @@ export const defaultSetupPrompts: SetupPrompts = {
   validationError: (_field, message) => prompts.log.error(message),
 };
 
+/**
+ * The terminal rendering below stays — this is the CLI, and an operator running `init` at a TTY is
+ * a legitimate observer. What changes (#386) is that it is no longer the *only* observer: the same
+ * material is retained on the setup channel, so a browser attaching mid-flow (#371) sees what the
+ * terminal saw rather than a blank screen.
+ */
 export const createDeviceCodeCallbacks = (output: CliOutput): DeviceCodeCallbacks => ({
   onDeviceCode: (info) => {
     output.stdout(`Open ${info.verificationUri} and enter code ${info.userCode}.\n`);
     if (info.expiresInSeconds !== undefined) {
       output.stdout(`The device code expires in ${info.expiresInSeconds} seconds.\n`);
     }
+    publishDeviceObservation({
+      kind: "awaiting_authorization",
+      userCode: info.userCode,
+      verificationUri: info.verificationUri,
+      ...(info.expiresInSeconds === undefined ? {} : { expiresAt: Date.now() + info.expiresInSeconds * 1_000 }),
+    });
   },
   onProgress: ({ phase }) => {
     output.stdout(phase === "waiting" ? "Waiting for ChatGPT authorization...\n" : "ChatGPT authorization complete.\n");
+    if (phase === "complete") publishDeviceObservation({ kind: "complete" });
   },
 });
 
 export const createWhatsAppCallbacks = (output: CliOutput) => ({
-  onPairing: (pairing: { readonly qr?: string; readonly code?: string }) => {
+  onPairing: (pairing: {
+    readonly method: "qr" | "pairing_code";
+    readonly qr?: string;
+    readonly code?: string;
+    readonly expiresAt: number;
+  }) => {
     if (pairing.qr !== undefined) {
       renderQr(pairing.qr, output.stdout);
     } else if (pairing.code !== undefined) {
       output.stdout(`Enter WhatsApp pairing code ${pairing.code}.\n`);
     }
+    publishPairingProgress(pairing);
   },
 });

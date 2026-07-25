@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { runCli, type CliOutput, type StartRuntime } from "../../apps/cli/src/program.ts";
 import { installManagedData } from "../../packages/test-support/src/managed-installation.ts";
 import { managedPaths } from "../../packages/installation/src/paths.ts";
+import { observed } from "../../packages/installation/src/observation.ts";
 
 const roots: string[] = [];
 const controllers: AbortController[] = [];
@@ -76,6 +77,26 @@ const startControlPlane = async (
     get: async (path, token) =>
       await fetch(`${origin}${path}`, token === undefined ? {} : { headers: { authorization: `Bearer ${token}` } }),
   };
+};
+
+/** Read one named SSE event off a live stream, then hang up — the stream never ends on its own. */
+const firstEvent = async (
+  response: Response,
+  name: string,
+): Promise<Record<string, { readonly value: Record<string, unknown> }>> => {
+  const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`The observation stream ended before a ${name} event arrived.`);
+      buffer += value;
+      const frame = buffer.split("\n\n").find((candidate) => candidate.startsWith(`event: ${name}\n`));
+      if (frame !== undefined) return JSON.parse(frame.slice(frame.indexOf("data: ") + 6));
+    }
+  } finally {
+    await reader.cancel();
+  }
 };
 
 const persistedToken = async (dataDirectory: string): Promise<string> =>
@@ -186,6 +207,54 @@ describe("the no-subcommand control plane", () => {
     for (const file of files) {
       expect(await readFile(join(logs, file), "utf8"), file).not.toContain(token);
     }
+  });
+
+  it("opens the observation stream with a snapshot of state published before anyone attached", async () => {
+    // The nonce is minted during boot, published to the seam before the port is even bound, and
+    // read back by a client that connects afterwards — so what the client received cannot be a
+    // replayed event, and cannot have pre-existed the run.
+    const dataDirectory = await installed();
+    const control = await startControlPlane(dataDirectory);
+    const token = await persistedToken(dataDirectory);
+    const identity = (await (await control.get("/api/status", token)).json()) as {
+      readonly instance: { readonly id: string };
+    };
+
+    const stream = await control.get("/api/observe", token);
+
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get("content-type")).toBe("text/event-stream");
+    const snapshot = await firstEvent(stream, "snapshot");
+    expect(snapshot.instance?.value).toMatchObject({ id: identity.instance.id, pid: process.pid });
+    expect(snapshot.runtime?.value).toEqual({ phase: "running" });
+    expect(identity.instance.id).not.toBe("");
+  });
+
+  it("recovers full state for a client that reconnects, and keeps producing while none is attached", async () => {
+    const dataDirectory = await installed();
+    const control = await startControlPlane(dataDirectory);
+    const token = await persistedToken(dataDirectory);
+
+    const before = await firstEvent(await control.get("/api/observe", token), "snapshot");
+    // `firstEvent` already hung up, exactly as closing a browser tab does.
+    // The producer carried on regardless: this publication lands with zero subscribers attached.
+    const channel = observed<{ readonly beat: string }>("test-liveness", { beat: "" });
+    const beat = `beat-${Date.now()}`;
+    channel.publish({ beat });
+
+    const after = await firstEvent(await control.get("/api/observe", token), "snapshot");
+
+    expect(before["test-liveness"]).toBeUndefined();
+    expect(after["test-liveness"]?.value).toEqual({ beat });
+    expect(after.instance?.value).toEqual(before.instance?.value);
+  });
+
+  it("refuses the observation stream without a token, like every other path", async () => {
+    const dataDirectory = await installed();
+    const control = await startControlPlane(dataDirectory);
+
+    expect((await control.get("/api/observe")).status).toBe(401);
+    expect((await control.get("/api/observe", "wrong-token")).status).toBe(401);
   });
 
   it("refuses loudly when another live process already holds the data directory", async () => {
