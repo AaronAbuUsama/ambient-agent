@@ -356,7 +356,12 @@ describe("the static console shell", () => {
     await writeFile(join(directory, "assets", "index-abc.js"), "console.log(1)\n");
     const server = createControlPlaneServer(
       "the-token",
-      () => ({ dataDirectory: directory, installation: "ready", runtime: { phase: "running" } }),
+      () => ({
+        instance: { id: "shell-test", startedAt: new Date().toISOString(), pid: process.pid },
+        dataDirectory: directory,
+        installation: "ready",
+        runtime: { phase: "running" },
+      }),
       pathToFileURL(`${directory}/`),
     );
     servers.push(server);
