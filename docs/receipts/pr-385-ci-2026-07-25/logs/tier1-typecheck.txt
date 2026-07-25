@@ -1,0 +1,6 @@
+$ pnpm run typecheck
+
+> ambient-agent@0.4.0 typecheck /Users/abuusama/projects/ambient-agent/.claude/worktrees/fix-ci-braintrust-385
+> tsc --noEmit
+
+exit=0

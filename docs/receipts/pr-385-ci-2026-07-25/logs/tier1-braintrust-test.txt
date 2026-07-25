@@ -1,0 +1,10 @@
+$ pnpm vitest run tests/speaker/braintrust.test.ts
+
+ RUN  v4.1.10 /Users/abuusama/projects/ambient-agent/.claude/worktrees/fix-ci-braintrust-385
+
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  11:09:08
+   Duration  136ms (transform 24ms, setup 0ms, import 34ms, tests 3ms, environment 0ms)
+
