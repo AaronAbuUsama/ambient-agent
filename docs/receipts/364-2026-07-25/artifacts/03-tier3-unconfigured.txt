@@ -1,0 +1,34 @@
+# Tier 3 (live) — run A: no configuration present
+# started 2026-07-25T13:18:26Z   nonce n364-f184786f33ec   head bf8ed595e9200db5ae8ffeaedfa7c9a4e12e13d6
+# The nonce is the data directory's name, so every path-bearing line below names this run.
+
+$ node dist/cli/main.js --data-dir $D --control-port 47474  &
+Control plane listening on http://127.0.0.1:47474
+Control plane bearer token, unpersisted until $HOME/.ambient-agent-n364-f184786f33ec exists: <REDACTED — ephemeral, this run only>
+Runtime not started: Ambient Agent is not configured. Run ambient-agent init.
+
+$ curl -isS http://127.0.0.1:47474/api/status                                   # no Authorization header
+HTTP/1.1 401 Unauthorized
+content-type: application/json
+www-authenticate: Bearer
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+{"error":"unauthorized"}
+
+$ curl -isS -H 'Authorization: Bearer <token>' http://127.0.0.1:47474/api/status  # correct token
+HTTP/1.1 200 OK
+content-type: application/json
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+{"dataDirectory":"$HOME/.ambient-agent-n364-f184786f33ec","installation":"absent","runtime":{"phase":"not-configured","detail":"Ambient Agent is not configured. Run ambient-agent init."}}
+
+$ ls -d $D    # an unconfigured control plane must not create the data directory
+lsd: $HOME/.ambient-agent-n364-f184786f33ec: No such file or directory (os error 2).
+
+
+$ ps -p 68908 -o pid=,stat=   # still up after the exchange
+68908 SN  
