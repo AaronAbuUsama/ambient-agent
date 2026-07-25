@@ -51,7 +51,12 @@ export interface Observation<T> {
   readonly at: number;
   /** Epoch ms this reading was taken. */
   readonly observedAt: number;
-  /** Monotonic publication count for this channel. Equal revisions mean equal values. */
+  /**
+   * Monotonic count of what this channel has announced — every publication, plus the moment a
+   * promised renewal failed to arrive. Equal revisions mean the same *announcement*, not
+   * necessarily an identical `value`: a channel with a live source (see {@link Retained.refreshWith})
+   * projects that source at read time, so its value can move within one revision.
+   */
   readonly revision: number;
   /** The renewal deadline the producer promised, when it promised one. */
   readonly freshUntil?: number;
@@ -90,22 +95,36 @@ export interface Retained<T> extends Observed<T> {
   readonly refreshWith: (project: (published: T) => T) => void;
 }
 
-interface Cell<T> extends Retained<T> {
-  /** Registry-internal: erased to `Observed<unknown>` for consumers that enumerate channels. */
-  readonly __retained: true;
-}
-
 const REGISTRY = Symbol.for("ambient-agent.observation-registry");
 
 interface Registry {
-  readonly cells: Map<string, Cell<never>>;
+  readonly cells: Map<string, Retained<never>>;
   readonly watchers: Set<(cell: Observed<unknown>) => void>;
 }
 
 const registryGlobal = globalThis as typeof globalThis & { [REGISTRY]?: Registry };
 const registry = (): Registry => (registryGlobal[REGISTRY] ??= { cells: new Map(), watchers: new Set() });
 
-const createCell = <T>(channel: string, initial: T): Cell<T> => {
+/**
+ * Every call *out* of a cell — into an observer, into a projection, into a watcher — goes through
+ * here. The producer's work is in flight and must not unwind because a browser connection
+ * misbehaved or someone else's getter threw. Swallowed, but never silently: `process.emitWarning`
+ * needs no logger this deep in `installation` and lands in the journal under a service manager, so
+ * a consumer defect stays debuggable instead of turning into a stream that quietly says nothing.
+ */
+const isolate = <R>(what: string, act: () => R, fallback: R): R => {
+  try {
+    return act();
+  } catch (cause) {
+    process.emitWarning(cause instanceof Error ? cause : new Error(String(cause)), {
+      code: "AMBIENT_OBSERVATION_THREW",
+      detail: what,
+    });
+    return fallback;
+  }
+};
+
+const createCell = <T>(channel: string, initial: T): Retained<T> => {
   let value = initial;
   let at = Date.now();
   let revision = 0;
@@ -118,7 +137,10 @@ const createCell = <T>(channel: string, initial: T): Cell<T> => {
     const observedAt = Date.now();
     return {
       channel,
-      value: project === undefined ? value : project(value),
+      // The projection is the most failure-prone code in the cell: it reads someone else's live
+      // getter. If it throws, the channel falls back to the published value rather than taking the
+      // producer — or a control plane in the middle of serving a snapshot — down with it.
+      value: project === undefined ? value : isolate(`${channel} projection`, () => project!(value), value),
       at,
       observedAt,
       revision,
@@ -127,23 +149,15 @@ const createCell = <T>(channel: string, initial: T): Cell<T> => {
     };
   };
 
-  // A throwing observer is the producer's problem only if we let it be. Isolate each one: the
-  // producer's work is in flight and must not unwind because a browser connection misbehaved.
   const notify = (): void => {
     if (observers.size === 0) return;
     const observation = read();
     for (const observer of [...observers]) {
-      try {
-        observer(observation);
-      } catch {
-        // Deliberately swallowed and not logged here: `installation` has no logger at this depth,
-        // and an observer that throws is a consumer defect, never a reason to fail a publish.
-      }
+      isolate(`${channel} observer`, () => observer(observation), undefined);
     }
   };
 
   return {
-    __retained: true,
     channel,
     snapshot: read,
     subscribe: (observer) => {
@@ -159,8 +173,16 @@ const createCell = <T>(channel: string, initial: T): Cell<T> => {
       expiry = undefined;
       if (freshUntil !== undefined) {
         // Staleness is computed at read time, so this timer exists purely so that a *subscriber*
-        // learns about it too. Unref'd: an unrenewed value must never hold the process open.
-        expiry = setTimeout(notify, Math.max(0, freshUntil - at) + 1);
+        // learns about it too. It bumps the revision, because going stale is a change in what the
+        // channel says: a client that dedupes on revision must not drop exactly the notification
+        // the timer exists to deliver. Unref'd — an unrenewed value never holds the process open.
+        expiry = setTimeout(
+          () => {
+            revision += 1;
+            notify();
+          },
+          Math.max(0, freshUntil - at) + 1,
+        );
         expiry.unref?.();
       }
       notify();
@@ -181,8 +203,13 @@ export const observed = <T>(channel: string, initial: T): Retained<T> => {
   const existing = cells.get(channel);
   if (existing !== undefined) return existing as unknown as Retained<T>;
   const cell = createCell(channel, initial);
-  cells.set(channel, cell as unknown as Cell<never>);
-  for (const watcher of [...watchers]) watcher(cell as unknown as Observed<unknown>);
+  cells.set(channel, cell as unknown as Retained<never>);
+  // Isolated for the same reason a delta is: this runs on the *producer's* stack, at the moment it
+  // first touches a channel, and a watcher that throws must neither unwind that producer nor stop
+  // the remaining watchers from learning the channel exists.
+  for (const watcher of [...watchers]) {
+    isolate(`${channel} channel watcher`, () => watcher(cell as unknown as Observed<unknown>), undefined);
+  }
   return cell;
 };
 
@@ -202,7 +229,7 @@ export const subscribeToAllObservations = (observer: Observer<unknown>): (() => 
     unsubscribes.add(cell.subscribe(observer));
     // A channel that appears mid-connection is itself news: emit its first value as a delta so a
     // client that has already taken its snapshot is not left waiting for the next publication.
-    observer(cell.snapshot());
+    isolate(`${cell.channel} first delta`, () => observer(cell.snapshot()), undefined);
   };
   const watcher = (cell: Observed<unknown>): void => attach(cell);
   watchers.add(watcher);
@@ -241,8 +268,14 @@ export const OBSERVATION_CHANNELS = {
 /**
  * whatsappd's connection state, projected to the fields an operator surface needs and *nothing
  * else*. Deliberately not the raw `Status`: its `pairing` arm carries the QR and the pairing code,
- * and this channel is read by `/health` consumers. Pairing material travels on the setup channel,
- * which exists to carry it.
+ * and adding a live source to a channel should not quietly widen what that channel carries. The
+ * projection is a whitelist, so a future whatsappd status arm degrades to phase-only rather than
+ * leaking whatever it holds.
+ *
+ * This is a bound on what `transport` adds, not a claim about the whole channel: `status.pairing`
+ * has carried `PairingProgress` since before this seam existed, because the authorized bridge
+ * pairing route reads it (`bridge-contract.ts:49`). Both fields sit behind the control plane's
+ * bearer gate; `/health` narrows to `phase` alone (`bridge-contract.ts:37-47`).
  */
 export interface TransportObservation {
   readonly phase: Status["phase"];
@@ -337,10 +370,18 @@ export const publishPairingProgress = (progress: {
   );
 };
 
-/** Pairing settled. Published without a deadline: "paired" is idle-correct, not perishable. */
+/**
+ * Pairing settled. Published without a deadline: neither outcome is perishable, so the channel goes
+ * idle-correct rather than counting down to stale.
+ *
+ * A failure never overwrites `paired`. Pairing is over once it succeeded, and a runtime that dies an
+ * hour later is a transport failure — which the whatsapp channel reports — not a retraction of the
+ * pairing a page already watched complete.
+ */
 export const publishPairingSettled = (result: { readonly jid?: string } | { readonly reason: string }): void => {
   const setup = setupObservation();
   const current = setup.snapshot().value;
+  if ("reason" in result && current.pairing.kind === "paired") return;
   setup.publish({
     ...current,
     pairing: "reason" in result ? { kind: "failed", reason: result.reason } : { kind: "paired", ...result },

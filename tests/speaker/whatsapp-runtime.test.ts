@@ -1075,6 +1075,12 @@ describe("runtime pairing and bridge control", () => {
       },
       async start() {
         for (const listener of statusListeners) {
+          // Both branches of the deleted terminal write, in the order the QR one used to draw an
+          // ANSI code block to stdout.
+          await listener({
+            phase: "pairing",
+            pairing: { step: "challenge_live", method: "qr", qr: "QR-MUST-NOT-REACH-STDOUT", expiresAt: 40_000 },
+          });
           await listener({
             phase: "pairing",
             pairing: {
@@ -1119,12 +1125,16 @@ describe("runtime pairing and bridge control", () => {
       // #386: the terminal render is deleted, not adapted. The material is retained on the setup
       // channel, so a page that connects after the code was issued still finds it — and nothing is
       // written to a stdout that, under a service manager, is the journal.
-      expect(stdoutSpy.mock.calls.map(([chunk]) => String(chunk)).join("")).not.toContain("ABCD-EFGH");
+      const written = stdoutSpy.mock.calls.map(([chunk]) => String(chunk)).join("");
+      expect(written).not.toContain("ABCD-EFGH");
+      expect(written).not.toContain("QR-MUST-NOT-REACH-STDOUT");
       expect(setupObservation().snapshot().value.pairing).toMatchObject({
         kind: "awaiting_scan",
         method: "pairing_code",
         code: "ABCD-EFGH",
         expiresAt: 60_000,
+        // Re-issued material rotates the same flow rather than restarting it.
+        rotations: 1,
       });
 
       continueStart();
@@ -1158,7 +1168,7 @@ describe("runtime pairing and bridge control", () => {
 
   it("reports a transport transition that happens after authentication settles", async () => {
     // #373's incident, as a test. `authenticate` tears its own status subscription down the instant
-    // auth settles (`whatsapp-account.ts:335`), so every transition after that reached nobody and
+    // auth settles (`whatsapp-account.ts:335` on `eb5c8b6`), so every transition after that reached nobody and
     // `/health` said `online` for ten minutes against a dead stream. The seam keeps one long-lived
     // subscription and reads `session.status` at observation time, so both halves now move.
     const { applicationDatabase, storeDirectory, archive } = temporaryArchive();

@@ -7,7 +7,7 @@ Surface: **backend**. Tiers 2 and 5 are N/A by the node's contract.
 |---|---|---|
 | 1 mechanical | captured | `pnpm run typecheck && pnpm test` — 856 passed, 4 skipped, 85 files |
 | 2 integrated | N/A | no agent behaviour changes |
-| 3 live (control plane, branch) | captured | `transcript-a.txt`, `transcript-b.txt`, `transcript-c.txt`, `process.log` |
+| 3 live (control plane, branch) | captured | `transcript-a.txt`, `transcript-b.txt`, `transcript-c.txt`, `process-output.txt` |
 | 4 readback | captured | greps below |
 | 5 observed | N/A | no model traffic |
 
@@ -36,11 +36,17 @@ The two tests the contract names by hand, plus the rest of the acceptance criter
 | pull is not a shadow | `tests/managed/observation.test.ts` — "projects a live source at read time instead of shadowing it with a cached copy" |
 | liveness after auth settles (the #373 incident) | `tests/speaker/whatsapp-runtime.test.ts` — "reports a transport transition that happens after authentication settles" |
 | terminal write deleted, material retained | `tests/speaker/whatsapp-runtime.test.ts` — "captures pairing for HTTP polling, retains it off the terminal, and exposes synchronized chats" |
-| SSE snapshot + gate + reconnect | `tests/managed/control-plane.test.ts` — three new cases |
+| SSE snapshot, deltas (including a channel created after connect), gate, reconnect, no observer leak on hangup | `tests/managed/control-plane.test.ts` — five new cases |
+| pairing/device settle, and a failure that never retracts a completed pairing | `tests/managed/observation.test.ts` — three new cases |
 
 ---
 
 ## Tier 3 — live, against a running process
+
+Run **locally**, not on the rig: the rig takes only merged, CI-green commits, three teammates share
+one systemd service on that box, and this node touches the WhatsApp session path — proving it
+against the owner's only paired session is the #311 failure mode. The contract asks for "a running
+process", and this is one.
 
 A real `dist/cli/main.js` (built from this branch) on a fresh managed installation at
 `/tmp/386-proof/managed`, control plane on `127.0.0.1:4747`, pid **37930**. The WhatsApp store was
@@ -61,8 +67,8 @@ $ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:4747/api/status
 
 ### A client attaches mid-flight and renders correct state — `transcript-a.txt`
 
-Attached at 15:22:06Z, **24 seconds after** the first QR was published at `at: 1784992883480`
-(15:21:23Z). Its first frame is a `snapshot` carrying the current QR, `revision: 4` on the
+Attached at 15:22:06Z, **43 seconds after** the first QR was published at `at: 1784992883480`
+(15:21:23Z) — `observedAt` 1784992926859 minus `at` 1784992883480. Its first frame is a `snapshot` carrying the current QR, `revision: 4` on the
 `whatsapp` channel and `revision: 1` on `setup` — not a replay of the four publications it missed.
 
 ```
@@ -80,7 +86,7 @@ carrying a new `freshUntil`. `transport` is present on every `whatsapp` frame �
 
 ### It is killed and reattached, and recovers — `transcript-b.txt`
 
-Client A hung up at 15:22:56Z. **No client was attached for the next 48 seconds.** Client B attached
+Client A hung up at 15:22:56Z. **No client was attached for the next 63 seconds.** Client B attached
 at 15:23:59Z:
 
 | channel | client A's last view | client B's snapshot |
@@ -92,7 +98,7 @@ at 15:23:59Z:
 One snapshot, zero deltas at connect. The reconnecting client recovered everything it missed without
 a single event being replayed, and the revision gap told it that it had missed something.
 
-### The producer continued throughout — `process.log`, `transcript-c.txt`
+### The producer continued throughout — `process-output.txt`, `transcript-c.txt`
 
 The revision jump above happened entirely with **zero subscribers attached**: the WhatsApp client
 kept rotating QRs (rotations 2 → 5) while nobody was listening. `transcript-c.txt` picks the same
@@ -103,9 +109,9 @@ process up again at `whatsapp` rev 18 / `setup` rev 7 and watches it run on to r
 Pairing was live for the whole capture, and the process's own stdout+stderr contains **none** of it:
 
 ```
-$ grep -c "wa.me/settings/linked_devices" process.log   → 0
-$ grep -ci "pairing code" process.log                    → 0
-$ wc -l process.log                                      → 53
+$ grep -c "wa.me/settings/linked_devices" process-output.txt   → 0
+$ grep -ci "pairing code" process-output.txt                    → 0
+$ wc -l process-output.txt                                      → 53
 ```
 
 ### The gate covers the new route
@@ -147,7 +153,8 @@ runtime, and the same terminal failure is *also* published to the `whatsapp` cha
 where an operator running `init` at a TTY is a legitimate observer — and that path now publishes to
 the seam as well.
 
-The deleted lines, `apps/runtime/src/host/whatsapp-runtime.ts:479-485` on `eb5c8b6`:
+The deleted lines, `apps/runtime/src/host/whatsapp-runtime.ts:480-485` on `eb5c8b6` (`:479` is
+the `setRuntimeStatus` call, which was kept):
 
 ```ts
 if (pairing.qr !== undefined) {
@@ -161,9 +168,10 @@ if (pairing.qr !== undefined) {
 
 ```
 $ grep -rn "session\.status" apps packages --include='*.ts'
-packages/installation/src/whatsapp-account.ts:400   transport: () => session.status,
-packages/installation/src/whatsapp-account.ts:69    (doc comment)
-packages/installation/src/observation.ts:32,269     (doc comments)
+packages/installation/src/whatsapp-account.ts:400        transport: () => session.status,   ← the only read
+packages/installation/src/whatsapp-account.ts:69         (doc comment)
+apps/runtime/src/host/whatsapp-runtime.ts:434            (doc comment)
+packages/installation/src/observation.ts:32,269          (doc comments)
 ```
 
 On `eb5c8b6` this grep returned **nothing** — that was the finding of #373. The single read is a

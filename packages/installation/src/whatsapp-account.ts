@@ -73,7 +73,7 @@ export interface ManagedWhatsAppAccount extends WhatsAppAccountSetup {
   transport?(): Status | undefined;
   /**
    * A process-lifetime status subscription. Unlike the one `authenticate` registers, this one is
-   * *not* torn down when authentication settles (`:335`) — that teardown is why every transition
+   * *not* torn down when authentication settles (`settle()` below) — that teardown is why every transition
    * after going online was delivered to nobody and `/health` lied for ten minutes (#373).
    */
   observeTransport?(handler: (status: Status) => void): () => void;

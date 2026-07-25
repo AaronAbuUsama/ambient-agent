@@ -155,8 +155,12 @@ export const defaultSetupPrompts: SetupPrompts = {
 /**
  * The terminal rendering below stays — this is the CLI, and an operator running `init` at a TTY is
  * a legitimate observer. What changes (#386) is that it is no longer the *only* observer: the same
- * material is retained on the setup channel, so a browser attaching mid-flow (#371) sees what the
- * terminal saw rather than a blank screen.
+ * material is also retained on the setup channel.
+ *
+ * Today that retention is only reachable from a flow running inside the control plane's process, so
+ * these two callbacks are the seam being ready before its consumer — a standalone `ambient-agent
+ * init` has no `/api/observe` of its own to serve it. #371 is what moves first-run into that
+ * process; when it does, these publishers already say the right thing and nothing here changes.
  */
 export const createDeviceCodeCallbacks = (output: CliOutput): DeviceCodeCallbacks => ({
   onDeviceCode: (info) => {

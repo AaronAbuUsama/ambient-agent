@@ -125,7 +125,7 @@ const OBSERVE_HEARTBEAT_MS = 15_000;
  * reattaching after a disconnect are the same operation and both recover everything; after that it
  * receives one `delta` per publication and never a replay of what the snapshot already carried.
  */
-const observe = (response: ServerResponse): void => {
+const observe = (response: ServerResponse, headersOnly = false): void => {
   response.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
@@ -133,10 +133,22 @@ const observe = (response: ServerResponse): void => {
     // Any buffering proxy in front of this would defeat the point of a live stream.
     "x-accel-buffering": "no",
   });
+  if (headersOnly) return void response.end();
   const send = (event: string, data: unknown): void => {
     response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
-  send("snapshot", observationSnapshot());
+  try {
+    send("snapshot", observationSnapshot());
+  } catch (cause) {
+    // A value that will not serialize must cost this one client its stream, not the process. The
+    // control plane exists to outlive what it diagnoses, and this handler runs synchronously inside
+    // `createServer` — an escape here is an uncaught exception and the operator's surface is gone.
+    process.emitWarning(cause instanceof Error ? cause : new Error(String(cause)), {
+      code: "AMBIENT_OBSERVATION_THREW",
+      detail: "control plane snapshot",
+    });
+    return void response.destroy();
+  }
   // Subscribed only *after* the snapshot is written, so no publication is both in the snapshot and
   // in a delta, and none can slip between the two.
   const unsubscribe = subscribeToAllObservations((observation: Observation<unknown>) =>
@@ -169,7 +181,9 @@ export const createControlPlaneServer = (token: string, status: () => ControlPla
     }
     // The observation channels carry live pairing material, so this endpoint sits behind the same
     // gate as everything else — which, since the gate runs before routing, it already does.
-    if (path === "/api/observe") return observe(response);
+    // A HEAD gets the headers and nothing else; holding a subscription open for a body that Node
+    // will discard would leak an observer per probe.
+    if (path === "/api/observe") return request.method === "HEAD" ? observe(response, true) : observe(response);
     return respond(response, 200, status());
   });
 };
@@ -248,17 +262,14 @@ export const runControlPlane = async (options: ControlPlaneOptions): Promise<voi
   // The identity of this run, retained before anything can subscribe (#386). A client that attaches
   // later reads it from its snapshot — that it arrives without a replayed event is the whole point,
   // and the id is minted here so it demonstrably cannot pre-date the process.
-  const instance: Retained<InstanceIdentity> = observed<InstanceIdentity>(OBSERVATION_CHANNELS.instance, {
-    id: "",
-    startedAt: "",
-    pid: process.pid,
-  });
   const identity: InstanceIdentity = {
     id: randomBytes(16).toString("base64url"),
     startedAt: new Date().toISOString(),
     pid: process.pid,
   };
-  instance.publish(identity);
+  // Published as well as seeded: `observed` keeps the first caller's value, and a second control
+  // plane in one process (the tests do this) must not report the previous run's identity.
+  observed<InstanceIdentity>(OBSERVATION_CHANNELS.instance, identity).publish(identity);
   // Was a plain mutable cell, written below and read only by the routes; it is now a channel, so a
   // boot failure is something an operator's page learns as it happens rather than by polling.
   const boot: Retained<RuntimeBoot> = observed<RuntimeBoot>(OBSERVATION_CHANNELS.runtime, { phase: "starting" });

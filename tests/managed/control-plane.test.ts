@@ -79,25 +79,40 @@ const startControlPlane = async (
   };
 };
 
-/** Read one named SSE event off a live stream, then hang up — the stream never ends on its own. */
+type SseReader = ReadableStreamDefaultReader<string>;
+
+const sseReader = (response: Response): SseReader => response.body!.pipeThrough(new TextDecoderStream()).getReader();
+
+/** Pull frames off a live SSE stream until `enough` is satisfied — it never ends on its own. */
+const frames = async (reader: SseReader, enough: (seen: readonly string[]) => boolean): Promise<string[]> => {
+  let buffer = "";
+  for (;;) {
+    const seen = buffer.split("\n\n").filter((frame) => frame.startsWith("event: "));
+    if (enough(seen)) return seen;
+    const { value, done } = await reader.read();
+    if (done) throw new Error(`The observation stream ended after ${seen.length} events.`);
+    buffer += value;
+  }
+};
+
+const payload = (frame: string): Record<string, never> => JSON.parse(frame.slice(frame.indexOf("data: ") + 6));
+
+/** Read one named SSE event, then hang up. */
 const firstEvent = async (
   response: Response,
   name: string,
 ): Promise<Record<string, { readonly value: Record<string, unknown> }>> => {
-  const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
-  let buffer = "";
+  const reader = sseReader(response);
   try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) throw new Error(`The observation stream ended before a ${name} event arrived.`);
-      buffer += value;
-      const frame = buffer.split("\n\n").find((candidate) => candidate.startsWith(`event: ${name}\n`));
-      if (frame !== undefined) return JSON.parse(frame.slice(frame.indexOf("data: ") + 6));
-    }
+    const seen = await frames(reader, (candidates) => candidates.some((frame) => frame.startsWith(`event: ${name}\n`)));
+    return payload(seen.find((frame) => frame.startsWith(`event: ${name}\n`))!);
   } finally {
     await reader.cancel();
   }
 };
+
+/** Let the server observe a hangup before asserting on what it did about it. */
+const settle = async (): Promise<void> => await new Promise((resolve) => setTimeout(resolve, 50));
 
 const persistedToken = async (dataDirectory: string): Promise<string> =>
   JSON.parse(await readFile(managedPaths({ dataDirectory }).controlPlaneCredential, "utf8")).token as string;
@@ -247,6 +262,54 @@ describe("the no-subcommand control plane", () => {
     expect(before["test-liveness"]).toBeUndefined();
     expect(after["test-liveness"]?.value).toEqual({ beat });
     expect(after.instance?.value).toEqual(before.instance?.value);
+  });
+
+  it("sends a delta for every publication after the snapshot, including on a channel created later", async () => {
+    const dataDirectory = await installed();
+    const control = await startControlPlane(dataDirectory);
+    const token = await persistedToken(dataDirectory);
+    const existing = observed<string>("test-existing", "before");
+
+    // The handler writes the snapshot and takes its subscription synchronously, before `fetch`
+    // resolves — so anything published from here on is a delta, never part of the snapshot.
+    const reader = sseReader(await control.get("/api/observe", token));
+    existing.publish("after");
+    // The runtime boots after the control plane has accepted clients, so its channels are always
+    // late. A client must learn about them without reconnecting.
+    observed<string>("test-appeared-later", "first value");
+
+    const seen = await frames(reader, (candidates) => candidates.length >= 3);
+    await reader.cancel();
+
+    const deltas = seen.filter((frame) => frame.startsWith("event: delta")).map(payload);
+    expect(deltas).toMatchObject([
+      { channel: "test-existing", value: "after", revision: 1 },
+      { channel: "test-appeared-later", value: "first value", revision: 0 },
+    ]);
+  });
+
+  it("releases its subscription when the client hangs up", async () => {
+    // Without this the process leaks an observer per browser tab, and every publication keeps
+    // serializing itself into a response nobody is reading.
+    const dataDirectory = await installed();
+    const control = await startControlPlane(dataDirectory);
+    const token = await persistedToken(dataDirectory);
+    // `notify` returns early at zero observers, so a projection that never runs after the hangup is
+    // proof that the subscription is gone.
+    let projections = 0;
+    const channel = observed<string>("test-leak", "value");
+    channel.refreshWith((value) => {
+      projections += 1;
+      return value;
+    });
+
+    await firstEvent(await control.get("/api/observe", token), "snapshot");
+    await settle();
+    const afterHangup = projections;
+    channel.publish("published to nobody");
+
+    expect(projections).toBe(afterHangup);
+    expect(channel.snapshot().value).toBe("published to nobody");
   });
 
   it("refuses the observation stream without a token, like every other path", async () => {

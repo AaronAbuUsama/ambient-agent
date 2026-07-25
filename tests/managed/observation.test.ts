@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   observationSnapshot,
   observed,
+  publishDeviceObservation,
   publishPairingProgress,
+  publishPairingSettled,
   resetObservations,
   setupObservation,
   subscribeToAllObservations,
@@ -164,6 +166,50 @@ describe("the channels the seam is consolidating", () => {
     expect(pairing).toMatchObject({ kind: "awaiting_scan", qr: "second", rotations: 1 });
     // The client's own rotation deadline becomes the channel's renewal promise.
     expect(setupObservation().snapshot().freshUntil).toBe(expiresAt + 20_000);
+  });
+
+  it("retires pairing material once it settles, and never retracts a completed pairing", () => {
+    publishPairingProgress({ method: "qr", qr: "live", expiresAt: Date.now() + 60_000 });
+    publishPairingSettled({ jid: "15550000000@s.whatsapp.net" });
+
+    const settled = setupObservation().snapshot();
+    expect(settled.value.pairing).toEqual({ kind: "paired", jid: "15550000000@s.whatsapp.net" });
+    // Settled carries no renewal promise, so it cannot rot the way live material does.
+    expect(settled.freshUntil).toBeUndefined();
+    expect(settled.stale).toBe(false);
+
+    // A runtime that dies later is a transport failure, not a retraction of a pairing a page
+    // already watched complete.
+    publishPairingSettled({ reason: "the fiber died an hour later" });
+    expect(setupObservation().snapshot().value.pairing).toMatchObject({ kind: "paired" });
+  });
+
+  it("reports a pairing that failed before it settled", () => {
+    publishPairingProgress({ method: "qr", qr: "live", expiresAt: Date.now() + 60_000 });
+
+    publishPairingSettled({ reason: "authentication ended in logged_out" });
+
+    expect(setupObservation().snapshot().value.pairing).toEqual({
+      kind: "failed",
+      reason: "authentication ended in logged_out",
+    });
+  });
+
+  it("makes a device code perishable and a completed authorization idle", () => {
+    publishDeviceObservation({
+      kind: "awaiting_authorization",
+      userCode: "ABCD-EFGH",
+      verificationUri: "https://example.test/device",
+      expiresAt: Date.now() + 900_000,
+    });
+    expect(setupObservation().snapshot().freshUntil).toBeGreaterThan(Date.now());
+
+    publishDeviceObservation({ kind: "complete" });
+
+    expect(setupObservation().snapshot().value.device).toEqual({ kind: "complete" });
+    expect(setupObservation().snapshot().freshUntil).toBeUndefined();
+    // The two sub-states share one channel and must not clobber each other.
+    expect(setupObservation().snapshot().value.pairing).toEqual({ kind: "idle" });
   });
 
   it("carries the transport's fault reason and never its pairing material", () => {

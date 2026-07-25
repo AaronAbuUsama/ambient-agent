@@ -439,6 +439,15 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
     const transport = transportObservation(account.transport?.());
     return transport === undefined ? { status: published.status } : { status: published.status, transport };
   });
+  // Both halves are optional on the interface only because the test seams predate them. A real
+  // account always has them, and an account without them would silently reinstate exactly the
+  // pre-#386 regime — status written at boot and never updated again — so say so out loud.
+  if (account.observeTransport === undefined || account.transport === undefined) {
+    log.warn(
+      { event: "whatsapp.transport-unobservable" },
+      "This WhatsApp account exposes no live transport state; reported liveness is startup phase only",
+    );
+  }
   const unsubscribeTransport =
     account.observeTransport?.(() => liveness.publish({ status: liveness.snapshot().value.status })) ??
     (() => undefined);
@@ -480,7 +489,15 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
     );
     yield* Effect.addFinalizer(() => Effect.sync(() => deliveries.close()));
     yield* Effect.addFinalizer(() => Effect.sync(unsubscribeDirectiveOutcomes));
-    yield* Effect.addFinalizer(() => Effect.sync(unsubscribeTransport));
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        unsubscribeTransport();
+        // Drop the projection with the subscription. A stopped runtime has no transport, and a
+        // channel that kept reading a dead account's getter would report the last thing it saw as
+        // though it were live — the very shadowing this seam exists to prevent.
+        liveness.refreshWith((published) => ({ status: published.status }));
+      }),
+    );
     yield* Effect.addFinalizer(() => Effect.sync(() => historicalReplay.close()));
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
@@ -511,9 +528,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
     // a new chat's Surface against it (#179).
     authenticatedJid = authenticatedAccount.jid;
     // Retire the pairing material the moment it stops being true, so a page that connects after
-    // pairing completed sees "paired" rather than a QR that will never be scanned. A pairing that
-    // *fails* surfaces on the whatsapp channel (phase `failed`, with the transport's fault reason),
-    // which is where a terminal transport failure belongs.
+    // pairing completed sees "paired" rather than a QR that will never be scanned.
     publishPairingSettled({ jid: authenticatedAccount.jid });
     yield* Effect.sync(() => surfaces.activateConfigured(authenticatedAccount.jid, currentManagedChats));
     yield* Effect.sync(() =>
@@ -644,6 +659,10 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   void Effect.runPromise(Fiber.await(fiber)).then((exit) => {
     if (Exit.isFailure(exit) && !stopping) {
       setRuntimeStatus({ phase: "failed", chatTarget: gate.describe(), error: String(exit.cause) });
+      // Settle the setup channel too, when the failure landed mid-pairing. Leaving it on
+      // `awaiting_scan` would make a setup page infer failure from a QR going stale, one channel
+      // over, when the seam has a `failed` state that says it outright.
+      publishPairingSettled({ reason: String(exit.cause) });
       log.error({ cause: String(exit.cause) }, "WhatsApp runtime failed");
       const loggedOut = exit.cause.reasons
         .filter(Cause.isDieReason)

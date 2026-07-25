@@ -16,7 +16,7 @@ Two confirmed instances, both now routed through this seam:
 
 | Instance | What was discarded | Symptom |
 |---|---|---|
-| Liveness (#373) | `session.status` had zero reads repo-wide, and `onStatus` was torn down at `whatsapp-account.ts:335` the instant authentication settled | `/health` reported `online` for 10+ minutes against a dead stream (#312) |
+| Liveness (#373) | `session.status` had zero reads repo-wide, and `onStatus` was torn down (`whatsapp-account.ts:335` on `eb5c8b6`) the instant authentication settled | `/health` reported `online` for 10+ minutes against a dead stream (#312) |
 | Setup flow (#370) | `PairingCallbacks.onPairing` / `DeviceCodeCallbacks.onDeviceCode` were push-only and fire-and-forget | A page connecting late, or reopened mid-pair, rendered blank against a live pairing session |
 
 ## The name
@@ -33,7 +33,7 @@ interface Observation<T> {
   readonly value: T;
   readonly at: number;            // epoch ms of the publication that produced `value`
   readonly observedAt: number;    // epoch ms this reading was taken
-  readonly revision: number;      // monotonic publication count; equal revisions mean equal values
+  readonly revision: number;      // monotonic count of announcements — see the note below
   readonly freshUntil?: number;   // the renewal deadline the producer promised, if it promised one
   readonly stale: boolean;        // a promised renewal that did not arrive — never true without one
 }
@@ -71,6 +71,19 @@ meet on one channel without either resetting the other's state.
    published *without* a deadline is legitimately idle and never goes stale. A rotating pairing QR
    is the first kind; a healthy silent WhatsApp socket is the second.
 
+(The module docblock in `observation.ts` numbers these 1–4 without "no replay", which it states in
+its opening paragraph instead. This list is the canonical one to quote.)
+
+### What `revision` does and does not promise
+
+It counts what the channel has *announced*: every `publish`, plus the moment a promised renewal
+failed to arrive. A gap therefore means "you missed something", which is what a reconnecting client
+needs.
+
+It is **not** a content hash. A channel with a live source projects that source at read time, so two
+reads at the same revision can differ — on the `whatsapp` channel they routinely do, because that is
+the point of the projection. Do not dedupe rendering on `revision` alone for a projected channel.
+
 ### Pull is never a shadow
 
 `refreshWith` names a live source read at *observation* time, so a channel projects the truth rather
@@ -94,8 +107,17 @@ under me" — the one thing a snapshot alone cannot say.
 
 `WhatsAppObservation.transport` is whatsappd's connection state projected to `{ phase, reason?,
 retryAttempt?, nextRetryAt? }` and **deliberately not the raw `Status`**: its `pairing` arm carries
-the QR and pairing code, and this channel is read by health consumers. Pairing material travels on
-the `setup` channel, which exists to carry it and is behind the control plane's token gate.
+the QR and pairing code, and adding a live source to a channel should not quietly widen what that
+channel carries. The projection is a whitelist, so a future whatsappd status arm degrades to
+phase-only rather than leaking whatever it holds.
+
+That is a bound on what `transport` adds, not a claim about the channel as a whole.
+`WhatsAppObservation.status.pairing` has carried `PairingProgress` — QR and code — since before this
+seam existed, because the authorized bridge pairing route reads it
+(`bridge-contract.ts:49`). So both `whatsapp` and `setup` can carry pairing material, both sit behind
+the control plane's bearer gate, and `/health` narrows to `phase` alone
+(`bridge-contract.ts:37-47`). Treat every channel on `/api/observe` as privileged; none of them is a
+public surface.
 
 ## Delivery: `GET /api/observe`
 
