@@ -3,6 +3,16 @@
 Written 2026-07-25. Everything below is checked against this tree, the live rig
 (`capxul-vps`, `~/.ambient-agent/application.sqlite`), and the Braintrust org `The Call`.
 
+> **Read the findings; ignore the sequencing.** This was written *before* the Brain cost
+> investigation that followed it the same day. Its diagnosis of the eval situation still holds — no
+> Brain coverage, no Braintrust datasets, payload-thin traces, and a starter dataset already sitting
+> in the chat history. **"What I'd do first, in order" is superseded** by
+> [`BRAIN-COST-HANDOFF-2026-07-25.md`](./BRAIN-COST-HANDOFF-2026-07-25.md), which changes both the
+> order and the reasoning: the Brain is 84% of token spend, most of its wake-ups were structurally
+> pointless, and making it stateless is what makes it evaluable at all. Much of what this document
+> frames as eval work turned out to be ordinary bugs with right answers — cheaper to fix than to
+> grade.
+
 ---
 
 ## The headline
