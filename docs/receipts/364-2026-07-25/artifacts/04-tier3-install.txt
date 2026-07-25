@@ -1,25 +1,21 @@
-# Tier 3 (live) — run B: build the real managed installation the rest of the run proves against
-# 2026-07-25T13:18:40Z   nonce n364-f184786f33ec
+# Tier 3 (live) — run B: the real managed installation the rest of the run proves against
+# 2026-07-25T13:48:32Z   nonce n364-a0be3694c292
 # whatsappd / @octokit/rest / e2b / the ChatGPT device endpoints are the repo's own
 # tests/fixtures/packed-runtime.mjs stand-ins — the same ones tests/packaging/packed-cli.test.ts
-# uses to reach a real data directory without a WhatsApp pairing ceremony (the whatsapp/ store is
-# single-home and is never copied). Nothing in the node under proof is stubbed.
+# uses to reach a real data directory without a pairing ceremony. The whatsapp/ store is created
+# fresh and never copied. Nothing in the node under proof is stubbed.
 
 $ node dist/cli/main.js --data-dir $D init --authorize --chat 120363000@g.us --repository owner/repo --github-apps-file <file>
-Data directory: $HOME/.ambient-agent-n364-f184786f33ec
+Data directory: $HOME/.ambient-agent-n364-a0be3694c292
 Open https://auth.openai.com/codex/device and enter code PACK-TEST.
 The device code expires in 900 seconds.
 Waiting for ChatGPT authorization...
 ChatGPT authorization complete.
-Created secure managed installation at $HOME/.ambient-agent-n364-f184786f33ec.
+Created secure managed installation at $HOME/.ambient-agent-n364-a0be3694c292.
 exit=0
 
-$ ls $D/credentials    # note: no control-plane.json — init does not mint the token
+$ ls $D/credentials   # note: init does not mint control-plane.json
 chatgpt-oauth.json
 github-coder.json
 github-planner.json
 github-reviewer.json
-
-$ ls $D/logs           # no log files yet either
-.
-..

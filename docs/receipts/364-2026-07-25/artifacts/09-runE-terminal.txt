@@ -1,12 +1,12 @@
 Control plane listening on http://127.0.0.1:47474
-Control plane bearer token: $HOME/.ambient-agent-n364-f184786f33ec-boot/credentials/control-plane.json (mode 0600).
-[flue] Server listening on http://localhost:50987
-{"level":30,"time":1784985651636,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"120363000@g.us","msg":"Speaker WhatsApp online"}
+Control plane bearer token: $HOME/.ambient-agent-n364-a0be3694c292-boot/credentials/control-plane.json (mode 0600).
+[flue] Server listening on http://localhost:52354
+{"level":30,"time":1784987337625,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"120363000@g.us","msg":"Speaker WhatsApp online"}
 [flue:submission-processing] {
-  submissionId: '5d464809-d3b7-4ef3-b775-f8437af8a971',
+  submissionId: '445461b9-5fa6-44a0-b51d-a63bc7231552',
   operation: 'process_submission',
   outcome: 'failed'
-} OperationFailedError [FlueError]: dispatch(5d464809-d3b7-4ef3-b775-f8437af8a971) failed: Unexpected network request in packed runtime fixture: https://chatgpt.com/backend-api/codex/responses
+} OperationFailedError [FlueError]: dispatch(445461b9-5fa6-44a0-b51d-a63bc7231552) failed: Unexpected network request in packed runtime fixture: https://chatgpt.com/backend-api/codex/responses
     at Session.throwIfError (file://<worktree>/node_modules/.pnpm/@flue+runtime@1.0.0-beta.9_@standard-schema+spec@1.1.0_@types+json-schema@7.0.15_effect@4.0.0_d5yyr4cfepff6luxvcwbajnrzm/node_modules/@flue/runtime/dist/conversation-stream-store-Bitz7UoW.mjs:2564:23)
     at Session.resumeConversationToCompletion (file://<worktree>/node_modules/.pnpm/@flue+runtime@1.0.0-beta.9_@standard-schema+spec@1.1.0_@types+json-schema@7.0.15_effect@4.0.0_d5yyr4cfepff6luxvcwbajnrzm/node_modules/@flue/runtime/dist/conversation-stream-store-Bitz7UoW.mjs:2695:10)
     at async file://<worktree>/node_modules/.pnpm/@flue+runtime@1.0.0-beta.9_@standard-schema+spec@1.1.0_@types+json-schema@7.0.15_effect@4.0.0_d5yyr4cfepff6luxvcwbajnrzm/node_modules/@flue/runtime/dist/conversation-stream-store-Bitz7UoW.mjs:2804:5

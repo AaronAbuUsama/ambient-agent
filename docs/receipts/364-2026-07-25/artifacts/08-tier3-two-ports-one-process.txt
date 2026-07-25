@@ -1,45 +1,29 @@
 # Tier 3 (live) — run E: one process, two ports. The runtime is brought up in the same process.
-# 2026-07-25T13:20:50Z   nonce n364-f184786f33ec   head bf8ed595e9200db5ae8ffeaedfa7c9a4e12e13d6
-# Fresh install at $D2 (nonce in the path), runtime port 50987 set with 'config --port'.
+# 2026-07-25T13:48:56Z   nonce n364-a0be3694c292   head bd05abf1d31c4749e5676982f5d7396d908e086c
+# Fresh install at $D2 (nonce in the path); runtime port 52354 set with 'config --port'.
 
 $ node dist/cli/main.js --data-dir $D2 --control-port 47474  &
 Control plane listening on http://127.0.0.1:47474
-Control plane bearer token: $HOME/.ambient-agent-n364-f184786f33ec-boot/credentials/control-plane.json (mode 0600).
-[flue] Server listening on http://localhost:50987
+Control plane bearer token: $HOME/.ambient-agent-n364-a0be3694c292-boot/credentials/control-plane.json (mode 0600).
+[flue] Server listening on http://localhost:52354
 [flue:submission-processing] {
-  submissionId: '5d464809-d3b7-4ef3-b775-f8437af8a971',
-  operation: 'process_submission',
-  outcome: 'failed'
-} OperationFailedError [FlueError]: dispatch(5d464809-d3b7-4ef3-b775-f8437af8a971) failed: Unexpected network request in packed runtime fixture: https://chatgpt.com/backend-api/codex/responses
-    at Session.throwIfError (file://<worktree>/node_modules/.pnpm/@flue+runtime@1.0.0-beta.9_@standard-schema+spec@1.1.0_@types+json-schema@7.0.15_effect@4.0.0_d5yyr4cfepff6luxvcwbajnrzm/node_modules/@flue/runtime/dist/conversation-stream-store-Bitz7UoW.mjs:2564:23)
-    at Session.resumeConversationToCompletion (file://<worktree>/node_modules/.pnpm/@flue+runtime@1.0.0-beta.9_@standard-schema+spec@1.1.0_@types+json-schema@7.0.15_effect@4.0.0_d5yyr4cfepff6luxvcwbajnrzm/node_modules/@flue/runtime/dist/conversation-stream-store-Bitz7UoW.mjs:2695:10)
-    at async file://<worktree>/node_modules/.pnpm/@flue+runtime@1.0.0-beta.9_@standard-schema+spec@1.1.0_@types+json-schema@7.0.15_effect@4.0.0_d5yyr4cfepff6luxvcwbajnrzm/node_modules/@flue/runtime/dist/conversation-stream-store-Bitz7UoW.mjs:2804:5
-    at async Session.withCallOverrides (file://<worktree>/node_modules/.pnpm/@flue+runtime@1.0.0-beta.9_@standard-schema+spec@1.1.0_@types+json-schema@7.0.15_effect@4.0.0_d5yyr4cfepff6luxvcwbajnrzm/node_modules/@flue/runtime/dist/conversation-stream-store-Bitz7UoW.mjs:1890:11)
-    at async deliverAfterExecution (file://<worktree>/dist/assets/app-BZV6MFqO.js:1272:10)
-    at async file://<worktree>/node_modules/.pnpm/@flue+runtime@1.0.0-beta.9_@standard-schema+spec@1.1.0_@types+json-schema@7.0.15_effect@4.0.0_d5yyr4cfepff6luxvcwbajnrzm/node_modules/@flue/runtime/dist/conversation-stream-store-Bitz7UoW.mjs:2060:70
-    at async Session.runExclusive (file://<worktree>/node_modules/.pnpm/@flue+runtime@1.0.0-beta.9_@standard-schema+spec@1.1.0_@types+json-schema@7.0.15_effect@4.0.0_d5yyr4cfepff6luxvcwbajnrzm/node_modules/@flue/runtime/dist/conversation-stream-store-Bitz7UoW.mjs:2111:11) {
-  type: 'operation_failed',
-  details: '',
-  dev: '',
-  meta: undefined,
-  cause: undefined
-  ... (the runtime's own JSON log lines on stderr elided; the full capture is runE-terminal.txt)
+  ... (the runtime's own log lines elided; full capture in 09-runE-terminal.txt)
 
-$ lsof -nP -a -p 76831 -iTCP -sTCP:LISTEN   # ONE pid, TWO listening ports
+$ lsof -nP -a -p 62506 -iTCP -sTCP:LISTEN   # ONE pid, TWO listening ports
 COMMAND   PID     USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
-node    76831 abuusama   12u  IPv4 0xcf1fdede2fe67dc0      0t0  TCP 127.0.0.1:47474 (LISTEN)
-node    76831 abuusama   28u  IPv6  0xb59bc156fe16e9f      0t0  TCP *:50987 (LISTEN)
+node    62506 abuusama   12u  IPv4 0x44438b4f23d7937f      0t0  TCP 127.0.0.1:47474 (LISTEN)
+node    62506 abuusama   28u  IPv6 0xc12ee8d2954efd8a      0t0  TCP *:52354 (LISTEN)
 
-$ curl -sS -H 'Authorization: Bearer <token>' http://127.0.0.1:47474/api/status | jq .   # control plane port
+$ curl -sS -H 'Authorization: Bearer <token>' http://127.0.0.1:47474/api/status | jq .
 {
-  "dataDirectory": "$HOME/.ambient-agent-n364-f184786f33ec-boot",
+  "dataDirectory": "$HOME/.ambient-agent-n364-a0be3694c292-boot",
   "installation": "ready",
   "runtime": {
     "phase": "running"
   }
 }
 
-$ curl -sS http://127.0.0.1:50987/health | jq .   # the runtime's own port, same pid
+$ curl -sS http://127.0.0.1:52354/health | jq .   # the runtime's own port, same pid
 {
   "authentication": "chatgpt-oauth",
   "model": "openai-codex/gpt-5.6-luna",
@@ -49,7 +33,7 @@ $ curl -sS http://127.0.0.1:50987/health | jq .   # the runtime's own port, same
   ],
   "provider": "openai-codex",
   "ok": true,
-  "runtimeId": "Gb49NiZXg472uqCAfKUKIC",
+  "runtimeId": "rqI1FGadcC-tJydyu3hqRP",
   "runtime": {
     "state": "healthy",
     "whatsapp": {

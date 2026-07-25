@@ -1,13 +1,16 @@
 # Tier 3 (live) — run A: no configuration present
-# started 2026-07-25T13:18:26Z   nonce n364-f184786f33ec   head bf8ed595e9200db5ae8ffeaedfa7c9a4e12e13d6
-# The nonce is the data directory's name, so every path-bearing line below names this run.
+# 2026-07-25T13:48:31Z   nonce n364-a0be3694c292   head bd05abf1d31c4749e5676982f5d7396d908e086c
+# The nonce is the data directory's own name, so every path-bearing line names this run.
 
 $ node dist/cli/main.js --data-dir $D --control-port 47474  &
 Control plane listening on http://127.0.0.1:47474
-Control plane bearer token, unpersisted until $HOME/.ambient-agent-n364-f184786f33ec exists: <REDACTED — ephemeral, this run only>
+Control plane bearer token: minted for this process only, and not printed to a non-terminal stdout. Run ambient-agent init, or start this again from a terminal.
 Runtime not started: Ambient Agent is not configured. Run ambient-agent init.
 
-$ curl -isS http://127.0.0.1:47474/api/status                                   # no Authorization header
+# stdout is a pipe here, not a terminal, so the first-run token is withheld — under a
+# service manager stdout is the journal. The 401s below are what an unauthorized caller sees.
+
+$ curl -isS http://127.0.0.1:47474/api/status                     # no Authorization header
 HTTP/1.1 401 Unauthorized
 content-type: application/json
 www-authenticate: Bearer
@@ -17,18 +20,18 @@ Transfer-Encoding: chunked
 
 {"error":"unauthorized"}
 
-$ curl -isS -H 'Authorization: Bearer <token>' http://127.0.0.1:47474/api/status  # correct token
-HTTP/1.1 200 OK
+$ curl -isS -H 'Authorization: Bearer guessed' .../api/status
+HTTP/1.1 401 Unauthorized
 content-type: application/json
+www-authenticate: Bearer
 Connection: keep-alive
 Keep-Alive: timeout=5
 Transfer-Encoding: chunked
 
-{"dataDirectory":"$HOME/.ambient-agent-n364-f184786f33ec","installation":"absent","runtime":{"phase":"not-configured","detail":"Ambient Agent is not configured. Run ambient-agent init."}}
+{"error":"unauthorized"}
 
-$ ls -d $D    # an unconfigured control plane must not create the data directory
-lsd: $HOME/.ambient-agent-n364-f184786f33ec: No such file or directory (os error 2).
+$ ls -d $D   # an unconfigured control plane must not create the data directory
+ls: $HOME/.ambient-agent-n364-a0be3694c292: No such file or directory
 
-
-$ ps -p 68908 -o pid=,stat=   # still up after the exchange
-68908 SN  
+$ ps -p 61286 -o pid=,stat=   # still up
+61286 S   

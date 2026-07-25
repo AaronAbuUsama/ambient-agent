@@ -1,6 +1,18 @@
-# Tier 1 — mechanical, head bf8ed595e9200db5ae8ffeaedfa7c9a4e12e13d6, started 2026-07-25T13:14:01Z
+# Tier 1 — mechanical, head bd05abf1d31c4749e5676982f5d7396d908e086c, 2026-07-25T13:43:54Z
 
-$ git status --porcelain  (must be empty: proof runs against the committed head)
+$ git status --porcelain   # must be empty: the proof runs against the committed head
+ D docs/receipts/364-2026-07-25/artifacts/01-baseline-nonce-absent.txt
+ D docs/receipts/364-2026-07-25/artifacts/02-tier1-mechanical.txt
+ D docs/receipts/364-2026-07-25/artifacts/02b-tier1-named-test.txt
+ D docs/receipts/364-2026-07-25/artifacts/03-tier3-unconfigured.txt
+ D docs/receipts/364-2026-07-25/artifacts/04-tier3-install.txt
+ D docs/receipts/364-2026-07-25/artifacts/05-tier3-broken-credential.txt
+ D docs/receipts/364-2026-07-25/artifacts/06-tier3-second-process.txt
+ D docs/receipts/364-2026-07-25/artifacts/07-tier4-readback.txt
+ D docs/receipts/364-2026-07-25/artifacts/08-tier3-two-ports-one-process.txt
+ D docs/receipts/364-2026-07-25/artifacts/09-runE-terminal.txt
+ D docs/receipts/364-2026-07-25/artifacts/10-tier3-token-survives-restart.txt
+?? docs/receipts/364-2026-07-25/artifacts/live-proof.sh
 (empty)
 
 $ pnpm run typecheck && pnpm test
@@ -15,60 +27,71 @@ $ pnpm run typecheck && pnpm test
 
  RUN  v4.1.10 <worktree>
 
-{"level":30,"time":1784985249616,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"15550000000:7@s.whatsapp.net","text":"SMOKE abc123 — ignore","chatId":"managed-31@g.us","messageId":"real-host-message-1","msg":"Managed chat message received"}
-{"level":30,"time":1784985249819,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
-{"level":30,"time":1784985249942,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
-{"level":40,"time":1784985249946,"subsystem":"brain","event":"brain.proactive-clock.failed","error":"[flue] dispatch() called before runtime was configured. This usually means it was used outside a Flue-built server entry.","msg":"Proactive clock tick could not dispatch; left durable to retry next tick"}
-{"level":40,"time":1784985250281,"subsystem":"brain","effectId":"brain-effect:6da994f3fb44a6f5bcc208c01240198af8e7e6445833ac91cd6a88145ec34b1d","repository":"acme/widgets","error":"ETIMEDOUT","msg":"Pending issue filing could not be recovered at boot; left pending to retry"}
-{"level":30,"time":1784985250791,"subsystem":"whatsapp","operatorEvent":"agent.say","text":"boot sweep can speak","chatId":"managed-31@g.us","messageId":"real-host-message-1","msg":"Speaker said a WhatsApp message"}
-{"level":30,"time":1784985250945,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"Alice","text":"quiet production-path input","chatId":"managed-31@g.us","messageId":"inbound-31","msg":"Managed chat message received"}
-{"level":30,"time":1784985251749,"subsystem":"whatsapp","operatorEvent":"agent.say","text":"one controlled reply","chatId":"managed-31@g.us","messageId":"real-host-message-1","msg":"Speaker said a WhatsApp message"}
-{"level":30,"time":1784985252501,"subsystem":"whatsapp","operatorEvent":"agent.say","text":"one quoted reply","chatId":"managed-31@g.us","messageId":"real-host-message-2","msg":"Speaker said a WhatsApp message"}
-{"level":30,"time":1784985252504,"subsystem":"whatsapp","operatorEvent":"agent.react","emoji":"👀","chatId":"managed-31@g.us","targetMessageId":"inbound-31","msg":"Speaker reacted to a WhatsApp message"}
-{"level":30,"time":1784985252590,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"Alice","text":"unchanged path","chatId":"managed-31@g.us","messageId":"post-reload-managed","msg":"Managed chat message received"}
-{"level":30,"time":1784985252594,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"Alice","text":"now admitted","chatId":"unmanaged-31@g.us","messageId":"post-reload-other","msg":"Managed chat message received"}
-{"level":30,"time":1784985252759,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
-{"level":40,"time":1784985252761,"subsystem":"brain","event":"brain.proactive-clock.failed","error":"[flue] dispatch() called before runtime was configured. This usually means it was used outside a Flue-built server entry.","msg":"Proactive clock tick could not dispatch; left durable to retry next tick"}
-{"level":30,"time":1784985252914,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
-{"level":40,"time":1784985252930,"subsystem":"brain","event":"brain.proactive-clock.failed","error":"[flue] dispatch() called before runtime was configured. This usually means it was used outside a Flue-built server entry.","msg":"Proactive clock tick could not dispatch; left durable to retry next tick"}
-{"level":30,"time":1784985253080,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us, unmanaged-31@g.us","msg":"Speaker WhatsApp online"}
-{"level":40,"time":1784985253083,"subsystem":"brain","event":"brain.proactive-clock.failed","error":"[flue] dispatch() called before runtime was configured. This usually means it was used outside a Flue-built server entry.","msg":"Proactive clock tick could not dispatch; left durable to retry next tick"}
-{"level":30,"time":1784985253277,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"Alice","text":"[location]","chatId":"managed-31@g.us","messageId":"location-31","msg":"Managed chat message received"}
-{"level":30,"time":1784985253393,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
-{"level":40,"time":1784985253398,"subsystem":"brain","event":"brain.proactive-clock.failed","error":"[flue] dispatch() called before runtime was configured. This usually means it was used outside a Flue-built server entry.","msg":"Proactive clock tick could not dispatch; left durable to retry next tick"}
-{"level":30,"time":1784985253514,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
-{"level":30,"time":1784985254269,"subsystem":"whatsapp","operatorEvent":"agent.say","text":"What do you need help with?","chatId":"managed-31@g.us","messageId":"real-host-message-1","msg":"Speaker said a WhatsApp message"}
-{"level":30,"time":1784985254324,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
-{"level":40,"time":1784985254327,"subsystem":"brain","event":"brain.proactive-clock.failed","error":"[flue] dispatch() called before runtime was configured. This usually means it was used outside a Flue-built server entry.","msg":"Proactive clock tick could not dispatch; left durable to retry next tick"}
-{"level":30,"time":1784985254375,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"Alice","text":"thanks, got it","chatId":"204663831932940@lid","messageId":"dm-reply-1","msg":"Managed chat message received"}
-{"level":30,"time":1784985254427,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"Alice","text":"thanks, got it","chatId":"204663831932940@lid","messageId":"dm-reply-2","msg":"Managed chat message received"}
-{"level":30,"time":1784985254433,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"Alice","text":"one more","chatId":"204663831932940@lid","messageId":"dm-reply-3","msg":"Managed chat message received"}
-{"level":30,"time":1784985254484,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"Alice","text":"one more","chatId":"204663831932940@lid","messageId":"dm-reply-4","msg":"Managed chat message received"}
-{"level":30,"time":1784985254536,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
-{"level":40,"time":1784985254538,"subsystem":"brain","event":"brain.proactive-clock.failed","error":"[flue] dispatch() called before runtime was configured. This usually means it was used outside a Flue-built server entry.","msg":"Proactive clock tick could not dispatch; left durable to retry next tick"}
-{"level":30,"time":1784985254585,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"15550000000:7@s.whatsapp.net","text":"SMOKE abc123 — ignore","chatId":"managed-31@g.us","messageId":"real-host-message-1","msg":"Managed chat message received"}
-{"level":30,"time":1784985254666,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
-{"level":40,"time":1784985254672,"subsystem":"brain","event":"brain.proactive-clock.failed","error":"[flue] dispatch() called before runtime was configured. This usually means it was used outside a Flue-built server entry.","msg":"Proactive clock tick could not dispatch; left durable to retry next tick"}
-{"level":50,"time":1784985254825,"subsystem":"whatsapp","chatId":"managed-31@g.us","error":"not online (phase: backing_off)","msg":"WhatsApp reaction delivery failed"}
-{"level":50,"time":1784985254826,"subsystem":"whatsapp","chatId":"managed-31@g.us","error":"provider outcome unknown","msg":"WhatsApp reaction delivery unknown"}
-{"level":40,"time":1784985255247,"subsystem":"intake","operatorEvent":"agent.retrying","detail":"dispatch attempt 2 of 3","windowId":"window-1","chatId":"managed-admission@g.us","attempt":1,"reason":"transient failure 1","msg":"Retrying Speaker dispatch"}
-{"level":40,"time":1784985255248,"subsystem":"intake","operatorEvent":"agent.retrying","detail":"dispatch attempt 3 of 3","windowId":"window-1","chatId":"managed-admission@g.us","attempt":2,"reason":"transient failure 2","msg":"Retrying Speaker dispatch"}
-{"level":40,"time":1784985255263,"subsystem":"intake","operatorEvent":"agent.retrying","detail":"dispatch attempt 2 of 3","windowId":"window-1","chatId":"managed-admission@g.us","attempt":1,"reason":"Flue unreachable","msg":"Retrying Speaker dispatch"}
-{"level":40,"time":1784985255264,"subsystem":"intake","operatorEvent":"agent.retrying","detail":"dispatch attempt 3 of 3","windowId":"window-1","chatId":"managed-admission@g.us","attempt":2,"reason":"Flue unreachable","msg":"Retrying Speaker dispatch"}
-{"level":50,"time":1784985255264,"subsystem":"intake","operatorEvent":"agent.failed","detail":"Flue unreachable","windowId":"window-1","chatId":"managed-admission@g.us","attempt":3,"reason":"Flue unreachable","msg":"Flue dispatch failed; the Window settled as failed"}
-{"level":50,"time":1784985255277,"subsystem":"intake","windowId":"window-1","chatId":"managed-admission@g.us","dispatchId":"dispatch-accepted","reason":"injected done-write failure","msg":"Window done-write failed; startup will re-dispatch it"}
-{"level":30,"time":1784985255577,"subsystem":"whatsapp","operatorEvent":"agent.say","text":"show typing before this message","chatId":"managed-31@g.us","messageId":"real-host-message-1","msg":"Speaker said a WhatsApp message"}
-{"level":30,"time":1784985255734,"subsystem":"agent","operatorEvent":"agent.processing","dispatchId":"speaker-dispatch-survived","windowId":"window-failed-scribe","chatId":"team@g.us","messageCount":1,"msg":"Speaker processing a WhatsApp Window"}
-{"level":30,"time":1784985256329,"subsystem":"whatsapp","operatorEvent":"agent.say","text":"threaded reply","chatId":"managed-31@g.us","messageId":"real-host-message-1","msg":"Speaker said a WhatsApp message"}
-{"level":50,"time":1784985257081,"subsystem":"whatsapp","chatId":"managed-31@g.us","error":"provider outcome unknown","msg":"WhatsApp reply delivery unknown"}
-{"level":50,"time":1784985257834,"subsystem":"whatsapp","chatId":"managed-31@g.us","error":"not online (phase: backing_off)","msg":"WhatsApp reply delivery failed"}
-{"level":30,"time":1784985259337,"subsystem":"whatsapp","operatorEvent":"agent.say","text":"confirmed delivery","chatId":"managed-31@g.us","messageId":"real-host-message-1","msg":"Speaker said a WhatsApp message"}
-{"level":40,"time":1784985259337,"subsystem":"whatsapp","chatId":"managed-31@g.us","error":"typing cleanup outcome unknown","msg":"WhatsApp typing indicator state is unknown"}
+{"level":30,"time":1784987042424,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"15550000000:7@s.whatsapp.net","text":"SMOKE abc123 — ignore","chatId":"managed-31@g.us","messageId":"real-host-message-1","msg":"Managed chat message received"}
+{"level":30,"time":1784987042623,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
+{"level":30,"time":1784987042765,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
+{"level":40,"time":1784987042767,"subsystem":"brain","event":"brain.proactive-clock.failed","error":"[flue] dispatch() called before runtime was configured. This usually means it was used outside a Flue-built server entry.","msg":"Proactive clock tick could not dispatch; left durable to retry next tick"}
+{"level":40,"time":1784987043148,"subsystem":"brain","effectId":"brain-effect:6da994f3fb44a6f5bcc208c01240198af8e7e6445833ac91cd6a88145ec34b1d","repository":"acme/widgets","error":"ETIMEDOUT","msg":"Pending issue filing could not be recovered at boot; left pending to retry"}
+{"level":30,"time":1784987043617,"subsystem":"whatsapp","operatorEvent":"agent.say","text":"boot sweep can speak","chatId":"managed-31@g.us","messageId":"real-host-message-1","msg":"Speaker said a WhatsApp message"}
+{"level":30,"time":1784987043777,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"Alice","text":"quiet production-path input","chatId":"managed-31@g.us","messageId":"inbound-31","msg":"Managed chat message received"}
+{"level":30,"time":1784987044585,"subsystem":"whatsapp","operatorEvent":"agent.say","text":"one controlled reply","chatId":"managed-31@g.us","messageId":"real-host-message-1","msg":"Speaker said a WhatsApp message"}
+{"level":30,"time":1784987045340,"subsystem":"whatsapp","operatorEvent":"agent.say","text":"one quoted reply","chatId":"managed-31@g.us","messageId":"real-host-message-2","msg":"Speaker said a WhatsApp message"}
+{"level":30,"time":1784987045344,"subsystem":"whatsapp","operatorEvent":"agent.react","emoji":"👀","chatId":"managed-31@g.us","targetMessageId":"inbound-31","msg":"Speaker reacted to a WhatsApp message"}
+{"level":30,"time":1784987045465,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"Alice","text":"unchanged path","chatId":"managed-31@g.us","messageId":"post-reload-managed","msg":"Managed chat message received"}
+{"level":30,"time":1784987045469,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"Alice","text":"now admitted","chatId":"unmanaged-31@g.us","messageId":"post-reload-other","msg":"Managed chat message received"}
+{"level":30,"time":1784987045562,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
+{"level":40,"time":1784987045568,"subsystem":"brain","event":"brain.proactive-clock.failed","error":"[flue] dispatch() called before runtime was configured. This usually means it was used outside a Flue-built server entry.","msg":"Proactive clock tick could not dispatch; left durable to retry next tick"}
+{"level":30,"time":1784987045654,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
+{"level":40,"time":1784987045656,"subsystem":"brain","event":"brain.proactive-clock.failed","error":"[flue] dispatch() called before runtime was configured. This usually means it was used outside a Flue-built server entry.","msg":"Proactive clock tick could not dispatch; left durable to retry next tick"}
+{"level":30,"time":1784987045817,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us, unmanaged-31@g.us","msg":"Speaker WhatsApp online"}
+{"level":40,"time":1784987045824,"subsystem":"brain","event":"brain.proactive-clock.failed","error":"[flue] dispatch() called before runtime was configured. This usually means it was used outside a Flue-built server entry.","msg":"Proactive clock tick could not dispatch; left durable to retry next tick"}
+{"level":30,"time":1784987046070,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"Alice","text":"[location]","chatId":"managed-31@g.us","messageId":"location-31","msg":"Managed chat message received"}
+{"level":30,"time":1784987046340,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
+{"level":40,"time":1784987046348,"subsystem":"brain","event":"brain.proactive-clock.failed","error":"[flue] dispatch() called before runtime was configured. This usually means it was used outside a Flue-built server entry.","msg":"Proactive clock tick could not dispatch; left durable to retry next tick"}
+{"level":30,"time":1784987046436,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
+{"level":30,"time":1784987047199,"subsystem":"whatsapp","operatorEvent":"agent.say","text":"What do you need help with?","chatId":"managed-31@g.us","messageId":"real-host-message-1","msg":"Speaker said a WhatsApp message"}
+{"level":30,"time":1784987047259,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
+{"level":40,"time":1784987047261,"subsystem":"brain","event":"brain.proactive-clock.failed","error":"[flue] dispatch() called before runtime was configured. This usually means it was used outside a Flue-built server entry.","msg":"Proactive clock tick could not dispatch; left durable to retry next tick"}
+{"level":30,"time":1784987047312,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"Alice","text":"thanks, got it","chatId":"204663831932940@lid","messageId":"dm-reply-1","msg":"Managed chat message received"}
+{"level":30,"time":1784987047361,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"Alice","text":"thanks, got it","chatId":"204663831932940@lid","messageId":"dm-reply-2","msg":"Managed chat message received"}
+{"level":30,"time":1784987047363,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"Alice","text":"one more","chatId":"204663831932940@lid","messageId":"dm-reply-3","msg":"Managed chat message received"}
+{"level":30,"time":1784987047419,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"Alice","text":"one more","chatId":"204663831932940@lid","messageId":"dm-reply-4","msg":"Managed chat message received"}
+{"level":30,"time":1784987047462,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
+{"level":40,"time":1784987047470,"subsystem":"brain","event":"brain.proactive-clock.failed","error":"[flue] dispatch() called before runtime was configured. This usually means it was used outside a Flue-built server entry.","msg":"Proactive clock tick could not dispatch; left durable to retry next tick"}
+{"level":30,"time":1784987047519,"subsystem":"whatsapp","operatorEvent":"chat.received","actor":"15550000000:7@s.whatsapp.net","text":"SMOKE abc123 — ignore","chatId":"managed-31@g.us","messageId":"real-host-message-1","msg":"Managed chat message received"}
+{"level":30,"time":1784987047598,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"managed-31@g.us","msg":"Speaker WhatsApp online"}
+{"level":40,"time":1784987047600,"subsystem":"brain","event":"brain.proactive-clock.failed","error":"[flue] dispatch() called before runtime was configured. This usually means it was used outside a Flue-built server entry.","msg":"Proactive clock tick could not dispatch; left durable to retry next tick"}
+{"level":50,"time":1784987047773,"subsystem":"whatsapp","chatId":"managed-31@g.us","error":"not online (phase: backing_off)","msg":"WhatsApp reaction delivery failed"}
+{"level":50,"time":1784987047774,"subsystem":"whatsapp","chatId":"managed-31@g.us","error":"provider outcome unknown","msg":"WhatsApp reaction delivery unknown"}
+{"level":40,"time":1784987047980,"subsystem":"intake","operatorEvent":"agent.retrying","detail":"dispatch attempt 2 of 3","windowId":"window-1","chatId":"managed-admission@g.us","attempt":1,"reason":"transient failure 1","msg":"Retrying Speaker dispatch"}
+{"level":40,"time":1784987047981,"subsystem":"intake","operatorEvent":"agent.retrying","detail":"dispatch attempt 3 of 3","windowId":"window-1","chatId":"managed-admission@g.us","attempt":2,"reason":"transient failure 2","msg":"Retrying Speaker dispatch"}
+{"level":40,"time":1784987048004,"subsystem":"intake","operatorEvent":"agent.retrying","detail":"dispatch attempt 2 of 3","windowId":"window-1","chatId":"managed-admission@g.us","attempt":1,"reason":"Flue unreachable","msg":"Retrying Speaker dispatch"}
+{"level":40,"time":1784987048004,"subsystem":"intake","operatorEvent":"agent.retrying","detail":"dispatch attempt 3 of 3","windowId":"window-1","chatId":"managed-admission@g.us","attempt":2,"reason":"Flue unreachable","msg":"Retrying Speaker dispatch"}
+{"level":50,"time":1784987048008,"subsystem":"intake","operatorEvent":"agent.failed","detail":"Flue unreachable","windowId":"window-1","chatId":"managed-admission@g.us","attempt":3,"reason":"Flue unreachable","msg":"Flue dispatch failed; the Window settled as failed"}
+{"level":50,"time":1784987048029,"subsystem":"intake","windowId":"window-1","chatId":"managed-admission@g.us","dispatchId":"dispatch-accepted","reason":"injected done-write failure","msg":"Window done-write failed; startup will re-dispatch it"}
+{"level":30,"time":1784987048524,"subsystem":"whatsapp","operatorEvent":"agent.say","text":"show typing before this message","chatId":"managed-31@g.us","messageId":"real-host-message-1","msg":"Speaker said a WhatsApp message"}
+{"level":30,"time":1784987048854,"subsystem":"agent","operatorEvent":"agent.processing","dispatchId":"speaker-dispatch-survived","windowId":"window-failed-scribe","chatId":"team@g.us","messageCount":1,"msg":"Speaker processing a WhatsApp Window"}
+{"level":30,"time":1784987049275,"subsystem":"whatsapp","operatorEvent":"agent.say","text":"threaded reply","chatId":"managed-31@g.us","messageId":"real-host-message-1","msg":"Speaker said a WhatsApp message"}
+{"level":50,"time":1784987050027,"subsystem":"whatsapp","chatId":"managed-31@g.us","error":"provider outcome unknown","msg":"WhatsApp reply delivery unknown"}
+{"level":50,"time":1784987050782,"subsystem":"whatsapp","chatId":"managed-31@g.us","error":"not online (phase: backing_off)","msg":"WhatsApp reply delivery failed"}
+{"level":30,"time":1784987052288,"subsystem":"whatsapp","operatorEvent":"agent.say","text":"confirmed delivery","chatId":"managed-31@g.us","messageId":"real-host-message-1","msg":"Speaker said a WhatsApp message"}
+{"level":40,"time":1784987052288,"subsystem":"whatsapp","chatId":"managed-31@g.us","error":"typing cleanup outcome unknown","msg":"WhatsApp typing indicator state is unknown"}
 
  Test Files  83 passed | 1 skipped (84)
-      Tests  832 passed | 4 skipped (836)
-   Start at  13:14:07
-   Duration  80.68s (transform 3.93s, setup 0ms, import 34.95s, tests 122.88s, environment 5ms)
+      Tests  833 passed | 4 skipped (837)
+   Start at  13:44:00
+   Duration  76.38s (transform 4.22s, setup 0ms, import 38.89s, tests 120.87s, environment 5ms)
 
 exit=0
-finished 2026-07-25T13:15:28Z
+
+# the contract's named test, by name:
+$ npx vp test run tests/managed/control-plane.test.ts --reporter=verbose
+ ✓ tests/managed/control-plane.test.ts > the no-subcommand control plane > binds its own port, stays up, and serves the booted runtime state 141ms
+ ✓ tests/managed/control-plane.test.ts > the no-subcommand control plane > keeps serving and exposes the failure when the runtime boot throws 49ms
+ ✓ tests/managed/control-plane.test.ts > the no-subcommand control plane > reports not configured rather than erroring when no configuration is present 6ms
+ ✓ tests/managed/control-plane.test.ts > the no-subcommand control plane > never prints the first-run token to a non-terminal stdout 4ms
+ ✓ tests/managed/control-plane.test.ts > the no-subcommand control plane > rejects every route on a missing, malformed, or wrong bearer token 67ms
+ ✓ tests/managed/control-plane.test.ts > the no-subcommand control plane > generates the token once, persists it, and keeps it out of stdout and the log files 51ms
+ ✓ tests/managed/control-plane.test.ts > the no-subcommand control plane > refuses loudly when another live process already holds the data directory 38ms
+ Test Files  1 passed (1)
+      Tests  7 passed (7)

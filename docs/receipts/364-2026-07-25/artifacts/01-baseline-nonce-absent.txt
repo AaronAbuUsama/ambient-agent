@@ -1,22 +1,21 @@
-# Baseline — nonce absence, 2026-07-25T13:13:52Z
-nonce: n364-f184786f33ec
-head:  bf8ed595e9200db5ae8ffeaedfa7c9a4e12e13d6
+# Baseline — the nonce appears nowhere yet, 2026-07-25T13:48:31Z
+nonce: n364-a0be3694c292
+head:  bd05abf1d31c4749e5676982f5d7396d908e086c
 
-$ git -C <worktree> grep -c n364-f184786f33ec $(git rev-parse HEAD) -- . ; echo exit=$?
+$ git grep -c n364-a0be3694c292 $(git rev-parse HEAD) -- .
 (no matches) exit=1
 
-$ grep -rc n364-f184786f33ec <worktree>/dist ; echo exit=$?
+$ grep -rc n364-a0be3694c292 dist/
+<worktree>/dist/cli/main.js.map:0
+<worktree>/dist/cli/main.js:0
 <worktree>/dist/server.mjs.map:0
 <worktree>/dist/server.mjs:0
 <worktree>/dist/assets/rolldown-runtime-Bl3dcgcQ.js:0
-<worktree>/dist/cli/main.js:0
-<worktree>/dist/assets/ingress-runtime-BB7kTmSl.js:0
-<worktree>/dist/cli/main.js.map:0
 <worktree>/dist/assets/ingress-runtime-BB7kTmSl.js.map:0
 <worktree>/dist/assets/app-BZV6MFqO.js:0
+<worktree>/dist/assets/ingress-runtime-BB7kTmSl.js:0
 <worktree>/dist/assets/app-BZV6MFqO.js.map:0
 (no matches) exit=1
 
-$ ls -d $HOME/.ambient-agent-proof (data directory must not exist yet)
-lsd: $HOME/.ambient-agent-proof: No such file or directory (os error 2).
-
+$ ls -d $D   # the data directory must not exist yet
+ls: $HOME/.ambient-agent-n364-a0be3694c292: No such file or directory
