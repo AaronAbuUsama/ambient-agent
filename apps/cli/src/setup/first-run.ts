@@ -65,7 +65,7 @@ export interface FirstRunPrompts {
 type ChatGptSetup = Pick<ChatGptAuthentication, "inspect" | "authenticate">;
 
 export interface FirstRunServices {
-  readonly chatGptFor: (paths: ManagedPaths) => ChatGptSetup;
+  readonly chatGptFor: (paths: ManagedPaths) => Promise<ChatGptSetup>;
   readonly whatsappFor: (paths: ManagedPaths, archive: ConversationArchive) => ManagedWhatsAppAccount;
   readonly discoverRepository: () => Promise<string | undefined>;
   readonly verifyGitHub: (credential: GitHubAppTriple, repository: string, signal?: AbortSignal) => Promise<string>;
@@ -258,7 +258,7 @@ export const runFirstRunSetup = async (input: RunFirstRunSetupInput): Promise<In
         modelApiKey = await input.prompts.modelApiKey(modelChoice.provider);
         modelSource = "pasted API key";
       } else {
-        const chatGpt = input.services.chatGptFor(paths);
+        const chatGpt = await input.services.chatGptFor(paths);
         const chatGptStatus = await chatGpt.inspect();
         if (!input.interactive && !input.allowFreshChatGptAuthentication && chatGptStatus.state !== "ready") {
           throw new Error("Non-interactive setup requires an existing valid managed ChatGPT credential.");

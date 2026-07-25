@@ -14,6 +14,7 @@ const paths = {
     planner: "/missing/credentials/github-planner.json",
   },
   legacyGithubCredential: "/missing/credentials/github.json",
+  managedConfigDatabase: "/missing/managed-config.sqlite",
   chatGptOAuthCredential: "/missing/credentials/chatgpt-oauth.json",
   legacyPiAuthCredential: "/missing/credentials/pi-auth.json",
   modelApiKeyCredential: "/missing/credentials/model-api-key.json",

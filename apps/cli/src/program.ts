@@ -15,10 +15,12 @@ import {
 import { createManagedChatGptAuthentication } from "@ambient-agent/installation/chatgpt-authentication.ts";
 import {
   atomicWriteManagedConfig,
-  readManagedConfig,
-  readManagedGitHubAppCredential,
   writeManagedConfiguration,
 } from "@ambient-agent/installation/configuration.ts";
+import {
+  openManagedConfigurationSource,
+  type ManagedConfigurationSource,
+} from "@ambient-agent/installation/configuration-source.ts";
 import { inspectManagedServices, inspectWhatsAppSession } from "@ambient-agent/installation/diagnostics.ts";
 import {
   migrateLegacyManagedData,
@@ -181,11 +183,18 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
   const interactive =
     dependencies.interactive ??
     (dependencies.setupPrompts !== undefined || (process.stdin.isTTY === true && process.stdout.isTTY === true));
-  const authenticationFor = (paths: ManagedPaths) =>
-    createManagedChatGptAuthentication(paths, dependencies.chatGptOAuth, environment);
+  // Every configuration value and every credential this CLI reads comes from one seam (#366);
+  // each command opens it over the data directory it is operating on.
+  const authenticationFor = (source: ManagedConfigurationSource) =>
+    createManagedChatGptAuthentication(source, dependencies.chatGptOAuth, environment);
+  const authenticationForPaths = async (paths: ManagedPaths) =>
+    authenticationFor(await openManagedConfigurationSource(paths));
   const serviceOverrides = dependencies.firstRunServices ?? {};
   const firstRunServices: FirstRunServices = {
-    chatGptFor: serviceOverrides.chatGptFor ?? authenticationFor,
+    // First run has no installation yet, so its seam is ephemeral: see `openManagedConfigurationSource`.
+    chatGptFor:
+      serviceOverrides.chatGptFor ??
+      (async (paths) => authenticationFor(await openManagedConfigurationSource(paths, { ephemeral: true }))),
     whatsappFor:
       serviceOverrides.whatsappFor ??
       ((paths, archive) =>
@@ -203,18 +212,23 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
   const startRuntime =
     dependencies.startRuntime ??
     ((paths: ManagedPaths, logging: RuntimeLoggingOptions) =>
-      startGeneratedRuntime(paths, logging, authenticationFor(paths), dependencies.importRuntime));
+      startGeneratedRuntime(paths, logging, authenticationFor, dependencies.importRuntime));
   const runtimeHealthFor =
     dependencies.runtimeHealthFor ??
     (async (paths) => {
-      const configuration = await readManagedConfig(paths.config);
-      const credential = await readManagedGitHubAppCredential(paths.githubAppCredentials.planner);
-      if (credential.webhookSecret === undefined) return { state: "stopped", whatsapp: { phase: "stopped" } };
-      return await probeAmbientRuntimeHealth({
-        port: configuration.runtime.port,
-        installationId: runtimeInstallationId(credential.webhookSecret),
-        timeoutMillis: 750,
-      });
+      const source = await openManagedConfigurationSource(paths);
+      try {
+        const configuration = source.config();
+        const credential = source.secret("github-app:planner");
+        if (credential.webhookSecret === undefined) return { state: "stopped", whatsapp: { phase: "stopped" } };
+        return await probeAmbientRuntimeHealth({
+          port: configuration.runtime.port,
+          installationId: runtimeInstallationId(credential.webhookSecret),
+          timeoutMillis: 750,
+        });
+      } finally {
+        source.close();
+      }
     });
   const operationSignal = (timeoutMillis: number): AbortSignal => {
     const timeout = AbortSignal.timeout(timeoutMillis);
@@ -370,7 +384,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
         }
       }
-      const authentication = authenticationFor(paths);
+      const authentication = await authenticationForPaths(paths);
       await authentication.authenticate(deviceCodeCallbacks, authenticationSignal());
       if ((await authentication.inspect()).state !== "ready") {
         throw new Error("ChatGPT authentication was saved, but the managed credential store did not verify it.");
@@ -423,8 +437,10 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
         output.stdout("Provisioned three GitHub Apps and retired the personal-token credential.\n");
       }
       await readyManagedPaths("reconfigure");
-      const currentConfig = await readManagedConfig(paths.config);
-      const currentCredential = await readManagedGitHubAppCredential(paths.githubAppCredentials.planner);
+      const configurationSource = await openManagedConfigurationSource(paths);
+      const currentConfig = configurationSource.config();
+      const currentCredential = configurationSource.secret("github-app:planner");
+      configurationSource.close();
       let selected = {
         jid: options.chat ?? currentConfig.managedChats[0]!,
         name: options.chat ?? currentConfig.managedChats[0]!,
@@ -659,7 +675,9 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           "WhatsApp re-pairing requires a human to scan a QR code; run ambient-agent repair whatsapp in an interactive terminal.",
         );
       }
-      const configuration = await readManagedConfig(paths.config);
+      const repairSource = await openManagedConfigurationSource(paths);
+      const configuration = repairSource.config();
+      repairSource.close();
       // An unprobeable runtime (no webhook secret to correlate) is undefined and does not
       // block; any observed state other than an explicit "stopped" fails closed, because
       // even a failed runtime process still holds the store directory open.

@@ -3,13 +3,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { configureLogging, type LogFormat } from "@ambient-agent/engine/logging/logging.ts";
+import { ensureManagedGitHubWebhookSecret } from "@ambient-agent/installation/configuration.ts";
 import {
-  ensureManagedGitHubWebhookSecret,
-  readManagedBraintrustApiKey,
-  readManagedConfig,
-  readManagedGitHubAppCredential,
-  readManagedModelApiKey,
-} from "@ambient-agent/installation/configuration.ts";
+  openManagedConfigurationSource,
+  type ManagedConfigurationSource,
+} from "@ambient-agent/installation/configuration-source.ts";
+import type { ManagedSecret } from "@ambient-agent/installation/managed-config-store.ts";
 import { SUBSCRIPTION_PROVIDER_ID } from "@ambient-agent/engine/model/pi-subscription.ts";
 import {
   installManagedRuntimeDependencies,
@@ -101,10 +100,11 @@ const portOccupied = (cause: unknown): boolean =>
  * with no usable inference exits non-zero at start instead of booting green and going silent
  * on the first message (#250).
  */
-const readModelApiKeyOrFail = async (paths: ManagedPaths, provider: string): Promise<string> => {
-  let credential: Awaited<ReturnType<typeof readManagedModelApiKey>>;
+const readModelApiKeyOrFail = (source: ManagedConfigurationSource, provider: string): string => {
+  const { paths } = source;
+  let credential: ManagedSecret<"model-api-key">;
   try {
-    credential = await readManagedModelApiKey(paths.modelApiKeyCredential);
+    credential = source.secret("model-api-key");
   } catch (cause) {
     throw new Error(
       `model.provider is ${provider} but the managed API key at ${paths.modelApiKeyCredential} is missing or unreadable. Run ambient-agent config --model-provider ${provider} and paste a fresh key.`,
@@ -124,9 +124,10 @@ const readModelApiKeyOrFail = async (paths: ManagedPaths, provider: string): Pro
  * before anything binds, so a tracing-on config with a missing key fails the process at start rather
  * than booting with tracing silently dead. The key is threaded into the runtime bundle, never env.
  */
-const readBraintrustApiKeyOrFail = async (paths: ManagedPaths): Promise<string> => {
+const readBraintrustApiKeyOrFail = (source: ManagedConfigurationSource): string => {
+  const { paths } = source;
   try {
-    return (await readManagedBraintrustApiKey(paths.braintrustCredential)).apiKey;
+    return source.secret("braintrust").apiKey;
   } catch (cause) {
     throw new Error(
       `runtime.tracing.enabled is true but the Braintrust key at ${paths.braintrustCredential} is missing or unreadable. Run ambient-agent config --tracing on and paste a key, or ambient-agent config --tracing off.`,
@@ -138,7 +139,7 @@ const readBraintrustApiKeyOrFail = async (paths: ManagedPaths): Promise<string> 
 export const startGeneratedRuntime = async (
   paths: ManagedPaths,
   logging: RuntimeLoggingOptions,
-  authentication: ChatGptAuthentication,
+  authenticationFor: (source: ManagedConfigurationSource) => ChatGptAuthentication,
   importServer: ImportRuntime = importRuntime,
 ): Promise<void> => {
   await acquireInstanceLock(paths.root);
@@ -147,22 +148,25 @@ export const startGeneratedRuntime = async (
     level: logging.debug ? "debug" : "info",
     ...(logging.format === undefined ? {} : { format: logging.format }),
   });
+  // The app-owned webhook-secret migration writes the planner credential FILE, which stays
+  // authoritative (EMC), so it runs before the seam is opened and seeded from it.
   await ensureManagedGitHubWebhookSecret(paths.githubAppCredentials.planner);
-  const configuration = await readManagedConfig(paths.config);
-  const githubCredential = await readManagedGitHubAppCredential(paths.githubAppCredentials.planner);
+  // From here on every configuration value and every credential comes from this one seam (#366).
+  const source = await openManagedConfigurationSource(paths);
+  const configuration = source.config();
+  const githubCredential = source.secret("github-app:planner");
   if (githubCredential.webhookSecret === undefined) {
     throw new Error("The app-owned GitHub webhook credential migration did not complete.");
   }
   const modelApiKey =
     configuration.model.provider === SUBSCRIPTION_PROVIDER_ID
       ? undefined
-      : await readModelApiKeyOrFail(paths, configuration.model.provider);
-  const braintrustApiKey = configuration.runtime.tracing.enabled
-    ? await readBraintrustApiKeyOrFail(paths)
-    : undefined;
-  const agentSandbox = await resolveAgentSandbox(configuration, paths);
+      : readModelApiKeyOrFail(source, configuration.model.provider);
+  const braintrustApiKey = configuration.runtime.tracing.enabled ? readBraintrustApiKeyOrFail(source) : undefined;
+  const agentSandbox = await resolveAgentSandbox(source);
   installManagedRuntimeDependencies({
-    authentication,
+    authentication: authenticationFor(source),
+    source,
     configuration,
     githubCredential: { ...githubCredential, webhookSecret: githubCredential.webhookSecret },
     paths,

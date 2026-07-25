@@ -4,6 +4,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { resolveAgentSandbox } from "../../packages/installation/src/agent-sandbox.ts";
+import { atomicWriteManagedConfig } from "../../packages/installation/src/configuration.ts";
+import {
+  openManagedConfigurationSource,
+  type ManagedConfigurationSource,
+} from "../../packages/installation/src/configuration-source.ts";
 import { E2B_WORKSPACES_ROOT } from "../../packages/installation/src/e2b-sandbox.ts";
 import { managedPaths, type ManagedPaths } from "../../packages/installation/src/paths.ts";
 import { createManagedConfig, e2bCredentialFrom, type RuntimeSandbox } from "../../packages/installation/src/schema.ts";
@@ -26,13 +31,20 @@ const configWith = (sandbox: RuntimeSandbox) => ({
   runtime: { port: 3000, sandbox, tracing: { enabled: false } },
 });
 
+/** The resolution seam (#366) over a real data directory, seeded from the files it holds. */
+const sourceWith = async (paths: ManagedPaths, sandbox: RuntimeSandbox): Promise<ManagedConfigurationSource> => {
+  await mkdir(paths.root, { recursive: true });
+  await atomicWriteManagedConfig(paths.config, configWith(sandbox));
+  return await openManagedConfigurationSource(paths);
+};
+
 describe("resolveAgentSandbox (#251)", () => {
   it("resolves the local sandbox against the host workspaces and creates its TMPDIR before first use", async () => {
     const root = await mkdtemp(join(tmpdir(), "aa-sandbox-local-"));
     roots.push(root);
     const paths = managedPaths({ dataDirectory: root });
 
-    const resolved = await resolveAgentSandbox(configWith({ kind: "local" }), paths, {});
+    const resolved = await resolveAgentSandbox(await sourceWith(paths, { kind: "local" }), {});
 
     // The local sandbox pairs with the host workspaces root, not the E2B in-VM path.
     expect(resolved.workspacesRoot).toBe(paths.workspaces);
@@ -45,7 +57,7 @@ describe("resolveAgentSandbox (#251)", () => {
   it("resolves the e2b sandbox against its in-VM root, reading the key from credentials/e2b.json (#252)", async () => {
     const paths = await seedManagedRoot();
     await writeFile(paths.e2bCredential, `${JSON.stringify(e2bCredentialFrom("e2b_test_key"))}\n`);
-    const resolved = await resolveAgentSandbox(configWith({ kind: "e2b" }), paths, {});
+    const resolved = await resolveAgentSandbox(await sourceWith(paths, { kind: "e2b" }), {});
     expect(resolved.workspacesRoot).toBe(E2B_WORKSPACES_ROOT);
     expect(typeof resolved.sandbox.createSessionEnv).toBe("function");
   });
@@ -55,7 +67,9 @@ describe("resolveAgentSandbox (#251)", () => {
     await writeFile(paths.e2bCredential, `${JSON.stringify(e2bCredentialFrom("from_credentials"))}\n`);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      const resolved = await resolveAgentSandbox(configWith({ kind: "e2b" }), paths, { E2B_API_KEY: "garbage" });
+      const resolved = await resolveAgentSandbox(await sourceWith(paths, { kind: "e2b" }), {
+        E2B_API_KEY: "garbage",
+      });
       expect(resolved.workspacesRoot).toBe(E2B_WORKSPACES_ROOT);
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/E2B_API_KEY.*ignored/u));
     } finally {
@@ -67,9 +81,9 @@ describe("resolveAgentSandbox (#251)", () => {
     // The absent credential must fail loudly even with a garbage env value present, rather than
     // silently adopting the environment (the exact substitution #252 removes).
     const paths = await seedManagedRoot();
-    await expect(resolveAgentSandbox(configWith({ kind: "e2b" }), paths, { E2B_API_KEY: "garbage" })).rejects.toThrow(
-      /e2b\.json/u,
-    );
+    await expect(
+      resolveAgentSandbox(await sourceWith(paths, { kind: "e2b" }), { E2B_API_KEY: "garbage" }),
+    ).rejects.toThrow(/e2b\.json/u);
   });
 
   it("validates the --sandbox selector", () => {

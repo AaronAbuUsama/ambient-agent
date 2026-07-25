@@ -207,7 +207,14 @@ const readPrivateJson = async (path: string): Promise<unknown | undefined> => {
       offset += bytesRead;
     }
     if (offset !== opened.size) throw new Error("The managed ChatGPT credential changed while it was read.");
-    return JSON.parse(bytes.toString("utf8"));
+    // V8's `SyntaxError` quotes the opening bytes of the source it choked on, so a credential file
+    // holding a bare pasted token instead of its JSON envelope would put that token in the message
+    // (SEC-WO). Refused by hand, carrying nothing of the value — the shape #365 shipped and proved.
+    try {
+      return JSON.parse(bytes.toString("utf8"));
+    } catch {
+      throw new Error("The managed ChatGPT credential is malformed.");
+    }
   } catch (cause) {
     if (errorCode(cause) === "ENOENT") return undefined;
     throw cause;

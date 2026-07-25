@@ -8,6 +8,7 @@ describe("Flue database configuration", () => {
     const paths = managedPaths({ dataDirectory: "/private/ambient-agent" });
     installManagedRuntimeDependencies({
       authentication: {} as never,
+      source: {} as never,
       configuration: {} as never,
       githubCredential: {} as never,
       paths,

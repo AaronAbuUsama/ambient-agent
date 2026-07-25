@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
@@ -7,9 +7,13 @@ import {
   ensureManagedGitHubWebhookSecret,
   readManagedBraintrustApiKey,
   readManagedE2BApiKey,
-  readProvisionedGitHubAppCredential,
   writeManagedConfiguration,
 } from "../../packages/installation/src/configuration.ts";
+import {
+  openManagedConfigurationSource,
+  readProvisionedGitHubAppCredential,
+} from "../../packages/installation/src/configuration-source.ts";
+import { managedPaths } from "../../packages/installation/src/paths.ts";
 import {
   braintrustCredentialFrom,
   e2bCredentialFrom,
@@ -155,27 +159,31 @@ describe("managed configuration migrations", () => {
   });
 });
 
-describe("readProvisionedGitHubAppCredential (#247, #251)", () => {
+describe("readProvisionedGitHubAppCredential (#247, #251, through the seam since #366)", () => {
   it("fails loudly and nameably on a missing or mispasted Specialist App credential", async () => {
     const root = await mkdtemp(join(tmpdir(), "ambient-provisioned-credential-"));
     roots.push(root);
+    const paths = managedPaths({ dataDirectory: root });
+    await mkdir(paths.credentials, { recursive: true });
 
     // Missing file → the runtime must exit non-zero at start, not boot with a dead Coder.
-    const missing = join(root, "github-coder.json");
-    await expect(readProvisionedGitHubAppCredential(missing, "coder")).rejects.toThrow(/coder GitHub App credential/u);
-
-    // A mispasted (present-but-malformed) credential is loud too, and names the role.
-    const malformed = join(root, "github-reviewer.json");
-    await writeFile(malformed, "{ not valid json", { mode: 0o600 });
-    await expect(readProvisionedGitHubAppCredential(malformed, "reviewer")).rejects.toThrow(/reviewer GitHub App credential/u);
+    // A mispasted (present-but-malformed) credential is loud too, and names its own role.
+    await writeFile(paths.githubAppCredentials.reviewer, "{ not valid json", { mode: 0o600 });
+    const broken = await openManagedConfigurationSource(paths);
+    expect(() => readProvisionedGitHubAppCredential(broken, "coder")).toThrow(/coder GitHub App credential/u);
+    expect(() => readProvisionedGitHubAppCredential(broken, "reviewer")).toThrow(/reviewer GitHub App credential/u);
+    broken.close();
 
     // A well-formed credential reads back unchanged.
-    const good = join(root, "github-coder-good.json");
-    await writeFile(good, JSON.stringify(appCredential({ appId: "424242" })), { mode: 0o600 });
-    await expect(readProvisionedGitHubAppCredential(good, "coder")).resolves.toMatchObject({
+    await writeFile(paths.githubAppCredentials.coder, JSON.stringify(appCredential({ appId: "424242" })), {
+      mode: 0o600,
+    });
+    const good = await openManagedConfigurationSource(paths);
+    expect(readProvisionedGitHubAppCredential(good, "coder")).toMatchObject({
       kind: "github-app",
       appId: "424242",
     });
+    good.close();
   });
 });
 

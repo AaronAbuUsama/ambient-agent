@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { resolveAgentSandbox } from "../../packages/installation/src/agent-sandbox.ts";
+import { atomicWriteManagedConfig } from "../../packages/installation/src/configuration.ts";
+import { openManagedConfigurationSource } from "../../packages/installation/src/configuration-source.ts";
 import { managedPaths } from "../../packages/installation/src/paths.ts";
 import { createManagedConfig } from "../../packages/installation/src/schema.ts";
 
@@ -27,7 +29,9 @@ describe("local agent sandbox shell (#251 pre-flight, model-independent)", () =>
     roots.push(root);
     const paths = managedPaths({ dataDirectory: root });
 
-    const { sandbox, workspacesRoot } = await resolveAgentSandbox(localConfig(), paths, process.env);
+    await atomicWriteManagedConfig(paths.config, localConfig());
+    const source = await openManagedConfigurationSource(paths);
+    const { sandbox, workspacesRoot } = await resolveAgentSandbox(source, process.env);
     expect(workspacesRoot).toBe(paths.workspaces);
     const env = await sandbox.createSessionEnv({ id: "preflight" });
 

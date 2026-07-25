@@ -61,7 +61,7 @@ describe("starting on an api-key model provider", () => {
     const importServer = vi.fn(async () => undefined);
 
     await expect(
-      startGeneratedRuntime(paths, { debug: false }, authentication, importServer),
+      startGeneratedRuntime(paths, { debug: false }, () => authentication, importServer),
     ).rejects.toThrow(/missing or unreadable/u);
     expect(importServer).not.toHaveBeenCalled();
   });
@@ -77,7 +77,7 @@ describe("starting on an api-key model provider", () => {
     const importServer = vi.fn(async () => undefined);
 
     await expect(
-      startGeneratedRuntime(paths, { debug: false }, authentication, importServer),
+      startGeneratedRuntime(paths, { debug: false }, () => authentication, importServer),
     ).rejects.toThrow(/was issued for anthropic/u);
     expect(importServer).not.toHaveBeenCalled();
   });

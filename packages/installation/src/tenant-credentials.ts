@@ -313,7 +313,14 @@ export const createLibsqlChatGptCredentialStore = (database: TenantCredentialDat
     if (typeof serialized !== "string" || Buffer.byteLength(serialized, "utf8") > MAX_CREDENTIAL_BYTES) {
       throw new Error("The managed ChatGPT credential row is malformed.");
     }
-    return validateChatGptOAuthCredential(JSON.parse(serialized));
+    // Hand-written refusal rather than V8's, which quotes the bytes it choked on (SEC-WO).
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(serialized);
+    } catch {
+      throw new Error("The managed ChatGPT credential row is malformed.");
+    }
+    return validateChatGptOAuthCredential(decoded);
   };
 
   const readStoredFresh = async (providerId: string) => {
