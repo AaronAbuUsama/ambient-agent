@@ -128,7 +128,13 @@ const pathExists = async (path: string | undefined): Promise<boolean> => {
   }
 };
 
-const assertManagedCredentialDirectory = async (path: string, managedRoot: string): Promise<void> => {
+/**
+ * Refuse a credentials directory that has been swapped for a symlink or moved outside the managed
+ * root — the credential-substitution check that runs before every managed read. Exported since #366:
+ * the installation package's store-backed reader serves the credential from the store, so it must
+ * run this itself rather than inheriting it from the file read it no longer performs.
+ */
+export const assertManagedCredentialDirectory = async (path: string, managedRoot: string): Promise<void> => {
   if (resolve(path) !== resolve(join(managedRoot, "credentials"))) {
     throw new Error("The managed ChatGPT credential path escapes the managed data root.");
   }

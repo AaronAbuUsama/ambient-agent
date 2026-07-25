@@ -104,9 +104,10 @@ export interface ManagedConfigStore {
    */
   storedSecretKinds(): readonly ManagedSecretKind[];
   /**
-   * Forget this kind's row. Idempotent. A store-backed reader that never forgets would keep serving
-   * a credential the owner has revoked (`ambient-agent auth --forget` deletes the file), so the
-   * seam's delete path needs this to stay truthful (#366).
+   * Forget this kind's row. Idempotent. The file is authoritative until #367, so the store must be
+   * able to give a value up: `openManagedConfigurationSource` calls this when a credential file no
+   * longer reads, which is what stops a row from a previous boot outliving the file it came from
+   * and being served as if it were current (#366).
    */
   deleteSecret(kind: ManagedSecretKind): void;
   close(): void;

@@ -11,18 +11,10 @@ import {
   type ManagedSecretKind,
 } from "./managed-config-store.ts";
 import {
-  BraintrustCredentialSchema,
-  ControlPlaneCredentialSchema,
-  E2BCredentialSchema,
   GitHubAppCredentialSchema,
   ManagedConfigSchema,
-  ModelApiKeyCredentialSchema,
-  type BraintrustCredential,
-  type ControlPlaneCredential,
-  type E2BCredential,
   type GitHubAppCredential,
   type ManagedConfig,
-  type ModelApiKeyCredential,
 } from "./schema.ts";
 
 const FILE_MODE = 0o600;
@@ -78,33 +70,11 @@ export const readManagedSecretFile = async <TKind extends ManagedSecretKind>(
 export const readManagedGitHubAppCredential = async (path: string): Promise<GitHubAppCredential> =>
   await readPrivateJson(path, GitHubAppCredentialSchema);
 
-/**
- * The model API key. A missing or damaged file throws: the runtime must fail loudly at start
- * rather than boot green with no inference (#250).
- */
-export const readManagedModelApiKey = async (path: string): Promise<ModelApiKeyCredential> =>
-  await readPrivateJson(path, ModelApiKeyCredentialSchema);
-
-/**
- * The E2B API key from `credentials/e2b.json` (#252). A missing or damaged file throws: an `e2b`
- * sandbox with no key must fail the runtime loudly at start rather than boot with a dead Coder.
- */
-export const readManagedE2BApiKey = async (path: string): Promise<E2BCredential> =>
-  await readPrivateJson(path, E2BCredentialSchema);
-
-/**
- * The Braintrust API key from `credentials/braintrust.json` (#252). A missing or damaged file
- * throws: tracing that is configured on but has no key must fail loudly rather than boot silent.
- */
-export const readManagedBraintrustApiKey = async (path: string): Promise<BraintrustCredential> =>
-  await readPrivateJson(path, BraintrustCredentialSchema);
-
-/**
- * The control-plane bearer token from `credentials/control-plane.json` (#364). Absent on the first
- * boot — the control plane mints one then — so the ENOENT is the caller's to handle, not an error.
- */
-export const readManagedControlPlaneCredential = async (path: string): Promise<ControlPlaneCredential> =>
-  await readPrivateJson(path, ControlPlaneCredentialSchema);
+// The per-kind file readers for the model API key (#250), the E2B and Braintrust keys (#252) and the
+// control-plane token (#364) are gone (#366): every one of them resolved a credential path for a
+// caller, and every caller now goes through `openManagedConfigurationSource`, which reads the same
+// files through `readManagedSecretFile` above. Deleted rather than left dead so the seam cannot be
+// bypassed by calling a function that still happens to exist.
 
 export const atomicWriteManagedConfig = async (path: string, value: unknown): Promise<void> => {
   const directory = dirname(path);

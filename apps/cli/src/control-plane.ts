@@ -28,7 +28,7 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir } from "node:fs/promises";
 
 import { atomicWriteManagedConfig } from "@ambient-agent/installation/configuration.ts";
-import { openManagedConfigurationSource } from "@ambient-agent/installation/configuration-source.ts";
+import { withManagedConfigurationSource } from "@ambient-agent/installation/configuration-source.ts";
 import { inspectManagedData, type InstallationInspection } from "@ambient-agent/installation/installation.ts";
 import { controlPlaneCredentialFrom } from "@ambient-agent/installation/schema.ts";
 import {
@@ -200,12 +200,8 @@ const controlPlaneToken = async (
   persistable: boolean,
 ): Promise<{ readonly token: string; readonly persisted: boolean }> => {
   try {
-    const source = await openManagedConfigurationSource(paths);
-    try {
-      return { token: source.secret("control-plane").token, persisted: true };
-    } finally {
-      source.close();
-    }
+    const token = await withManagedConfigurationSource(paths, (source) => source.secret("control-plane").token);
+    return { token, persisted: true };
   } catch (cause) {
     // Absent is first-boot. Anything else — malformed, unreadable, a symlink — fails closed:
     // silently minting a replacement over a damaged token file would revoke live access unasked.

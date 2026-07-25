@@ -5,15 +5,13 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   ensureManagedGitHubWebhookSecret,
-  readManagedBraintrustApiKey,
-  readManagedE2BApiKey,
   writeManagedConfiguration,
 } from "../../packages/installation/src/configuration.ts";
 import {
   openManagedConfigurationSource,
   readProvisionedGitHubAppCredential,
 } from "../../packages/installation/src/configuration-source.ts";
-import { managedPaths } from "../../packages/installation/src/paths.ts";
+import { managedPaths, type ManagedPaths } from "../../packages/installation/src/paths.ts";
 import {
   braintrustCredentialFrom,
   e2bCredentialFrom,
@@ -187,35 +185,52 @@ describe("readProvisionedGitHubAppCredential (#247, #251, through the seam since
   });
 });
 
-describe("re-homed secret credentials (#252)", () => {
-  it("round-trips the E2B key file and rejects a malformed one", async () => {
-    const root = await mkdtemp(join(tmpdir(), "ambient-e2b-cred-"));
+describe("re-homed secret credentials (#252), now resolved through the seam (#366)", () => {
+  /** A data directory holding just `credentials/`, for tests that write one credential file. */
+  const credentialledRoot = async (): Promise<ManagedPaths> => {
+    const root = await mkdtemp(join(tmpdir(), "ambient-secret-cred-"));
     roots.push(root);
-    const path = join(root, "e2b.json");
+    const paths = managedPaths({ dataDirectory: root });
+    await mkdir(paths.credentials, { recursive: true });
+    return paths;
+  };
 
-    // write → read → identical.
-    await writeFile(path, `${JSON.stringify(e2bCredentialFrom("e2b_sk_live"))}\n`, { mode: 0o600 });
-    await expect(readManagedE2BApiKey(path)).resolves.toEqual({ schemaVersion: 1, kind: "e2b", apiKey: "e2b_sk_live" });
+  it("round-trips the E2B key file and rejects a malformed one", async () => {
+    const paths = await credentialledRoot();
+
+    // write → seed → read → identical.
+    await writeFile(paths.e2bCredential, `${JSON.stringify(e2bCredentialFrom("e2b_sk_live"))}\n`, { mode: 0o600 });
+    const good = await openManagedConfigurationSource(paths);
+    expect(good.secret("e2b")).toEqual({ schemaVersion: 1, kind: "e2b", apiKey: "e2b_sk_live" });
+    good.close();
 
     // A blank key is refused by the schema rather than read back as a live credential.
-    await writeFile(path, JSON.stringify({ schemaVersion: 1, kind: "e2b", apiKey: "" }), { mode: 0o600 });
-    await expect(readManagedE2BApiKey(path)).rejects.toThrow();
+    await writeFile(paths.e2bCredential, JSON.stringify({ schemaVersion: 1, kind: "e2b", apiKey: "" }), {
+      mode: 0o600,
+    });
+    const blank = await openManagedConfigurationSource(paths);
+    expect(() => blank.secret("e2b")).toThrow();
+    blank.close();
   });
 
   it("round-trips the Braintrust key file and rejects a malformed one", async () => {
-    const root = await mkdtemp(join(tmpdir(), "ambient-braintrust-cred-"));
-    roots.push(root);
-    const path = join(root, "braintrust.json");
+    const paths = await credentialledRoot();
 
-    await writeFile(path, `${JSON.stringify(braintrustCredentialFrom("bt_sk_live"))}\n`, { mode: 0o600 });
-    await expect(readManagedBraintrustApiKey(path)).resolves.toEqual({
+    await writeFile(paths.braintrustCredential, `${JSON.stringify(braintrustCredentialFrom("bt_sk_live"))}\n`, {
+      mode: 0o600,
+    });
+    const good = await openManagedConfigurationSource(paths);
+    expect(good.secret("braintrust")).toEqual({
       schemaVersion: 1,
       kind: "braintrust",
       apiKey: "bt_sk_live",
     });
+    good.close();
 
     // Wrong kind (an E2B file at the Braintrust path) is refused rather than silently accepted.
-    await writeFile(path, JSON.stringify(e2bCredentialFrom("mismatch")), { mode: 0o600 });
-    await expect(readManagedBraintrustApiKey(path)).rejects.toThrow();
+    await writeFile(paths.braintrustCredential, JSON.stringify(e2bCredentialFrom("mismatch")), { mode: 0o600 });
+    const mismatched = await openManagedConfigurationSource(paths);
+    expect(() => mismatched.secret("braintrust")).toThrow();
+    mismatched.close();
   });
 });

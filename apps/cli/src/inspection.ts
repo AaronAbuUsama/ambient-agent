@@ -6,6 +6,7 @@ import { createIssueOperationStore } from "@ambient-agent/engine/github/operatio
 import { createManagedChatGptAuthentication } from "@ambient-agent/installation/chatgpt-authentication.ts";
 import {
   openManagedConfigurationSource,
+  withManagedConfigurationSource,
   type ManagedConfigurationSource,
 } from "@ambient-agent/installation/configuration-source.ts";
 import { errorCode } from "@ambient-agent/engine/shared/errors.ts";
@@ -95,28 +96,25 @@ export const createInspectionReporter = ({
   const runtimeHealthFor =
     dependencies.runtimeHealthFor ??
     (async (paths: ManagedPaths) => {
-      const source = await openManagedConfigurationSource(paths);
-      try {
-        const configuration = source.config();
-        const credential = source.secret("github-app:planner");
-        if (credential.webhookSecret === undefined) {
-          return { state: "stopped", whatsapp: { phase: "stopped" } } as const;
-        }
-        return await probeAmbientRuntimeHealth({
-          port: configuration.runtime.port,
-          installationId: runtimeInstallationId(credential.webhookSecret),
-          timeoutMillis: 750,
-        });
-      } finally {
-        source.close();
+      const { configuration, credential } = await withManagedConfigurationSource(paths, (source) => ({
+        configuration: source.config(),
+        credential: source.secret("github-app:planner"),
+      }));
+      if (credential.webhookSecret === undefined) {
+        return { state: "stopped", whatsapp: { phase: "stopped" } } as const;
       }
+      return await probeAmbientRuntimeHealth({
+        port: configuration.runtime.port,
+        installationId: runtimeInstallationId(credential.webhookSecret),
+        timeoutMillis: 750,
+      });
     });
   const uncertainWorkFor =
     dependencies.uncertainWorkFor ??
     (async (paths: ManagedPaths): Promise<UncertainWorkController> => {
-      const source = await openManagedConfigurationSource(paths);
-      const credential = source.secret("github-app:planner");
-      source.close();
+      const credential = await withManagedConfigurationSource(paths, (source) =>
+        source.secret("github-app:planner"),
+      );
       const resolver = createInstallationResolver(credential);
       const archive = createConversationArchive(paths.applicationDatabase);
       try {

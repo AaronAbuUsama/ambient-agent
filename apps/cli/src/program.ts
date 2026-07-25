@@ -19,6 +19,7 @@ import {
 } from "@ambient-agent/installation/configuration.ts";
 import {
   openManagedConfigurationSource,
+  withManagedConfigurationSource,
   type ManagedConfigurationSource,
 } from "@ambient-agent/installation/configuration-source.ts";
 import { inspectManagedServices, inspectWhatsAppSession } from "@ambient-agent/installation/diagnostics.ts";
@@ -187,6 +188,9 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
   // each command opens it over the data directory it is operating on.
   const authenticationFor = (source: ManagedConfigurationSource) =>
     createManagedChatGptAuthentication(source, dependencies.chatGptOAuth, environment);
+  // NOT `withManagedConfigurationSource`: the authentication returned here reads the credential
+  // through the store on every call, so the seam has to outlive this function. It is closed by the
+  // process exiting, which for a one-shot CLI command is the whole of its lifetime.
   const authenticationForPaths = async (paths: ManagedPaths) =>
     authenticationFor(await openManagedConfigurationSource(paths));
   const serviceOverrides = dependencies.firstRunServices ?? {};
@@ -216,19 +220,16 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
   const runtimeHealthFor =
     dependencies.runtimeHealthFor ??
     (async (paths) => {
-      const source = await openManagedConfigurationSource(paths);
-      try {
-        const configuration = source.config();
-        const credential = source.secret("github-app:planner");
-        if (credential.webhookSecret === undefined) return { state: "stopped", whatsapp: { phase: "stopped" } };
-        return await probeAmbientRuntimeHealth({
-          port: configuration.runtime.port,
-          installationId: runtimeInstallationId(credential.webhookSecret),
-          timeoutMillis: 750,
-        });
-      } finally {
-        source.close();
-      }
+      const { configuration, credential } = await withManagedConfigurationSource(paths, (source) => ({
+        configuration: source.config(),
+        credential: source.secret("github-app:planner"),
+      }));
+      if (credential.webhookSecret === undefined) return { state: "stopped", whatsapp: { phase: "stopped" } };
+      return await probeAmbientRuntimeHealth({
+        port: configuration.runtime.port,
+        installationId: runtimeInstallationId(credential.webhookSecret),
+        timeoutMillis: 750,
+      });
     });
   const operationSignal = (timeoutMillis: number): AbortSignal => {
     const timeout = AbortSignal.timeout(timeoutMillis);
@@ -437,10 +438,10 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
         output.stdout("Provisioned three GitHub Apps and retired the personal-token credential.\n");
       }
       await readyManagedPaths("reconfigure");
-      const configurationSource = await openManagedConfigurationSource(paths);
-      const currentConfig = configurationSource.config();
-      const currentCredential = configurationSource.secret("github-app:planner");
-      configurationSource.close();
+      const { currentConfig, currentCredential } = await withManagedConfigurationSource(paths, (source) => ({
+        currentConfig: source.config(),
+        currentCredential: source.secret("github-app:planner"),
+      }));
       let selected = {
         jid: options.chat ?? currentConfig.managedChats[0]!,
         name: options.chat ?? currentConfig.managedChats[0]!,
@@ -675,9 +676,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
           "WhatsApp re-pairing requires a human to scan a QR code; run ambient-agent repair whatsapp in an interactive terminal.",
         );
       }
-      const repairSource = await openManagedConfigurationSource(paths);
-      const configuration = repairSource.config();
-      repairSource.close();
+      const configuration = await withManagedConfigurationSource(paths, (source) => source.config());
       // An unprobeable runtime (no webhook secret to correlate) is undefined and does not
       // block; any observed state other than an explicit "stopped" fails closed, because
       // even a failed runtime process still holds the store directory open.

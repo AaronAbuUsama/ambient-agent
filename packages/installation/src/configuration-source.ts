@@ -26,16 +26,20 @@ import type { GitHubAppCredential, ManagedConfig } from "./schema.ts";
  *
  * ## What a failure looks like
  *
- * Seeding records, per kind, whatever the file reader threw — `ENOENT`, "not a supported private
+ * Seeding records, per kind, whatever the FILE reader threw — `ENOENT`, "not a supported private
  * JSON file", "malformed" — and {@link ManagedConfigurationSource.secret} **rethrows that exact
  * error**. So a missing or malformed value still fails boot as loudly and with the same `code` and
  * wording as before the swap, and a caller that discriminates on `ENOENT` (the control plane minting
- * a first-boot token) still can. A recorded failure always beats a stale stored row: a file that has
- * gone missing or bad must not be papered over by what the last boot managed to seed.
+ * a first-boot token) still can. A file failure also **deletes that kind's row**, so a credential
+ * whose file has gone missing or bad stops resolving everywhere — through `secret`, through
+ * {@link ManagedConfigurationSource.store} directly, and in `storedSecretKinds`. Nothing a previous
+ * boot managed to seed can paper over the file, which is what keeps the file authoritative (EMC).
  *
- * Seeding never throws. An installation that does not use a secret (no `e2b.json` on a `local`
- * sandbox, no `model-api-key.json` on a subscription install) must still boot, exactly as today —
- * the failure surfaces at the read, in the caller that actually needs the value.
+ * A file failure never throws at open: an installation that does not use a secret (no `e2b.json` on a
+ * `local` sandbox, no `model-api-key.json` on a subscription install) must still boot, exactly as
+ * today — the failure surfaces at the read, in the caller that actually needs the value. A failure of
+ * the *store* is the opposite and throws at open, because "the database is unavailable" must never be
+ * reported to an operator as "your credential is missing or malformed; paste a fresh one".
  *
  * ## SEC-WO
  *
@@ -99,22 +103,31 @@ export const openManagedConfigurationSource = async (
   const failures = new Map<ManagedSecretKind, unknown>();
   let configFailure: unknown;
 
-  const seedConfig = async (): Promise<void> => {
-    configFailure = undefined;
-    try {
-      store.replace(await readManagedConfig(paths.config));
-    } catch (cause) {
-      configFailure = cause;
-    }
-  };
+  try {
+    store.replace(await readManagedConfig(paths.config));
+  } catch (cause) {
+    configFailure = cause;
+  }
 
-  await seedConfig();
   for (const kind of MANAGED_SECRET_KINDS) {
+    let secret: ManagedSecret<ManagedSecretKind>;
     try {
-      store.writeSecret(kind, await readManagedSecretFile(secretPaths[kind], kind));
+      secret = await readManagedSecretFile(secretPaths[kind], kind);
     } catch (cause) {
+      // Only a FILE failure is deferred to the reader. The row from a previous boot goes with it:
+      // the file is authoritative (EMC), so a credential whose file has been deleted or corrupted
+      // must stop resolving everywhere — including through `store` directly, which the ChatGPT
+      // credential store reads, and through `storedSecretKinds()`, which the tier-4 readback and
+      // #381's "set / not set" render from.
       failures.set(kind, cause);
+      store.deleteSecret(kind);
+      continue;
     }
+    // Deliberately OUTSIDE the catch. The value is already validated against the very schema
+    // `writeSecret` re-checks, so the only thing left to fail here is the database — and recording a
+    // `SQLITE_BUSY` as this kind's failure would tell the operator to paste a fresh credential to fix
+    // a credential that is perfectly fine. An infrastructure failure is loud, at open, and once.
+    store.writeSecret(kind, secret);
   }
 
   return {
@@ -124,21 +137,49 @@ export const openManagedConfigurationSource = async (
       if (configFailure !== undefined) throw configFailure;
       return store.current();
     },
+    // A failed reload throws, but leaves the last good configuration in place — the runtime keeps
+    // serving it, exactly as it did before this seam (`reloadAuthorizationOnSignal` logs and carries
+    // on). Only a failed *initial* seed poisons `config()`, because there is nothing good to serve.
     refreshConfig: async () => {
-      await seedConfig();
-      if (configFailure !== undefined) throw configFailure;
+      const next = await readManagedConfig(paths.config);
+      store.replace(next);
+      configFailure = undefined;
       return store.current();
     },
+    // `has`, not `!== undefined`: a recorded failure must win even if what was thrown was itself
+    // `undefined`, so the precedence is structural rather than incidental.
     secret: (kind) => {
-      const failure = failures.get(kind);
-      if (failure !== undefined) throw failure;
+      if (failures.has(kind)) throw failures.get(kind);
       const stored = store.readSecret(kind);
-      if (stored === undefined) throw new Error(`No ${kind} secret is stored.`);
+      // The seed leaves every kind either stored or recorded as failed, so this is only reachable
+      // when another process deleted the row after this source was opened.
+      if (stored === undefined) {
+        throw new Error(`No ${kind} secret is stored; ${secretPaths[kind]} was not readable at start.`);
+      }
       return stored;
     },
     storedSecretKinds: () => store.storedSecretKinds(),
     close: () => store.close(),
   };
+};
+
+/**
+ * Open the seam, hand it to `use`, and close it however that ends. Every caller that only needs a
+ * value and is done — the CLI's one-shot commands — should use this rather than `open`/`close`,
+ * because the interesting paths here all throw, and a `close()` written as a plain statement after
+ * the read is skipped by exactly the failure that matters. The handle is on a database the running
+ * runtime holds open, so leaking one is lock contention, not just an fd.
+ */
+export const withManagedConfigurationSource = async <T>(
+  paths: ManagedPaths,
+  use: (source: ManagedConfigurationSource) => T | Promise<T>,
+): Promise<T> => {
+  const source = await openManagedConfigurationSource(paths);
+  try {
+    return await use(source);
+  } finally {
+    source.close();
+  }
 };
 
 /**

@@ -12,7 +12,7 @@ import {
   type ManagedSecret,
   type ManagedSecretKind,
 } from "../../packages/installation/src/managed-config-store.ts";
-import { createManagedConfig } from "../../packages/installation/src/schema.ts";
+import { braintrustCredentialFrom, createManagedConfig } from "../../packages/installation/src/schema.ts";
 
 const CHAT = "team@g.us";
 
@@ -262,6 +262,26 @@ describe("the managed configuration store holds the runtime's secrets (#365)", (
       "no managed secret kind",
     );
     expect(() => store.readSecret("aws" as ManagedSecretKind)).toThrow("no managed secret kind");
+    expect(() => store.deleteSecret("aws" as ManagedSecretKind)).toThrow("no managed secret kind");
+    store.close();
+  });
+
+  /**
+   * The store has to be able to give a value up (#366): the file is authoritative until #367, so a
+   * credential whose file no longer reads must stop resolving here too rather than being served
+   * from a row an earlier boot wrote.
+   */
+  it("forgets a secret, idempotently, and drops it from the stored kinds", () => {
+    const store = createManagedConfigStore(":memory:");
+    store.writeSecret("braintrust", braintrustCredentialFrom("bt_sk_live"));
+    expect(store.storedSecretKinds()).toContain("braintrust");
+
+    store.deleteSecret("braintrust");
+
+    expect(store.readSecret("braintrust")).toBeUndefined();
+    expect(store.storedSecretKinds()).not.toContain("braintrust");
+    // Idempotent: forgetting what is already forgotten is not an error.
+    expect(() => store.deleteSecret("braintrust")).not.toThrow();
     store.close();
   });
 });

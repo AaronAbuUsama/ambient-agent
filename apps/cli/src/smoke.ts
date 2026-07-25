@@ -1,4 +1,4 @@
-import { openManagedConfigurationSource } from "@ambient-agent/installation/configuration-source.ts";
+import { withManagedConfigurationSource } from "@ambient-agent/installation/configuration-source.ts";
 import { runtimeSmokeAuthorization } from "@ambient-agent/installation/runtime-health.ts";
 import type { ManagedPaths } from "@ambient-agent/installation/paths.ts";
 import type { InspectionReport } from "./rendering.ts";
@@ -31,16 +31,15 @@ function assertCanaryReceipt(nonce: string, value: unknown): asserts value is Sm
 }
 
 export const requestRuntimeSmokeCanary: SmokeCanary = async (paths, nonce, timeoutMillis) => {
-  const source = await openManagedConfigurationSource(paths);
-  const configuration = source.config();
+  const { configuration, credential } = await withManagedConfigurationSource(paths, (source) => ({
+    configuration: source.config(),
+    credential: source.secret("github-app:planner"),
+  }));
   if (configuration.smoke === undefined) {
-    source.close();
     throw new Error(
       "No dedicated smoke canary group is configured; run ambient-agent config --canary-chat <group-jid>.",
     );
   }
-  const credential = source.secret("github-app:planner");
-  source.close();
   if (credential.webhookSecret === undefined) throw new Error("The runtime installation identity is unavailable.");
   const signal = AbortSignal.timeout(timeoutMillis + 1_000);
   const response = await fetch(`http://127.0.0.1:${configuration.runtime.port}/smoke`, {
@@ -83,15 +82,7 @@ export const smokeStations = async (
 ): Promise<readonly SmokeStation[]> => {
   const config =
     report.installation.state === "ready"
-      ? await openManagedConfigurationSource(paths)
-          .then((source) => {
-            try {
-              return source.config();
-            } finally {
-              source.close();
-            }
-          })
-          .catch(() => undefined)
+      ? await withManagedConfigurationSource(paths, (source) => source.config()).catch(() => undefined)
       : undefined;
   const deliveries = report.windowDeliveries;
   const githubAccess = report.checks.find(({ name }) => name === "github-access");
