@@ -1,6 +1,6 @@
 # Vendored Claude Code `/verify` methodology
 
-`verify/SKILL.md` is the decoded built-in `/verify` skill from this exact public npm artifact:
+`verify/skill-body.md` (renamed from `verify/SKILL.md` in #375, which needs the raw bytes) is the decoded built-in `/verify` skill from this exact public npm artifact:
 
 - Package: `@anthropic-ai/claude-code-darwin-arm64@2.1.214`
 - Tarball: `https://registry.npmjs.org/@anthropic-ai/claude-code-darwin-arm64/-/claude-code-darwin-arm64-2.1.214.tgz`

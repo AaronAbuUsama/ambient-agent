@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { IncomingMessage as WhatsAppMessage } from "whatsappd";
 
 import "../../../../packages/engine/src/braintrust.ts";
+import { configureEphemeralPromptStore } from "../../../../packages/engine/src/prompts/store.ts";
 import { composeSpeaker } from "../../../../packages/agents/src/speaker/compose.ts";
 import { makeSpeakerWindowDispatcher, dispatchSpeaker } from "../../../../packages/agents/src/speaker/dispatch.ts";
 import type {
@@ -35,6 +36,11 @@ import {
   connectPiChatGptSubscription,
   SUBSCRIPTION_PROVIDER_ID,
 } from "../../../../packages/engine/src/model/pi-subscription.ts";
+
+// #375: this fixture is a composition root of its own, so it binds its own prompt store. In-memory
+// rather than durable — the fixture has no managed data directory — but seeded from the same shipped
+// catalog through the same code, so the evals grade the prompts the runtime actually serves.
+configureEphemeralPromptStore();
 
 const liveModel = process.env.SPEAKER_FIXTURE_LIVE_MODEL === "true";
 const provider = liveModel ? undefined : registerFauxProvider({ provider: "speaker-fixture" });

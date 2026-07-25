@@ -1,8 +1,14 @@
 # Receipt — node #375, prompt and skill store with customisation tracking
 
 - **Node:** #375 · surface **backend** · branch `agent/coder/issue-375`
-- **Proven head:** `b4af0961970a853e9ed386cabf6d2a998b8779a4` (base `21a2905`, which carries #364, #369, #365)
+- **Proven head:** see §1 (base `21a2905`, which carries #364, #369, #365)
 - **Captured by:** the node's teammate. Tiers 3–5 are the orchestrator's, post-merge.
+
+An earlier head (`b4af096`) was proven and then superseded: the independent review found that
+`getPromptStore()` self-filled an unbound slot, which would let a boot-order mistake serve prompts
+from a private in-memory store while operator edits landed in the durable file, silently. That and
+four other findings were fixed and **tier 1 and tier 2 were re-run from scratch** against the head
+below. Only that run is reported. §7 lists what the review changed.
 
 ## Tier table
 
@@ -70,7 +76,9 @@ $ git switch --detach 21a2905 && pnpm run evals:deterministic
 Logs: `logs/tier2-evals-head.txt`, `logs/tier2-evals-baseline-21a2905.txt`,
 `logs/tier2-evals-per-test.txt`. Same five tests, same failure, both before and after.
 
-The failure is **not** a prompt failure. Every one of the five is the same assertion:
+The failure is **not** a prompt failure. All five fail the same way — a tool call the Speaker cannot
+serve — across two files: four in `issue-management.eval.ts` (three on `github_create_issue`, one on
+`github_update_issue`) and one in `participation-mechanics.eval.ts`, whose error body is explicit:
 
 ```
 "error": { "message": "Tool github_create_issue not found" }
@@ -78,16 +86,18 @@ The failure is **not** a prompt failure. Every one of the five is the same asser
 
 The deterministic issue-management suite still drives the **Speaker** through `github_create_issue`
 and `github_update_issue`, but issue filing and mutation moved to the **Brain**; the Speaker mounts
-neither tool. The suite describes an architecture the code no longer has, and has done since before
-this node. Repairing it means rewriting the issue-management eval suite against the Brain, which is
-a different node's work.
+neither tool (`tests/speaker/issue-management.test.ts:1045` asserts exactly that absence). The suite
+describes an architecture the code no longer has, and has done since before this node. Repairing it
+means rewriting the issue-management eval suite against the Brain, which is a different node's work.
 
 What tier 2 *does* establish here: the ten passing eval cases run against a live `flue dev` fixture
 whose agents — the Speaker, and the fixture's Planner and Verifier surfaces — resolve every
 instruction block and skill body from the prompt store, because after this change there is no other
-path. There is no compiled-in fallback to drift from: `getPromptStore()` fills an unset slot with an
-in-memory store that seeds itself from the same shipped catalog, so "served from the store" is
-literally true in the fixture, in unit tests, and in production alike.
+path. The fixture binds its own store explicitly (`tests/fixtures/speaker/src/app.ts`), seeded from
+the same shipped catalog through the same code; nothing is auto-filled and nothing is stubbed. The
+Planner and Verifier prose evals in particular now grade the catalog's shipped instructions rather
+than a fixture-local copy of them, which is what makes "the evals still describe what runs" true for
+those two roles rather than merely claimed.
 
 **This is the orchestrator's call, not mine to lower.** The contract asks for green; the tree was
 not green when this node started, for a reason this node does not touch.
@@ -127,3 +137,26 @@ prompt.
 `ambient-agent prompt` reads and writes entries but never creates them; the runtime is the process
 that carries the shipped catalog and seeds at boot. Against a data directory the runtime has never
 booted, `prompt list` says the store is empty rather than inventing entries.
+
+**Run the CLI as the service user.** The store is a 0600 file owned by whoever created it, and
+`createManagedConfigStore` chmods it on open. `sudo -u <service-user> ambient-agent prompt …` — a
+root or foreign-user invocation either fails with `EPERM` or leaves a file the service cannot open.
+
+## 7. What the independent review changed
+
+Five reviewers ran against `b4af096`. Fixed here:
+
+| finding | fix |
+|---|---|
+| `getPromptStore()` self-filled an unbound slot, so a boot-order mistake would serve in-memory prompts while operator edits went to the durable file, silently | it throws now, like every sibling `createFlueGlobal` singleton; tests and the eval fixture bind explicitly via `configureEphemeralPromptStore` |
+| `resolve()` never re-validated an `instructions` row, so a corrupted row served an empty system prompt silently | `resolve` re-validates on read, matching what `resolveSkill` already did |
+| the frontmatter parser used js-yaml's default schema where Flue uses `FAILSAFE_SCHEMA`, so `name: yes` parsed as a boolean and was refused with a misleading message | parses with `FAILSAFE_SCHEMA`, the same predicate Flue applies |
+| a shipped entry that changed `kind` kept the customised body, producing a row whose body did not match its kind — failing at the next agent turn instead of at save | a kind change re-seeds; the edit is not portable across kinds |
+| the eval fixture's Planner and Verifier kept a second, divergent copy of role prose | both take `storedInstructions(...)` from the catalog |
+| the "every role" assertion only proved the catalog agreed with itself — hardcoding a role's prompt broke nothing | a source-level guard refuses a literal `instructions:`/`skills: [` in any agent module that does not go through the store. Mutation-checked: hardcoding the coder coordinator fails it. |
+| the SQLite adapter's unknown-kind guard, the double-seed no-op, and cross-process visibility were untested | three tests added, including one that writes a corrupt row with a raw `DatabaseSync` and one that proves a second process's edit is visible to an already-open store — the "no restart" claim |
+| stale `SKILL.md` paths in `PROVENANCE.md`, `packages/agents/README.md`, `packages/agents/package.json` | corrected |
+
+Not fixed, deliberately: WAL journal mode (rollback journal is fine at prompt-edit frequency),
+memoizing skill construction per agent turn (not on any profile yet), and a build-version stamp to
+detect a stale CLI validating against a newer runtime's rules (real, but its own node's work).

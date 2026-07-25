@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { defineSkill, type SkillReference } from "@flue/runtime";
-import { load } from "js-yaml";
+import { FAILSAFE_SCHEMA, load } from "js-yaml";
 
 import { createFlueGlobal } from "../shared/flue-global.ts";
 
@@ -40,10 +40,11 @@ export interface ShippedPrompt {
  * - `seededVersion` is the shipped version this entry was last seeded (or reverted) from. It is
  *   deliberately FROZEN while customised, so `seededVersion !== shippedVersion` is exactly
  *   "this customisation predates the shipped prompt it was forked from" — divergence, detectable.
- * - `shippedBody` / `shippedVersion` are the CURRENT shipped text and its version, refreshed on
- *   every boot for every entry including customised ones. They are what revert restores and what a
- *   diff view renders against, and they are what lets a process that has no compiled-in catalog
- *   (the CLI, the control plane) revert an entry.
+ * - `shippedBody` / `shippedVersion` are the CURRENT shipped text and its version, reconciled against
+ *   the catalog on every boot for every entry including customised ones (a boot that ships the same
+ *   text writes nothing). They are what revert restores and what a diff view renders against, and
+ *   they are what lets a process that has no compiled-in catalog — the CLI, the control plane —
+ *   revert an entry.
  */
 export interface StoredPrompt {
   readonly id: string;
@@ -113,7 +114,10 @@ const parseSkillDocument = (id: string, body: string): SkillDocument => {
   if (match === null) throw new Error(`The ${id} skill body is missing its YAML frontmatter (--- name/description ---).`);
   let frontmatter: unknown;
   try {
-    frontmatter = load(match[1] ?? "");
+    // FAILSAFE_SCHEMA is the schema Flue's own skill loader uses: every scalar stays a string, so
+    // `name: yes` is the string "yes" rather than a boolean and `description: 2026-07-25` is not a
+    // Date. Matching it exactly is what keeps "valid here" and "valid to Flue" the same predicate.
+    frontmatter = load(match[1] ?? "", { schema: FAILSAFE_SCHEMA });
   } catch {
     throw new Error(`The ${id} skill body has invalid YAML frontmatter.`);
   }
@@ -160,7 +164,15 @@ export const promptSkillReference = (
   }
 };
 
-/** Refuse a body before it is written. Instructions carry no schema beyond "there is text here". */
+/**
+ * Refuse a body before it is written. Instructions carry no schema beyond "there is text here".
+ *
+ * The skill check deliberately validates the document ALONE, with no auxiliary `files`. That is safe
+ * only because auxiliary files are shipped constants an operator cannot edit (`SKILL_FILES` in the
+ * agents catalog): the document is the whole editable surface, so validating it is validating the
+ * edit. The day auxiliary files become editable, this must take them too — otherwise a body could
+ * pass `save` and fail at the next agent turn, which is exactly what this function exists to stop.
+ */
 export const validatePromptBody = (id: string, kind: PromptEntryKind, body: string): void => {
   if (kind === "skill") {
     promptSkillReference(id, body);
@@ -196,14 +208,30 @@ export const createPromptStore = (rows: PromptRows): PromptStore => {
           write({ ...base, body: entryShipped.body, customised: false, seededVersion: version, updatedAt: now });
           continue;
         }
+        // A shipped entry that changed kind is a different entry wearing the same id. Keeping the
+        // customised body would leave, say, a plain instruction string labelled `kind: "skill"` —
+        // refused at the next agent initialization rather than at save time, the one place this
+        // store otherwise never defers a failure. Re-seed it instead; the edit is not portable.
+        if (existing.kind !== entryShipped.kind) {
+          write({ ...base, body: entryShipped.body, customised: false, seededVersion: version, updatedAt: now });
+          continue;
+        }
         // A customised entry survives the upgrade untouched apart from learning what is now shipped;
         // its seededVersion stays put, so the divergence from `version` remains visible.
-        if (existing.shippedVersion !== version || existing.kind !== entryShipped.kind) {
+        if (existing.shippedVersion !== version) {
           write({ ...base, body: existing.body, customised: existing.customised, seededVersion: existing.seededVersion, updatedAt: now });
         }
       }
     },
-    resolve: (id) => entry(id).body,
+    resolve: (id) => {
+      const row = entry(id);
+      // Re-validated on the way out, not only on the way in. `save` is not the only way a row can
+      // change — a hand-edited database, a bad restore, or a future writer can all put a body here
+      // that never passed validation, and an empty instruction block is invisible in a transcript.
+      // The skill kind already gets this for free, because `resolveSkill` re-parses every time.
+      validatePromptBody(id, row.kind, row.body);
+      return row.body;
+    },
     resolveSkill: (id, files) => {
       const row = entry(id);
       if (row.kind !== "skill") throw new Error(`The prompt store entry ${id} is not a skill.`);
@@ -242,20 +270,32 @@ export const createMemoryPromptRows = (): PromptRows => {
   };
 };
 
-const storeSlot = createFlueGlobal<PromptStore>("prompt-store", "The prompt store is not configured.");
+const storeSlot = createFlueGlobal<PromptStore>(
+  "prompt-store",
+  "The prompt store is not configured (the composition root must call configurePromptStore before any agent initializes).",
+);
 
 /**
- * There is exactly ONE way a prompt reaches an agent: through the store. When the composition root
- * has not bound a durable store (unit tests, the eval fixture), the slot fills with an in-memory
- * store on first use and seeds itself from the same shipped catalog — so "served from the store" is
- * literally true everywhere, and no second code path exists to drift from the first.
+ * There is exactly ONE way a prompt reaches an agent: through the store, and it must have been bound
+ * deliberately. This throws when the slot is empty rather than manufacturing a fallback, because the
+ * fallback's failure mode is invisible: agents would resolve shipped text from a private in-memory
+ * copy while an operator's `prompt set` lands in the durable file, with nothing to distinguish that
+ * from a working install. Every sibling singleton in this codebase fails closed the same way.
+ *
+ * A process with no composition root — a unit test, the eval fixture — binds one explicitly with
+ * {@link configureEphemeralPromptStore}. That is a real store seeded from the same shipped catalog,
+ * so "served from the store" stays literally true everywhere; what it is not is automatic.
  */
-export const getPromptStore = (): PromptStore => {
-  const configured = storeSlot.peek();
-  if (configured !== undefined) return configured;
-  const store = createPromptStore(createMemoryPromptRows());
-  storeSlot.set(store);
-  return store;
-};
+export const getPromptStore = (): PromptStore => storeSlot.get();
 
 export const configurePromptStore = (store: PromptStore): void => storeSlot.set(store);
+
+/**
+ * Bind an in-memory store, for a process that has no durable data directory: the eval fixture and
+ * the unit tests. Explicit by design — see {@link getPromptStore}.
+ */
+export const configureEphemeralPromptStore = (): PromptStore => {
+  const store = createPromptStore(createMemoryPromptRows());
+  configurePromptStore(store);
+  return store;
+};

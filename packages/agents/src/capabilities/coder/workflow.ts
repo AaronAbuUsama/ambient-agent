@@ -97,15 +97,14 @@ export const roleProfiles = () => [
 ];
 
 /** Unprompted root: TypeScript alone chooses every role transition and budget. */
-const coderAgent = defineAgent(() => {
-  const { sandbox } = getCoderRuntime();
-  return {
-    ...resolveAgentModelProfile("coder"),
-    sandbox,
-    subagents: roleProfiles(),
-    instructions: storedInstructions(PROMPT_IDS.coderCoordinator),
-  };
+export const coderRuntimeConfig = () => ({
+  ...resolveAgentModelProfile("coder"),
+  sandbox: getCoderRuntime().sandbox,
+  subagents: roleProfiles(),
+  instructions: storedInstructions(PROMPT_IDS.coderCoordinator),
 });
+
+const coderAgent = defineAgent(() => coderRuntimeConfig());
 
 /** Hash every tracked file so publication can diff the workspace against its seed. */
 const snapshotWorkspace = async (

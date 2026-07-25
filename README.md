@@ -245,7 +245,7 @@ src/capabilities/
 │   ├── tools.ts
 │   └── whatsapp-port.ts
 └── issue-management/
-    ├── SKILL.md
+    ├── SKILL.md          # not mounted on any agent, so not in the prompt store
     ├── tools.ts
     ├── issue-repository.ts
     ├── operation-store.ts
