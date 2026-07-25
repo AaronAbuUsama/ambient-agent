@@ -12,9 +12,10 @@
  * - **The bearer-token scheme.** Every request carries `Authorization: Bearer <token>`; the token
  *   is minted once and persisted at `credentials/control-plane.json` (mode 0600). Under `/api/`
  *   the gate runs *before* routing, so an unknown API path is refused exactly like a known one.
- * - **The route shape.** JSON under `/api/`; `GET /api/status` for a point read and
- *   `GET /api/observe` for the live one. 401 with `WWW-Authenticate: Bearer` for a missing or wrong
- *   token, 404 for an unknown authorized path, 405 for a wrong method.
+ * - **The route shape.** JSON under `/api/`; `GET /api/status` for a point read, `GET /api/observe`
+ *   for the live state and `GET /api/logs` for the live operator feed. 401 with
+ *   `WWW-Authenticate: Bearer` for a missing or wrong token, 404 for an unknown authorized path,
+ *   405 for a wrong method.
  * - **The runtime-boot value.** {@link RuntimeBoot} — the in-process value the routes serve, and
  *   the single place a boot failure is recorded.
  *
@@ -38,6 +39,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { operatorFeed, type OperatorFeedRecord } from "@ambient-agent/engine/logging/operator-feed.ts";
 import { atomicWriteManagedConfig } from "@ambient-agent/installation/configuration.ts";
 import { withManagedConfigurationSource } from "@ambient-agent/installation/configuration-source.ts";
 import { inspectManagedData, type InstallationInspection } from "@ambient-agent/installation/installation.ts";
@@ -129,12 +131,11 @@ const respond = (
 /** SSE keepalive. Long enough to be cheap, short enough that a dead proxy is noticed. */
 const OBSERVE_HEARTBEAT_MS = 15_000;
 
-/**
- * Snapshot-plus-deltas over SSE. The client's first read is the whole state, so attaching late and
- * reattaching after a disconnect are the same operation and both recover everything; after that it
- * receives one `delta` per publication and never a replay of what the snapshot already carried.
- */
-const observe = (response: ServerResponse, headersOnly = false): void => {
+/** Open an SSE response. Returns the sender, or undefined for a HEAD that wants headers only. */
+const openEventStream = (
+  response: ServerResponse,
+  headersOnly: boolean,
+): ((event: string, data: unknown) => void) | undefined => {
   response.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
@@ -142,10 +143,100 @@ const observe = (response: ServerResponse, headersOnly = false): void => {
     // Any buffering proxy in front of this would defeat the point of a live stream.
     "x-accel-buffering": "no",
   });
-  if (headersOnly) return void response.end();
-  const send = (event: string, data: unknown): void => {
+  if (headersOnly) {
+    response.end();
+    return undefined;
+  }
+  return (event, data) => {
     response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
+};
+
+/** Both streams keep the connection warm the same way, and neither holds the process open. */
+const keepAlive = (response: ServerResponse, close: () => void): void => {
+  const heartbeat = setInterval(() => response.write(": keepalive\n\n"), OBSERVE_HEARTBEAT_MS);
+  heartbeat.unref?.();
+  const done = (): void => {
+    clearInterval(heartbeat);
+    close();
+  };
+  response.on("close", done);
+  response.on("error", done);
+};
+
+/**
+ * The operator log feed over SSE (#374) — the delivery half of
+ * `@ambient-agent/engine/logging/operator-feed.ts`, and what #382's Logs screen consumes.
+ *
+ * Same event vocabulary as `/api/observe`: a `snapshot` of the retained records, then one `delta`
+ * per record. `?after=<seq>` resumes a reconnecting client from where it left off, and a `gap`
+ * event says outright when the answer is "further back than the feed still reaches" — the ring has
+ * a fixed size, so a client that was away long enough must be told, not quietly under-served.
+ *
+ * **A slow client is dropped, never buffered.** `response.write` returns false once the socket's
+ * buffer is full, and Node will happily keep accumulating in memory from there — which is exactly
+ * how a browser on a bad connection would grow the runtime's heap without bound. So when the socket
+ * needs to drain, the record is skipped and counted, and the count is delivered as a `gap` once the
+ * socket recovers: the client then re-reads what it missed with `?after=`. Bounded by construction,
+ * and honest about it.
+ */
+const streamLogs = (response: ServerResponse, after: number | undefined, headersOnly = false): void => {
+  const send = openEventStream(response, headersOnly);
+  if (send === undefined) return;
+  const feed = operatorFeed();
+  let lastDelivered = 0;
+  try {
+    const initial = feed.recent(after);
+    lastDelivered = initial.records.at(-1)?.seq ?? after ?? 0;
+    send("snapshot", initial);
+  } catch (cause) {
+    // Same reason `observe` guards its snapshot: this handler runs synchronously inside
+    // `createServer`, so an escape here is an uncaught exception and the operator's surface — the
+    // thing that exists to outlive what it diagnoses — is gone. `publishToOperatorFeed` is exported
+    // for non-Pino producers, so an unserializable record is reachable, and it must cost this one
+    // client its stream and nothing more.
+    process.emitWarning(cause instanceof Error ? cause : new Error(String(cause)), {
+      code: "AMBIENT_OPERATOR_FEED_THREW",
+      detail: "control plane log snapshot",
+    });
+    return void response.destroy();
+  }
+  let dropped = 0;
+  /**
+   * Confess a drop the moment we can, which is not necessarily when the next record arrives. A
+   * burst around an outage is exactly what fills a socket buffer, and an outage is exactly when the
+   * traffic then stops — so waiting for a subsequent record to carry the `gap` would leave the
+   * client watching keepalives, looking healthy, permanently missing the only records that mattered.
+   */
+  const confessDrops = (): void => {
+    if (dropped === 0 || response.writableNeedDrain) return;
+    const missed = dropped;
+    dropped = 0;
+    send("gap", { dropped: missed, resumeAfter: lastDelivered });
+  };
+  const deliver = (record: OperatorFeedRecord): void => {
+    if (response.writableNeedDrain) {
+      dropped += 1;
+      return;
+    }
+    confessDrops();
+    lastDelivered = record.seq;
+    send("delta", record);
+  };
+  // The socket recovering is the earliest honest moment to report what was skipped while it did not.
+  response.on("drain", confessDrops);
+  // Subscribed after the snapshot is written, so no record is both in the snapshot and in a delta.
+  keepAlive(response, feed.subscribe(deliver));
+};
+
+/**
+ * Snapshot-plus-deltas over SSE. The client's first read is the whole state, so attaching late and
+ * reattaching after a disconnect are the same operation and both recover everything; after that it
+ * receives one `delta` per publication and never a replay of what the snapshot already carried.
+ */
+const observe = (response: ServerResponse, headersOnly = false): void => {
+  const send = openEventStream(response, headersOnly);
+  if (send === undefined) return;
   try {
     send("snapshot", observationSnapshot());
   } catch (cause) {
@@ -160,17 +251,10 @@ const observe = (response: ServerResponse, headersOnly = false): void => {
   }
   // Subscribed only *after* the snapshot is written, so no publication is both in the snapshot and
   // in a delta, and none can slip between the two.
-  const unsubscribe = subscribeToAllObservations((observation: Observation<unknown>) =>
-    send("delta", observation),
+  keepAlive(
+    response,
+    subscribeToAllObservations((observation: Observation<unknown>) => send("delta", observation)),
   );
-  const heartbeat = setInterval(() => response.write(": keepalive\n\n"), OBSERVE_HEARTBEAT_MS);
-  heartbeat.unref?.();
-  const close = (): void => {
-    clearInterval(heartbeat);
-    unsubscribe();
-  };
-  response.on("close", close);
-  response.on("error", close);
 };
 
 /**
@@ -248,7 +332,8 @@ export const createControlPlaneServer = (
 ): Server => {
   const expected = digest(token);
   return createServer((request, response) => {
-    const path = new URL(request.url ?? "/", `http://${CONTROL_PLANE_HOST}`).pathname;
+    const url = new URL(request.url ?? "/", `http://${CONTROL_PLANE_HOST}`);
+    const path = url.pathname;
     const method = request.method ?? "GET";
     // #372's amendment: the static shell is the one unauthenticated surface, because it carries no
     // installation state. Everything under /api/ keeps #364's gate, ahead of its own routing.
@@ -267,13 +352,22 @@ export const createControlPlaneServer = (
     if (presented === undefined || !timingSafeEqual(digest(presented), expected)) {
       return respond(response, 401, { error: "unauthorized" }, { "www-authenticate": "Bearer" });
     }
-    if (path !== "/api/status" && path !== "/api/observe") return respond(response, 404, { error: "not-found" });
+    if (path !== "/api/status" && path !== "/api/observe" && path !== "/api/logs") {
+      return respond(response, 404, { error: "not-found" });
+    }
     if (method !== "GET" && method !== "HEAD") return respond(response, 405, { error: "method-not-allowed" });
-    // The observation channels carry live pairing material, so this endpoint sits behind the same
-    // gate as everything else — which, since the gate runs before API routing, it already does.
+    // The observation channels carry live pairing material and the log feed carries message text,
+    // so both endpoints sit behind the same gate as everything else — which, since `isApi` matches
+    // every `/api/` path and the gate runs ahead of API routing, they already do. #372 moved the
+    // static shell to the unauthenticated side; nothing under `/api/` went with it.
     // A HEAD gets the headers and nothing else; holding a subscription open for a body that Node
     // will discard would leak an observer per probe.
-    if (path === "/api/observe") return method === "HEAD" ? observe(response, true) : observe(response);
+    const headOnly = method === "HEAD";
+    if (path === "/api/observe") return observe(response, headOnly);
+    if (path === "/api/logs") {
+      const after = Number(url.searchParams.get("after"));
+      return streamLogs(response, Number.isSafeInteger(after) && after > 0 ? after : undefined, headOnly);
+    }
     return respond(response, 200, status());
   });
 };

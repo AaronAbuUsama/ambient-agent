@@ -48,6 +48,24 @@ describe("managed runtime health", () => {
     ).resolves.toEqual({ state: "starting", whatsapp: { phase: "pairing" } });
   });
 
+  it("accepts a degraded phase rather than calling an honest report malformed", async () => {
+    // #374 made `/health` able to say `degraded`. If this parser does not know the word, an
+    // honestly-reported dead stream is rejected as a malformed response and comes back as a bare
+    // `failed` with no reason — the CLI would lose exactly the diagnosis the runtime just gained.
+    await expect(
+      probeAmbientRuntimeHealth({
+        port: 4321,
+        installationId: "expected-installation",
+        fetch: async () =>
+          Response.json({
+            ok: false,
+            runtimeId: "expected-installation",
+            runtime: { state: "failed", whatsapp: { phase: "degraded", error: "connection_lost" } },
+          }),
+      }),
+    ).resolves.toEqual({ state: "failed", whatsapp: { phase: "degraded" } });
+  });
+
   it("keeps the live-runtime guard compatible with legacy installationId health responses", async () => {
     await expect(
       probeAmbientRuntimeHealth({

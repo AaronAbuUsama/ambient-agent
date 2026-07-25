@@ -41,7 +41,7 @@
  */
 import type { Status } from "whatsappd";
 
-import type { WhatsAppRuntimeStatus } from "./runtime-health.ts";
+import type { WhatsAppRuntimePhase, WhatsAppRuntimeStatus } from "./runtime-health.ts";
 
 /** One reading of a channel: the current value, plus everything needed to judge it. */
 export interface Observation<T> {
@@ -248,6 +248,7 @@ export const observationSnapshot = (): Record<string, Observation<unknown>> =>
 export const resetObservations = (): void => {
   registry().cells.clear();
   registry().watchers.clear();
+  delete sinceGlobal[LIVENESS_SINCE];
 };
 
 // ---------------------------------------------------------------------------
@@ -296,15 +297,246 @@ export const transportObservation = (status: Status | undefined): TransportObser
   };
 };
 
+/**
+ * **The stated bound (#374).** A dead WhatsApp stream is reflected in the reported phase within
+ * **65 seconds**, and within one event-loop tick when the stream terminates explicitly.
+ *
+ * Derived in `docs/research/whatsapp-liveness.md` §"Stated bound", from baileys' own source rather
+ * than from any timer this repository owns:
+ *
+ * - **Explicit termination** — a `<stream:error>` (the #312 `conflict: replaced`), a `CB:failure`,
+ *   or an `xmlstreamend` calls `end()` inline, which emits `connection.update {connection:'close'}`
+ *   on the same tick. whatsappd's assignment to `session.status` follows within milliseconds — it
+ *   is a queue hop through `supervise()`, plus an awaited `store.clear()` on the `logged_out` arm,
+ *   so "same tick" is baileys' emission, not whatsappd's assignment.
+ * - **Silent death** (network gone, no FIN) — baileys' keep-alive gives up when no byte has arrived
+ *   for `keepAliveIntervalMs + 5000` = 35 s, and evaluates that on a 30 s interval, so the worst
+ *   case is 35 + 30 = **65 s** after the last received byte.
+ *
+ * This layer adds **zero**: `session.status` is a synchronous getter over the same variable the
+ * push stream carries, and {@link Retained.refreshWith} reads it at observation time. So the bound
+ * above is the whole bound, and it is a property of the WhatsApp client, not of a poll we chose.
+ *
+ * It is on the wire as {@link WhatsAppLiveness.boundMs} so a screen can say "last checked" honestly
+ * instead of inventing a number. **What the tests assert is this layer's zero** — that a status the
+ * transport changed without announcing is already reported on the next read
+ * (`tests/speaker/whatsapp-runtime.test.ts`). The 35 s/30 s half is baileys' own and no fake session
+ * can exercise it; that half is what the live tier on the rig proves.
+ */
+export const WHATSAPP_LIVENESS_BOUND_MS = 65_000;
+
+/**
+ * What an operator is told about the WhatsApp connection — the vocabulary #377 (Overview) and #382
+ * (Logs) render, and the thing `/health` narrows to a phase.
+ *
+ * Derived, never stored: every field comes from whatsappd's live `session.status` plus the
+ * runtime's own startup record, read together at observation time.
+ */
+export interface WhatsAppLiveness {
+  readonly phase: WhatsAppRuntimePhase;
+  /**
+   * whatsappd's closed `FaultReason` for `degraded`/`failed`, or the runtime's own error string.
+   * This is what tells `connection_replaced` (credentials wiped, re-pair required) from
+   * `connection_lost` (it will come back by itself).
+   */
+  readonly reason?: string;
+  /** Epoch ms this phase was entered — how a screen says "online for 3h" without keeping a clock. */
+  readonly since: number;
+  /** whatsappd's `nextRetryAt` while `degraded`, so a countdown is the truth rather than a guess. */
+  readonly retryAt?: number;
+  /**
+   * Terminal in whatsappd's sense: the connection state machine will not leave this phase unaided,
+   * so nothing will improve without an operator. It does **not** mean re-pairing is futile — for
+   * `logged_out_remote` (unlinked from the phone) re-pairing is exactly the fix, while for
+   * `suspended` it is not and for `connection_replaced` the credential store was already wiped.
+   * Read `reason` to tell them apart.
+   */
+  readonly terminal?: true;
+  /** whatsappd's retry counter while `degraded` — "attempt 7" is a wedged loop, "attempt 1" is a blip. */
+  readonly retryAttempt?: number;
+  readonly accountJid?: string;
+  readonly chatTarget?: string;
+  /** {@link WHATSAPP_LIVENESS_BOUND_MS}, on the wire so a consumer never has to hard-code it. */
+  readonly boundMs: number;
+}
+
+/**
+ * whatsappd's connection phase → the reported phase. Total over `Status["phase"]`, and settled by
+ * `docs/research/whatsapp-liveness.md` §"Mapping".
+ *
+ * The two that are easy to get wrong: `authenticated` is **not** `online` — whatsappd refuses every
+ * send in that arm — and `backing_off` is `degraded` rather than `failed`, because the library
+ * recovers from it unaided and telling an operator to re-pair would be a second lie.
+ */
+const REPORTED_PHASE: Record<Status["phase"], WhatsAppRuntimePhase> = {
+  disconnected: "starting",
+  connecting: "starting",
+  pairing: "pairing",
+  authenticated: "starting",
+  online: "online",
+  backing_off: "degraded",
+  logged_out: "failed",
+  suspended: "failed",
+};
+
+/** Terminal in whatsappd's sense: the state machine will not leave it, so neither will we. */
+const TERMINAL_TRANSPORT = new Set<Status["phase"]>(["logged_out", "suspended"]);
+
+/**
+ * An unrecognised transport phase — a whatsappd minor bump adding a `Status` arm this build does
+ * not know — reports `degraded`, never the optimistic answer. `REPORTED_PHASE` is total in
+ * TypeScript, so this is unreachable at compile time and deliberately not unreachable at runtime:
+ * a phase we cannot interpret is a connection we cannot vouch for, and the whole point of #374 is
+ * that "we don't know" must not render as "fine".
+ */
+const UNKNOWN_TRANSPORT_PHASE: WhatsAppRuntimePhase = "degraded";
+
+/**
+ * Phases the *runtime* owns outright. The transport cannot express "the process never started this
+ * account" or "the operator stopped it", so when the runtime says one of these it wins — otherwise
+ * a stopped runtime whose last-seen transport was `backing_off` would report `degraded` forever.
+ */
+const RUNTIME_OWNED = new Set<WhatsAppRuntimePhase>(["disabled", "stopped", "failed"]);
+
+/**
+ * `since` for the reported phase, on `globalThis` for the same reason the registry is: `apps/cli`
+ * loads the runtime as a separately bundled dist, and a module-level variable would be two
+ * variables.
+ *
+ * **This slot is why {@link whatsappLiveness} must be called with the real transport, once per
+ * observation, and never speculatively.** It records the first time a derivation *saw* a phase, so
+ * a second derivation of the same moment from different inputs — say, one that omitted the
+ * transport and therefore concluded `online` — overwrites the entry and makes the next real
+ * derivation look like a fresh transition. The symptom is `since` resetting to now on every
+ * whatsappd backoff tick: "degraded for 0 seconds", forever, on exactly the outage `since` exists
+ * to measure. Publishers must carry liveness forward rather than re-derive it
+ * (`whatsapp-runtime.ts`), and {@link INITIAL_WHATSAPP_OBSERVATION} is hoisted for the same reason.
+ */
+const LIVENESS_SINCE = Symbol.for("ambient-agent.liveness-since");
+const sinceGlobal = globalThis as typeof globalThis & {
+  [LIVENESS_SINCE]?: { phase: WhatsAppRuntimePhase; at: number };
+};
+
+const phaseSince = (phase: WhatsAppRuntimePhase, now: number): number => {
+  const held = sinceGlobal[LIVENESS_SINCE];
+  if (held !== undefined && held.phase === phase) return held.at;
+  sinceGlobal[LIVENESS_SINCE] = { phase, at: now };
+  return now;
+};
+
+/**
+ * The one derivation. `/health`, the bridge, the CLI and `/api/observe` all report what this
+ * returns, so there is exactly one answer to "is the coworker connected right now" in the process.
+ *
+ * `transport` is whatsappd's truth, read at observation time; `status` is the runtime's startup
+ * record. Transport wins wherever it has an opinion, which is the whole point of #374 — before it,
+ * the reported phase was the startup record alone, written four times and never again.
+ *
+ * **Asymmetric in both directions, and both matter.** The startup record is a **floor on readiness**
+ * and the transport is a **ceiling on connectivity**, and what is reported is the lower of the two:
+ *
+ * - The transport may never report `online` before the runtime has finished booting. whatsappd says
+ *   `online` the moment the socket is sendable, which is well before history sync has drained and
+ *   the participation port is wired; reporting `healthy` there would replace #312's lie with its
+ *   mirror image, a coworker that answers `/health` with "yes" while it cannot answer a message.
+ * - Once the runtime *has* booted, anything short of an online transport is `degraded` — not
+ *   `starting`. whatsappd's outage cycle alternates `backing_off → connecting → backing_off`, and
+ *   `connecting` maps to `starting`, so without this an hours-old process would flap between
+ *   `failed` and `starting` through an outage and claim to be booting. `starting` after boot is not
+ *   a thing: it is a reconnection, which is a degraded connection.
+ *
+ * The second rule is #374's own addition — `docs/research/whatsapp-liveness.md` settled the
+ * transport→phase table below, not this floor/ceiling relation between the two sources.
+ */
+export const whatsappLiveness = (
+  status: WhatsAppRuntimeStatus,
+  transport: TransportObservation | undefined,
+  now: number = Date.now(),
+): WhatsAppLiveness => {
+  const derived = transport === undefined || RUNTIME_OWNED.has(status.phase) ? undefined : transport;
+  const reported =
+    derived === undefined ? status.phase : (REPORTED_PHASE[derived.phase] ?? UNKNOWN_TRANSPORT_PHASE);
+  const booted = status.phase === "online";
+  const phase =
+    reported === "online" && !booted
+      ? status.phase
+      : reported === "starting" && booted
+        ? "degraded"
+        : reported;
+  const reason = derived?.reason ?? status.error;
+  return {
+    phase,
+    ...(reason === undefined ? {} : { reason }),
+    since: phaseSince(phase, now),
+    ...(derived?.nextRetryAt === undefined ? {} : { retryAt: derived.nextRetryAt }),
+    ...(derived?.retryAttempt === undefined ? {} : { retryAttempt: derived.retryAttempt }),
+    ...(derived !== undefined && TERMINAL_TRANSPORT.has(derived.phase) ? { terminal: true as const } : {}),
+    ...(status.accountJid === undefined ? {} : { accountJid: status.accountJid }),
+    ...(status.chatTarget === undefined ? {} : { chatTarget: status.chatTarget }),
+    boundMs: WHATSAPP_LIVENESS_BOUND_MS,
+  };
+};
+
 export interface WhatsAppObservation {
-  /** What the runtime reports about its own startup. Unchanged in meaning; #374 owns deriving from it. */
+  /** What the runtime reports about its own startup. Raw input to `liveness`, not the answer. */
   readonly status: WhatsAppRuntimeStatus;
   /** Read from `session.status` at observation time, so it cannot be stale by construction. */
   readonly transport?: TransportObservation;
+  /** The derived answer — what an operator is told. Always present; see {@link whatsappLiveness}. */
+  readonly liveness: WhatsAppLiveness;
 }
 
+/**
+ * The channel value for a `(status, transport)` pair, with liveness derived once.
+ *
+ * **Read path only.** Call it from a projection, where `transport` is the live getter's current
+ * value — never from a publisher with `transport: undefined` as a placeholder, because the
+ * derivation stamps `since` (see {@link LIVENESS_SINCE}) and a transport-blind derivation of a
+ * moment the transport had an opinion about is a wrong answer that outlives itself. Publishers use
+ * {@link whatsAppStatusUpdate}.
+ */
+export const whatsAppObservationOf = (
+  status: WhatsAppRuntimeStatus,
+  transport: TransportObservation | undefined,
+): WhatsAppObservation => ({
+  status,
+  ...(transport === undefined ? {} : { transport }),
+  liveness: whatsappLiveness(status, transport),
+});
+
+/**
+ * The channel value for a publisher recording a new *startup* fact. Liveness and transport are
+ * carried forward from the current observation rather than re-derived: the projection re-derives
+ * both on the very next read, so deriving here would change nothing a reader sees and would leave
+ * behind a `since` stamped from inputs that were never true together.
+ */
+export const whatsAppStatusUpdate = (
+  current: WhatsAppObservation,
+  status: WhatsAppRuntimeStatus,
+): WhatsAppObservation => ({ ...current, status });
+
+/**
+ * The status every pre-#374 consumer already reads (`/health`, the bridge, `ambient-agent doctor`),
+ * with its phase replaced by the derived one. Nothing downstream had to change to stop lying: they
+ * were all reading one field, so making that field honest is the whole fix.
+ */
+export const reportedWhatsAppStatus = (observation: WhatsAppObservation): WhatsAppRuntimeStatus => ({
+  ...observation.status,
+  phase: observation.liveness.phase,
+  ...(observation.status.error === undefined && observation.liveness.reason !== undefined
+    ? { error: observation.liveness.reason }
+    : {}),
+});
+
+/**
+ * Built once, at module load, rather than per call: `observed` ignores `initial` after the channel
+ * exists, but the expression is still evaluated every time — and evaluating it would ask the
+ * derivation for `disabled`, resetting `since` under whatever phase is actually live.
+ */
+const INITIAL_WHATSAPP_OBSERVATION: WhatsAppObservation = whatsAppObservationOf({ phase: "disabled" }, undefined);
+
 export const whatsappObservation = (): Retained<WhatsAppObservation> =>
-  observed<WhatsAppObservation>(OBSERVATION_CHANNELS.whatsapp, { status: { phase: "disabled" } });
+  observed<WhatsAppObservation>(OBSERVATION_CHANNELS.whatsapp, INITIAL_WHATSAPP_OBSERVATION);
 
 export type PairingObservation =
   | { readonly kind: "idle" }

@@ -398,8 +398,13 @@ export const createWhatsAppAccount = (options: CreateWhatsAppAccountOptions): Ma
   return {
     authenticate,
     transport: () => session.status,
-    observeTransport: (handler) =>
-      typeof session.onStatus === "function" ? session.onStatus(handler) : () => undefined,
+    // Omitted entirely when the session cannot be observed, rather than defined as a no-op that
+    // returns a no-op unsubscribe. The runtime warns when this capability is absent (#374); a
+    // stub that silently registers nothing would defeat that warning and take every live surface
+    // — the operator feed, the observation deltas — quietly offline with no diagnostic anywhere.
+    ...(typeof session.onStatus === "function"
+      ? { observeTransport: (handler: (status: Status) => void) => session.onStatus(handler) }
+      : {}),
     synchronizedChats: async (signal) => {
       throwIfAborted(signal);
       if (authenticated === undefined) {

@@ -10,10 +10,15 @@ import {
   resetObservations,
   setupObservation,
   subscribeToAllObservations,
+  reportedWhatsAppStatus,
   transportObservation,
+  whatsAppObservationOf,
+  whatsappLiveness,
   whatsappObservation,
+  WHATSAPP_LIVENESS_BOUND_MS,
   type Observation,
 } from "../../packages/installation/src/observation.ts";
+import { ambientRuntimeHealth } from "../../packages/installation/src/runtime-health.ts";
 
 beforeEach(() => {
   resetObservations();
@@ -23,18 +28,20 @@ beforeEach(() => {
 const nonce = () => randomBytes(8).toString("hex");
 
 /**
- * How long the staleness tests wait for a ~20ms renewal deadline to elapse and be announced.
+ * The staleness tests turn on a renewal deadline elapsing, which is a *clock* fact, not a scheduling
+ * one — so they drive the clock instead of racing it.
  *
- * `vi.waitFor` defaults to a 1s budget, which is not the deadline itself but the budget for a loaded
- * runner to get around to firing an unref'd `setTimeout` and running the poll. A full-suite Node 24
- * job exceeded it and turned "pushes the staleness transition to subscribers" red on `main` at
- * `7dd8750` — a scheduling delay, not a seam defect. Widened rather than made clock-dependent: these
- * assertions still fail if the transition is never announced, which is the whole point of them.
+ * They previously waited on a real ~20ms timer. That is not the deadline, it is a bet on how soon a
+ * loaded runner gets around to firing an unref'd `setTimeout` and running the poll, and the bet lost
+ * twice: at vitest's 1s default (red on `main` at `7dd8750`, widened to 4s by #394) and then at 4s
+ * on a Node 24 full-suite job. Widening again would just move the next failure.
  *
- * Kept under vitest's 5s per-test timeout on purpose. Overshooting it would mean a genuine
- * regression surfaced as an opaque test timeout instead of the assertion that names what broke.
+ * Fake timers remove the runner from the question. `advanceTimersByTime` fires the expiry timer and
+ * moves `Date.now()` past `freshUntil` in one deterministic step, so these assertions still fail if
+ * the transition is never announced — which is the whole point of them — and cannot fail for any
+ * other reason. Verified non-vacuous by removing `notify()` from the cell's expiry timer.
  */
-const STALENESS_BUDGET_MS = 4_000;
+const AFTER_THE_DEADLINE_MS = 25;
 
 describe("the retained-state observation seam", () => {
   it("gives a subscriber that attaches after the publication the current value, with no replay", () => {
@@ -98,31 +105,47 @@ describe("the retained-state observation seam", () => {
     expect(second).toEqual([]);
   });
 
-  it("tells a value that went stale from one that is legitimately idle", async () => {
-    const perishable = observed("perishable", "qr-1");
-    const idle = observed("idle", "online");
+  it("tells a value that went stale from one that is legitimately idle", () => {
+    vi.useFakeTimers();
+    try {
+      const perishable = observed("perishable", "qr-1");
+      const idle = observed("idle", "online");
 
-    perishable.publish("qr-2", { freshUntil: Date.now() + 20 });
-    idle.publish("online");
+      perishable.publish("qr-2", { freshUntil: Date.now() + 20 });
+      idle.publish("online");
 
-    expect(perishable.snapshot().stale).toBe(false);
-    await vi.waitFor(() => expect(perishable.snapshot().stale).toBe(true), { timeout: STALENESS_BUDGET_MS });
-    // No renewal deadline was promised, so nothing to break: a silent healthy socket is not stale.
-    expect(idle.snapshot().stale).toBe(false);
-    // Renewal clears it — rotation is health, not a restart.
-    perishable.publish("qr-3", { freshUntil: Date.now() + 10_000 });
-    expect(perishable.snapshot().stale).toBe(false);
+      expect(perishable.snapshot().stale).toBe(false);
+      vi.advanceTimersByTime(AFTER_THE_DEADLINE_MS);
+      expect(perishable.snapshot().stale).toBe(true);
+      // No renewal deadline was promised, so nothing to break: a silent healthy socket is not stale.
+      expect(idle.snapshot().stale).toBe(false);
+      // Renewal clears it — rotation is health, not a restart.
+      perishable.publish("qr-3", { freshUntil: Date.now() + 10_000 });
+      expect(perishable.snapshot().stale).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it("pushes the staleness transition to subscribers, not only to readers", async () => {
-    const channel = observed("unrenewed", "qr-1");
-    const deltas: Observation<string>[] = [];
-    channel.subscribe((observation) => deltas.push(observation));
+  it("pushes the staleness transition to subscribers, not only to readers", () => {
+    vi.useFakeTimers();
+    try {
+      const channel = observed("unrenewed", "qr-1");
+      const deltas: Observation<string>[] = [];
+      channel.subscribe((observation) => deltas.push(observation));
 
-    channel.publish("qr-2", { freshUntil: Date.now() + 20 });
+      channel.publish("qr-2", { freshUntil: Date.now() + 20 });
+      expect(deltas.at(-1)?.stale).toBe(false);
 
-    await vi.waitFor(() => expect(deltas.at(-1)?.stale).toBe(true), { timeout: STALENESS_BUDGET_MS });
-    expect(deltas[0]?.stale).toBe(false);
+      // The deadline passes with nothing renewing it. A reader would compute staleness for itself;
+      // a *subscriber* only learns about it if the cell announces it, which is what this pins.
+      vi.advanceTimersByTime(AFTER_THE_DEADLINE_MS);
+
+      expect(deltas.at(-1)?.stale).toBe(true);
+      expect(deltas[0]?.stale).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("projects a live source at read time instead of shadowing it with a cached copy", () => {
@@ -248,7 +271,118 @@ describe("the channels the seam is consolidating", () => {
   });
 
   it("starts liveness at disabled rather than at nothing", () => {
-    expect(whatsappObservation().snapshot().value).toEqual({ status: { phase: "disabled" } });
+    expect(whatsappObservation().snapshot().value).toMatchObject({
+      status: { phase: "disabled" },
+      liveness: { phase: "disabled", boundMs: WHATSAPP_LIVENESS_BOUND_MS },
+    });
     expect(whatsappObservation().snapshot().stale).toBe(false);
+  });
+});
+
+describe("the derived WhatsApp liveness (#374)", () => {
+  const booted = { phase: "online" } as const;
+
+  it("maps every whatsappd connection phase, so no transport state is unaccounted for", () => {
+    // Total by construction: an unmapped arm would fall back to the startup record, which is the
+    // exact failure #312 was. `Status["phase"]` is whatsappd's closed union, so this list is it.
+    // Read against a runtime that is still booting, which is where the raw table shows through:
+    // after boot the reconnect rule folds the `starting` arms into `degraded` (tested below).
+    const mapped = (phase: string) => whatsappLiveness({ phase: "starting" }, { phase } as never).phase;
+
+    expect(mapped("disconnected")).toBe("starting");
+    expect(mapped("connecting")).toBe("starting");
+    expect(mapped("pairing")).toBe("pairing");
+    // Authenticated is draining/syncing: whatsappd refuses every send here, so it is not online.
+    expect(mapped("authenticated")).toBe("starting");
+    // Retrying on its own — degraded, not failed: telling an operator to re-pair would be a lie.
+    expect(mapped("backing_off")).toBe("degraded");
+    expect(mapped("logged_out")).toBe("failed");
+    expect(mapped("suspended")).toBe("failed");
+    // `online` needs a booted runtime to show through — that is the floor rule, tested below.
+    expect(whatsappLiveness(booted, { phase: "online" }).phase).toBe("online");
+  });
+
+  it("reports an unknown future transport phase as degraded rather than as fine", () => {
+    // whatsappd is free to add a `Status` arm in a minor bump, and `transportObservation` is
+    // explicitly forward-compatible. An uninterpretable phase must not fall through to the
+    // optimistic answer — "we cannot tell" is not "healthy".
+    expect(whatsappLiveness(booted, { phase: "quantum_entangled" } as never).phase).toBe("degraded");
+  });
+
+  it("calls a reconnect after boot degraded, not starting", () => {
+    // whatsappd's outage cycle alternates backing_off → connecting → backing_off. Without this an
+    // hours-old process reports `starting` for roughly half of an outage — reading as a cold boot,
+    // and folding to AmbientRuntimeState "starting", which is the optimistic answer a down
+    // transport is never allowed to give.
+    expect(whatsappLiveness(booted, { phase: "connecting", retryAttempt: 3 } as never).phase).toBe("degraded");
+    expect(whatsappLiveness(booted, { phase: "disconnected" }).phase).toBe("degraded");
+    expect(
+      ambientRuntimeHealth(reportedWhatsAppStatus(whatsAppObservationOf(booted, { phase: "connecting" }))).state,
+    ).toBe("failed");
+    // Before boot, the same transport phase is exactly what it says: still starting.
+    expect(whatsappLiveness({ phase: "starting" }, { phase: "connecting" }).phase).toBe("starting");
+  });
+
+  it("carries whatsappd's retry counter, so a blip is distinguishable from a wedged loop", () => {
+    expect(
+      whatsappLiveness(booted, { phase: "backing_off", reason: "connection_lost", retryAttempt: 7 }).retryAttempt,
+    ).toBe(7);
+  });
+
+  it("lets the transport report worse than the runtime believes, but never better", () => {
+    // The asymmetry that keeps #312's fix from becoming its mirror image. whatsappd says `online`
+    // the moment the socket is sendable, which is before history has drained and the participation
+    // port is wired — reporting healthy there would be a coworker that answers /health but not a
+    // message.
+    expect(whatsappLiveness({ phase: "starting" }, { phase: "online" }).phase).toBe("starting");
+    expect(whatsappLiveness(booted, { phase: "online" }).phase).toBe("online");
+    // Worse, always, in both directions.
+    expect(whatsappLiveness(booted, { phase: "backing_off" }).phase).toBe("degraded");
+    expect(whatsappLiveness({ phase: "starting" }, { phase: "backing_off" }).phase).toBe("degraded");
+  });
+
+  it("keeps the phases the runtime owns, which the transport cannot express", () => {
+    // A stopped runtime whose last-seen transport was backing off must not read `degraded` forever.
+    expect(whatsappLiveness({ phase: "stopped" }, { phase: "backing_off" }).phase).toBe("stopped");
+    expect(whatsappLiveness({ phase: "failed", error: "boom" }, { phase: "online" })).toMatchObject({
+      phase: "failed",
+      reason: "boom",
+    });
+    expect(whatsappLiveness({ phase: "disabled" }, undefined).phase).toBe("disabled");
+  });
+
+  it("carries the fault reason, the retry deadline, and whether re-pairing can help", () => {
+    const retryAt = Date.now() + 4_000;
+    expect(
+      whatsappLiveness(booted, { phase: "backing_off", reason: "connection_lost", nextRetryAt: retryAt }),
+    ).toMatchObject({ phase: "degraded", reason: "connection_lost", retryAt });
+    // `connection_replaced` wiped the credential store: terminal, and no countdown is offered.
+    const replaced = whatsappLiveness(booted, { phase: "logged_out", reason: "connection_replaced" });
+    expect(replaced).toMatchObject({ phase: "failed", reason: "connection_replaced", terminal: true });
+    expect(replaced.retryAt).toBeUndefined();
+  });
+
+  it("holds `since` across readings of an unchanged phase and moves it when the phase changes", () => {
+    // A screen says "online for 3h" off this, so it must not reset every time somebody looks.
+    const entered = whatsappLiveness(booted, { phase: "online" }, 1_000).since;
+    expect(whatsappLiveness(booted, { phase: "online" }, 9_000).since).toBe(entered);
+    expect(whatsappLiveness(booted, { phase: "backing_off" }, 9_000).since).toBe(9_000);
+  });
+
+  it("gives every existing consumer the derived phase without changing the shape they read", () => {
+    // The whole reason nothing downstream had to be rewritten: `/health`, the bridge and the CLI
+    // all read one field, so making that field honest is the entire fix.
+    const observation = whatsAppObservationOf({ phase: "online", accountJid: "15550000000@s.whatsapp.net" }, {
+      phase: "backing_off",
+      reason: "connection_lost",
+    });
+
+    expect(reportedWhatsAppStatus(observation)).toMatchObject({
+      phase: "degraded",
+      accountJid: "15550000000@s.whatsapp.net",
+      error: "connection_lost",
+    });
+    // A dead transport is never healthy, and never merely "starting".
+    expect(ambientRuntimeHealth(reportedWhatsAppStatus(observation)).state).toBe("failed");
   });
 });

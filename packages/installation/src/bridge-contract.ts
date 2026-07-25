@@ -51,7 +51,10 @@ export const bridgePairing = (status: WhatsAppRuntimeStatus): BridgePairing => {
     return { status: "pairing", ...status.pairing };
   }
   const accountJid = status.accountJid?.trim();
-  return status.phase === "online" && accountJid
-    ? { status: "paired", accountJid }
-    : { status: "not_pairing" };
+  // Keyed on the account, not on `online`. Since #374 the phase is derived from the live transport,
+  // so a paired account whose socket is briefly `degraded` would otherwise flip to `not_pairing` —
+  // reporting that pairing is not done, which is false and is a different question from whether the
+  // connection is up. `accountJid` is set only once authentication succeeds and is dropped by every
+  // terminal status write, so its presence is exactly "this installation is paired right now".
+  return accountJid ? { status: "paired", accountJid } : { status: "not_pairing" };
 };
