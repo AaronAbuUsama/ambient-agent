@@ -1,46 +1,65 @@
 # Receipt — node #375, prompt and skill store with customisation tracking
 
 - **Node:** #375 · surface **backend** · branch `agent/coder/issue-375`
-- **Proven head:** see §1 (base `21a2905`, which carries #364, #369, #365)
+- **Proven head:** see §1 (base `15421b9`, which carries #366's single resolution seam)
 - **Captured by:** the node's teammate. Tiers 3–5 are the orchestrator's, post-merge.
 
-An earlier head (`b4af096`) was proven and then superseded: the independent review found that
-`getPromptStore()` self-filled an unbound slot, which would let a boot-order mistake serve prompts
-from a private in-memory store while operator edits landed in the durable file, silently. That and
-four other findings were fixed and **tier 1 and tier 2 were re-run from scratch** against the head
-below. Only that run is reported. §7 lists what the review changed.
+Two heads were proven and superseded before this one; **only the run below is reported**, because
+the head that was proved must be the head that merges.
+
+1. `b4af096` — superseded by the independent review, which found that `getPromptStore()` self-filled
+   an unbound slot: a boot-order mistake would have served prompts from a private in-memory store
+   while operator edits landed in the durable file, silently. That plus four other findings are
+   fixed; §7 lists them.
+2. `f3ea299` / `95cc598` — superseded by the rebase onto `15421b9` (#366), which moved every
+   configuration and secret reader onto `packages/installation/src/configuration-source.ts`. The
+   prompt store now rides that seam rather than opening the database beside it; §8 covers the rebase.
 
 ## Tier table
 
 | tier | contract | verdict | evidence |
 |---|---|---|---|
 | 1 mechanical | `pnpm run typecheck && pnpm test` green, covering seed, re-seed, preserve-on-upgrade, revert, and invalid-save-refused | **PASS** | §1 |
-| 2 integrated | `pnpm run evals:deterministic` green with prompts served from the store | **BLOCKED — pre-existing red on `main`, unchanged by this node** | §2 |
+| 2 integrated | `pnpm run evals:deterministic` green with prompts served from the store | **NOT PROVEN** — owner ruling, see §2 | §2 |
 | 3 live (WhatsApp, after merge) | distinctive instruction added through the store, obeyed under a nonce, reverted | orchestrator | §3 |
 | 4 readback | store shows customised + seed version, unmarked after revert; archive holds both turns | orchestrator | §3 |
 | 5 observed | both turns in Braintrust, the first carrying the edited instruction | orchestrator | §3 |
 
-## 1. Tier 1 — mechanical · 2026-07-25T16:44:32Z → 16:46:10Z
+## 1. Tier 1 — mechanical · 2026-07-25T17:33Z → 17:34:21Z
 
-Run against the exact committed head with a clean tree (`git status --short` empty).
+Run against the exact committed head with a clean tree (`git status --short` empty), after the
+rebase onto `15421b9`.
 
 ```
 $ git rev-parse HEAD
-f3ea2996379695273af435acda2b637a84c0292c
+6e1b11a1976f0ccae40c05dc642e07cb0b59da70
 $ pnpm run typecheck
 > tsc --noEmit                                    (no output — clean)
 $ pnpm test
- Test Files  85 passed | 1 skipped (86)
-      Tests  886 passed | 4 skipped (890)
-   Duration  72.55s
+ Test Files  88 passed | 1 skipped (89)
+      Tests  932 passed | 4 skipped (936)
+   Duration  75.18s
 ```
 
-Full tail: `logs/tier1-test.txt`. Baseline on `21a2905` was 880 passed; this node adds 21 tests in
-`tests/managed/prompt-store.test.ts` and changes one existing assertion in
-`tests/speaker/participation.test.ts` (the Speaker's skill is now resolved, not imported) and two
-`ManagedPaths` fixtures (`managedConfigStore` is now a named managed path).
+`6e1b11a` is every line of code that merges. The only commit after it is this receipt, which touches
+`docs/receipts/375-2026-07-25/` and nothing else — verifiable with
+`git diff --stat 6e1b11a..HEAD`. A commit cannot state its own hash, so the code head is named here
+and the branch head is reported to the orchestrator alongside the CI run that covers it.
+
+Full tail: `logs/tier1-test.txt`. This node adds 21 tests in `tests/managed/prompt-store.test.ts`,
+changes one existing assertion in `tests/speaker/participation.test.ts` (the Speaker's skill is now
+resolved, not imported), and no longer adds a `ManagedPaths` entry — #366 landed the same path as
+`managedConfigDatabase`, so the rebase drops this node's redundant `managedConfigStore`.
+
+**One local flake, disclosed:** on an earlier attempt at this same head,
+`tests/managed/tenant-credentials.test.ts > serializes model credential rotation across independent
+processes` timed out at 15s. It spawns two `tsx` child processes and is timing-sensitive on a loaded
+machine. It reproduces **identically on clean `main` (`15421b9`)** with none of this node's changes
+present, so it is environmental and not attributable here; it passes in the clean run reported above,
+and CI is green at this head on both Node 22 and Node 24.
 
 `tests/managed/prompt-store.test.ts` covers, per acceptance criterion:
+
 
 | criterion | test |
 |---|---|
@@ -58,10 +77,10 @@ Durability and the operator surface are covered separately: "survives a restart 
 customised mark across it" (a real SQLite file, closed and reopened, re-seeded with a newer shipped
 version) and "lists, edits, refuses, and reverts against a seeded data directory" (`runCli`).
 
-## 2. Tier 2 — integrated · 2026-07-25T16:47Z
+## 2. Tier 2 — integrated · **NOT PROVEN** (owner ruling) · 2026-07-25T17:34Z
 
 ```
-$ pnpm run evals:deterministic          (head f3ea299)
+$ pnpm run evals:deterministic          (head 6e1b11a)
  Test Files  2 failed | 3 passed | 5 skipped (10)
       Tests  5 failed | 10 passed | 22 skipped (37)
 ```
@@ -73,6 +92,14 @@ $ git switch --detach 21a2905 && pnpm run evals:deterministic
  Test Files  2 failed | 3 passed | 5 skipped (10)
       Tests  5 failed | 10 passed | 22 skipped (37)
 ```
+
+**Ruling:** the orchestrator reproduced this on clean `main` (`a7cedb1`) — same 5 failed / 10 passed
+/ 22 skipped — and traced the cause to PR **#317** (`f06208b`, 2026-07-23), which moved the issue
+tools to the Brain while `issue-management.eval.ts:7` kept driving
+`createFlueAgentHarness({ agentName: "speaker" })` and asserting `github_create_issue`. Nothing
+caught it because **CI never runs the evals**. The owner has ruled: **merge with tier 2 recorded NOT
+PROVEN**, with the eval repair filed as its own node. It is not charged to this node, and this node
+was not asked to fix it.
 
 Logs: `logs/tier2-evals-head.txt`, `logs/tier2-evals-baseline-21a2905.txt`,
 `logs/tier2-evals-per-test.txt`. Same five tests, same failure, both before and after.
@@ -100,8 +127,8 @@ Planner and Verifier prose evals in particular now grade the catalog's shipped i
 than a fixture-local copy of them, which is what makes "the evals still describe what runs" true for
 those two roles rather than merely claimed.
 
-**This is the orchestrator's call, not mine to lower.** The contract asks for green; the tree was
-not green when this node started, for a reason this node does not touch.
+The contract asked for green; the tree was not green when this node started, for a reason this node
+does not touch. It was reported rather than lowered, and the ruling above is what settled it.
 
 ## 3. Tiers 3–5 — what the orchestrator runs, post-merge
 
@@ -161,3 +188,20 @@ Five reviewers ran against `b4af096`. Fixed here:
 Not fixed, deliberately: WAL journal mode (rollback journal is fine at prompt-edit frequency),
 memoizing skill construction per agent turn (not on any profile yet), and a build-version stamp to
 detect a stale CLI validating against a newer runtime's rules (real, but its own node's work).
+
+## 8. The rebase onto #366
+
+`main` moved to `15421b9` (#366, the single resolution seam) while this node was finishing, and the
+PR went `CONFLICTING`. Resolved **through** the seam rather than around it:
+
+| conflict | resolution |
+|---|---|
+| `paths.ts` — both nodes added the same path under different names | #366's `managedConfigDatabase` wins; this node's `managedConfigStore` is dropped as redundant, along with its two test fixtures. Its doc comment now records that the prompt store shares that file and that two processes open it. |
+| `managed-config-store.ts` — #366 added `deleteSecret`, this node added `promptRows` | both kept; the additions are orthogonal |
+| `apps/runtime/src/app.ts` — #366 stopped opening a store here (the CLI opens the seam and passes it in) | the prompt store binds from `source.store.promptRows`. **No second store is opened**, which is strictly better than the pre-rebase code: one file, one opener, one seam. |
+| `apps/cli/src/prompt-store.ts` — opened the database itself | now `withManagedConfigurationSource(paths, …)`, #366's own helper, which is exactly the open/use/close this node had written by hand. The four `prompt` commands became async. |
+
+The `SKILL.md` → `skill-body.md` rename survived intact: all six documents plus the `raw-md.d.ts`
+replacement for `flue-skill.d.ts` are present, `pnpm run build:dist` still succeeds (exercised by
+`tests/packaging/packed-cli.test.ts`, green), and the seeding path that forced the rename is
+unchanged — #366 touched credential readers, not the skill-import path.
