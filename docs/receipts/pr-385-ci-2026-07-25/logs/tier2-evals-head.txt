@@ -1,0 +1,11 @@
+$ pnpm run evals:deterministic   # at af47e1d (this head)
+      Tests  5 failed | 10 passed | 22 skipped (37)
+ FAIL  packages/agents/evals/participation-mechanics.eval.ts > Participation mechanics through coalesced Windows > records the complete issue capture and its chat receipt
+ FAIL  packages/agents/src/capabilities/issue-management/evals/issue-management.eval.ts > Issue Management deterministic contract > corrects and organizes one existing issue, then acknowledges it once
+ FAIL  packages/agents/src/capabilities/issue-management/evals/issue-management.eval.ts > Issue Management deterministic contract > creates one complete feature request with its audience and motivation
+ FAIL  packages/agents/src/capabilities/issue-management/evals/issue-management.eval.ts > Issue Management deterministic contract > creates one complete report after duplicate search
+ FAIL  packages/agents/src/capabilities/issue-management/evals/issue-management.eval.ts > Issue Management deterministic contract > redirects an existing report without a create mutation
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+ Test Files  2 failed | 3 passed | 5 skipped (10)
+      Tests  5 failed | 10 passed | 22 skipped (37)
+ Test Files  2 failed | 3 passed | 5 skipped (10)
