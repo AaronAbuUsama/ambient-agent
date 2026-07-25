@@ -1,32 +1,13 @@
-import { readFileSync } from "node:fs";
 import { defineConfig } from "vite-plus";
 
-export default defineConfig(({ mode }) => ({
-  plugins:
-    mode === "test"
-      ? [
-          {
-            name: "flue-test-skill-reference",
-            enforce: "pre",
-            load(id) {
-              if (!id.endsWith("/SKILL.md")) return;
-              const frontmatter = readFileSync(id, "utf8").match(/^---\n([\s\S]*?)\n---/u)?.[1];
-              const name = frontmatter?.match(/^name:\s*(.+)$/mu)?.[1]?.trim();
-              const description = frontmatter?.match(/^description:\s*(.+)$/mu)?.[1]?.trim();
-              if (!name || !description) throw new Error(`Test skill ${id} must declare name and description`);
-              return `export default ${JSON.stringify({
-                __flueSkillReference: true,
-                id: `test:${name}`,
-                name,
-                description,
-              })};`;
-            },
-          },
-        ]
-      : [],
+// The test-mode SKILL.md stub is gone with #375: every skill body is now imported as text (`?raw`,
+// which Vite serves natively) and turned into a real skill reference from the prompt store, so the
+// tests exercise the same skill construction production does.
+export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    setupFiles: ["tests/setup-prompt-store.ts"],
     restoreMocks: true,
   },
   fmt: {
@@ -45,4 +26,4 @@ export default defineConfig(({ mode }) => ({
     dts: false,
     sourcemap: true,
   },
-}));
+});

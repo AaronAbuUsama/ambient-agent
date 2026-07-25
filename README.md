@@ -241,11 +241,11 @@ Capabilities are the canonical extension unit. The two shipped examples live tog
 ```text
 src/capabilities/
 ├── whatsapp-participation/
-│   ├── SKILL.md
+│   ├── skill-body.md
 │   ├── tools.ts
 │   └── whatsapp-port.ts
 └── issue-management/
-    ├── SKILL.md
+    ├── SKILL.md          # not mounted on any agent, so not in the prompt store
     ├── tools.ts
     ├── issue-repository.ts
     ├── operation-store.ts
@@ -254,23 +254,26 @@ src/capabilities/
 
 To add Code Review, for example:
 
-1. Add `src/capabilities/code-review/SKILL.md` with the review policy and its own version.
+1. Add `src/capabilities/code-review/skill-body.md` with the review policy and its own version.
 2. Define provider-neutral review interfaces rather than exposing Octokit objects to the Agent.
 3. Add narrowly scoped, typed Tools for direct reads and effects.
 4. Put real GitHub mechanics in a private adapter under `src/host/`.
 5. Configure the adapter from managed dependencies in `src/app.ts`.
-6. Import the Skill and Tool factory in `src/agents/speaker.ts`.
+6. Add the skill to the shipped prompt catalog (`packages/agents/src/prompts/catalog.ts`) and mount it in
+   `src/agents/speaker.ts` alongside its Tool factory.
 7. Add deterministic contract tests, behavioral Evaluation Scenarios, and separately gated live evidence.
 
-Registration is explicit—there is no dynamic plugin scan:
+Registration is explicit—there is no dynamic plugin scan. Skill bodies and instructions resolve from the prompt
+store (#375), which is seeded from the catalog on boot, so editing one afterwards is an edit, not a release:
 
 ```ts
-import codeReview from "../capabilities/code-review/SKILL.md" with { type: "skill" };
+import { PROMPT_IDS, storedInstructions, storedSkill } from "../prompts/catalog.ts";
 import { createCodeReviewTools } from "../capabilities/code-review/tools.js";
 
 export default defineAgent(({ id }) => ({
-  skills: [whatsappParticipation, issueManagement, codeReview],
+  skills: [storedSkill(PROMPT_IDS.whatsappParticipationSkill), storedSkill(PROMPT_IDS.codeReviewSkill)],
   tools: [...createWhatsAppParticipationTools(id), ...createIssueManagementTools(), ...createCodeReviewTools()],
+  instructions: storedInstructions(PROMPT_IDS.speaker),
 }));
 ```
 

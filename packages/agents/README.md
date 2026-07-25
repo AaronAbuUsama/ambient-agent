@@ -10,7 +10,9 @@ Everything that thinks. Two kinds of thing live here, with an enforced arrow bet
   precisely the frame a skill cannot carry (recorded on #131).
 - **`capabilities/` — shared units of work, agent-agnostic.** A Capability is "a cohesive
   kind of work the Ambient Agent can perform for the group... the canonical way the product
-  grows" (`CONTEXT.md`). Each bundle is: `SKILL.md` (the Skill — policy and process) +
+  grows" (`CONTEXT.md`). Each bundle is: `skill-body.md` (the Skill — policy and process;
+  an Agent Skills document, named this rather than `SKILL.md` because Flue reserves that
+  exact filename for compiled skill imports and #375 seeds the prompt store from the text) +
   `tools.ts` (the Tools — validated operations) + a port at the seam + `evals/` (the
   capability's own proof: its deterministic and `.live` suites). Any agent may mount
   any capability; **capabilities may never import from an agent folder** (enforced by
@@ -22,7 +24,7 @@ Everything that thinks. Two kinds of thing live here, with an enforced arrow bet
 | Capability | Skill | Tools | Port / seam |
 |---|---|---|---|
 | `capabilities/issue-management` | Turn chat into well-formed GitHub issues (`SKILL.md` + `references/{labels,report-templates}.md`) | `createIssueManagementTools` — 10 tools with duplicate detection and Operation Identity uncertainty handling | `IssueRepository` (12-method port; production adapter: `@ambient-agent/installation/github-issue-repository.ts`, fakes in test-support) |
-| `capabilities/whatsapp-participation` | How to behave in a group chat (`SKILL.md` + `references/rubric-traceability.md`) | `createWhatsAppParticipationTools(id)` — Say, React, read thread, search history; chat-bound per agent instance | `WhatsAppParticipationPort` (configured by the server's WhatsApp runtime; fakes in test-support) |
+| `capabilities/whatsapp-participation` | How to behave in a group chat (`skill-body.md` + `references/rubric-traceability.md`) | `createWhatsAppParticipationTools(id)` — Say, React, read thread, search history; chat-bound per agent instance | `WhatsAppParticipationPort` (configured by the server's WhatsApp runtime; fakes in test-support) |
 
 Agents: `speaker/` — "a continuing private ambient agent instance identified by its
 managed WhatsApp chatId." A second agent arrives as a sibling folder mounting the same
@@ -37,8 +39,9 @@ Worked example: a **codography** agent that reviews matching PRs. Five steps, in
    existing ones (`skills: [issueManagement]`) and/or a new one (step 2). Sibling files as
    needed: `compose.ts` (its routes), `dispatch.ts` (its input type + dispatch pairing),
    `observer.ts` (its event vocabulary).
-2. **Capability, if the work is new** — `src/capabilities/pr-review/`: `SKILL.md`
-   (review policy), `tools.ts` (validated operations), and a port for the outside world
+2. **Capability, if the work is new** — `src/capabilities/pr-review/`: `skill-body.md`
+   (review policy, added to `src/prompts/catalog.ts` so the store serves it),
+   `tools.ts` (validated operations), and a port for the outside world
    (the `IssueRepository` pattern: interface here, Octokit adapter in
    `@ambient-agent/installation`). Capabilities never import an agent folder — that's the
    enforced seam that lets Speaker mount `pr-review` later for free.

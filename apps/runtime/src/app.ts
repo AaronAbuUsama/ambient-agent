@@ -25,6 +25,8 @@ import {
   readProvisionedGitHubAppCredential,
   type ManagedConfigurationSource,
 } from "@ambient-agent/installation/configuration-source.ts";
+import { configurePromptStore, createPromptStore } from "@ambient-agent/engine/prompts/store.ts";
+import { promptStore } from "@ambient-agent/agents/prompts/catalog.ts";
 import { applyManagedAuthorization, reloadAuthorizationOnSignal } from "./host/authorization-reload.ts";
 import { createOctokitIssueRepository } from "@ambient-agent/installation/github-issue-repository.ts";
 import { invoke } from "@flue/runtime";
@@ -181,6 +183,13 @@ export const createAmbientAgentApp = async ({
   // S8 (#179): the DB-backed live source for authorization-knob reloads is now the same seam every
   // credential resolves through (#366) — the CLI opened it and seeded it from config.json (the
   // durable source of truth) before boot, so there is no second store to open here.
+  // #375: the prompt store rides that same seam. Bound BEFORE any agent initializes, then seeded
+  // from the shipped catalog: untouched entries take this build's prompts, a customised entry keeps
+  // its edit and only learns what is now shipped, so divergence stays visible rather than silently
+  // reverted. `getPromptStore` throws until this runs, so a boot that skipped it cannot quietly
+  // serve prompts from a store no operator can reach.
+  configurePromptStore(createPromptStore(source.store.promptRows));
+  promptStore();
   // Hoisted so the SIGHUP reload can rebuild them in place. `reviewRepositories` is the exact mutable
   // array the ingress reads live (see ingress `review.repositories`), so splicing it updates the
   // Reviewer allowlist with no re-wiring.

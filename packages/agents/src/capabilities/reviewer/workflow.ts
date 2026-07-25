@@ -3,7 +3,7 @@ import * as v from "valibot";
 
 import { resolveAgentModelProfile } from "@ambient-agent/engine/model/pi-subscription.ts";
 import { parseGitHubRepository } from "@ambient-agent/engine/github/repository.ts";
-import reviewerSkill from "./SKILL.md" with { type: "skill" };
+import { PROMPT_IDS, storedInstructions, storedSkill } from "../../prompts/catalog.ts";
 import { archiveBytes, findReviewForHead, listChangedFiles, missingVerdictReviewEvent, renderReviewSubmission, reviewEvent, reviewIneligibilityReason, reviewerHeadMarker, reviewerLogin, validInlineLocations } from "./github.ts";
 import { getReviewerRuntime, reviewerRuntimeConfigured } from "./runtime.ts";
 import { reviewFindingSchema, reviewerJobInputSchema, reviewerJobRequestSchema, reviewerResultSchema, type ReviewerJobInput, type ReviewerResult } from "./schemas.ts";
@@ -48,13 +48,16 @@ export const reviewerExerciseCommand = (): string => [
   "else echo 'No supported repository exercise contract found' >&2; exit 2; fi",
 ].join("\n");
 
-const reviewerAgent = defineAgent(() => ({
+/** The Reviewer's runtime configuration; its instructions and skill body come from the store (#375). */
+export const reviewerRuntimeConfig = () => ({
   // #208 has one policy profile for verification/review work; Reviewer reuses it.
   ...resolveAgentModelProfile("verifier"),
   sandbox: getReviewerRuntime().sandbox,
-  skills: [reviewerSkill],
-  instructions: "You are Reviewer, an independent finite pull-request reviewer. Judge only; never repair or merge.",
-}));
+  skills: [storedSkill(PROMPT_IDS.reviewerSkill)],
+  instructions: storedInstructions(PROMPT_IDS.reviewer),
+});
+
+const reviewerAgent = defineAgent(() => reviewerRuntimeConfig());
 
 const runChecks = async (harness: FlueHarness, cwd: string): Promise<{ passed: boolean; output: string }> => {
   const result = await harness.shell(reviewerExerciseCommand(), { cwd, timeoutMs: SHELL_TIMEOUT_MS });

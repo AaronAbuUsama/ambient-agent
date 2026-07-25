@@ -7,9 +7,7 @@ import {
   type FlueSession,
 } from "@flue/runtime";
 
-import coderSkill from "./SKILL.md" with { type: "skill" };
-import plannerSkill from "./planner/SKILL.md" with { type: "skill" };
-import verifierSkill from "./verifier/verify/SKILL.md" with { type: "skill" };
+import { PROMPT_IDS, storedInstructions, storedSkill } from "../../prompts/catalog.ts";
 import { createSpecialistGraphTools } from "../graph/tools.ts";
 import { resolveAgentModelProfile } from "@ambient-agent/engine/model/pi-subscription.ts";
 import { parseGitHubRepository } from "@ambient-agent/engine/github/repository.ts";
@@ -72,41 +70,41 @@ type StageWaypoint = (stage: Exclude<CodingStage, "workflow" | "publication">, s
   verdict?: VerificationVerdict;
 }) => void;
 
-const roleProfiles = () => [
+/** The three delegated coding roles. Every instruction block and skill body comes from the store (#375). */
+export const roleProfiles = () => [
   defineAgentProfile({
     name: "planner",
     description: "Produce one ordered implementation and behavioral verification plan before code changes begin.",
     ...resolveAgentModelProfile("planner"),
-    skills: [plannerSkill],
-    instructions: "Plan one issue. Return only the requested structured artifact. Do not edit files or implement the change.",
+    skills: [storedSkill(PROMPT_IDS.plannerSkill)],
+    instructions: storedInstructions(PROMPT_IDS.planner),
   }),
   defineAgentProfile({
     name: "coder",
     description: "Implement or repair the current plan in the shared workspace, then author the final pull request when asked.",
     ...resolveAgentModelProfile("coder"),
-    skills: [coderSkill],
+    skills: [storedSkill(PROMPT_IDS.coderSkill)],
     tools: createSpecialistGraphTools(),
-    instructions: "Work only in the task's named shared workspace. Never launch another agent.",
+    instructions: storedInstructions(PROMPT_IDS.coder),
   }),
   defineAgentProfile({
     name: "verifier",
     description: "Drive the changed code at its runtime surface and return a complete PASS, FAIL, BLOCKED, or SKIP report.",
     ...resolveAgentModelProfile("verifier"),
-    skills: [verifierSkill],
-    instructions: "Activate and follow the verify skill. Return only the requested structured receipt and never edit implementation files.",
+    skills: [storedSkill(PROMPT_IDS.verifySkill)],
+    instructions: storedInstructions(PROMPT_IDS.verifier),
   }),
 ];
 
 /** Unprompted root: TypeScript alone chooses every role transition and budget. */
-const coderAgent = defineAgent(() => {
-  const { sandbox } = getCoderRuntime();
-  return {
-    ...resolveAgentModelProfile("coder"),
-    sandbox,
-    subagents: roleProfiles(),
-    instructions: "Deterministic coding-workflow coordinator. This root session is never prompted.",
-  };
+export const coderRuntimeConfig = () => ({
+  ...resolveAgentModelProfile("coder"),
+  sandbox: getCoderRuntime().sandbox,
+  subagents: roleProfiles(),
+  instructions: storedInstructions(PROMPT_IDS.coderCoordinator),
 });
+
+const coderAgent = defineAgent(() => coderRuntimeConfig());
 
 /** Hash every tracked file so publication can diff the workspace against its seed. */
 const snapshotWorkspace = async (

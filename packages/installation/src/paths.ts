@@ -31,8 +31,9 @@ export interface ManagedPaths {
   readonly applicationDatabase: string;
   /**
    * The managed configuration and secret store (#179, #365) — the single resolution seam's backing
-   * database (#366). Owner-only (0600), and deliberately NOT a table in {@link applicationDatabase},
-   * whose migration-governed schema rejects unknown tables.
+   * database (#366), which also holds the prompt store (#375). Owner-only (0600), and deliberately
+   * NOT a table in {@link applicationDatabase}, whose migration-governed schema rejects unknown
+   * tables. Two processes open it: the runtime, and the CLI's `prompt` commands.
    */
   readonly managedConfigDatabase: string;
   readonly flueDatabase: string;

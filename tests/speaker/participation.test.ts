@@ -37,12 +37,14 @@ describe("WhatsApp Participation capability", () => {
   it("registers a versioned packaged skill instead of embedding participation policy in standing instructions", async () => {
     const [agent, skill] = await Promise.all([
       read("packages/agents/src/speaker/agent.ts"),
-      read("packages/agents/src/capabilities/whatsapp-participation/SKILL.md"),
+      read("packages/agents/src/capabilities/whatsapp-participation/skill-body.md"),
     ]);
 
-    expect(agent).toContain('import whatsappParticipation from "../capabilities/whatsapp-participation/SKILL.md"');
-    expect(agent).toContain('with { type: "skill" }');
-    expect(agent).toContain("skills: [whatsappParticipation]");
+    // #375: the skill is no longer compiled in — it is resolved from the prompt store, seeded from
+    // this same shipped document, so an edit to the policy no longer needs a release.
+    expect(agent).toContain('import { PROMPT_IDS, storedInstructions, storedSkill } from "../prompts/catalog.ts"');
+    expect(agent).toContain("skills: [storedSkill(PROMPT_IDS.whatsappParticipationSkill)]");
+    expect(agent).toContain("instructions: storedInstructions(PROMPT_IDS.speaker)");
     expect(agent).not.toContain("when older chat context is needed");
 
     expect(skill).toMatch(/^---\nname: whatsapp-participation\n/m);

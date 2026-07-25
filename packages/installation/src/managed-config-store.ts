@@ -3,6 +3,8 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import * as v from "valibot";
 
+import type { PromptEntryKind, PromptRows, StoredPrompt } from "@ambient-agent/engine/prompts/store.ts";
+
 import {
   BraintrustCredentialSchema,
   ChatGptOAuthCredentialSchema,
@@ -110,6 +112,12 @@ export interface ManagedConfigStore {
    * and being served as if it were current (#366).
    */
   deleteSecret(kind: ManagedSecretKind): void;
+  /**
+   * The durable rows behind the prompt store (#375) — the same file again, expanded a third time.
+   * The rules about seeding, customisation and revert live in the engine's `createPromptStore`;
+   * this is only the row storage it is handed.
+   */
+  promptRows: PromptRows;
   close(): void;
 }
 
@@ -120,6 +128,35 @@ interface ConfigRow {
 interface SecretRow {
   secret_json: string;
 }
+
+interface PromptRow {
+  id: string;
+  kind: string;
+  body: string;
+  customised: number;
+  seeded_version: string;
+  shipped_body: string;
+  shipped_version: string;
+  updated_at: string;
+}
+
+const isPromptEntryKind = (kind: string): kind is PromptEntryKind => kind === "instructions" || kind === "skill";
+
+const promptFromRow = (row: PromptRow): StoredPrompt => {
+  // A hand-edited row with an unknown kind is refused rather than resolved as instructions: the
+  // kind decides what "valid" means on save, so guessing it would let an invalid skill through.
+  if (!isPromptEntryKind(row.kind)) throw new Error(`The prompt store entry ${row.id} has an unknown kind.`);
+  return {
+    id: row.id,
+    kind: row.kind,
+    body: row.body,
+    customised: row.customised !== 0,
+    seededVersion: row.seeded_version,
+    shippedBody: row.shipped_body,
+    shippedVersion: row.shipped_version,
+    updatedAt: row.updated_at,
+  };
+};
 
 export const createManagedConfigStore = (databasePath: string): ManagedConfigStore => {
   if (databasePath !== ":memory:") {
@@ -149,6 +186,37 @@ export const createManagedConfigStore = (databasePath: string): ManagedConfigSto
       secret_json TEXT NOT NULL,
       updated_at TEXT NOT NULL
     ) STRICT
+  `);
+  // The prompt half (#375). Instructions and skill bodies, seeded from the shipped catalog and
+  // tracked against it, so editing a prompt is not a release. Same file, same 0600 mode, and still
+  // not the migration-governed application database.
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS managed_prompt (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      body TEXT NOT NULL,
+      customised INTEGER NOT NULL,
+      seeded_version TEXT NOT NULL,
+      shipped_body TEXT NOT NULL,
+      shipped_version TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT
+  `);
+  const selectPrompt = database.prepare("SELECT * FROM managed_prompt WHERE id = ?");
+  const selectPrompts = database.prepare("SELECT * FROM managed_prompt ORDER BY id");
+  // One statement, so it is one implicit transaction: a failed write leaves the previous row whole
+  // and no agent ever resolves a partially written prompt.
+  const upsertPrompt = database.prepare(`
+    INSERT INTO managed_prompt (id, kind, body, customised, seeded_version, shipped_body, shipped_version, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (id) DO UPDATE SET
+      kind = excluded.kind,
+      body = excluded.body,
+      customised = excluded.customised,
+      seeded_version = excluded.seeded_version,
+      shipped_body = excluded.shipped_body,
+      shipped_version = excluded.shipped_version,
+      updated_at = excluded.updated_at
   `);
   const selectRow = database.prepare("SELECT config_json FROM managed_configuration WHERE id = 1");
   const selectSecret = database.prepare("SELECT secret_json FROM managed_secret WHERE kind = ?");
@@ -201,6 +269,25 @@ export const createManagedConfigStore = (databasePath: string): ManagedConfigSto
       (selectSecretKinds.all() as { kind: string }[])
         .map((row) => row.kind)
         .filter(isManagedSecretKind),
+    promptRows: {
+      get: (id) => {
+        const row = selectPrompt.get(id) as PromptRow | undefined;
+        return row === undefined ? undefined : promptFromRow(row);
+      },
+      list: () => (selectPrompts.all() as unknown as PromptRow[]).map(promptFromRow),
+      put: (prompt) => {
+        upsertPrompt.run(
+          prompt.id,
+          prompt.kind,
+          prompt.body,
+          prompt.customised ? 1 : 0,
+          prompt.seededVersion,
+          prompt.shippedBody,
+          prompt.shippedVersion,
+          prompt.updatedAt,
+        );
+      },
+    },
     close: () => database.close(),
   };
 };

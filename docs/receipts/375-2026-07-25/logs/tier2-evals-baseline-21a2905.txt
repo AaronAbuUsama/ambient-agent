@@ -1,0 +1,40 @@
+-     "status": "duplicate",
+-   },
+-   "status": "ok",
++   "status": "error",
+  }
+
+ ❯ packages/agents/src/capabilities/issue-management/evals/issue-management.eval.ts:142:25
+    140|       const create = toolCalls(result).filter((call) => call.name === …
+    141|       expect(create).toHaveLength(1);
+    142|       expect(create[0]).toMatchObject({ status: "ok", result: { status…
+       |                         ^
+    143|       expect(toolCalls(result).filter((call) => call.name === "say")).…
+    144|       expect(result.output.whatsappEvents).toEqual([]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  2 failed | 3 passed | 5 skipped (10)
+      Tests  5 failed | 10 passed | 22 skipped (37)
+   Start at  16:17:26
+   Duration  2.83s (transform 92ms, setup 0ms, import 935ms, tests 749ms, environment 1ms)
+
+
+[2m Test Files [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m3 passed[39m[22m[2m | [22m[33m5 skipped[39m[90m (10)[39m
+[2m      Tests [22m [1m[31m5 failed[39m[22m[2m | [22m[1m[32m10 passed[39m[22m[2m | [22m[33m22 skipped[39m[90m (37)[39m
+[2m   Start at [22m 16:17:26
+[2m   Duration [22m 2.84s[2m (transform 92ms, setup 0ms, import 935ms, tests 749ms, environment 1ms)[22m
+
+/Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-af69fd27e93373c3c/scripts/run-evals.ts:51
+  if (exitCode !== 0) throw new Error(`${command} exited with code ${exitCode ?? "signal"}.`);
+                            ^
+
+Error: /Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-af69fd27e93373c3c/node_modules/.bin/vitest exited with code 1.
+    at run [90m(/Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-af69fd27e93373c3c/[39mscripts/run-evals.ts:51:29[90m)[39m
+[90m    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)[39m
+    at async runFamily [90m(/Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-af69fd27e93373c3c/[39mscripts/run-evals.ts:148:5[90m)[39m
+    at async <anonymous> [90m(/Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-af69fd27e93373c3c/[39mscripts/run-evals.ts:157:32[90m)[39m
+
+Node.js v24.18.0
+[41m[30m ELIFECYCLE [39m[49m [31mCommand failed with exit code 1.[39m
