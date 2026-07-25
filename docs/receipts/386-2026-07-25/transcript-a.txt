@@ -1,0 +1,18 @@
+event: snapshot
+data: {"instance":{"channel":"instance","value":{"id":"hdoPm8mSlrYnqJVHFAhopw","startedAt":"2026-07-25T15:58:28.874Z","pid":60088},"at":1784995108874,"observedAt":1784995129843,"revision":1,"stale":false},"runtime":{"channel":"runtime","value":{"phase":"running"},"at":1784995109055,"observedAt":1784995129843,"revision":2,"stale":false},"whatsapp":{"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784995170789}},"transport":{"phase":"pairing"}},"at":1784995110789,"observedAt":1784995129843,"revision":4,"stale":false},"setup":{"channel":"setup","value":{"pairing":{"kind":"awaiting_scan","method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784995170789,"rotations":0},"device":{"kind":"idle"}},"at":1784995110789,"observedAt":1784995129849,"revision":1,"freshUntil":1784995170789,"stale":false}}
+
+: keepalive
+
+: keepalive
+
+event: delta
+data: {"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784995170789}},"transport":{"phase":"pairing"}},"at":1784995170797,"observedAt":1784995170797,"revision":5,"stale":false}
+
+event: delta
+data: {"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784995190796}},"transport":{"phase":"pairing"}},"at":1784995170799,"observedAt":1784995170799,"revision":6,"stale":false}
+
+event: delta
+data: {"channel":"setup","value":{"pairing":{"kind":"awaiting_scan","method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784995190796,"rotations":1},"device":{"kind":"idle"}},"at":1784995170799,"observedAt":1784995170800,"revision":2,"freshUntil":1784995190796,"stale":false}
+
+: keepalive
+
