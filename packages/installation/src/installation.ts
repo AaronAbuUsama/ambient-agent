@@ -424,7 +424,9 @@ const SetupLockOwnerSchema = v.object({
   pid: v.pipe(v.number(), v.integer(), v.minValue(1)),
   host: v.pipe(v.string(), v.minLength(1)),
   startedAt: v.string(),
-  attempt: v.string(),
+  // A reclaim deletes this attempt's staging directory, so the recorded value must be exactly
+  // the uuid the attempt minted — never a path a damaged or hostile lock file could steer.
+  attempt: v.pipe(v.string(), v.uuid()),
 });
 
 type SetupLockOwner = v.InferOutput<typeof SetupLockOwnerSchema>;
@@ -552,6 +554,10 @@ export const acquireSetupLock = async (root: string): Promise<AcquiredSetupLock>
           "wait for it to finish or clear the lock after confirming it stopped.",
       );
     }
+    // The dead owner's half-built staging tree is orphaned: it is keyed by that attempt's uuid,
+    // so no later attempt names it and nothing else sweeps it. Reclaiming the lock without it
+    // would trade a lock a human had to clear for a partial install nobody ever clears.
+    await rm(setupStagingPath(root, held.attempt), { recursive: true, force: true });
     return await record("w");
   }
 };

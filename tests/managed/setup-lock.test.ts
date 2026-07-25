@@ -1,5 +1,6 @@
 import { hostname, tmpdir } from "node:os";
 import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
@@ -17,7 +18,11 @@ const managedRoot = async () => {
   const parent = await mkdtemp(join(tmpdir(), "ambient-setup-lock-"));
   parents.push(parent);
   const root = join(parent, "managed");
-  return { root, lockPath: join(parent, ".managed.setup.lock") };
+  return {
+    root,
+    lockPath: join(parent, ".managed.setup.lock"),
+    staging: (attempt: string) => join(parent, `.managed.setup-${attempt}`),
+  };
 };
 
 const owner = async (lockPath: string) =>
@@ -27,7 +32,10 @@ const owner = async (lockPath: string) =>
 const DEAD_PID = 2_147_483_646;
 
 const holder = async (lockPath: string, record: Record<string, unknown>) =>
-  await writeFile(lockPath, JSON.stringify({ startedAt: new Date().toISOString(), attempt: "held", ...record }));
+  await writeFile(
+    lockPath,
+    JSON.stringify({ startedAt: new Date().toISOString(), attempt: randomUUID(), ...record }),
+  );
 
 describe.skipIf(process.platform === "win32")("the setup lock", () => {
   it("records its owner: pid, host, start time, and the attempt it belongs to", async () => {
@@ -64,15 +72,29 @@ describe.skipIf(process.platform === "win32")("the setup lock", () => {
   it("reclaims the lock an interrupted setup left behind and records the new owner", async () => {
     // A closed browser tab, a dropped connection, or a crash leaves the lock with a dead owner.
     // Reclaiming it is the ordinary next-attempt path (#371), not something a human must clear.
-    const { root, lockPath } = await managedRoot();
-    await holder(lockPath, { pid: DEAD_PID, host: hostname(), attempt: "the-killed-run" });
+    const { root, lockPath, staging } = await managedRoot();
+    const killed = randomUUID();
+    await holder(lockPath, { pid: DEAD_PID, host: hostname(), attempt: killed });
+    // The killed attempt's half-built install: keyed by its own uuid, so nothing else names it.
+    await mkdir(staging(killed), { recursive: true, mode: 0o700 });
 
     const lock = await acquireSetupLock(root);
 
     const recorded = await owner(lockPath);
     expect(recorded.pid).toBe(process.pid);
-    expect(recorded.attempt).not.toBe("the-killed-run");
-    expect(lock.stagingRoot).toContain(recorded.attempt);
+    expect(recorded.attempt).not.toBe(killed);
+    expect(lock.stagingRoot).toBe(staging(recorded.attempt));
+    // Reclaiming without this would trade a lock a human had to clear for a tree nobody clears.
+    await expect(lstat(staging(killed))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses, rather than reclaims, when the recorded attempt is not the uuid it must be", async () => {
+    // The reclaim deletes the recorded attempt's staging directory, so a damaged or hostile lock
+    // file must never be able to name that path. An unusable owner record is refused, not obeyed.
+    const { root, lockPath } = await managedRoot();
+    await holder(lockPath, { pid: DEAD_PID, host: hostname(), attempt: "../../../../../../tmp" });
+
+    await expect(acquireSetupLock(root)).rejects.toThrow("the lock records no owner");
   });
 
   it("never reclaims a lock held by another host, whose owner it cannot check", async () => {
