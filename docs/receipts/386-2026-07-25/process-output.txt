@@ -1,17 +1,17 @@
 Control plane listening on http://127.0.0.1:4747
-Control plane bearer token: /tmp/386-proof/managed/credentials/control-plane.json (mode 0600).
+Control plane bearer token: /tmp/386-proof2/managed/credentials/control-plane.json (mode 0600).
 GET /app - undefined with id UNKNOWN in 2ms
 [reviewer] could not resolve the reviewer App identity; automatic PR review is unprovisioned Error: error:1E08010C:DECODER routines::unsupported
 [90m    at createPrivateKey (node:internal/crypto/keys:785:10)[39m
-    at convertPrivateKey (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-DWdYWeW9.js:2791:9)
-    at getToken (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-DWdYWeW9.js:2803:30)
-    at githubAppJwt (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-DWdYWeW9.js:2836:16)
-    at getAppAuthentication (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-DWdYWeW9.js:2987:35)
-    at hook (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-DWdYWeW9.js:3190:35)
+    at convertPrivateKey (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-aNjJJRf5.js:2791:9)
+    at getToken (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-aNjJJRf5.js:2803:30)
+    at githubAppJwt (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-aNjJJRf5.js:2836:16)
+    at getAppAuthentication (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-aNjJJRf5.js:2987:35)
+    at hook (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-aNjJJRf5.js:3190:35)
     at file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/node_modules/[4m.pnpm[24m/@octokit+plugin-request-log@6.0.0_@octokit+core@7.0.6/node_modules/[4m@octokit/plugin-request-log[24m/dist-src/index.js:8:12
     at file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/node_modules/[4m.pnpm[24m/before-after-hook@4.0.0/node_modules/[4mbefore-after-hook[24m/lib/register.js:25:15
     at async reviewerSlug (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/ingress-runtime-BB7kTmSl.js:3463:39)
-    at async configureReviewerRuntimeBinding (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-DWdYWeW9.js:6930:19) {
+    at async configureReviewerRuntimeBinding (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-aNjJJRf5.js:7070:19) {
   opensslErrorStack: [
     [32m'error:0688010A:asn1 encoding routines::nested asn1 error'[39m,
     [32m'error:06800066:asn1 encoding routines::bad object header'[39m,
@@ -28,15 +28,15 @@ GET /app - undefined with id UNKNOWN in 2ms
 GET /app - undefined with id UNKNOWN in 1ms
 [coder] could not resolve the coder App slug; lifecycle-comment author filtering degrades to bot-type Error: error:1E08010C:DECODER routines::unsupported
 [90m    at createPrivateKey (node:internal/crypto/keys:785:10)[39m
-    at convertPrivateKey (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-DWdYWeW9.js:2791:9)
-    at getToken (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-DWdYWeW9.js:2803:30)
-    at githubAppJwt (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-DWdYWeW9.js:2836:16)
-    at getAppAuthentication (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-DWdYWeW9.js:2987:35)
-    at hook (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-DWdYWeW9.js:3190:35)
+    at convertPrivateKey (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-aNjJJRf5.js:2791:9)
+    at getToken (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-aNjJJRf5.js:2803:30)
+    at githubAppJwt (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-aNjJJRf5.js:2836:16)
+    at getAppAuthentication (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-aNjJJRf5.js:2987:35)
+    at hook (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-aNjJJRf5.js:3190:35)
     at file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/node_modules/[4m.pnpm[24m/@octokit+plugin-request-log@6.0.0_@octokit+core@7.0.6/node_modules/[4m@octokit/plugin-request-log[24m/dist-src/index.js:8:12
     at file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/node_modules/[4m.pnpm[24m/before-after-hook@4.0.0/node_modules/[4mbefore-after-hook[24m/lib/register.js:25:15
     at async reviewerSlug (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/ingress-runtime-BB7kTmSl.js:3463:39)
-    at async configureCoderRuntimeBinding (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-DWdYWeW9.js:6905:18) {
+    at async configureCoderRuntimeBinding (file:///Users/abuusama/projects/ambient-agent/.claude/worktrees/agent-a73abbcc5f7529b48/dist/assets/app-aNjJJRf5.js:7045:18) {
   opensslErrorStack: [
     [32m'error:0688010A:asn1 encoding routines::nested asn1 error'[39m,
     [32m'error:06800066:asn1 encoding routines::bad object header'[39m,

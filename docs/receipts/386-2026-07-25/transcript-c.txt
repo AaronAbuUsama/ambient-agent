@@ -1,42 +1,25 @@
 event: snapshot
-data: {"instance":{"channel":"instance","value":{"id":"zj3dBB6RABA3_23EYLteFg","startedAt":"2026-07-25T15:21:21.520Z","pid":37930},"at":1784992881520,"observedAt":1784993059474,"revision":1,"stale":false},"runtime":{"channel":"runtime","value":{"phase":"running"},"at":1784992881697,"observedAt":1784993059474,"revision":2,"stale":false},"whatsapp":{"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784993106300}},"transport":{"phase":"pairing"}},"at":1784993046300,"observedAt":1784993059474,"revision":18,"stale":false},"setup":{"channel":"setup","value":{"pairing":{"kind":"awaiting_scan","method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784993106300,"rotations":6},"device":{"kind":"idle"}},"at":1784993046300,"observedAt":1784993059474,"revision":7,"freshUntil":1784993106300,"stale":false}}
+data: {"instance":{"channel":"instance","value":{"id":"hdoPm8mSlrYnqJVHFAhopw","startedAt":"2026-07-25T15:58:28.874Z","pid":60088},"at":1784995108874,"observedAt":1784995267465,"revision":1,"stale":false},"runtime":{"channel":"runtime","value":{"phase":"running"},"at":1784995109055,"observedAt":1784995267465,"revision":2,"stale":false},"whatsapp":{"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784995270805}},"transport":{"phase":"pairing"}},"at":1784995250805,"observedAt":1784995267465,"revision":14,"stale":false},"setup":{"channel":"setup","value":{"pairing":{"kind":"awaiting_scan","method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784995270805,"rotations":5},"device":{"kind":"idle"}},"at":1784995250805,"observedAt":1784995267465,"revision":6,"freshUntil":1784995270805,"stale":false}}
+
+event: delta
+data: {"channel":"setup","value":{"pairing":{"kind":"awaiting_scan","method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784995270805,"rotations":5},"device":{"kind":"idle"}},"at":1784995250805,"observedAt":1784995270811,"revision":7,"freshUntil":1784995270805,"stale":true}
+
+event: delta
+data: {"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784995270805}},"transport":{"phase":"backing_off","reason":"connection_lost","retryAttempt":0,"nextRetryAt":1784995272189}},"at":1784995271189,"observedAt":1784995271189,"revision":15,"stale":false}
+
+event: delta
+data: {"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784995270805}},"transport":{"phase":"connecting","retryAttempt":1}},"at":1784995272191,"observedAt":1784995272191,"revision":16,"stale":false}
+
+event: delta
+data: {"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784995270805}},"transport":{"phase":"pairing"}},"at":1784995273761,"observedAt":1784995273761,"revision":17,"stale":false}
+
+event: delta
+data: {"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784995333761}},"transport":{"phase":"pairing"}},"at":1784995273761,"observedAt":1784995273761,"revision":18,"stale":false}
+
+event: delta
+data: {"channel":"setup","value":{"pairing":{"kind":"awaiting_scan","method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784995333761,"rotations":6},"device":{"kind":"idle"}},"at":1784995273761,"observedAt":1784995273761,"revision":8,"freshUntil":1784995333761,"stale":false}
 
 : keepalive
-
-: keepalive
-
-: keepalive
-
-event: delta
-data: {"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784993106300}},"transport":{"phase":"pairing"}},"at":1784993106301,"observedAt":1784993106301,"revision":19,"stale":false}
-
-event: delta
-data: {"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784993126301}},"transport":{"phase":"pairing"}},"at":1784993106301,"observedAt":1784993106301,"revision":20,"stale":false}
-
-event: delta
-data: {"channel":"setup","value":{"pairing":{"kind":"awaiting_scan","method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784993126301,"rotations":7},"device":{"kind":"idle"}},"at":1784993106301,"observedAt":1784993106301,"revision":8,"freshUntil":1784993126301,"stale":false}
-
-: keepalive
-
-event: delta
-data: {"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784993126301}},"transport":{"phase":"pairing"}},"at":1784993126302,"observedAt":1784993126302,"revision":21,"stale":false}
-
-event: delta
-data: {"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784993146302}},"transport":{"phase":"pairing"}},"at":1784993126303,"observedAt":1784993126303,"revision":22,"stale":false}
-
-event: delta
-data: {"channel":"setup","value":{"pairing":{"kind":"awaiting_scan","method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784993146302,"rotations":8},"device":{"kind":"idle"}},"at":1784993126303,"observedAt":1784993126303,"revision":9,"freshUntil":1784993146302,"stale":false}
-
-: keepalive
-
-event: delta
-data: {"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784993146302}},"transport":{"phase":"pairing"}},"at":1784993146304,"observedAt":1784993146304,"revision":23,"stale":false}
-
-event: delta
-data: {"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784993166303}},"transport":{"phase":"pairing"}},"at":1784993146304,"observedAt":1784993146304,"revision":24,"stale":false}
-
-event: delta
-data: {"channel":"setup","value":{"pairing":{"kind":"awaiting_scan","method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784993166303,"rotations":9},"device":{"kind":"idle"}},"at":1784993146304,"observedAt":1784993146304,"revision":10,"freshUntil":1784993166303,"stale":false}
 
 : keepalive
 
