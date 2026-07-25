@@ -1,5 +1,6 @@
 import { constants } from "node:fs";
-import { chmod, lstat, mkdir, open, rename, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
@@ -414,6 +415,53 @@ const inspectConfigReferences = (path: string, value: unknown): readonly Install
 
 const setupLockPath = (root: string): string => join(dirname(root), `.${basename(root)}.setup.lock`);
 
+/**
+ * Who holds the setup lock (#369). Written atomically with the lock itself, so the lock never
+ * exists without naming its owner — the window between "lock taken" and "owner recorded" would
+ * otherwise read as an unowned lock to a genuinely concurrent attempt.
+ */
+const SetupLockOwnerSchema = v.object({
+  pid: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  host: v.pipe(v.string(), v.minLength(1)),
+  startedAt: v.string(),
+  attempt: v.string(),
+});
+
+type SetupLockOwner = v.InferOutput<typeof SetupLockOwnerSchema>;
+
+/** Undefined for an absent, unreadable, torn, or pre-#369 directory lock: an owner we cannot name. */
+const readSetupLockOwner = async (lockPath: string): Promise<SetupLockOwner | undefined> => {
+  try {
+    const parsed = v.safeParse(SetupLockOwnerSchema, JSON.parse(await readFile(lockPath, "utf8")));
+    return parsed.success ? parsed.output : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * True only when the recorded owner is *provably* gone — the sole input to reclaiming a lock.
+ * Deliberately keyed on liveness, never on elapsed time: a slow setup is not an abandoned one.
+ * A pid recorded by another host cannot be probed from here, so such a lock is never reclaimed;
+ * the operator is told which host holds it instead of having its pid checked against ours.
+ * ponytail: pid liveness, not flock — Node's stdlib has no flock, so a pid the OS has since
+ * reused holds the lock until someone deletes the file, and two simultaneous reclaims of one
+ * stale lock both win. `startedAt` is the recorded input a `ps -o lstart=` comparison would use
+ * to close the reused-pid hole; add it if either ever bites.
+ */
+const ownerGone = (owner: SetupLockOwner): boolean => {
+  if (owner.host !== hostname()) return false;
+  try {
+    process.kill(owner.pid, 0);
+    return false;
+  } catch (cause) {
+    return errorCode(cause) !== "EPERM"; // EPERM: alive, just not ours to signal.
+  }
+};
+
+const setupLockHolder = (owner: SetupLockOwner): string =>
+  `pid ${owner.pid} on ${owner.host}, started ${owner.startedAt}, attempt ${owner.attempt}`;
+
 const inspectSetupLock = async (root: string): Promise<readonly InstallationDiagnostic[]> => {
   const lockPath = setupLockPath(root);
   try {
@@ -428,12 +476,35 @@ const inspectSetupLock = async (root: string): Promise<readonly InstallationDiag
       ),
     ];
   }
+  const owner = await readSetupLockOwner(lockPath);
+  if (owner === undefined) {
+    return [
+      diagnostic(
+        "setup.locked",
+        lockPath,
+        "A setup lock is present but records no owner, so it cannot be reclaimed automatically.",
+        "Confirm that no setup is running, then remove this lock and run ambient-agent init again.",
+      ),
+    ];
+  }
+  // An interrupted setup's lock is reclaimed by the next attempt, so it is not a fault to report.
+  if (ownerGone(owner)) return [];
+  if (owner.host !== hostname()) {
+    return [
+      diagnostic(
+        "setup.locked",
+        lockPath,
+        `Setup is held by ${setupLockHolder(owner)}; a process on another host cannot be checked from here.`,
+        "Confirm that setup is not running on that host, then remove this lock and run ambient-agent init again.",
+      ),
+    ];
+  }
   return [
     diagnostic(
       "setup.locked",
       lockPath,
-      "Another setup is in progress or an earlier setup was interrupted.",
-      "Wait for setup to finish. If it is not running, remove this lock and run ambient-agent init again.",
+      `Setup is in progress (${setupLockHolder(owner)}).`,
+      "Wait for it to finish, then run ambient-agent doctor again; an interrupted setup's lock is reclaimed automatically.",
     ),
   ];
 };
@@ -446,24 +517,46 @@ export interface AcquiredSetupLock {
 const setupStagingPath = (root: string, token: string): string =>
   join(dirname(root), `.${basename(root)}.setup-${token}`);
 
+/**
+ * Take the setup lock, reclaiming one an interrupted setup left behind (#369). A file, not the
+ * former directory, so the owner record lands in the same exclusive-create as the lock — the
+ * shape `acquireInstanceLock` already uses for `runtime.lock`, not a second kind of lock.
+ *
+ * Unlike that lock, our own pid is never a free pass: #371 runs setup inside the runtime
+ * process, so two browser tabs racing setup are two live attempts sharing one pid, and the
+ * second must still be refused. Every caller releases in a `finally`, so a live process holding
+ * this lock is always a real setup in flight.
+ */
 export const acquireSetupLock = async (root: string): Promise<AcquiredSetupLock> => {
   const lockPath = setupLockPath(root);
   const token = randomUUID();
   const stagingRoot = setupStagingPath(root, token);
-  try {
-    await mkdir(lockPath, { mode: DIRECTORY_MODE });
-    await chmod(lockPath, DIRECTORY_MODE);
+  const owner: SetupLockOwner = {
+    pid: process.pid,
+    host: hostname(),
+    startedAt: new Date(performance.timeOrigin).toISOString(),
+    attempt: token,
+  };
+  const record = async (flag: "wx" | "w"): Promise<AcquiredSetupLock> => {
+    await writeFile(lockPath, json(owner), { flag, mode: FILE_MODE });
     return { path: lockPath, stagingRoot };
+  };
+  try {
+    return await record("wx");
   } catch (cause) {
-    if (errorCode(cause) === "EEXIST") {
+    if (errorCode(cause) !== "EEXIST") throw cause;
+    const held = await readSetupLockOwner(lockPath);
+    if (held === undefined || !ownerGone(held)) {
       throw new Error(
-        `Setup is already in progress for ${root}; wait for it to finish or clear the lock after confirming it stopped.`,
+        `Setup is already in progress for ${root} (${held === undefined ? "the lock records no owner" : setupLockHolder(held)}); ` +
+          "wait for it to finish or clear the lock after confirming it stopped.",
       );
     }
-    throw cause;
+    return await record("w");
   }
 };
 
+/** `recursive` outlives the file/directory switch: it also clears a pre-#369 directory lock. */
 export const releaseSetupLock = async (lock: AcquiredSetupLock): Promise<void> => {
   await rm(lock.path, { recursive: true, force: true });
 };
