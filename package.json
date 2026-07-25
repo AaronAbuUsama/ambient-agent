@@ -49,7 +49,8 @@
     "version-packages": "changeset version",
     "evals": "tsx scripts/run-evals.ts both",
     "evals:deterministic": "tsx scripts/run-evals.ts deterministic",
-    "evals:live": "tsx scripts/run-evals.ts live"
+    "evals:live": "tsx scripts/run-evals.ts live",
+    "spike:370": "node packages/installation/spike-370/tui.ts"
   },
   "dependencies": {
     "@clack/prompts": "1.7.0",
