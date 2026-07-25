@@ -20,22 +20,22 @@ below. Only that run is reported. §7 lists what the review changed.
 | 4 readback | store shows customised + seed version, unmarked after revert; archive holds both turns | orchestrator | §3 |
 | 5 observed | both turns in Braintrust, the first carrying the edited instruction | orchestrator | §3 |
 
-## 1. Tier 1 — mechanical · 2026-07-25T16:15:09Z → 16:17:00Z
+## 1. Tier 1 — mechanical · 2026-07-25T16:44:32Z → 16:46:10Z
 
 Run against the exact committed head with a clean tree (`git status --short` empty).
 
 ```
 $ git rev-parse HEAD
-b4af0961970a853e9ed386cabf6d2a998b8779a4
+f3ea2996379695273af435acda2b637a84c0292c
 $ pnpm run typecheck
 > tsc --noEmit                                    (no output — clean)
 $ pnpm test
  Test Files  85 passed | 1 skipped (86)
-      Tests  881 passed | 4 skipped (885)
-   Duration  96.17s
+      Tests  886 passed | 4 skipped (890)
+   Duration  72.55s
 ```
 
-Full tail: `logs/tier1-test.txt`. Baseline on `21a2905` was 880 passed; this node adds 16 tests in
+Full tail: `logs/tier1-test.txt`. Baseline on `21a2905` was 880 passed; this node adds 21 tests in
 `tests/managed/prompt-store.test.ts` and changes one existing assertion in
 `tests/speaker/participation.test.ts` (the Speaker's skill is now resolved, not imported) and two
 `ManagedPaths` fixtures (`managedConfigStore` is now a named managed path).
@@ -44,6 +44,7 @@ Full tail: `logs/tier1-test.txt`. Baseline on `21a2905` was 880 passed; this nod
 
 | criterion | test |
 |---|---|
+| instructions and skill bodies for every role resolve from the store | additionally, "leaves no agent prose compiled into an agent module" reads every agent module and refuses a literal `instructions:` / `skills: [` that does not go through the store — the assertion that catches a role added *without* a catalog entry |
 | shipped files seed the store on first boot | "seeds every shipped entry on first boot and records the version it was seeded from" |
 | an untouched entry re-seeds when the shipped version changes | "re-seeds an untouched entry when the shipped version changes" |
 | an edited entry is preserved across that upgrade and marked customised | "preserves an edited entry across the upgrade, marks it customised, and keeps the divergence visible" |
@@ -57,10 +58,10 @@ Durability and the operator surface are covered separately: "survives a restart 
 customised mark across it" (a real SQLite file, closed and reopened, re-seeded with a newer shipped
 version) and "lists, edits, refuses, and reverts against a seeded data directory" (`runCli`).
 
-## 2. Tier 2 — integrated · 2026-07-25T16:19Z
+## 2. Tier 2 — integrated · 2026-07-25T16:47Z
 
 ```
-$ pnpm run evals:deterministic          (head b4af096)
+$ pnpm run evals:deterministic          (head f3ea299)
  Test Files  2 failed | 3 passed | 5 skipped (10)
       Tests  5 failed | 10 passed | 22 skipped (37)
 ```
