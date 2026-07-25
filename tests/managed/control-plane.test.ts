@@ -1,8 +1,11 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { createControlPlaneServer } from "../../apps/cli/src/control-plane.ts";
 import { runCli, type CliOutput, type StartRuntime } from "../../apps/cli/src/program.ts";
 import { installManagedData } from "../../packages/test-support/src/managed-installation.ts";
 import { managedPaths } from "../../packages/installation/src/paths.ts";
@@ -194,7 +197,7 @@ describe("the no-subcommand control plane", () => {
     const control = await startControlPlane(dataDirectory);
     const token = await persistedToken(dataDirectory);
 
-    for (const path of ["/api/status", "/api/unknown", "/"]) {
+    for (const path of ["/api/status", "/api/unknown", "/api"]) {
       expect((await control.get(path)).status, `${path} without a token`).toBe(401);
       expect((await control.get(path, "wrong-token")).status, `${path} with a wrong token`).toBe(401);
       expect((await control.get(path, `${token}x`)).status, `${path} with a near-miss token`).toBe(401);
@@ -331,5 +334,83 @@ describe("the no-subcommand control plane", () => {
     expect(control.exitCode).toBe(1);
     expect(control.stderr).toContain(`Another ambient-agent runtime (pid ${process.ppid}) is already using`);
     expect(control.origin).toBe("");
+  });
+});
+
+/**
+ * #372's amendment to #364's gate. The console is a browser application: it has to load before it
+ * has a token, or it can never ask for one. So the static shell is served unauthenticated, and
+ * everything under `/api/` keeps the gate exactly as merged — including gate-before-routing.
+ */
+describe("the static console shell", () => {
+  const servers: Server[] = [];
+  afterEach(() => {
+    for (const server of servers.splice(0)) server.close();
+  });
+
+  /** A control plane serving a two-file stand-in for the built console. */
+  const shellServer = async () => {
+    const directory = join(await temporaryHome(), "web");
+    await mkdir(join(directory, "assets"), { recursive: true });
+    await writeFile(join(directory, "index.html"), "<!doctype html><title>console</title>");
+    await writeFile(join(directory, "assets", "index-abc.js"), "console.log(1)\n");
+    const server = createControlPlaneServer(
+      "the-token",
+      () => ({ dataDirectory: directory, installation: "ready", runtime: { phase: "running" } }),
+      pathToFileURL(`${directory}/`),
+    );
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("The shell server bound no TCP address.");
+    const origin = `http://127.0.0.1:${address.port}`;
+    return { origin, get: async (path: string) => await fetch(`${origin}${path}`) };
+  };
+
+  it("serves the shell and its assets without a bearer token", async () => {
+    const shell = await shellServer();
+
+    const index = await shell.get("/");
+    expect(index.status).toBe(200);
+    expect(index.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    await expect(index.text()).resolves.toContain("<title>console</title>");
+
+    const asset = await shell.get("/assets/index-abc.js");
+    expect(asset.status).toBe(200);
+    expect(asset.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+  });
+
+  it("answers a deep link with the shell, so a cold load of any route works", async () => {
+    const shell = await shellServer();
+
+    for (const route of ["/agents", "/logs", "/chats/120363000"]) {
+      const response = await shell.get(route);
+      expect(response.status, route).toBe(200);
+      await expect(response.text(), route).resolves.toContain("<title>console</title>");
+    }
+    // A path that names a file and misses is a real 404: falling back to the shell there would
+    // serve HTML to a <script> tag and turn a broken build into a mystery.
+    expect((await shell.get("/assets/missing.js")).status).toBe(404);
+  });
+
+  it("refuses to serve anything outside the built shell", async () => {
+    const shell = await shellServer();
+
+    for (const escape of ["/../../etc/passwd.js", "/%2e%2e/%2e%2e/etc/passwd.js", "/assets/../../secret.js"]) {
+      expect((await shell.get(escape)).status, escape).toBe(404);
+    }
+  });
+
+  it("keeps every /api/ path gated exactly as #364 merged it", async () => {
+    const shell = await shellServer();
+
+    expect((await shell.get("/api/status")).status).toBe(401);
+    // Gate before routing: an unknown API path is refused, not 404'd.
+    expect((await shell.get("/api/unknown")).status).toBe(401);
+    const authorized = await fetch(`${shell.origin}/api/status`, { headers: { authorization: "Bearer the-token" } });
+    expect(authorized.status).toBe(200);
+    expect((await fetch(`${shell.origin}/api/unknown`, { headers: { authorization: "Bearer the-token" } })).status).toBe(
+      404,
+    );
   });
 });

@@ -1,4 +1,5 @@
-import * as React from "react"
+// The registry emits an unused `import * as React` here; the scaffold's `noUnusedLocals` rejects it,
+// so the dead line is dropped. Re-adding this component through the shadcn CLI reintroduces it.
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area"
 
 import { cn } from "@/lib/utils"

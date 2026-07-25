@@ -34,9 +34,10 @@
   "scripts": {
     "dev": "pnpm run build:dist && pnpm start",
     "build": "pnpm run build:dist",
-    "build:dist": "pnpm run build:runtime && pnpm run build:cli",
+    "build:dist": "pnpm run build:runtime && pnpm run build:cli && pnpm run build:web",
     "build:runtime": "flue build --target node --root apps/runtime --output dist",
     "build:cli": "vp pack",
+    "build:web": "VITE_BUILD_NONCE=${VITE_BUILD_NONCE:-dev} vp build apps/web --outDir ../../dist/web --emptyOutDir",
     "changeset": "changeset",
     "prepack": "pnpm run build:dist",
     "release": "pnpm run build:dist && tsx scripts/publish-npm-release.ts",

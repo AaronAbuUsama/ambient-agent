@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { copyFile, cp, mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -220,6 +220,18 @@ describe("packed ambient-agent executable", () => {
     await expect(executeAmbientAgent(["--version"])).resolves.toMatchObject({
       stdout: `${installedManifest.version}\n`,
     });
+  });
+
+  it("ships the built console inside the package, not just in the checkout", async () => {
+    // #372: the control plane serves `dist/web` from beside its own bundle, so the assets have to
+    // survive `npm pack` — a console that only exists in the working tree is not shipped.
+    const web = join(installDirectory, "node_modules", "ambient-agent", "dist", "web");
+    const index = await readFile(join(web, "index.html"), "utf8");
+    expect(index).toContain('<div id="root">');
+    const assets = await readdir(join(web, "assets"));
+    expect(assets.filter((asset) => asset.endsWith(".js")), "a built script").not.toHaveLength(0);
+    expect(assets.filter((asset) => asset.endsWith(".css")), "a built stylesheet").not.toHaveLength(0);
+    for (const asset of assets) expect(index.includes(asset) || asset.endsWith(".woff2")).toBe(true);
   });
 
   it("resolves the installed production runtime dependencies without test hooks or a checkout", async () => {
