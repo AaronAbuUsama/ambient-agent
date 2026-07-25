@@ -68,6 +68,11 @@ export interface ControlPlaneOptions {
   readonly logging: RuntimeLoggingOptions;
   readonly startRuntime: StartRuntime;
   readonly output: CliOutput;
+  /**
+   * Whether a human is watching this terminal. It gates one thing: printing the first-run token
+   * that has nowhere to be persisted. Under a service manager stdout *is* the log.
+   */
+  readonly interactive: boolean;
   /** Closes the control plane; the process holds the port open until it aborts. */
   readonly signal?: AbortSignal;
 }
@@ -196,13 +201,15 @@ export const runControlPlane = async (options: ControlPlaneOptions): Promise<voi
     { once: true },
   );
   output.stdout(`Control plane listening on http://${CONTROL_PLANE_HOST}:${port}\n`);
-  // The token is handed over by file path, never echoed: stdout is journald's input under systemd,
-  // and a token in the journal is a token in a log. The unpersisted first-run token has no file to
-  // point at, so it is printed once — that installation has no logs directory yet either.
+  // A persisted token is handed over by file path and never echoed: under a service manager stdout
+  // is the journal, and a token in the journal is a token in a log. The first-run token has no file
+  // to point at, so it is printed — but only to a human at a terminal, for the same reason.
   output.stdout(
     persisted
       ? `Control plane bearer token: ${paths.controlPlaneCredential} (mode 0600).\n`
-      : `Control plane bearer token, unpersisted until ${paths.root} exists: ${token}\n`,
+      : options.interactive
+        ? `Control plane bearer token, unpersisted until ${paths.root} exists: ${token}\n`
+        : `Control plane bearer token: minted for this process only, and not printed to a non-terminal stdout. Run ambient-agent init, or start this again from a terminal.\n`,
   );
   if (inspection.state !== "ready") {
     output.stdout(`Runtime not started: ${explain(inspection)}\n`);

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { runCli, type CliOutput } from "../../apps/cli/src/program.ts";
+import { runCli, type CliOutput, type StartRuntime } from "../../apps/cli/src/program.ts";
 import { installManagedData } from "../../packages/test-support/src/managed-installation.ts";
 import { managedPaths } from "../../packages/installation/src/paths.ts";
 
@@ -52,7 +52,8 @@ interface RunningControlPlane {
  */
 const startControlPlane = async (
   dataDirectory: string | undefined,
-  startRuntime: (...args: never[]) => Promise<void> = vi.fn(async () => undefined),
+  startRuntime: StartRuntime = vi.fn(async () => undefined),
+  interactive = false,
 ): Promise<RunningControlPlane> => {
   let stdout = "";
   let stderr = "";
@@ -64,7 +65,7 @@ const startControlPlane = async (
   controllers.push(controller);
   const exitCode = await runCli(
     [...(dataDirectory === undefined ? [] : ["--data-dir", dataDirectory]), "--control-port", "0"],
-    { output, interactive: false, signal: controller.signal, startRuntime: startRuntime as never },
+    { output, interactive, signal: controller.signal, startRuntime },
   );
   const origin = /Control plane listening on (http:\/\/127\.0\.0\.1:\d+)/u.exec(stdout)?.[1] ?? "";
   return {
@@ -122,7 +123,7 @@ describe("the no-subcommand control plane", () => {
     const dataDirectory = join(await temporaryHome(), "absent");
     const startRuntime = vi.fn(async () => undefined);
 
-    const control = await startControlPlane(dataDirectory, startRuntime);
+    const control = await startControlPlane(dataDirectory, startRuntime, true);
 
     expect(control.exitCode).toBe(0);
     expect(startRuntime).not.toHaveBeenCalled();
@@ -137,6 +138,19 @@ describe("the no-subcommand control plane", () => {
     // An unconfigured control plane must not mint the data directory: `inspectManagedData` would
     // then classify it incomplete and `ambient-agent init` would refuse to install into it.
     await expect(readdir(dataDirectory)).rejects.toThrow(/ENOENT/u);
+  });
+
+  it("never prints the first-run token to a non-terminal stdout", async () => {
+    // Under a service manager stdout is the journal, so printing there is printing to a log. A
+    // token that has no file to be handed over by is only ever shown to a human at a terminal.
+    const dataDirectory = join(await temporaryHome(), "absent");
+
+    const control = await startControlPlane(dataDirectory);
+
+    expect(control.stdout).toContain("Control plane listening on http://127.0.0.1:");
+    expect(control.stdout).toContain("not printed to a non-terminal stdout");
+    expect(control.stdout).not.toMatch(/unpersisted until .* exists: \S/u);
+    expect((await control.get("/api/status")).status).toBe(401);
   });
 
   it("rejects every route on a missing, malformed, or wrong bearer token", async () => {

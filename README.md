@@ -203,7 +203,10 @@ installation that does not exist yet is reported as not configured rather than a
 
 Every route lives under `/api/` and requires `Authorization: Bearer <token>`; `GET /api/status` reports the
 installation state and how the runtime boot went. The token is generated once and stored at
-`credentials/control-plane.json` (mode 0600) — it is never echoed to stdout or written to a log:
+`credentials/control-plane.json` (mode 0600); it is handed over by file path and never written to a log or
+echoed to stdout. (The exception is a control plane started before `ambient-agent init`: there is no data
+directory to persist into, so that first-run token lives for the process only and is printed — to a
+terminal, never to a non-interactive stdout, which under a service manager is the journal.)
 
 ```bash
 curl -sS -H "Authorization: Bearer $(jq -r .token ~/.ambient-agent/credentials/control-plane.json)" \

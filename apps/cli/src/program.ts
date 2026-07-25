@@ -243,6 +243,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
         logging: { debug: false },
         startRuntime,
         output,
+        interactive,
         ...(dependencies.signal === undefined ? {} : { signal: dependencies.signal }),
       });
     });
