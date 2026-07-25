@@ -536,6 +536,8 @@ export const acquireSetupLock = async (root: string): Promise<AcquiredSetupLock>
   const owner: SetupLockOwner = {
     pid: process.pid,
     host: hostname(),
+    // This process's start, not the moment the lock was taken: it is what a reused-pid check
+    // would compare against `ps -o lstart=`, and `new Date()` here would quietly break that.
     startedAt: new Date(performance.timeOrigin).toISOString(),
     attempt: token,
   };
