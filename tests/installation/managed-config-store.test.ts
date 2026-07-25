@@ -3,6 +3,7 @@ import { chmodSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { inspect } from "node:util";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -130,6 +131,45 @@ describe("the managed configuration store holds the runtime's secrets (#365)", (
     });
   }
 
+  it("serves the rotated value after a kind is written twice", () => {
+    const store = createManagedConfigStore(":memory:");
+    store.writeSecret("e2b", { schemaVersion: 1, kind: "e2b", apiKey: "first" });
+    store.writeSecret("e2b", { schemaVersion: 1, kind: "e2b", apiKey: "second" });
+    // A rotation that silently kept serving the old key is the failure this store exists to prevent.
+    expect(store.readSecret("e2b")?.apiKey).toBe("second");
+    expect(store.storedSecretKinds()).toEqual(["e2b"]);
+    store.close();
+  });
+
+  it("keeps every stored kind readable across a close and reopen", () => {
+    const directory = mkdtempSync(join(tmpdir(), "managed-secret-"));
+    const databasePath = join(directory, "managed-config.sqlite");
+    try {
+      const store = createManagedConfigStore(databasePath);
+      for (const kind of MANAGED_SECRET_KINDS) store.writeSecret(kind, SECRET_FIXTURES[kind].valid as never);
+      store.close();
+
+      const reopened = createManagedConfigStore(databasePath);
+      expect(reopened.storedSecretKinds()).toEqual([...MANAGED_SECRET_KINDS].sort());
+      for (const kind of MANAGED_SECRET_KINDS) {
+        expect(reopened.readSecret(kind)).toEqual(SECRET_FIXTURES[kind].valid);
+      }
+      reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a ChatGPT credential whose expiry cannot survive the round trip", () => {
+    const store = createManagedConfigStore(":memory:");
+    // JSON.stringify turns a non-finite number into null, so accepting one would acknowledge a write
+    // that could never be read back. The file's real reader (validateChatGptOAuthCredential) agrees.
+    const nonFinite = { type: "oauth" as const, access: "a", refresh: "r", expires: Number.POSITIVE_INFINITY };
+    expect(() => store.writeSecret("chatgpt-oauth", nonFinite)).toThrow("The chatgpt-oauth secret is malformed.");
+    expect(store.readSecret("chatgpt-oauth")).toBeUndefined();
+    store.close();
+  });
+
   it("keeps the database owner-only, like every credential file it now mirrors", () => {
     const directory = mkdtempSync(join(tmpdir(), "managed-secret-"));
     const databasePath = join(directory, "managed-config.sqlite");
@@ -167,6 +207,38 @@ describe("the managed configuration store holds the runtime's secrets (#365)", (
     }
   });
 
+  it("refuses a row corrupted into invalid JSON without quoting the bytes it choked on", () => {
+    const nonce = `nonce-${randomUUID()}`;
+    const directory = mkdtempSync(join(tmpdir(), "managed-secret-"));
+    const databasePath = join(directory, "managed-config.sqlite");
+    try {
+      const store = createManagedConfigStore(databasePath);
+      store.writeSecret("e2b", SECRET_FIXTURES.e2b.valid);
+      store.close();
+
+      // A torn write leaves invalid JSON, and V8's SyntaxError quotes the opening characters of the
+      // source it choked on — which, for a secret row, is secret material (SEC-WO). Raw `JSON.parse`
+      // here puts `Unexpected token 'n', "nonce-…"... is not valid JSON` into the failure.
+      const database = new DatabaseSync(databasePath);
+      database.prepare("UPDATE managed_secret SET secret_json = ? WHERE kind = 'e2b'").run(`${nonce}","kind":"e2b"}`);
+      database.close();
+
+      const reopened = createManagedConfigStore(databasePath);
+      let message = "";
+      try {
+        reopened.readSecret("e2b");
+      } catch (cause) {
+        message = inspect(cause, { depth: null });
+      }
+      expect(message).toContain("The e2b secret is malformed.");
+      // V8 quotes only the opening characters, so the leading fragment is what must be absent.
+      expect(message).not.toContain(nonce.slice(0, 10));
+      reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("never puts secret material in a validation failure (SEC-WO)", () => {
     const nonce = `nonce-${randomUUID()}`;
     const store = createManagedConfigStore(":memory:");
@@ -176,7 +248,8 @@ describe("the managed configuration store holds the runtime's secrets (#365)", (
     try {
       store.writeSecret("braintrust", attempt as never);
     } catch (cause) {
-      message = cause instanceof Error ? `${cause.message}\n${cause.stack ?? ""}` : String(cause);
+      // The whole thrown object, so an attached `cause` or issue payload cannot smuggle the value past.
+      message = inspect(cause, { depth: null });
     }
     expect(message).toContain("malformed");
     expect(message).not.toContain(nonce);

@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync } from "node:fs";
+import { chmodSync, closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import * as v from "valibot";
@@ -57,6 +57,21 @@ const parseSecret = <TKind extends ManagedSecretKind>(kind: TKind, value: unknow
 };
 
 /**
+ * `JSON.parse` is the other value-carrying thrower: V8's `SyntaxError` quotes a window of the source
+ * it choked on, so a row corrupted anywhere near the secret bytes would put them in the message. The
+ * same refusal as a schema failure, and for the same reason.
+ */
+const parseSecretRow = <TKind extends ManagedSecretKind>(kind: TKind, json: string): ManagedSecret<TKind> => {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(json);
+  } catch {
+    throw new Error(`The ${kind} secret is malformed.`);
+  }
+  return parseSecret(kind, decoded);
+};
+
+/**
  * The single-row, DB-backed managed-configuration store (#179). It holds the full validated
  * {@link ManagedConfig} as the re-validated live snapshot the runtime reloads its AUTHORIZATION KNOBS
  * from (managedChats, allowedRepositories, reviewRepositories) without a restart. `config.json` on disk
@@ -77,7 +92,11 @@ export interface ManagedConfigStore {
    * being handed back. Neither the value nor any part of it appears in the failure.
    */
   readSecret<TKind extends ManagedSecretKind>(kind: TKind): ManagedSecret<TKind> | undefined;
-  /** Validate, then replace this kind's row in one transaction — a half-written secret is never observable. */
+  /**
+   * Validate, then replace this kind's row. The value is validated before the transaction opens, so a
+   * refused secret never reaches the file; the write itself is one upsert in one transaction, so a
+   * half-written secret is never observable — including when a later kind's write fails mid-rotation.
+   */
   writeSecret<TKind extends ManagedSecretKind>(kind: TKind, secret: ManagedSecret<TKind>): void;
   /**
    * Which kinds have a stored value — names only, never values. The one read a write-only surface
@@ -96,12 +115,16 @@ interface SecretRow {
 }
 
 export const createManagedConfigStore = (databasePath: string): ManagedConfigStore => {
-  if (databasePath !== ":memory:") mkdirSync(dirname(databasePath), { recursive: true });
+  if (databasePath !== ":memory:") {
+    mkdirSync(dirname(databasePath), { recursive: true });
+    // Owner-only, the same mode every credential file carries — this file now holds secrets, and the
+    // live rig's store was found at 0644 before #365. Created at 0600 rather than chmod'd afterwards,
+    // so a fresh database is never briefly world-readable; the chmod then also tightens a database an
+    // earlier, config-only build left behind.
+    closeSync(openSync(databasePath, "a", 0o600));
+    chmodSync(databasePath, 0o600);
+  }
   const database = new DatabaseSync(databasePath);
-  // Owner-only, the same mode every credential file carries — this file now holds secrets, and the
-  // live rig's store was found at 0644 before #365. Applied after open, so it also tightens the
-  // database an earlier, config-only build left behind.
-  if (databasePath !== ":memory:") chmodSync(databasePath, 0o600);
   database.exec("PRAGMA busy_timeout = 5000");
   database.exec(`
     CREATE TABLE IF NOT EXISTS managed_configuration (
@@ -145,7 +168,7 @@ export const createManagedConfigStore = (databasePath: string): ManagedConfigSto
       if (!isManagedSecretKind(kind)) throw new Error(`There is no managed secret kind ${String(kind)}.`);
       const row = selectSecret.get(kind) as SecretRow | undefined;
       if (row === undefined) return undefined;
-      return parseSecret(kind, JSON.parse(row.secret_json));
+      return parseSecretRow(kind, row.secret_json);
     },
     writeSecret: (kind, secret) => {
       if (!isManagedSecretKind(kind)) throw new Error(`There is no managed secret kind ${String(kind)}.`);
@@ -160,6 +183,8 @@ export const createManagedConfigStore = (databasePath: string): ManagedConfigSto
         throw cause;
       }
     },
+    // `writeSecret` cannot create a row of an unknown kind, so the filter only ever drops a row left
+    // by a kind that has since been renamed — which #367 must migrate rather than orphan.
     storedSecretKinds: () =>
       (selectSecretKinds.all() as { kind: string }[])
         .map((row) => row.kind)
