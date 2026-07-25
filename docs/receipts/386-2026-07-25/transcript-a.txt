@@ -1,0 +1,27 @@
+event: snapshot
+data: {"instance":{"channel":"instance","value":{"id":"zj3dBB6RABA3_23EYLteFg","startedAt":"2026-07-25T15:21:21.520Z","pid":37930},"at":1784992881520,"observedAt":1784992926859,"revision":1,"stale":false},"runtime":{"channel":"runtime","value":{"phase":"running"},"at":1784992881697,"observedAt":1784992926859,"revision":2,"stale":false},"whatsapp":{"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784992943480}},"transport":{"phase":"pairing"}},"at":1784992883480,"observedAt":1784992926859,"revision":4,"stale":false},"setup":{"channel":"setup","value":{"pairing":{"kind":"awaiting_scan","method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784992943480,"rotations":0},"device":{"kind":"idle"}},"at":1784992883480,"observedAt":1784992926859,"revision":1,"freshUntil":1784992943480,"stale":false}}
+
+: keepalive
+
+event: delta
+data: {"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784992943480}},"transport":{"phase":"pairing"}},"at":1784992943481,"observedAt":1784992943481,"revision":5,"stale":false}
+
+event: delta
+data: {"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784992963481}},"transport":{"phase":"pairing"}},"at":1784992943481,"observedAt":1784992943481,"revision":6,"stale":false}
+
+event: delta
+data: {"channel":"setup","value":{"pairing":{"kind":"awaiting_scan","method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784992963481,"rotations":1},"device":{"kind":"idle"}},"at":1784992943481,"observedAt":1784992943481,"revision":2,"freshUntil":1784992963481,"stale":false}
+
+: keepalive
+
+event: delta
+data: {"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784992963481}},"transport":{"phase":"pairing"}},"at":1784992963482,"observedAt":1784992963482,"revision":7,"stale":false}
+
+event: delta
+data: {"channel":"whatsapp","value":{"status":{"phase":"pairing","chatTarget":"120363000@g.us","pairing":{"method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784992983482}},"transport":{"phase":"pairing"}},"at":1784992963482,"observedAt":1784992963482,"revision":8,"stale":false}
+
+event: delta
+data: {"channel":"setup","value":{"pairing":{"kind":"awaiting_scan","method":"qr","qr":"<redacted: live pairing material>","expiresAt":1784992983482,"rotations":2},"device":{"kind":"idle"}},"at":1784992963482,"observedAt":1784992963482,"revision":3,"freshUntil":1784992983482,"stale":false}
+
+: keepalive
+
