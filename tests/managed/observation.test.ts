@@ -22,6 +22,20 @@ beforeEach(() => {
 /** A value that provably cannot pre-date this run, so "it was retained" cannot be confused with "it was already there". */
 const nonce = () => randomBytes(8).toString("hex");
 
+/**
+ * How long the staleness tests wait for a ~20ms renewal deadline to elapse and be announced.
+ *
+ * `vi.waitFor` defaults to a 1s budget, which is not the deadline itself but the budget for a loaded
+ * runner to get around to firing an unref'd `setTimeout` and running the poll. A full-suite Node 24
+ * job exceeded it and turned "pushes the staleness transition to subscribers" red on `main` at
+ * `7dd8750` — a scheduling delay, not a seam defect. Widened rather than made clock-dependent: these
+ * assertions still fail if the transition is never announced, which is the whole point of them.
+ *
+ * Kept under vitest's 5s per-test timeout on purpose. Overshooting it would mean a genuine
+ * regression surfaced as an opaque test timeout instead of the assertion that names what broke.
+ */
+const STALENESS_BUDGET_MS = 4_000;
+
 describe("the retained-state observation seam", () => {
   it("gives a subscriber that attaches after the publication the current value, with no replay", () => {
     // The nest, in one test: the value is emitted while nobody is listening. A push-only callback
@@ -92,7 +106,7 @@ describe("the retained-state observation seam", () => {
     idle.publish("online");
 
     expect(perishable.snapshot().stale).toBe(false);
-    await vi.waitFor(() => expect(perishable.snapshot().stale).toBe(true));
+    await vi.waitFor(() => expect(perishable.snapshot().stale).toBe(true), { timeout: STALENESS_BUDGET_MS });
     // No renewal deadline was promised, so nothing to break: a silent healthy socket is not stale.
     expect(idle.snapshot().stale).toBe(false);
     // Renewal clears it — rotation is health, not a restart.
@@ -107,7 +121,7 @@ describe("the retained-state observation seam", () => {
 
     channel.publish("qr-2", { freshUntil: Date.now() + 20 });
 
-    await vi.waitFor(() => expect(deltas.at(-1)?.stale).toBe(true));
+    await vi.waitFor(() => expect(deltas.at(-1)?.stale).toBe(true), { timeout: STALENESS_BUDGET_MS });
     expect(deltas[0]?.stale).toBe(false);
   });
 
