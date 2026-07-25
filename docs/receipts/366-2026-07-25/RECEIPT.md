@@ -1,8 +1,8 @@
 # Receipt — node #366, migrate configuration and secret readers onto the store
 
 - **Node:** #366 · surface **backend** · branch `migrate-readers-onto-store-366`
-- **Proven head:** `5f3594926d5dad5890443aa8758090f5da6bb3bf` (base `21a2905`, which carries #365, #364 and #369)
-- **Runtime bundle built from that head:** `dist/server.mjs` sha256 `32dcbd00b848392908d3fb9c013cbfaf83486503b75f202af84d57e11f898820`
+- **Proven head:** `0e24878b3211fcf70f8f10efbe9c0c2799671741` (base `a7cedb1`, which carries #386, #394, #365, #364 and #369)
+- **Runtime bundle built from that head:** `dist/server.mjs` sha256 `1e7ac7c98a7dc0da40c9d824c22ad3854f61895a259aac2d19a44bf21e8640d6`
 - **Tiers 1 and 2 are mine.** Tiers 3, 4 and 5 are the orchestrator's, post-merge, on `capxul-vps`. This
   node never touched the rig.
 
@@ -22,19 +22,25 @@ Run against the exact committed head with a clean tree (`git status --short` emp
 
 ```
 $ git rev-parse HEAD
-5f3594926d5dad5890443aa8758090f5da6bb3bf
+0e24878b3211fcf70f8f10efbe9c0c2799671741
 $ git status --short
                                                   (empty)
 $ pnpm run typecheck
 > tsc --noEmit                                    (no output — clean)
 $ pnpm test
- Test Files  85 passed | 1 skipped (86)
-      Tests  883 passed | 4 skipped (887)
+ Test Files  86 passed | 1 skipped (87)
+      Tests  904 passed | 4 skipped (908)
 ```
 
-Base for comparison, `origin/main` at `21a2905`: `84 passed | 1 skipped` files, `865 passed | 4 skipped`
-tests. This node adds one file (`tests/managed/configuration-source.test.ts`, 17 tests) plus a
-`deleteSecret` test, and nothing regressed.
+Rebased onto `a7cedb1` after CI went red on Node 22 at head `5f35949`. The failure was
+`tests/managed/observation.test.ts > pushes the staleness transition to subscribers` — a `vi.waitFor`
+timing assertion in **#386**, which merged into `main` while this branch was open, and which **#394**
+(`a7cedb1`, *"stop the #386 staleness tests flaking on a loaded runner"*) then fixed. Nothing in this
+node's diff touches observation, QR or channels; the rebase picks up the fix. Recorded rather than
+re-run until green.
+
+Base for comparison, `origin/main` at `a7cedb1`: `85 passed | 1 skipped` files. This node adds one file
+(`tests/managed/configuration-source.test.ts`, 17 tests) plus a `deleteSecret` test, and nothing regressed.
 
 **One flake observed and chased down.** An intermediate full run showed
 `tests/managed/tenant-credentials.test.ts > serializes model credential rotation across independent
@@ -48,7 +54,7 @@ The runtime bundle builds from this head:
 $ pnpm run build:runtime
 done built dist/server.mjs
 $ shasum -a 256 dist/server.mjs
-32dcbd00b848392908d3fb9c013cbfaf83486503b75f202af84d57e11f898820
+1e7ac7c98a7dc0da40c9d824c22ad3854f61895a259aac2d19a44bf21e8640d6
 ```
 
 ## 2. Tier 1 — the two contract-named assertions
