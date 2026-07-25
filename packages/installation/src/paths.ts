@@ -26,6 +26,8 @@ export interface ManagedPaths {
   readonly e2bCredential: string;
   /** The Braintrust API key, read when `runtime.tracing.enabled` is true (#252). */
   readonly braintrustCredential: string;
+  /** The control-plane bearer token, minted on the first boot that has a data directory (#364). */
+  readonly controlPlaneCredential: string;
   readonly applicationDatabase: string;
   readonly flueDatabase: string;
   readonly whatsapp: string;
@@ -97,6 +99,7 @@ export const managedPaths = (options: ManagedPathEnvironment = {}): ManagedPaths
     modelApiKeyCredential: paths.join(credentials, "model-api-key.json"),
     e2bCredential: paths.join(credentials, "e2b.json"),
     braintrustCredential: paths.join(credentials, "braintrust.json"),
+    controlPlaneCredential: paths.join(credentials, "control-plane.json"),
     applicationDatabase: paths.join(root, "application.sqlite"),
     flueDatabase: paths.join(root, "flue.sqlite"),
     whatsapp: paths.join(root, "whatsapp"),

@@ -183,7 +183,7 @@ Useful lifecycle commands:
 
 | Command                       | Purpose                                                                   |
 | ----------------------------- | ------------------------------------------------------------------------- |
-| `ambient-agent`               | Start setup when unconfigured; otherwise report current status            |
+| `ambient-agent`               | Start the control plane, and the runtime in the same process             |
 | `ambient-agent init`          | Create a validated managed installation                                   |
 | `ambient-agent auth`          | Replace only the managed ChatGPT authorization                            |
 | `ambient-agent config`        | Review or change the Managed Chat, repository, token, or runtime port     |
@@ -193,6 +193,22 @@ Useful lifecycle commands:
 | `ambient-agent doctor --live` | Add bounded real GitHub and model readiness checks                        |
 
 Use `ambient-agent doctor` for installation integrity and unresolved (Uncertain) work.
+
+### Control plane
+
+`ambient-agent` with no subcommand binds a control plane on `127.0.0.1:4747` (`--control-port` to move it)
+and keeps it bound for the life of the process, then brings the Flue runtime up in the same process. A runtime
+that cannot start is reported by the control plane rather than taking the process down with it, and an
+installation that does not exist yet is reported as not configured rather than as an error.
+
+Every route lives under `/api/` and requires `Authorization: Bearer <token>`; `GET /api/status` reports the
+installation state and how the runtime boot went. The token is generated once and stored at
+`credentials/control-plane.json` (mode 0600) — it is never echoed to stdout or written to a log:
+
+```bash
+curl -sS -H "Authorization: Bearer $(jq -r .token ~/.ambient-agent/credentials/control-plane.json)" \
+  http://127.0.0.1:4747/api/status
+```
 
 ### Logging
 

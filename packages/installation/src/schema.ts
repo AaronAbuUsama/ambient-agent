@@ -263,6 +263,23 @@ export type BraintrustCredential = v.InferOutput<typeof BraintrustCredentialSche
 export const braintrustCredentialFrom = (apiKey: string): BraintrustCredential =>
   v.parse(BraintrustCredentialSchema, { schemaVersion: 1, kind: "braintrust", apiKey });
 
+/**
+ * `credentials/control-plane.json`, mode 0600 (#364) — the bearer token every control-plane route
+ * demands. Minted once, on the first no-subcommand boot that has a data directory to write into,
+ * then read back verbatim on every later boot. It is handed to the operator by file path, never
+ * echoed to stdout or a log line (the logging root also censors the key `token`).
+ */
+export const ControlPlaneCredentialSchema = v.strictObject({
+  schemaVersion: v.literal(1),
+  kind: v.literal("control-plane"),
+  token: NonBlankString,
+});
+
+export type ControlPlaneCredential = v.InferOutput<typeof ControlPlaneCredentialSchema>;
+
+export const controlPlaneCredentialFrom = (token: string): ControlPlaneCredential =>
+  v.parse(ControlPlaneCredentialSchema, { schemaVersion: 1, kind: "control-plane", token });
+
 export const modelApiKeyCredentialFrom = (provider: string, apiKey: string): ModelApiKeyCredential =>
   v.parse(ModelApiKeyCredentialSchema, { schemaVersion: 1, kind: "api-key", provider, apiKey });
 

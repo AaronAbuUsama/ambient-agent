@@ -78,7 +78,7 @@ import { createConversationArchive, migrateConversationArchiveSchema } from "@am
 import { createHistoricalReplayStore } from "@ambient-agent/engine/intake/historical-replay.ts";
 import { createDeviceCodeCallbacks, createWhatsAppCallbacks, defaultSetupPrompts, type SetupPrompts } from "./prompts.ts";
 import {
-  parseRuntimePort,
+  parsePort,
   parseSandboxKind,
   parseTracingToggle,
   startGeneratedRuntime,
@@ -86,6 +86,7 @@ import {
   type RuntimeLoggingOptions,
   type StartRuntime,
 } from "./lifecycle.ts";
+import { DEFAULT_CONTROL_PLANE_PORT, runControlPlane } from "./control-plane.ts";
 import { createInspectionReporter } from "./inspection.ts";
 import type { WindowDeliveryCounts } from "./rendering.ts";
 import {
@@ -173,27 +174,6 @@ const readGitHubAppTriplesFile = async (path: string): Promise<GitHubAppTriples>
   return triples;
 };
 
-const bareDataDirectory = (args: readonly string[]): { readonly dataDirectory?: string } | undefined => {
-  if (args.some((arg) => arg === "--help" || arg === "-h" || arg === "--version" || arg === "-V")) return undefined;
-  let dataDirectory: string | undefined;
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]!;
-    if (arg === "--data-dir") {
-      const value = args[index + 1];
-      if (value === undefined) return undefined;
-      dataDirectory = value;
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith("--data-dir=")) {
-      dataDirectory = arg.slice("--data-dir=".length);
-      continue;
-    }
-    return undefined;
-  }
-  return dataDirectory === undefined ? {} : { dataDirectory };
-};
-
 export const runCli = async (argv: readonly string[], dependencies: CliDependencies = {}): Promise<number> => {
   const output = dependencies.output ?? defaultOutput;
   const environment = dependencies.environment ?? process.env;
@@ -249,8 +229,23 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .description("Install and operate the coworker managed runtime")
     .version(packageManifest.version)
     .option("--data-dir <path>", "override the managed data directory")
+    .option("--control-port <port>", "control plane HTTP port", String(DEFAULT_CONTROL_PLANE_PORT))
     .configureOutput({ writeOut: output.stdout, writeErr: output.stderr })
-    .exitOverride();
+    // No subcommand is the control plane, not a spare operand: a mistyped command must say so
+    // rather than silently start a server.
+    .allowExcessArguments(false)
+    .exitOverride()
+    .action(async () => {
+      const options = program.opts();
+      await runControlPlane({
+        paths: managedPaths({ dataDirectory: options.dataDir }),
+        port: parsePort(options.controlPort, "control plane port", 0),
+        logging: { debug: false },
+        startRuntime,
+        output,
+        ...(dependencies.signal === undefined ? {} : { signal: dependencies.signal }),
+      });
+    });
   const reportInspection = createInspectionReporter({
     dataDirectory: () => program.opts().dataDir,
     output,
@@ -570,7 +565,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
         (repository, index, all) =>
           all.findIndex((candidate) => candidate.toLowerCase() === repository.toLowerCase()) === index,
       );
-      const runtimePort = options.port === undefined ? currentConfig.runtime.port : parseRuntimePort(options.port);
+      const runtimePort = options.port === undefined ? currentConfig.runtime.port : parsePort(options.port);
       // sandbox.template: NonBlankString or absent — an empty --sandbox-template clears it (back to
       // the E2B account default), so an operator can undo a template without hand-editing config.json.
       const runtimeSandbox: RuntimeSandbox = {
@@ -857,7 +852,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     });
 
   try {
-    let args = [...argv];
+    const args = [...argv];
     const informational = args.some((arg) => arg === "--help" || arg === "-h" || arg === "--version" || arg === "-V");
     const overridden = args.some((arg) => arg === "--data-dir" || arg.startsWith("--data-dir="));
     if (!informational && !overridden) {
@@ -868,19 +863,6 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
         // stderr keeps stdout clean for machine consumers of `status --json`.
         output.stderr(`Moved managed data from ${migration.source} to ${migration.root}.\n`);
       }
-    }
-    const bare = bareDataDirectory(args);
-    if (bare !== undefined) {
-      const inspection = await inspectManagedData({ dataDirectory: bare.dataDirectory });
-      if (inspection.state === "absent") args.push("init");
-      else if (
-        inspection.state === "ready" &&
-        interactive &&
-        (await inspectWhatsAppSession(managedPaths({ dataDirectory: bare.dataDirectory }), environment)).state ===
-          "re-pair-required"
-      ) {
-        args.push("repair", "whatsapp");
-      } else args.push("status");
     }
     await program.parseAsync(["node", "ambient-agent", ...args]);
     return exitCode;

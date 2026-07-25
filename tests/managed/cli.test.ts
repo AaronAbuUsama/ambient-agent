@@ -1992,22 +1992,41 @@ describe("managed CLI", () => {
     ).toContain("fake-planner-key");
   });
 
-  it("routes global-only data-directory invocations through the selected installation", async () => {
+  it("serves the control plane for the selected data directory instead of running setup (#364)", async () => {
+    // The no-subcommand invocation is the control plane now: it honours --data-dir, and it never
+    // walks an operator into guided setup behind their back. Setup is `init`, over HTTP in #371.
     const paths = await files();
-    const prompted = harness();
+    const bare = harness();
+    const controller = new AbortController();
     const setupPrompts = {
-      ...prompted.setupPrompts,
-      selectChat: async () => "120363000@g.us",
-      repository: async () => "owner/repo",
-      githubApps: async () => fakeGitHubAppTriples(),
+      ...bare.setupPrompts,
+      selectChat: async (): Promise<string> => {
+        throw new Error("setup prompts must not run for a bare invocation");
+      },
+      githubApps: async (): Promise<never> => {
+        throw new Error("setup prompts must not run for a bare invocation");
+      },
     };
-    expect(await runCli(["--data-dir", paths.data], { ...prompted, setupPrompts })).toBe(0);
-    expect(prompted.stdout()).toContain("Created secure managed installation");
 
-    const status = harness();
-    expect(await runCli(["--data-dir", paths.data], status)).toBe(0);
-    expect(status.stdout()).toContain(`Data directory: ${paths.data}`);
-    expect(status.stdout()).toContain("Ambient Agent: ready");
+    expect(
+      await runCli(["--data-dir", paths.data, "--control-port", "0"], {
+        ...bare,
+        setupPrompts,
+        signal: controller.signal,
+      }),
+    ).toBe(0);
+    controller.abort();
+
+    expect(bare.stdout()).toContain("Control plane listening on http://127.0.0.1:");
+    expect(bare.stdout()).toContain("Ambient Agent is not configured. Run ambient-agent init.");
+    await expect(inspectManagedData({ dataDirectory: paths.data })).resolves.toMatchObject({ state: "absent" });
+  });
+
+  it("refuses a mistyped subcommand rather than silently starting the control plane", async () => {
+    const cli = harness();
+
+    expect(await runCli(["stat"], cli)).not.toBe(0);
+    expect(cli.stderr()).toContain("too many arguments");
   });
 
   it("never opens prompts in a non-interactive process with missing scripted values", async () => {
@@ -2327,7 +2346,10 @@ describe("managed CLI", () => {
     await expect(readFile(join(managed.whatsapp, "creds.json"), "utf8")).resolves.toBe(storeBefore);
   });
 
-  it("routes a bare interactive invocation into guided re-pair when the store is missing", async () => {
+  it("keeps a bare invocation on the control plane when the WhatsApp store needs re-pairing (#364)", async () => {
+    // Re-pairing used to be routed to from a bare invocation; it is `repair whatsapp` now, and a
+    // missing store must not start a QR flow nobody asked for. The runtime boot is what fails, and
+    // the control plane reports that failure rather than dying with it.
     const paths = await files();
     await runCli(
       [
@@ -2345,14 +2367,21 @@ describe("managed CLI", () => {
     await rm(managed.whatsapp, { recursive: true });
 
     const bare = harness();
+    const controller = new AbortController();
     expect(
-      await runCli(["--data-dir", paths.data], {
+      await runCli(["--data-dir", paths.data, "--control-port", "0"], {
         ...bare,
-        runtimeHealthFor: async () => ({ state: "stopped", whatsapp: { phase: "stopped" } }),
+        signal: controller.signal,
+        startRuntime: async () => {
+          throw new Error("WhatsApp requires re-pairing (whatsapp.store-missing).");
+        },
       }),
     ).toBe(0);
-    expect(bare.stdout()).toContain("Replaced the managed WhatsApp store");
-    await expect(readFile(join(managed.whatsapp, "creds.json"), "utf8")).resolves.toContain('"registered":true');
+    controller.abort();
+
+    expect(bare.stdout()).toContain("Control plane listening on http://127.0.0.1:");
+    expect(bare.stderr()).toContain("the runtime did not start: WhatsApp requires re-pairing");
+    await expect(lstat(join(managed.whatsapp, "creds.json"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("fails closed with a nonzero exit code when the root migration refuses to choose", async () => {
