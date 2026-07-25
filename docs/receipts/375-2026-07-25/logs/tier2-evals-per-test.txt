@@ -1,0 +1,13 @@
+ × packages/agents/evals/participation-mechanics.eval.ts > Participation mechanics through coalesced Windows > records the complete issue capture and its chat receipt [11174 tok | 1 tool] 129ms
+     × records the complete issue capture and its chat receipt 129ms
+ × packages/agents/src/capabilities/issue-management/evals/issue-management.eval.ts > Issue Management deterministic contract > creates one complete report after duplicate search [10535 tok | 1 tool] 358ms
+ × packages/agents/src/capabilities/issue-management/evals/issue-management.eval.ts > Issue Management deterministic contract > creates one complete feature request with its audience and motivation [10536 tok | 1 tool] 105ms
+ × packages/agents/src/capabilities/issue-management/evals/issue-management.eval.ts > Issue Management deterministic contract > corrects and organizes one existing issue, then acknowledges it once [15504 tok | 2 tools] 49ms
+ × packages/agents/src/capabilities/issue-management/evals/issue-management.eval.ts > Issue Management deterministic contract > redirects an existing report without a create mutation [10508 tok | 1 tool] 88ms
+     × creates one complete report after duplicate search 358ms
+     × creates one complete feature request with its audience and motivation 105ms
+     × corrects and organizes one existing issue, then acknowledges it once 49ms
+     × redirects an existing report without a create mutation 88ms
+ ✓ packages/agents/src/capabilities/whatsapp-participation/evals/whatsapp-participation.eval.ts (3 tests) 507ms
+ ✓ packages/agents/src/capabilities/coder/evals/verifier.eval.ts (2 tests) 155ms
+ ✓ packages/agents/src/capabilities/coder/evals/planner.eval.ts (1 test) 146ms
