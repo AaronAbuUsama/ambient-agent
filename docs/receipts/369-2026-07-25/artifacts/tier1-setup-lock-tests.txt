@@ -1,4 +1,4 @@
-tier 1 — the setup-lock tests alone, at head 7ce4aeda0f2240a7e973c97cf77d62f1f30db390
+tier 1 — the setup-lock tests alone, at head da972c32b7494c2b1a5ac3f06ffadabf3414df8c
 
 $ pnpm test -- tests/managed/setup-lock.test.ts --reporter=verbose
 
@@ -9,15 +9,15 @@ $ pnpm test -- tests/managed/setup-lock.test.ts --reporter=verbose
  RUN  v4.1.10 /Users/abuusama/projects/ambient-agent/.claude/worktrees/369-setup-lock
 
  ✓ tests/managed/setup-lock.test.ts > the setup lock > records its owner: pid, host, start time, and the attempt it belongs to 5ms
- ✓ tests/managed/setup-lock.test.ts > the setup lock > refuses a genuinely concurrent second setup, loudly and by name 4ms
+ ✓ tests/managed/setup-lock.test.ts > the setup lock > refuses a genuinely concurrent second setup, loudly and by name 2ms
  ✓ tests/managed/setup-lock.test.ts > the setup lock > reclaims the lock an interrupted setup left behind and records the new owner 2ms
  ✓ tests/managed/setup-lock.test.ts > the setup lock > refuses, rather than reclaims, when the recorded attempt is not the uuid it must be 1ms
  ✓ tests/managed/setup-lock.test.ts > the setup lock > never reclaims a lock held by another host, whose owner it cannot check 1ms
  ✓ tests/managed/setup-lock.test.ts > the setup lock > refuses a lock that records no owner rather than assuming it is stale 1ms
- ✓ tests/managed/setup-lock.test.ts > the setup lock > reports a live setup to doctor and stays silent about a reclaimable one 6ms
+ ✓ tests/managed/setup-lock.test.ts > the setup lock > reports a live setup to doctor and stays silent about a reclaimable one 2ms
 
  Test Files  1 passed (1)
       Tests  7 passed (7)
-   Start at  13:20:35
-   Duration  594ms (transform 63ms, setup 0ms, import 464ms, tests 22ms, environment 0ms)
+   Start at  13:27:42
+   Duration  647ms (transform 70ms, setup 0ms, import 518ms, tests 16ms, environment 0ms)
 

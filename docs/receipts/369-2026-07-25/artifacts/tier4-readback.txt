@@ -1,59 +1,54 @@
 tier 4 — readback for #369
-nonce  369-dbf4867db7
-head   7ce4aeda0f2240a7e973c97cf77d62f1f30db390
-UTC    2026-07-25T13:18:57Z
+nonce  369-36dc37d4b0
+head   da972c32b7494c2b1a5ac3f06ffadabf3414df8c
+UTC    2026-07-25T13:25:51Z
 
 === 1. the nonce was absent at this head before the run ===
-$ git grep -n "369-dbf4867db7" -- ':!docs/receipts'
-(no match — it exists only in this receipt, written after the run)
+(captured separately, before the run: artifacts/tier0-nonce-absence.txt)
 
 === 2. the lock's recorded owner BEFORE the reclaim — the process that was killed ===
 {
-  "pid": 69170,
+  "pid": 91523,
   "host": "Abdullahs-MacBook-Pro.local",
-  "startedAt": "2026-07-25T13:18:31.072Z",
-  "attempt": "62654be8-be41-45ca-997d-5cdec4763b46"
+  "startedAt": "2026-07-25T13:25:34.285Z",
+  "attempt": "e6944cf1-d4cd-4d5c-9be8-e7230787d10b"
 }
-the lock names pid 69170; that process is alive: yes
+the lock names pid 91523; that process is alive: yes
 
 === 3. the same lock AFTER the reclaim — the process that proceeded ===
 {
-  "pid": 69333,
+  "pid": 91749,
   "host": "Abdullahs-MacBook-Pro.local",
-  "startedAt": "2026-07-25T13:18:32.962Z",
-  "attempt": "3d55f25c-995a-42b8-9367-88c550ef8b8e"
+  "startedAt": "2026-07-25T13:25:36.374Z",
+  "attempt": "f1ff9a51-9483-4044-b94c-5ec44d0aeca4"
 }
-the killed run was pid 69170; the lock now names pid 69333
+the killed run was pid 91523; the lock now names pid 91749
 
 === 4. the killed attempt's staging tree is gone, not orphaned ===
-the killed attempt was 62654be8-be41-45ca-997d-5cdec4763b46
+the killed attempt was e6944cf1-d4cd-4d5c-9be8-e7230787d10b
 $ ls -a $SCRATCH/killed
 .
 ..
 managed
 managed.go
-$ ls -d $SCRATCH/killed/.managed.setup-62654be8-be41-45ca-997d-5cdec4763b46
-lsd: /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-dbf4867db7-i5Xf/killed/.managed.setup-62654be8-be41-45ca-997d-5cdec4763b46: No such file or directory (os error 2).
-
+$ ls -d $SCRATCH/killed/.managed.setup-e6944cf1-d4cd-4d5c-9be8-e7230787d10b
 (absent — swept by the reclaim)
 
 === 5. the durable delta: the nonce reached the installed data directory ===
 $ grep -o 'proof-[a-z0-9-]*' $SCRATCH/killed/managed/credentials/*.json
-proof-369-dbf4867db7
+proof-369-36dc37d4b0
 $ ls -la $SCRATCH/killed/managed
-drwx------ abuusama staff 256 B Sat Jul 25 13:18:33 2026 .
-drwx------ abuusama staff 128 B Sat Jul 25 13:18:33 2026 ..
-.rw------- abuusama staff 4.0 KB Sat Jul 25 13:18:33 2026 application.sqlite
-.rw------- abuusama staff 1.1 KB Sat Jul 25 13:18:33 2026 config.json
-drwx------ abuusama staff 192 B Sat Jul 25 13:18:33 2026 credentials
-.rw------- abuusama staff 0 B Sat Jul 25 13:18:33 2026 flue.sqlite
-drwx------ abuusama staff 64 B Sat Jul 25 13:18:33 2026 logs
-drwx------ abuusama staff 64 B Sat Jul 25 13:18:33 2026 whatsapp
+drwx------ abuusama staff 256 B Sat Jul 25 13:25:36 2026 .
+drwx------ abuusama staff 128 B Sat Jul 25 13:25:36 2026 ..
+.rw------- abuusama staff 4.0 KB Sat Jul 25 13:25:36 2026 application.sqlite
+.rw------- abuusama staff 1.1 KB Sat Jul 25 13:25:36 2026 config.json
+drwx------ abuusama staff 192 B Sat Jul 25 13:25:36 2026 credentials
+.rw------- abuusama staff 0 B Sat Jul 25 13:25:36 2026 flue.sqlite
+drwx------ abuusama staff 64 B Sat Jul 25 13:25:36 2026 logs
+drwx------ abuusama staff 64 B Sat Jul 25 13:25:36 2026 whatsapp
 
 === 6. the operator's real installation was never touched ===
-$ grep -rl "369-dbf4867db7" ~/.ambient-agent
+$ grep -rl "369-36dc37d4b0" ~/.ambient-agent
 (no match)
 $ ls -d ~/.ambient-agent
-lsd: /Users/abuusama/.ambient-agent: No such file or directory (os error 2).
-
-(this machine has no ~/.ambient-agent at all: no whatsapp/ store existed to touch)
+(this machine has no ~/.ambient-agent at all: there was no whatsapp/ store to touch)

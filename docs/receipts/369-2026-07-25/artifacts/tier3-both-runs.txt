@@ -1,51 +1,51 @@
-proof run for #369 — nonce 369-dbf4867db7
-head 7ce4aeda0f2240a7e973c97cf77d62f1f30db390
-scratch /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-dbf4867db7-i5Xf
-UTC start 2026-07-25T13:18:30Z
+proof run for #369 — nonce 369-36dc37d4b0
+head da972c32b7494c2b1a5ac3f06ffadabf3414df8c
+scratch /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-36dc37d4b0-ABTJ
+UTC start 2026-07-25T13:25:34Z
 
 === A1 — start a setup and let it take the lock ===
-[2026-07-25T13:18:31.740Z] [hold pid=69170] nonce=369-dbf4867db7 host=Abdullahs-MacBook-Pro.local root=/var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-dbf4867db7-i5Xf/killed/managed
-[2026-07-25T13:18:31.785Z] [hold pid=69170] setup is in flight; the lock at /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T/ambient-agent-369-dbf4867db7-i5Xf/killed/.managed.setup.lock now records:
-[2026-07-25T13:18:31.785Z] [hold pid=69170]   {"pid":69170,"host":"Abdullahs-MacBook-Pro.local","startedAt":"2026-07-25T13:18:31.072Z","attempt":"62654be8-be41-45ca-997d-5cdec4763b46"}
-[2026-07-25T13:18:31.785Z] [hold pid=69170] holding the lock until /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-dbf4867db7-i5Xf/killed/managed.go appears (kill -9 me to interrupt this setup)
+[2026-07-25T13:25:34.994Z] [hold pid=91523] nonce=369-36dc37d4b0 host=Abdullahs-MacBook-Pro.local root=/var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-36dc37d4b0-ABTJ/killed/managed
+[2026-07-25T13:25:35.027Z] [hold pid=91523] setup is in flight; the lock at /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T/ambient-agent-369-36dc37d4b0-ABTJ/killed/.managed.setup.lock now records:
+[2026-07-25T13:25:35.028Z] [hold pid=91523]   {"pid":91523,"host":"Abdullahs-MacBook-Pro.local","startedAt":"2026-07-25T13:25:34.285Z","attempt":"e6944cf1-d4cd-4d5c-9be8-e7230787d10b"}
+[2026-07-25T13:25:35.028Z] [hold pid=91523] holding the lock until /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-36dc37d4b0-ABTJ/killed/managed.go appears (kill -9 me to interrupt this setup)
 
 === A2 — readback BEFORE the kill: who does the lock say holds it? ===
 {
-  "pid": 69170,
+  "pid": 91523,
   "host": "Abdullahs-MacBook-Pro.local",
-  "startedAt": "2026-07-25T13:18:31.072Z",
-  "attempt": "62654be8-be41-45ca-997d-5cdec4763b46"
+  "startedAt": "2026-07-25T13:25:34.285Z",
+  "attempt": "e6944cf1-d4cd-4d5c-9be8-e7230787d10b"
 }
-the lock names pid 69170; that process is alive: yes
+the lock names pid 91523; that process is alive: yes
 
 === A3 — kill -9 the setup the lock names (the closed tab / dropped connection / crash) ===
-pid 69170 alive after the kill: no
+pid 91523 alive after the kill: no
 the lock it left behind still exists: yes
-it still names the killed pid 69170: yes
+it still names the killed pid 91523: yes
 the managed data directory was never created: absent, as expected
 
 === A4 — a fresh setup on the same root: it must reclaim the stale lock and proceed ===
-[2026-07-25T13:18:33.322Z] [hold pid=69333] nonce=369-dbf4867db7 host=Abdullahs-MacBook-Pro.local root=/var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-dbf4867db7-i5Xf/killed/managed
-[2026-07-25T13:18:33.356Z] [hold pid=69333] setup is in flight; the lock at /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T/ambient-agent-369-dbf4867db7-i5Xf/killed/.managed.setup.lock now records:
-[2026-07-25T13:18:33.357Z] [hold pid=69333]   {"pid":69333,"host":"Abdullahs-MacBook-Pro.local","startedAt":"2026-07-25T13:18:32.962Z","attempt":"3d55f25c-995a-42b8-9367-88c550ef8b8e"}
-[2026-07-25T13:18:33.357Z] [hold pid=69333] holding the lock until /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-dbf4867db7-i5Xf/killed/managed.go appears (kill -9 me to interrupt this setup)
+[2026-07-25T13:25:36.795Z] [hold pid=91749] nonce=369-36dc37d4b0 host=Abdullahs-MacBook-Pro.local root=/var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-36dc37d4b0-ABTJ/killed/managed
+[2026-07-25T13:25:36.822Z] [hold pid=91749] setup is in flight; the lock at /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T/ambient-agent-369-36dc37d4b0-ABTJ/killed/.managed.setup.lock now records:
+[2026-07-25T13:25:36.822Z] [hold pid=91749]   {"pid":91749,"host":"Abdullahs-MacBook-Pro.local","startedAt":"2026-07-25T13:25:36.374Z","attempt":"f1ff9a51-9483-4044-b94c-5ec44d0aeca4"}
+[2026-07-25T13:25:36.823Z] [hold pid=91749] holding the lock until /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-36dc37d4b0-ABTJ/killed/managed.go appears (kill -9 me to interrupt this setup)
 
 === A5 — readback AFTER the reclaim: the lock now names the second run ===
 {
-  "pid": 69333,
+  "pid": 91749,
   "host": "Abdullahs-MacBook-Pro.local",
-  "startedAt": "2026-07-25T13:18:32.962Z",
-  "attempt": "3d55f25c-995a-42b8-9367-88c550ef8b8e"
+  "startedAt": "2026-07-25T13:25:36.374Z",
+  "attempt": "f1ff9a51-9483-4044-b94c-5ec44d0aeca4"
 }
-the killed run was pid 69170; the lock now names pid 69333
+the killed run was pid 91523; the lock now names pid 91749
 
 === A6 — let the reclaiming setup finish ===
-[2026-07-25T13:18:33.322Z] [hold pid=69333] nonce=369-dbf4867db7 host=Abdullahs-MacBook-Pro.local root=/var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-dbf4867db7-i5Xf/killed/managed
-[2026-07-25T13:18:33.356Z] [hold pid=69333] setup is in flight; the lock at /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T/ambient-agent-369-dbf4867db7-i5Xf/killed/.managed.setup.lock now records:
-[2026-07-25T13:18:33.357Z] [hold pid=69333]   {"pid":69333,"host":"Abdullahs-MacBook-Pro.local","startedAt":"2026-07-25T13:18:32.962Z","attempt":"3d55f25c-995a-42b8-9367-88c550ef8b8e"}
-[2026-07-25T13:18:33.357Z] [hold pid=69333] holding the lock until /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-dbf4867db7-i5Xf/killed/managed.go appears (kill -9 me to interrupt this setup)
-[2026-07-25T13:18:33.559Z] [hold pid=69333] sentinel seen; finishing the setup
-[2026-07-25T13:18:33.593Z] [hold pid=69333] SETUP PROCEEDED: created=true state=ready at /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-dbf4867db7-i5Xf/killed/managed
+[2026-07-25T13:25:36.795Z] [hold pid=91749] nonce=369-36dc37d4b0 host=Abdullahs-MacBook-Pro.local root=/var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-36dc37d4b0-ABTJ/killed/managed
+[2026-07-25T13:25:36.822Z] [hold pid=91749] setup is in flight; the lock at /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T/ambient-agent-369-36dc37d4b0-ABTJ/killed/.managed.setup.lock now records:
+[2026-07-25T13:25:36.822Z] [hold pid=91749]   {"pid":91749,"host":"Abdullahs-MacBook-Pro.local","startedAt":"2026-07-25T13:25:36.374Z","attempt":"f1ff9a51-9483-4044-b94c-5ec44d0aeca4"}
+[2026-07-25T13:25:36.823Z] [hold pid=91749] holding the lock until /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-36dc37d4b0-ABTJ/killed/managed.go appears (kill -9 me to interrupt this setup)
+[2026-07-25T13:25:36.924Z] [hold pid=91749] sentinel seen; finishing the setup
+[2026-07-25T13:25:36.959Z] [hold pid=91749] SETUP PROCEEDED: created=true state=ready at /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-36dc37d4b0-ABTJ/killed/managed
 exit status: 0
 the lock is released: yes
 installed tree: application.sqlite
@@ -56,41 +56,41 @@ logs
 whatsapp
 
 === B1 — a live setup takes the lock and stays running ===
-[2026-07-25T13:18:34.107Z] [hold pid=69372] nonce=369-dbf4867db7 host=Abdullahs-MacBook-Pro.local root=/var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-dbf4867db7-i5Xf/concurrent/managed
-[2026-07-25T13:18:34.134Z] [hold pid=69372] setup is in flight; the lock at /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T/ambient-agent-369-dbf4867db7-i5Xf/concurrent/.managed.setup.lock now records:
-[2026-07-25T13:18:34.135Z] [hold pid=69372]   {"pid":69372,"host":"Abdullahs-MacBook-Pro.local","startedAt":"2026-07-25T13:18:33.702Z","attempt":"5424e1c5-624c-42e0-b2c5-ca8346cb99c7"}
-[2026-07-25T13:18:34.135Z] [hold pid=69372] holding the lock until /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-dbf4867db7-i5Xf/concurrent/managed.go appears (kill -9 me to interrupt this setup)
-the live setup is pid 69372, alive: yes
+[2026-07-25T13:25:37.511Z] [hold pid=91795] nonce=369-36dc37d4b0 host=Abdullahs-MacBook-Pro.local root=/var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-36dc37d4b0-ABTJ/concurrent/managed
+[2026-07-25T13:25:37.540Z] [hold pid=91795] setup is in flight; the lock at /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T/ambient-agent-369-36dc37d4b0-ABTJ/concurrent/.managed.setup.lock now records:
+[2026-07-25T13:25:37.540Z] [hold pid=91795]   {"pid":91795,"host":"Abdullahs-MacBook-Pro.local","startedAt":"2026-07-25T13:25:37.081Z","attempt":"2383435c-db05-4481-80e5-04bfe00d6ee0"}
+[2026-07-25T13:25:37.540Z] [hold pid=91795] holding the lock until /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-36dc37d4b0-ABTJ/concurrent/managed.go appears (kill -9 me to interrupt this setup)
+the live setup is pid 91795, alive: yes
 
 === B2 — readback while it is live ===
 {
-  "pid": 69372,
+  "pid": 91795,
   "host": "Abdullahs-MacBook-Pro.local",
-  "startedAt": "2026-07-25T13:18:33.702Z",
-  "attempt": "5424e1c5-624c-42e0-b2c5-ca8346cb99c7"
+  "startedAt": "2026-07-25T13:25:37.081Z",
+  "attempt": "2383435c-db05-4481-80e5-04bfe00d6ee0"
 }
 
 === B3 — a second setup is attempted against the same root ===
-[2026-07-25T13:18:34.706Z] [run pid=69405] nonce=369-dbf4867db7 host=Abdullahs-MacBook-Pro.local root=/var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-dbf4867db7-i5Xf/concurrent/managed
-[2026-07-25T13:18:34.720Z] [run pid=69405] SETUP REFUSED: Setup is already in progress for /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-dbf4867db7-i5Xf/concurrent/managed (pid 69372 on Abdullahs-MacBook-Pro.local, started 2026-07-25T13:18:33.702Z, attempt 5424e1c5-624c-42e0-b2c5-ca8346cb99c7); wait for it to finish or clear the lock after confirming it stopped.
+[2026-07-25T13:25:38.452Z] [run pid=91855] nonce=369-36dc37d4b0 host=Abdullahs-MacBook-Pro.local root=/var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-36dc37d4b0-ABTJ/concurrent/managed
+[2026-07-25T13:25:38.472Z] [run pid=91855] SETUP REFUSED: Setup is already in progress for /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-36dc37d4b0-ABTJ/concurrent/managed (pid 91795 on Abdullahs-MacBook-Pro.local, started 2026-07-25T13:25:37.081Z, attempt 2383435c-db05-4481-80e5-04bfe00d6ee0); wait for it to finish or clear the lock after confirming it stopped.
 second attempt exit status: 1 (non-zero = refused)
 
 === B4 — the refused attempt changed nothing: the live owner still holds the lock ===
 {
-  "pid": 69372,
+  "pid": 91795,
   "host": "Abdullahs-MacBook-Pro.local",
-  "startedAt": "2026-07-25T13:18:33.702Z",
-  "attempt": "5424e1c5-624c-42e0-b2c5-ca8346cb99c7"
+  "startedAt": "2026-07-25T13:25:37.081Z",
+  "attempt": "2383435c-db05-4481-80e5-04bfe00d6ee0"
 }
-the live setup is still pid 69372, alive: yes
+the live setup is still pid 91795, alive: yes
 
 === B5 — let the live setup finish normally ===
-[2026-07-25T13:18:34.107Z] [hold pid=69372] nonce=369-dbf4867db7 host=Abdullahs-MacBook-Pro.local root=/var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-dbf4867db7-i5Xf/concurrent/managed
-[2026-07-25T13:18:34.134Z] [hold pid=69372] setup is in flight; the lock at /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T/ambient-agent-369-dbf4867db7-i5Xf/concurrent/.managed.setup.lock now records:
-[2026-07-25T13:18:34.135Z] [hold pid=69372]   {"pid":69372,"host":"Abdullahs-MacBook-Pro.local","startedAt":"2026-07-25T13:18:33.702Z","attempt":"5424e1c5-624c-42e0-b2c5-ca8346cb99c7"}
-[2026-07-25T13:18:34.135Z] [hold pid=69372] holding the lock until /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-dbf4867db7-i5Xf/concurrent/managed.go appears (kill -9 me to interrupt this setup)
-[2026-07-25T13:18:34.739Z] [hold pid=69372] sentinel seen; finishing the setup
-[2026-07-25T13:18:34.775Z] [hold pid=69372] SETUP PROCEEDED: created=true state=ready at /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-dbf4867db7-i5Xf/concurrent/managed
+[2026-07-25T13:25:37.511Z] [hold pid=91795] nonce=369-36dc37d4b0 host=Abdullahs-MacBook-Pro.local root=/var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-36dc37d4b0-ABTJ/concurrent/managed
+[2026-07-25T13:25:37.540Z] [hold pid=91795] setup is in flight; the lock at /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T/ambient-agent-369-36dc37d4b0-ABTJ/concurrent/.managed.setup.lock now records:
+[2026-07-25T13:25:37.540Z] [hold pid=91795]   {"pid":91795,"host":"Abdullahs-MacBook-Pro.local","startedAt":"2026-07-25T13:25:37.081Z","attempt":"2383435c-db05-4481-80e5-04bfe00d6ee0"}
+[2026-07-25T13:25:37.540Z] [hold pid=91795] holding the lock until /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-36dc37d4b0-ABTJ/concurrent/managed.go appears (kill -9 me to interrupt this setup)
+[2026-07-25T13:25:38.570Z] [hold pid=91795] sentinel seen; finishing the setup
+[2026-07-25T13:25:38.614Z] [hold pid=91795] SETUP PROCEEDED: created=true state=ready at /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-36dc37d4b0-ABTJ/concurrent/managed
 exit status: 0
 installed tree: application.sqlite
 config.json
@@ -99,5 +99,5 @@ flue.sqlite
 logs
 whatsapp
 
-UTC end 2026-07-25T13:18:34Z
-scratch left at /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-dbf4867db7-i5Xf
+UTC end 2026-07-25T13:25:38Z
+scratch left at /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//ambient-agent-369-36dc37d4b0-ABTJ
