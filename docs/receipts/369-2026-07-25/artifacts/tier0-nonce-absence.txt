@@ -1,0 +1,12 @@
+nonce absence, established at head da972c32b7494c2b1a5ac3f06ffadabf3414df8c before the run
+UTC 2026-07-25T13:25:26Z
+
+$ git grep -n "369-36dc37d4b0"
+(no match — absent from the tracked tree)
+
+$ ls -d $TMPDIR/*369-36dc37d4b0*
+(eval):1: no matches found: /var/folders/4r/x7bvvh3x6053m_zvmnrwq2680000gn/T//*369-36dc37d4b0*
+(no match — no scratch directory carries it)
+
+$ grep -rl "369-36dc37d4b0" ~/.ambient-agent
+(no match — nowhere under ~/.ambient-agent)

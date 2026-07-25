@@ -1,0 +1,54 @@
+tier 4 — readback for #369
+nonce  369-36dc37d4b0
+head   da972c32b7494c2b1a5ac3f06ffadabf3414df8c
+UTC    2026-07-25T13:25:51Z
+
+=== 1. the nonce was absent at this head before the run ===
+(captured separately, before the run: artifacts/tier0-nonce-absence.txt)
+
+=== 2. the lock's recorded owner BEFORE the reclaim — the process that was killed ===
+{
+  "pid": 91523,
+  "host": "Abdullahs-MacBook-Pro.local",
+  "startedAt": "2026-07-25T13:25:34.285Z",
+  "attempt": "e6944cf1-d4cd-4d5c-9be8-e7230787d10b"
+}
+the lock names pid 91523; that process is alive: yes
+
+=== 3. the same lock AFTER the reclaim — the process that proceeded ===
+{
+  "pid": 91749,
+  "host": "Abdullahs-MacBook-Pro.local",
+  "startedAt": "2026-07-25T13:25:36.374Z",
+  "attempt": "f1ff9a51-9483-4044-b94c-5ec44d0aeca4"
+}
+the killed run was pid 91523; the lock now names pid 91749
+
+=== 4. the killed attempt's staging tree is gone, not orphaned ===
+the killed attempt was e6944cf1-d4cd-4d5c-9be8-e7230787d10b
+$ ls -a $SCRATCH/killed
+.
+..
+managed
+managed.go
+$ ls -d $SCRATCH/killed/.managed.setup-e6944cf1-d4cd-4d5c-9be8-e7230787d10b
+(absent — swept by the reclaim)
+
+=== 5. the durable delta: the nonce reached the installed data directory ===
+$ grep -o 'proof-[a-z0-9-]*' $SCRATCH/killed/managed/credentials/*.json
+proof-369-36dc37d4b0
+$ ls -la $SCRATCH/killed/managed
+drwx------ abuusama staff 256 B Sat Jul 25 13:25:36 2026 .
+drwx------ abuusama staff 128 B Sat Jul 25 13:25:36 2026 ..
+.rw------- abuusama staff 4.0 KB Sat Jul 25 13:25:36 2026 application.sqlite
+.rw------- abuusama staff 1.1 KB Sat Jul 25 13:25:36 2026 config.json
+drwx------ abuusama staff 192 B Sat Jul 25 13:25:36 2026 credentials
+.rw------- abuusama staff 0 B Sat Jul 25 13:25:36 2026 flue.sqlite
+drwx------ abuusama staff 64 B Sat Jul 25 13:25:36 2026 logs
+drwx------ abuusama staff 64 B Sat Jul 25 13:25:36 2026 whatsapp
+
+=== 6. the operator's real installation was never touched ===
+$ grep -rl "369-36dc37d4b0" ~/.ambient-agent
+(no match)
+$ ls -d ~/.ambient-agent
+(this machine has no ~/.ambient-agent at all: there was no whatsapp/ store to touch)
