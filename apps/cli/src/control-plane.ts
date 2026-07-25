@@ -10,8 +10,8 @@
  * Three contracts are defined here, and later work consumes them by name:
  *
  * - **The bearer-token scheme.** Every request carries `Authorization: Bearer <token>`; the token
- *   is minted once and persisted at `credentials/control-plane.json` (mode 0600). The gate runs
- *   *before* routing, so the control plane has no unauthenticated corner — not even a 404.
+ *   is minted once and persisted at `credentials/control-plane.json` (mode 0600). Under `/api/`
+ *   the gate runs *before* routing, so an unknown API path is refused exactly like a known one.
  * - **The route shape.** JSON under `/api/`; `GET /api/status` for a point read and
  *   `GET /api/observe` for the live one. 401 with `WWW-Authenticate: Bearer` for a missing or wrong
  *   token, 404 for an unknown authorized path, 405 for a wrong method.
@@ -22,10 +22,21 @@
  * with a `snapshot` event carrying every channel's current value, then sends one `delta` per
  * publication. Everything a browser needs to watch — runtime boot, WhatsApp liveness, setup
  * progress — reaches it through that one endpoint, so #371 and #374 do not each invent a transport.
+ *
+ * **#372 amends #364's gate, deliberately.** As merged, the gate ran before routing on *every*
+ * path, so a browser arriving at `http://127.0.0.1:4747` got `{"error":"unauthorized"}` and the
+ * console could never load. The static shell — `GET /` and everything under the built asset
+ * directory — is now served **without** a bearer token; everything under `/api/`, including
+ * `/api/observe`, keeps the gate exactly as merged. What is given up is "not even a 404 is
+ * unauthenticated". What is preserved is the property that matters: no unauthenticated access to
+ * *installation state*. The shell carries no data; it is an empty application that must
+ * authenticate before it can show anything.
  */
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type Server, type ServerResponse } from "node:http";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
+import { extname, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   atomicWriteManagedConfig,
@@ -164,26 +175,107 @@ const observe = (response: ServerResponse, headersOnly = false): void => {
   response.on("error", close);
 };
 
+/**
+ * Where the built console lives: `vp pack` writes `dist/cli/main.js`, and the console build writes
+ * `dist/web/` beside it, so one relative hop finds it from either the packed bundle or the source.
+ */
+export const SHELL_DIRECTORY = new URL("../web/", import.meta.url);
+
+/** Only what the console build actually emits. Anything else is served as bytes. */
+const CONTENT_TYPES: Readonly<Record<string, string>> = {
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".webmanifest": "application/manifest+json",
+  ".woff2": "font/woff2",
+};
+
+/**
+ * Serve one file out of the built console, with the SPA fallback that makes deep links load.
+ *
+ * A request is an *asset* only when it ends in an extension this build actually emits. Everything
+ * else is a route inside the application and is answered with `index.html`, so `/agents` and
+ * `/chats/120363000@g.us` both cold-load — the extension of that second one is `.us`, which is why
+ * "has an extension" is the wrong test. An asset that misses is a real 404: falling back to the
+ * shell there would serve HTML to a `<script>` tag and turn a broken build into a mystery.
+ *
+ * Every failure path in here answers with a status code. This handler is reached *before* the token
+ * gate, so a throw would be an unauthenticated crash of a process that also hosts the runtime.
+ */
+const serveShell = async (directory: URL, pathname: string, method: string, response: ServerResponse) => {
+  const root = resolve(fileURLToPath(directory)) + sep;
+  let file: string;
+  try {
+    // Decode first: path normalisation does not see `%2e%2e`, so an encoded traversal would
+    // otherwise survive the containment check below.
+    const requested = decodeURIComponent(pathname);
+    const asset = CONTENT_TYPES[extname(requested).toLowerCase()] === undefined ? "index.html" : `.${requested}`;
+    // `resolve` against the root, never `new URL`: a path like `/http:/evil.com/x.js` parses as an
+    // absolute URL with a non-file scheme, and `fileURLToPath` throws on it.
+    file = resolve(root, asset);
+  } catch {
+    return respond(response, 400, { error: "bad-request" });
+  }
+  // The trailing separator matters: without it `dist/web-secrets` would pass as inside `dist/web`.
+  if (!file.startsWith(root)) return respond(response, 404, { error: "not-found" });
+  let body: Buffer;
+  try {
+    body = await readFile(file);
+  } catch {
+    return respond(response, 404, { error: "not-found" });
+  }
+  response.writeHead(200, {
+    "content-type": CONTENT_TYPES[extname(file).toLowerCase()] ?? "application/octet-stream",
+    "content-length": String(body.byteLength),
+    // The shell is the one unauthenticated surface; do not let a browser guess its way to a
+    // different interpretation of these bytes, and do not let a stale build linger in a cache.
+    "x-content-type-options": "nosniff",
+    "cache-control": "no-cache",
+  });
+  return response.end(method === "HEAD" ? undefined : body);
+};
+
+const isApi = (path: string): boolean => path === "/api" || path.startsWith("/api/");
+
 /** The token gate and the routes behind it. Exported for tests; `runControlPlane` binds it. */
-export const createControlPlaneServer = (token: string, status: () => ControlPlaneStatus): Server => {
+export const createControlPlaneServer = (
+  token: string,
+  status: () => ControlPlaneStatus,
+  shellDirectory: URL = SHELL_DIRECTORY,
+): Server => {
   const expected = digest(token);
   return createServer((request, response) => {
+    const path = new URL(request.url ?? "/", `http://${CONTROL_PLANE_HOST}`).pathname;
+    const method = request.method ?? "GET";
+    // #372's amendment: the static shell is the one unauthenticated surface, because it carries no
+    // installation state. Everything under /api/ keeps #364's gate, ahead of its own routing.
+    if (!isApi(path)) {
+      if (method !== "GET" && method !== "HEAD") return respond(response, 405, { error: "method-not-allowed" });
+      // The last resort: an unauthenticated request must never be able to reject a promise nobody
+      // awaits, because an unhandled rejection ends a process that is also hosting the runtime.
+      return void serveShell(shellDirectory, path, method, response).catch(() => {
+        if (!response.headersSent) respond(response, 500, { error: "internal" });
+        response.end();
+      });
+    }
     const presented = bearer(request.headers.authorization);
-    // The gate runs before routing, so an unknown path is refused exactly like a known one and
-    // the token's length leaks nothing: both sides are compared as equal-width digests.
+    // The gate runs before API routing, so an unknown API path is refused exactly like a known one
+    // and the token's length leaks nothing: both sides are compared as equal-width digests.
     if (presented === undefined || !timingSafeEqual(digest(presented), expected)) {
       return respond(response, 401, { error: "unauthorized" }, { "www-authenticate": "Bearer" });
     }
-    const path = new URL(request.url ?? "/", `http://${CONTROL_PLANE_HOST}`).pathname;
     if (path !== "/api/status" && path !== "/api/observe") return respond(response, 404, { error: "not-found" });
-    if (request.method !== "GET" && request.method !== "HEAD") {
-      return respond(response, 405, { error: "method-not-allowed" });
-    }
+    if (method !== "GET" && method !== "HEAD") return respond(response, 405, { error: "method-not-allowed" });
     // The observation channels carry live pairing material, so this endpoint sits behind the same
-    // gate as everything else — which, since the gate runs before routing, it already does.
+    // gate as everything else — which, since the gate runs before API routing, it already does.
     // A HEAD gets the headers and nothing else; holding a subscription open for a body that Node
     // will discard would leak an observer per probe.
-    if (path === "/api/observe") return request.method === "HEAD" ? observe(response, true) : observe(response);
+    if (path === "/api/observe") return method === "HEAD" ? observe(response, true) : observe(response);
     return respond(response, 200, status());
   });
 };

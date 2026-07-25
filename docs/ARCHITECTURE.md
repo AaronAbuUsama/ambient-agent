@@ -4,14 +4,15 @@
 > description of how the agentic system _works_ (the Brain, Speakers, the Graph, the
 > Digest, the control loop), see [`SYSTEM-ARCHITECTURE.md`](./SYSTEM-ARCHITECTURE.md).
 
-The ratified taxonomy (#117 → #131): three packages, two apps, one arrow diagram —
-enforced, not aspirational (`tests/speaker/hard-cut.test.ts`).
+The ratified taxonomy (#117 → #131, extended by #372): three packages, three apps, one arrow
+diagram — enforced, not aspirational (`tests/speaker/hard-cut.test.ts`).
 
 ```mermaid
 graph TD
   subgraph apps
     CLI["apps/cli<br/>operate the installation"]
     SRV["apps/runtime<br/>Flue build root — hosts Speaker"]
+    WEB["apps/web<br/>the operator console —<br/>reaches the runtime over HTTP,<br/>imports nothing internal"]
   end
   subgraph packages
     AG["agents<br/>everything that thinks:<br/>agents own identity,<br/>capabilities are shared"]
@@ -19,6 +20,7 @@ graph TD
     ENG["engine<br/>agent-agnostic conversation<br/>machinery — imports nothing internal"]
   end
   TS["test-support<br/>fakes + eval battery<br/>(may import anything)"]
+  WEB -.->|"HTTP: /api/ on the control plane"| CLI
   CLI --> INST
   CLI --> ENG
   SRV --> AG
@@ -31,8 +33,16 @@ graph TD
 
 **Rules** (verbatim from the hard-cut test): engine → nothing internal; agents → engine;
 installation → agents+engine; apps/runtime → all packages; apps/cli → installation+engine
-(**never** agents); test-support → anything. Additionally: capabilities may never import
-from an agent folder, and no package may publish a `./*` wildcard export.
+(**never** agents); **apps/web → nothing internal**; test-support → anything. Additionally:
+capabilities may never import from an agent folder, and no package may publish a `./*` wildcard
+export.
+
+`apps/web` is the strictest row on the list, tied with `engine`. The console is a browser
+application: it reaches the runtime only over HTTP, through the control-plane API defined in
+`apps/cli/src/control-plane.ts`, so it has no reason to import an internal package and no way to
+use one. A future need for a shared type is a reason to re-open that row deliberately, not a
+reason to have left it off. Its built assets ship inside the published package (`dist/web`), and
+the control plane serves them — the shell unauthenticated, everything under `/api/` gated (#372).
 
 ## How a message becomes work
 

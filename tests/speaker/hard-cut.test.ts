@@ -20,7 +20,9 @@ async function sourceFiles(relativeDirectory: string): Promise<string[]> {
     entries.map(async (entry) => {
       const relativePath = path.join(relativeDirectory, entry.name);
       if (entry.isDirectory()) return sourceFiles(relativePath);
-      return entry.isFile() && relativePath.endsWith(".ts") ? [relativePath] : [];
+      // `.tsx` too: the console is the one workspace whose source is JSX, and a boundary that
+      // only reads `.ts` would enforce nothing there.
+      return entry.isFile() && /\.tsx?$/u.test(relativePath) ? [relativePath] : [];
     }),
   );
   return nested.flat();
@@ -36,7 +38,10 @@ describe("the post-Eve production cut", () => {
     expect(packageJson.scripts.dev).toBe("pnpm run build:dist && pnpm start");
     expect(packageJson.scripts["build:runtime"]).toBe("flue build --target node --root apps/runtime --output dist");
     expect(packageJson.scripts["build:cli"]).toBe("vp pack");
-    expect(packageJson.scripts["build:dist"]).toBe("pnpm run build:runtime && pnpm run build:cli");
+    // The console's assets are part of the published output, so its build is part of `build:dist`
+    // and runs last: the runtime build empties `dist` (#372).
+    expect(packageJson.scripts["build:web"]).toContain("vp build apps/web --outDir ../../dist/web");
+    expect(packageJson.scripts["build:dist"]).toBe("pnpm run build:runtime && pnpm run build:cli && pnpm run build:web");
     expect(packageJson.scripts.build).toBe("pnpm run build:dist");
     expect(packageJson.scripts.start).toBe("node dist/cli/main.js start");
     expect(Object.keys(packageJson.scripts)).not.toContain("speaker:build");
@@ -98,9 +103,13 @@ describe("the post-Eve production cut", () => {
   it("keeps the workspace boundaries: the ratified arrow diagram, enforced", async () => {
     // engine -> nothing internal; agents -> engine; installation -> agents+engine;
     // apps/runtime -> engine+agents+installation (never test-support);
-    // apps/cli -> installation+engine (NEVER agents); test-support -> anything.
+    // apps/cli -> installation+engine (NEVER agents); apps/web -> nothing internal;
+    // test-support -> anything.
     const boundaries: ReadonlyArray<readonly [string, RegExp]> = [
       ["packages/engine/src", /@ambient-agent\//],
+      // The console reaches the runtime over HTTP through the control-plane API (#364), so it needs
+      // no internal package at all — the strictest row on the list, and deliberately so (#372).
+      ["apps/web/src", /@ambient-agent\//],
       ["packages/agents/src", /@ambient-agent\/(?!engine\/)/],
       ["packages/installation/src", /@ambient-agent\/(?!engine\/|agents\/)/],
       ["apps/cli/src", /@ambient-agent\/(?!engine\/|installation\/)/],

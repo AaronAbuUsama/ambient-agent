@@ -1,0 +1,41 @@
+== the /api/ gate is unchanged (#364) ==
+  GET /api/status   no token  -> 401
+  GET /api/unknown  no token  -> 401
+  GET /api/status   token     -> 200
+  GET /api/unknown  token     -> 404
+
+== the static shell is unauthenticated, and every route deep-links ==
+  GET / -> 200 text/html; charset=utf-8
+  GET /chats -> 200 text/html; charset=utf-8
+  GET /repositories -> 200 text/html; charset=utf-8
+  GET /agents -> 200 text/html; charset=utf-8
+  GET /runtime -> 200 text/html; charset=utf-8
+  GET /secrets -> 200 text/html; charset=utf-8
+  GET /logs -> 200 text/html; charset=utf-8
+  GET /chats/120363000 -> 200 text/html; charset=utf-8
+  GET /chats/120363000@g.us -> 200 text/html; charset=utf-8
+  GET /assets/missing.js -> 404 (a named file that misses is a real 404)
+
+== nothing outside the shell directory, and nothing that throws ==
+  GET /../../etc/passwd.js -> 404
+  GET /%2e%2e/%2e%2e/etc/passwd.js -> 404
+  GET /assets/../../secret.js -> 404
+  GET /http:/evil.com/x.js -> 404
+  GET /%68ttp:/evil.com/x.js -> 404
+  GET /../web-secrets/token.js -> 404
+  GET / -> 200 (still serving: none of the above killed the process)
+  x-content-type-options: nosniff
+  cache-control: no-cache
+
+== the nonce this build was stamped with, read back off the wire ==
+    <meta name="build-nonce" content="372-20260725T155848Z-c987dd0e" />
+
+== the served asset bytes are the installed asset bytes ==
+  match  2317fa4bb293c9c0b110e18315d529235c47a0ddd3338cea3d8c7955e927899e  assets/geist-cyrillic-ext-wght-normal-DjL33-gN.woff2
+  match  6894439694946a589d157ece003086960a6a4013d74a813dab7602efdb3d8c09  assets/geist-cyrillic-wght-normal-BEAKL7Jp.woff2
+  match  824f485b5d26e2f2da3c2b236132ece1bc8e4e43373452950bb0e40548b4313f  assets/geist-latin-ext-wght-normal-DC-KSUi6.woff2
+  match  19f9c92546aa300c312235e3125af1b81394d8db9a4bc4a425cd5b641d2d54e1  assets/geist-latin-wght-normal-BgDaEnEv.woff2
+  match  8fa40e5d248247735eb97a0bd593b8852440430600d6ba01364c31fe0abc1fe1  assets/geist-vietnamese-wght-normal-6IgcOCM7.woff2
+  match  9be5060da19ecf3859c45bbe8b891facaf27d417771b1ea07aba95cf0bde1f1e  assets/index-CYOkFMUR.css
+  match  042e5a10b99acb655f5083959742d31e41122a8b378b3e03f8d5aa4681d19ad5  assets/index-FJ3lGdHB.js
+  match  87e51e8556a09333eb687dda43f4fcb0d6d8118d846250fd3307b34459b8d2d1  index.html
