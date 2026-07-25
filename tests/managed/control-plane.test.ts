@@ -16,7 +16,6 @@ import {
   WHATSAPP_LIVENESS_BOUND_MS,
 } from "../../packages/installation/src/observation.ts";
 import { operatorFeed, publishToOperatorFeed } from "../../packages/engine/src/logging/operator-feed.ts";
-import { createControlPlaneServer } from "../../apps/cli/src/control-plane.ts";
 
 const roots: string[] = [];
 const controllers: AbortController[] = [];
@@ -470,6 +469,14 @@ describe("the no-subcommand control plane", () => {
     expect((await control.get("/api/logs", "wrong-token")).status).toBe(401);
     expect((await control.get("/api/observe")).status).toBe(401);
     expect((await control.get("/api/observe", "wrong-token")).status).toBe(401);
+
+    // #372 moved the static shell to the unauthenticated side. The log feed carries operator log
+    // content, so it must stay on the gated side of `isApi` — a 401 with a JSON body proves the
+    // request was refused by the gate and never reached the shell branch, which serves HTML.
+    const refused = await control.get("/api/logs");
+    expect(refused.headers.get("content-type")).toBe("application/json");
+    expect(refused.headers.get("www-authenticate")).toBe("Bearer");
+    await expect(refused.json()).resolves.toEqual({ error: "unauthorized" });
   });
 
   it("refuses loudly when another live process already holds the data directory", async () => {
