@@ -249,7 +249,34 @@ The `wakes` semaphore (`dispatch.ts:19`) **stays**. It is what guarantees one op
 which keeps `claimBatch()` unambiguous.
 
 **Not needed:** no `attempt-context.ts` equivalent (the Brain's authority is inbox-derived, not
-instance-derived), no orphan-recovery handler, no compaction config (compaction becomes unreachable).
+instance-derived), and no compaction config (compaction becomes unreachable).
+
+> ### ⚠ REQUIRED — bind the instance to its Batch (raised on PR #398, P1)
+> **An orphan-recovery guard IS needed. An earlier draft of this document said it was not; that was
+> wrong.**
+>
+> `brainGraphContext()` (`packages/agents/src/brain/agent.ts:32-35`) resolves Graph write authority
+> by calling `inbox.claimBatch()` — *whichever Batch is currently open* — not the Batch the instance
+> was dispatched with. Today one instance and the in-process semaphore make that unambiguous.
+>
+> **Per-wake instances break that.** The semaphore (`dispatch.ts:19`) only serialises live wakes
+> *in this process*. Flue re-runs the initializer for an unsettled durable submission on the next
+> boot, which is outside its protection. A crash after `settleBatch` commits but before Flue settles
+> the submission can therefore recover an **old** instance while a **later** Batch is open — and that
+> recovered turn would append attestations under the new Batch's evidence set. That is silent
+> provenance corruption, which is the one failure this graph is built to make impossible.
+>
+> Two acceptable fixes, either alone:
+> - **Bind and validate** — pass the dispatched `batchId` into the instance and have
+>   `brainGraphContext(batchId)` resolve *that* Batch, refusing if it is no longer open. (Same change
+>   Build C needs; see §5.)
+> - **Recover tool-less** — copy `supersededScribeAttempt` (`packages/agents/src/scribe/agent.ts:27`)
+>   exactly: a recovered orphan mounts `tools: []`, so it cannot touch the Graph, and settles
+>   harmlessly rather than throwing. Throwing is what left submissions unsettled and re-recovering
+>   on every boot in #330.
+>
+> The Scribe already needed this for the same reason. The Brain needs it *more*, because unlike the
+> Scribe it holds Graph write authority.
 
 ### What must be reconstructed
 
@@ -304,10 +331,11 @@ rather than dollars. Check before quoting the 60%.
   biggest risk and only running it will settle it.**
 - **Multi-turn escalation arcs degrade first** — `recentEffects` says what it did, not why it
   hesitated.
-- **Framework risk to verify, not assume:** Flue re-runs initializers for unsettled durable
-  submissions on boot; the Scribe hit this and it cost issue #330 (`scribe/agent.ts:18-26`). Also
-  unverified: whether Flue prunes per-instance streams, or whether `flue.sqlite` trades one 4.9 MB
-  row-set for thousands of small ones.
+- **Orphan recovery is a correctness requirement, not a risk to monitor** — see the boxed note above.
+  Flue re-runs initializers for unsettled durable submissions on boot; the Scribe hit this and it
+  cost issue #330 (`scribe/agent.ts:18-26`).
+- **Unverified:** whether Flue prunes per-instance streams, or whether `flue.sqlite` trades one
+  4.9 MB row-set for thousands of small ones. Housekeeping, not correctness.
 
 **What does NOT break, contrary to expectation:** the ack→work→outcome contract. The skill names its
 own mechanism (`capabilities/whatsapp-participation/SKILL.md:28`) — the digest's `workItems` and
@@ -513,9 +541,32 @@ message that raised it.
    table already has a rebuild-and-copy migration path (lines 116-140); follow it.
 2. **`packages/agents/src/brain/issue-filing.ts`** — thread the originating Surface id through to the
    operation record.
-3. **Routing predicate** (used by Rule 2 and by the Brain): for an incoming event, take its linked
-   issue numbers via the existing `linkedIssueNumbers` / `correlateCreateIssues` path, look up
-   `source_surface_id`, and route there. No match → no wake.
+3. **Routing predicate** (used by Rule 2 and by the Brain). Two paths, because the event shapes
+   differ — **both are required**:
+
+   - **`pull_request` / `issues` events** — take linked issue numbers via the existing
+     `linkedIssueNumbers` / `correlateCreateIssues` path (`ingress.ts:121, 436`), look up
+     `source_surface_id`, route there.
+   - **`pull_request_review` events — via the Coder registry, not issue links.** The normalized
+     review event carries `pullRequest: {number, url, title, state, draft}` and `review: {…}` and
+     **no PR body**, and `linkedIssueNumbers` runs only on the `pull_request` branch
+     (`ingress.ts:435`). So body-parsing cannot establish provenance for a review. Use
+     `coding_jobs` instead (`packages/agents/src/capabilities/coder/registry.ts:105-115`), which is
+     keyed `PRIMARY KEY (repository, pr_number)` and carries the `issue` column:
+     `review → (repository, pr_number) → issue → source_surface_id`.
+
+   No match on either path → no wake.
+
+> ### ⚠ REQUIRED — the repair loop must survive this gate (raised on PR #398, P1)
+> A `changes_requested` review from our own Reviewer App is deliberately exempted from Build B's
+> Rule 1 so `repair_pull_request` can fire (`brain/agent.ts:84`). Under a naive provenance gate it
+> then **fails Rule 2 instead** — admitted but never woken — so the repair loop sits queued until
+> some unrelated wake happens to drain it.
+>
+> The `coding_jobs` path above closes this by construction: a review on a PR we opened is
+> provenance-bearing because we recorded opening it. That is stronger than regex over a PR body,
+> since it is a registry we wrote rather than free text we hope someone formatted. **Assert it in a
+> test** — Rule 1 exempts the review *and* Rule 2 wakes for it.
 4. **`packages/agents/src/brain/agent.ts:77`** — rewrite the routing instruction away from
    `works_on` toward the provenance path, and require it to state its reason when it prompts.
 5. **`github.surfaceRepositories`** stays as the **issue-filing target** it is documented to be
@@ -556,11 +607,15 @@ brain_batches ADD COLUMN lane`, revertible by reverting one wake call site.
    no evidence in the measured data of a single coherence failure or mis-route.
 3. **Build A gets most of the same money for one boundary instead of four.**
 
-**Prerequisite if it is ever built:** `brainGraphContext()` currently resolves authority via
-`claimBatch()` — "whatever batch is open" (`agent.ts:32-35`). With concurrent lanes that is a race
-that lets one lane write attestations under another's evidence set. It must become
-`brainGraphContext(batchId)`. **This is NOT a prerequisite for A or B** (the single wake semaphore
-keeps it unambiguous) — do not over-build it now.
+**Prerequisite, shared with Build A:** `brainGraphContext()` resolves authority via `claimBatch()` —
+"whatever batch is open" (`agent.ts:32-35`). With concurrent lanes that is a race that lets one lane
+write attestations under another's evidence set, so it must become `brainGraphContext(batchId)`.
+
+*Corrected 2026-07-25 (PR #398):* an earlier draft said this was not a prerequisite for A or B
+because the wake semaphore keeps it unambiguous. **That was wrong** — the semaphore is in-process
+only and does not cover Flue's boot recovery of an unsettled submission. Build A needs the same
+binding, or the tool-less orphan guard. See the boxed note in §3. Doing it once serves both, which
+makes Build C cheaper than this document originally implied.
 
 **C's one insight worth carrying forward regardless:** different input kinds deserve different model
 tiers. That becomes cheap once the Brain is stateless.
@@ -601,6 +656,10 @@ Still open:
   one with a claimed-undispatched batch still does.
 - Brain prompt tokens per wake stay under a ceiling (suggest 20,000).
 - An `escalate_intent` still wakes synchronously while a webhook is waiting in the debounce.
+- **A recovered orphan instance cannot write to the Graph.** Force a boot recovery of an unsettled
+  Brain submission while a later Batch is open, and assert no attestation lands under the new
+  Batch's evidence set — and that the recovered submission *settles* rather than throwing, so it
+  does not re-recover on every boot (#330).
 
 **Before/after on real traffic:**
 
