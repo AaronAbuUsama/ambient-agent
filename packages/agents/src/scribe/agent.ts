@@ -1,6 +1,6 @@
 import { defineAgent, type AgentRouteHandler, type AgentRuntimeConfig } from "@flue/runtime";
 
-import graphExtraction from "../capabilities/graph-extraction/SKILL.md" with { type: "skill" };
+import { PROMPT_IDS, storedInstructions, storedSkill } from "../prompts/catalog.ts";
 import { createScribeGraphTools } from "../capabilities/graph/tools.ts";
 import { resolveAgentModelProfile } from "@ambient-agent/engine/model/pi-subscription.ts";
 import { acceptsScribeDirectToken } from "./direct-access.ts";
@@ -27,11 +27,7 @@ export const description =
 const supersededScribeAttempt = (): AgentRuntimeConfig => ({
   ...resolveAgentModelProfile("scribe"),
   tools: [],
-  instructions: [
-    "This Scribe attempt was interrupted before it settled and has been superseded.",
-    "The durable ingestion frontier re-drives its Batch under a fresh attempt, so record nothing here.",
-    "You have no tools; acknowledge briefly and take no action.",
-  ].join("\n"),
+  instructions: storedInstructions(PROMPT_IDS.scribeSuperseded),
 });
 
 // Its own model + thinkingLevel on the one shared credential: starts cheap and
@@ -42,17 +38,9 @@ export const scribeAttemptRuntimeConfig = (id: string): AgentRuntimeConfig => {
   if (context === undefined) return supersededScribeAttempt();
   return {
     ...resolveAgentModelProfile("scribe"),
-    skills: [graphExtraction],
+    skills: [storedSkill(PROMPT_IDS.graphExtractionSkill)],
     tools: createScribeGraphTools(context),
-    instructions: [
-      "You are one stateless attempt of the coworker's single global Scribe ingestion clock.",
-      "You never reply, retain authority, or rely on prior private turns; your only effects are the three Scribe graph tools.",
-      "Each turn is one bounded cross-Surface Scribe Batch with a stable batchId and trusted immutable evidenceIds.",
-      "Read all inputs together in their supplied chronology, including relationships that only become visible across chats.",
-      "Extract the ontology from them per the graph-extraction skill.",
-      "Use only supplied evidenceIds for provenance; never invent a source reference.",
-      "Record honestly, not certainly: when unsure, propose a low-confidence fact rather than nothing.",
-    ].join("\n"),
+    instructions: storedInstructions(PROMPT_IDS.scribe),
   };
 };
 

@@ -41,6 +41,7 @@ import {
   type RuntimeTracing,
 } from "@ambient-agent/installation/schema.ts";
 import { managedPaths, type ManagedPaths } from "@ambient-agent/installation/paths.ts";
+import { readPromptBody, renderPromptEntries, withPromptStore } from "./prompt-store.ts";
 import {
   libsqlStore,
   tenantCredentialDatabaseFromEnvironment,
@@ -810,6 +811,48 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
       );
       output.stdout(renderSmokeStations(stations));
       if (stations.some(({ passed }) => !passed)) exitCode = 1;
+    });
+
+  // #375: the prompt store's operator surface. Every role's instructions and skill bodies resolve
+  // from the store at agent initialization, so these edits land on the next turn — no restart.
+  const promptCommand = program.command("prompt").description("inspect and edit the stored agent prompts and skills");
+  const promptPaths = () => managedPaths({ dataDirectory: program.opts().dataDir });
+
+  promptCommand
+    .command("list")
+    .description("list every stored prompt with its customised state and seed version")
+    .option("--json", "emit machine-readable JSON")
+    .action(async (options) => {
+      const entries = await withPromptStore(promptPaths(), (store) => store.list());
+      output.stdout(options.json ? `${JSON.stringify(entries, null, 2)}\n` : renderPromptEntries(entries));
+    });
+
+  promptCommand
+    .command("show <id>")
+    .description("print one stored prompt body")
+    .option("--shipped", "print the shipped body this entry would revert to")
+    .action(async (id: string, options) => {
+      const entry = await withPromptStore(promptPaths(), (store) => store.entry(id));
+      output.stdout(`${options.shipped ? entry.shippedBody : entry.body}\n`);
+    });
+
+  promptCommand
+    .command("set <id> <file>")
+    .description("replace one stored prompt body from a file (or - for stdin) and mark it customised")
+    .action(async (id: string, file: string) => {
+      const body = await readPromptBody(file);
+      // The body is validated inside `save`, before anything is written: an invalid skill document
+      // is refused here rather than at the next agent turn, and the stored entry is left whole.
+      const entry = await withPromptStore(promptPaths(), (store) => store.save(id, body));
+      output.stdout(`Saved ${entry.id}; it is now customised (seeded from ${entry.seededVersion}).\n`);
+    });
+
+  promptCommand
+    .command("revert <id>")
+    .description("restore one stored prompt to the shipped body and clear its customised mark")
+    .action(async (id: string) => {
+      const entry = await withPromptStore(promptPaths(), (store) => store.revert(id));
+      output.stdout(`Reverted ${entry.id} to shipped ${entry.shippedVersion}.\n`);
     });
 
   program
