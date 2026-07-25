@@ -1,6 +1,14 @@
 packages:
   - .
   - apps/*
+  # The console scaffold is tracked but not yet a workspace member. It declares its own toolchain
+  # (typescript ~6, vite ^8) outside the catalog below, and joining the workspace re-keys pnpm's peer
+  # resolution for the root toolchain: apps/runtime's `flue` resolved against typescript@6.0.3 while
+  # the root stayed on 5.9.3, producing two @flue/runtime instances. A `vi.mock("@flue/runtime")` then
+  # patches one instance while the code under test imports the other, which is what turned
+  # tests/speaker/braintrust.test.ts red. #372 wires the console in deliberately — build, published
+  # assets, and its own row in the hard-cut boundary test — and that is where it becomes a member.
+  - "!apps/web"
   - packages/*
 
 catalog:
