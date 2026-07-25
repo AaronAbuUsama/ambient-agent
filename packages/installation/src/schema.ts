@@ -209,11 +209,17 @@ export interface GitHubAppTriple {
 
 export type GitHubAppTriples = Readonly<Record<GitHubAppReference, GitHubAppTriple>>;
 
+/**
+ * `credentials/chatgpt-oauth.json`. The finite check is not decoration: it is what
+ * `validateChatGptOAuthCredential` — the reader that actually loads this file — requires, and a
+ * non-finite `expires` JSON-serialises to `null`, so a store that accepted one would acknowledge a
+ * write it could never read back.
+ */
 export const ChatGptOAuthCredentialSchema = v.looseObject({
   type: v.literal("oauth"),
   access: NonBlankString,
   refresh: NonBlankString,
-  expires: v.number(),
+  expires: v.pipe(v.number(), v.finite()),
 });
 
 /**
