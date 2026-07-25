@@ -4,8 +4,27 @@
 (`capxul-vps:~/.ambient-agent`), the Braintrust project `co-worker`
 (`ac7f8405-ae21-47ff-b962-7fe70a936fdb`), and this tree at `60532b1`. Estimates are marked.
 
-**Decision already taken by Aaron:** build **A (stateless Brain)** and **B (cheap gate)** together as
-one piece of work. **C (decompose into lanes)** is held, not rejected.
+## Decisions already taken by Aaron
+
+1. **Build A (stateless Brain) and B (cheap gate) ship together** as one piece of work.
+   **C (decompose into lanes)** is held, not rejected — see §5.
+2. **Routing is provenance-based, not config-based.** The `github.surfaceRepositories` route
+   (a hand-asserted `thread --works_on--> repository` edge) is **rejected**. A room hears about a
+   GitHub event when it closes a loop *that room opened*. See §4.5 — this **supersedes Build B's
+   original Rule 2**.
+3. **Model assignment**, once an `opencode-go` key exists — capable Brain, cheap everything else:
+
+   ```jsonc
+   "brain":    { "id": "deepseek-v4-pro",   "thinkingLevel": "high" },
+   "speaker":  { "id": "deepseek-v4-flash", "thinkingLevel": "minimal" },
+   "scribe":   { "id": "deepseek-v4-flash", "thinkingLevel": "minimal" },
+   "coder":    { "id": "kimi-k2.7-code",    "thinkingLevel": "medium" },
+   "verifier": { "id": "kimi-k2.7-code",    "thinkingLevel": "medium" }
+   ```
+
+   Not applied — no key was available. Requires `provider: "opencode-go"` and
+   `credential: "model-api-key"`; the write gate (`schema.ts:138`) refuses a mismatched pair.
+   Treat the ids as a starting point, not a ranking — settle them with the replay set in §7.
 
 ---
 
@@ -344,27 +363,27 @@ existing paths already do this. No migration.
 *Lazy fallback if plumbing the third (Planner) slug is unwanted:* `payload.sender.type === "Bot"` is
 one line and zero wiring. `ponytail:` known ceiling — also silences Dependabot and Renovate.
 
-### Rule 2 — do not wake for an unroutable repository
+### Rule 2 — do not wake for an event no room has a claim on
+
+**Superseded in substance by §4.5.** The original rule tested for a
+`thread --works_on--> repository` edge. That edge is now rejected (see §4.5), so the predicate
+becomes a provenance test instead: *does this event touch an issue some Surface actually raised?*
 
 **Where:** `apps/runtime/src/host/whatsapp-runtime.ts:388`, the
-`if (brainReady) void wakeBrain(...)` inside `configureGitHubUpInbox`.
-
-```ts
-const repo = graph.resolveIdentity("github", event.repository, "repository");
-const routable = repo !== undefined && graph.relationsTo(repo.entityId, "works_on")
-  .some((edge) => graph.getEntity(edge.fromId)?.type === "thread");
-```
-
-Both calls exist already (`packages/engine/src/graph/store.ts:192,200`). Use the canonical-cased
-`event.repository` — the ingress preserves case deliberately because `resolveIdentity` is exact-match
-(`ingress.ts:381-386`).
+`if (brainReady) void wakeBrain(...)` inside `configureGitHubUpInbox`. Placement is unchanged.
 
 **Critically, this does not drop the event.** It is still admitted durably to `brain_github_events`;
 the gate only declines to *wake*. It rides along free on the next wake that happens for another
 reason. Zero information loss. This is why it belongs at the wake site, not at ingress.
 
-**It self-heals.** The day `github.surfaceRepositories` is populated, `seedRepositoryFacts` writes the
-edge (`seed-repositories.ts:69-72`) and the gate opens on its own. No second knob.
+**It self-heals**, and better than the config version did: the moment a room files an issue, every
+later PR closing that issue is routable with no operator action at all.
+
+> **This raises the value of Build B, it does not lower it.** Under the rejected config approach,
+> filling in `surfaceRepositories` would have collapsed Rule 2's saving from ~84% to ~20–30%,
+> because it would have opened the gate for every event in a linked repo. Under provenance routing
+> the gate stays valuable permanently — most GitHub activity genuinely is not tied to anything a
+> room asked for, and never becomes so.
 
 ### Rule 3 — suppress a sweep with nothing to sweep
 
@@ -449,6 +468,75 @@ it.
 
 ---
 
+## 4.5 Provenance routing — replaces the config edge
+
+### The decision and why
+
+`github.surfaceRepositories` seeds a hand-written `thread --works_on--> repository` edge
+(`packages/agents/src/capabilities/graph/seed-repositories.ts:66-75`) which
+`packages/agents/src/brain/agent.ts:77` then reads as if it were knowledge. **This was rejected.**
+Three reasons, in order of weight:
+
+1. **It is the wrong granularity, and the ratified rubric says so.** The participation criteria
+   (`packages/agents/evals/rubric-judges.ts`, Axis 3) require: *"When a PR lands for **a captured
+   issue** → post the PR link back to the chat."* Issue-scoped, not repo-scoped. A repo edge would
+   fire on all ~70 events/day including work nobody in the room has heard of.
+2. **It is a fact with fake provenance.** Every other graph edge carries `evidenceIds` pointing at
+   real conversation events. This one carries a synthesised `surfaceEvidenceId(chat, repository)`.
+   It looks learned; nothing was learned. The file's own author flagged the discomfort —
+   `seed-repositories.ts:59-61`: *"ponytail: seeds only what config asserts … not an over-asserted
+   Graph edge."*
+3. **It is static in a dynamic world.** Rooms start and stop caring about repos; a JSON file cannot
+   track that, so it silently goes stale.
+
+### The rule
+
+**A Surface hears about a GitHub event when that event closes a loop the Surface opened.**
+Explainable by construction — the coworker can say *why* it is telling you, citing the issue and the
+message that raised it.
+
+### Most of the machinery already exists
+
+| Piece | Status | Where |
+|---|---|---|
+| Parse `Closes #184` from a PR body | **built** | `packages/engine/src/github/ingress.ts:121-132` (`linkedIssueNumbers`) |
+| Correlate linked issues to ones this system created | **built** | `ingress.ts:436` (`correlateCreateIssues`) |
+| `resolves` (PR → issue) and `works_on` (person → issue) as earned edges | **built** | `capabilities/graph-extraction/SKILL.md:34` |
+| `thread` entities in the graph | **built** | 3 present on the rig |
+| `interested_in` relation in the vocabulary | **built, unused** | `capabilities/graph/schemas.ts:60` — 1 edge live |
+| **Which Surface an issue was filed from** | **MISSING** | `packages/engine/src/github/operation-store.ts:100-113` records `repository`, `issue_number`, `kind`, `status` — and no surface |
+
+### The change
+
+1. **`packages/engine/src/github/operation-store.ts`** — add `source_surface_id TEXT` to
+   `github_issue_operations`. The value is known at filing time and currently discarded. Note the
+   table already has a rebuild-and-copy migration path (lines 116-140); follow it.
+2. **`packages/agents/src/brain/issue-filing.ts`** — thread the originating Surface id through to the
+   operation record.
+3. **Routing predicate** (used by Rule 2 and by the Brain): for an incoming event, take its linked
+   issue numbers via the existing `linkedIssueNumbers` / `correlateCreateIssues` path, look up
+   `source_surface_id`, and route there. No match → no wake.
+4. **`packages/agents/src/brain/agent.ts:77`** — rewrite the routing instruction away from
+   `works_on` toward the provenance path, and require it to state its reason when it prompts.
+5. **`github.surfaceRepositories`** stays as the **issue-filing target** it is documented to be
+   (`packages/installation/src/schema.ts:126-127`, #317) — that half is legitimate. Only the
+   `works_on` seeding in `seed-repositories.ts:66-75` is removed.
+
+### Implications, stated plainly
+
+- **Volume drops from ~70 events/day to roughly the rate the rooms actually file** — 10 issues in two
+  days on the measured traffic.
+- **The Call group hears nothing it did not ask for**, with no per-room config.
+- **It cannot answer "tell us about all ios-app activity."** Nothing can today either; if that is
+  wanted later, `interested_in` is the slot for it and the Scribe is the thing that should earn it.
+- **Issues filed before this ships have no `source_surface_id`** and are unroutable forever. Accept
+  it; the backfill is not worth it on 22 rows.
+- **It depends on PR authors writing `Closes #N`.** Our own Coder does. A human who forgets breaks
+  the link, and the loop silently never closes — worth a check that flags it rather than failing
+  quietly.
+
+---
+
 ## 5. Held: Build C — decompose into four lanes
 
 **Not rejected. Held.** Router (GitHub, 57% of inputs) / Curator (Scribe deltas) / Steward (wakes +
@@ -481,19 +569,24 @@ tiers. That becomes cheap once the Brain is stateless.
 
 ## 6. Open questions for Aaron
 
-1. **Do you want the coworker announcing GitHub activity in the groups?** Filling in
-   `surfaceRepositories` switches this on. Until now it has been structurally silent about every PR
-   and issue. This is a product decision, not a bug fix, and it changes Rule 2's value: fix the
-   config and Build B's saving drops from ~84% to ~20–30%, because a large part of B's measured win
-   is efficiently not-doing work that is currently broken.
-2. **Which model per role**, once a provider key exists. Suggested starting point: keep the Brain on
-   the strongest available (`deepseek-v4-pro` or `qwen3.7-max`), put Speaker and Scribe on
-   `deepseek-v4-flash` or `glm-5.1`. Every role must share one provider until #376.
-3. **Is the constraint dollars or rate-limit units?** Build A raises fresh tokens ~4× while lowering
-   total cost ~60%. If limits are denominated in fresh input, that trade needs checking.
-4. **Should trace payloads be turned on?** Prompt inputs are not currently logged, so production
-   traces cannot become eval rows without a database join. Turning them on means chat content leaves
-   the box — redaction needed first.
+**Answered — do not re-ask.** Routing shape (§4.5, provenance) and model assignment (§0) are
+decided.
+
+Still open:
+
+1. **Is the constraint dollars or rate-limit units?** Build A raises fresh tokens ~4× while lowering
+   total cost ~60%. If `opencode-go`'s limits are denominated in fresh input rather than spend, that
+   trade needs checking before Build A is judged a win.
+2. **Should trace payloads be turned on?** Prompt inputs are not currently logged (3 of 381 trace
+   roots carry an `input`; all 1,682 `llm:agent` spans carry none), so production traces cannot
+   become eval rows without a database join. **Not yet a real question** — nobody has established
+   whether this is a Flue configuration or requires a change in
+   `packages/engine/src/braintrust.ts`. Investigate before deciding. Turning it on means chat content
+   leaves the box, so redaction comes first either way.
+3. **Does `interested_in` get earned later?** §4.5 deliberately cannot answer "tell us about all
+   ios-app activity." If that turns out to be wanted, the relation already exists in the vocabulary
+   and the Scribe is the thing that should learn it — but that is a separate build and should not be
+   smuggled into this one.
 
 ---
 
