@@ -28,18 +28,20 @@ beforeEach(() => {
 const nonce = () => randomBytes(8).toString("hex");
 
 /**
- * How long the staleness tests wait for a ~20ms renewal deadline to elapse and be announced.
+ * The staleness tests turn on a renewal deadline elapsing, which is a *clock* fact, not a scheduling
+ * one — so they drive the clock instead of racing it.
  *
- * `vi.waitFor` defaults to a 1s budget, which is not the deadline itself but the budget for a loaded
- * runner to get around to firing an unref'd `setTimeout` and running the poll. A full-suite Node 24
- * job exceeded it and turned "pushes the staleness transition to subscribers" red on `main` at
- * `7dd8750` — a scheduling delay, not a seam defect. Widened rather than made clock-dependent: these
- * assertions still fail if the transition is never announced, which is the whole point of them.
+ * They previously waited on a real ~20ms timer. That is not the deadline, it is a bet on how soon a
+ * loaded runner gets around to firing an unref'd `setTimeout` and running the poll, and the bet lost
+ * twice: at vitest's 1s default (red on `main` at `7dd8750`, widened to 4s by #394) and then at 4s
+ * on a Node 24 full-suite job. Widening again would just move the next failure.
  *
- * Kept under vitest's 5s per-test timeout on purpose. Overshooting it would mean a genuine
- * regression surfaced as an opaque test timeout instead of the assertion that names what broke.
+ * Fake timers remove the runner from the question. `advanceTimersByTime` fires the expiry timer and
+ * moves `Date.now()` past `freshUntil` in one deterministic step, so these assertions still fail if
+ * the transition is never announced — which is the whole point of them — and cannot fail for any
+ * other reason. Verified non-vacuous by removing `notify()` from the cell's expiry timer.
  */
-const STALENESS_BUDGET_MS = 4_000;
+const AFTER_THE_DEADLINE_MS = 25;
 
 describe("the retained-state observation seam", () => {
   it("gives a subscriber that attaches after the publication the current value, with no replay", () => {
@@ -103,31 +105,47 @@ describe("the retained-state observation seam", () => {
     expect(second).toEqual([]);
   });
 
-  it("tells a value that went stale from one that is legitimately idle", async () => {
-    const perishable = observed("perishable", "qr-1");
-    const idle = observed("idle", "online");
+  it("tells a value that went stale from one that is legitimately idle", () => {
+    vi.useFakeTimers();
+    try {
+      const perishable = observed("perishable", "qr-1");
+      const idle = observed("idle", "online");
 
-    perishable.publish("qr-2", { freshUntil: Date.now() + 20 });
-    idle.publish("online");
+      perishable.publish("qr-2", { freshUntil: Date.now() + 20 });
+      idle.publish("online");
 
-    expect(perishable.snapshot().stale).toBe(false);
-    await vi.waitFor(() => expect(perishable.snapshot().stale).toBe(true), { timeout: STALENESS_BUDGET_MS });
-    // No renewal deadline was promised, so nothing to break: a silent healthy socket is not stale.
-    expect(idle.snapshot().stale).toBe(false);
-    // Renewal clears it — rotation is health, not a restart.
-    perishable.publish("qr-3", { freshUntil: Date.now() + 10_000 });
-    expect(perishable.snapshot().stale).toBe(false);
+      expect(perishable.snapshot().stale).toBe(false);
+      vi.advanceTimersByTime(AFTER_THE_DEADLINE_MS);
+      expect(perishable.snapshot().stale).toBe(true);
+      // No renewal deadline was promised, so nothing to break: a silent healthy socket is not stale.
+      expect(idle.snapshot().stale).toBe(false);
+      // Renewal clears it — rotation is health, not a restart.
+      perishable.publish("qr-3", { freshUntil: Date.now() + 10_000 });
+      expect(perishable.snapshot().stale).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it("pushes the staleness transition to subscribers, not only to readers", async () => {
-    const channel = observed("unrenewed", "qr-1");
-    const deltas: Observation<string>[] = [];
-    channel.subscribe((observation) => deltas.push(observation));
+  it("pushes the staleness transition to subscribers, not only to readers", () => {
+    vi.useFakeTimers();
+    try {
+      const channel = observed("unrenewed", "qr-1");
+      const deltas: Observation<string>[] = [];
+      channel.subscribe((observation) => deltas.push(observation));
 
-    channel.publish("qr-2", { freshUntil: Date.now() + 20 });
+      channel.publish("qr-2", { freshUntil: Date.now() + 20 });
+      expect(deltas.at(-1)?.stale).toBe(false);
 
-    await vi.waitFor(() => expect(deltas.at(-1)?.stale).toBe(true), { timeout: STALENESS_BUDGET_MS });
-    expect(deltas[0]?.stale).toBe(false);
+      // The deadline passes with nothing renewing it. A reader would compute staleness for itself;
+      // a *subscriber* only learns about it if the cell announces it, which is what this pins.
+      vi.advanceTimersByTime(AFTER_THE_DEADLINE_MS);
+
+      expect(deltas.at(-1)?.stale).toBe(true);
+      expect(deltas[0]?.stale).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("projects a live source at read time instead of shadowing it with a cached copy", () => {
