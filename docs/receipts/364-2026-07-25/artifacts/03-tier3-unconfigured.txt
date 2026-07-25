@@ -1,0 +1,37 @@
+# Tier 3 (live) — run A: no configuration present
+# 2026-07-25T13:48:31Z   nonce n364-a0be3694c292   head bd05abf1d31c4749e5676982f5d7396d908e086c
+# The nonce is the data directory's own name, so every path-bearing line names this run.
+
+$ node dist/cli/main.js --data-dir $D --control-port 47474  &
+Control plane listening on http://127.0.0.1:47474
+Control plane bearer token: minted for this process only, and not printed to a non-terminal stdout. Run ambient-agent init, or start this again from a terminal.
+Runtime not started: Ambient Agent is not configured. Run ambient-agent init.
+
+# stdout is a pipe here, not a terminal, so the first-run token is withheld — under a
+# service manager stdout is the journal. The 401s below are what an unauthorized caller sees.
+
+$ curl -isS http://127.0.0.1:47474/api/status                     # no Authorization header
+HTTP/1.1 401 Unauthorized
+content-type: application/json
+www-authenticate: Bearer
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+{"error":"unauthorized"}
+
+$ curl -isS -H 'Authorization: Bearer guessed' .../api/status
+HTTP/1.1 401 Unauthorized
+content-type: application/json
+www-authenticate: Bearer
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+{"error":"unauthorized"}
+
+$ ls -d $D   # an unconfigured control plane must not create the data directory
+ls: $HOME/.ambient-agent-n364-a0be3694c292: No such file or directory
+
+$ ps -p 61286 -o pid=,stat=   # still up
+61286 S   

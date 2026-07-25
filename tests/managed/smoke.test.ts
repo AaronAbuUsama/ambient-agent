@@ -19,6 +19,7 @@ const paths = {
   modelApiKeyCredential: "/missing/credentials/model-api-key.json",
   e2bCredential: "/missing/credentials/e2b.json",
   braintrustCredential: "/missing/credentials/braintrust.json",
+  controlPlaneCredential: "/missing/credentials/control-plane.json",
   applicationDatabase: "/missing/application.sqlite",
   flueDatabase: "/missing/flue.sqlite",
   whatsapp: "/missing/whatsapp",

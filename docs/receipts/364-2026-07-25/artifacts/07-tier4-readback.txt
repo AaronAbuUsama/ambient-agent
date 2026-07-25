@@ -1,0 +1,49 @@
+# Tier 4 (readback) — the token is in the managed configuration store, and in no log file
+# 2026-07-25T13:48:59Z   nonce n364-a0be3694c292
+# Token values are masked at capture and identified by SHA-256 — which is what the server itself
+# compares — so the identifier pins the exact secret without disclosing it.
+
+== run C — $HOME/.ambient-agent-n364-a0be3694c292
+$ /bin/ls -l $D/credentials/control-plane.json
+-rw-------@ 1 abuusama  wheel  110 Jul 25 13:48 $D/credentials/control-plane.json
+$ cat $D/credentials/control-plane.json
+{
+  "schemaVersion": 1,
+  "kind": "control-plane",
+  "token": "<REDACTED>"
+}
+   token sha256 = d2449676f6659995ff41cf3bdf7a1a6996e8871f5dab3c83f9ac4c43e60cc2ee  length = 43 chars
+$ /bin/ls -l $D/logs ; wc -lc $D/logs/*.log
+total 0
+-rw-r--r--@ 1 abuusama  wheel  0 Jul 25 13:48 ambient-agent.1.log
+       0       0 $D/logs/ambient-agent.1.log
+$ grep -rlF "<the token>" $D/logs ; echo exit=$?      # 1 = no log file holds the token
+exit=1 (output: <none>)
+$ grep -rlF "<the token>" $D                          # every file under the data directory
+$D/credentials/control-plane.json
+
+== run E — $HOME/.ambient-agent-n364-a0be3694c292-boot
+$ /bin/ls -l $D/credentials/control-plane.json
+-rw-------@ 1 abuusama  wheel  110 Jul 25 13:48 $D/credentials/control-plane.json
+$ cat $D/credentials/control-plane.json
+{
+  "schemaVersion": 1,
+  "kind": "control-plane",
+  "token": "<REDACTED>"
+}
+   token sha256 = ba4fdd4cc4c41ffe35db30a3056b925aa4ac9368c43946f58caa19b12d41c161  length = 43 chars
+$ /bin/ls -l $D/logs ; wc -lc $D/logs/*.log
+total 8
+-rw-r--r--@ 1 abuusama  wheel  224 Jul 25 13:48 ambient-agent.1.log
+       1     224 $D/logs/ambient-agent.1.log
+$ grep -rlF "<the token>" $D/logs ; echo exit=$?      # 1 = no log file holds the token
+exit=1 (output: <none>)
+$ grep -rlF "<the token>" $D                          # every file under the data directory
+$D/credentials/control-plane.json
+
+== the processes' own stdout/stderr ==
+run C: 0 occurrences of its token
+run E: 0 occurrences of its token
+
+== run E log sample (non-empty: the boot really logged) ==
+{"level":30,"time":1784987337625,"subsystem":"whatsapp","operatorEvent":"agent.online","detail":"managed chat connected","botIds":["15550000000@s.whatsapp.net"],"chatTarget":"120363000@g.us","msg":"Speaker WhatsApp online"}

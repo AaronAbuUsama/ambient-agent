@@ -1,0 +1,15 @@
+# Tier 3 (live) — run F: the token is generated once and survives a restart
+# 2026-07-25T13:49:00Z   nonce n364-a0be3694c292
+
+$ sha256 of the token stored before the restart
+ba4fdd4cc4c41ffe35db30a3056b925aa4ac9368c43946f58caa19b12d41c161
+
+$ node dist/cli/main.js --data-dir $D2 --control-port 47474  &   # second boot, same directory
+Control plane listening on http://127.0.0.1:47474
+Control plane bearer token: $HOME/.ambient-agent-n364-a0be3694c292-boot/credentials/control-plane.json (mode 0600).
+
+$ sha256 of the token stored after the restart   # unchanged: minted once, then read back
+ba4fdd4cc4c41ffe35db30a3056b925aa4ac9368c43946f58caa19b12d41c161
+
+$ curl -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer <the pre-restart token>' .../api/status
+200

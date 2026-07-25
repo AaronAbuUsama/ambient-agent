@@ -7,11 +7,13 @@ import * as v from "valibot";
 import { SUBSCRIPTION_PROVIDER_ID } from "@ambient-agent/engine/model/pi-subscription.ts";
 import {
   BraintrustCredentialSchema,
+  ControlPlaneCredentialSchema,
   E2BCredentialSchema,
   GitHubAppCredentialSchema,
   ManagedConfigSchema,
   ModelApiKeyCredentialSchema,
   type BraintrustCredential,
+  type ControlPlaneCredential,
   type E2BCredential,
   type GitHubAppCredential,
   type ManagedConfig,
@@ -87,6 +89,13 @@ export const readManagedE2BApiKey = async (path: string): Promise<E2BCredential>
  */
 export const readManagedBraintrustApiKey = async (path: string): Promise<BraintrustCredential> =>
   await readPrivateJson(path, BraintrustCredentialSchema);
+
+/**
+ * The control-plane bearer token from `credentials/control-plane.json` (#364). Absent on the first
+ * boot — the control plane mints one then — so the ENOENT is the caller's to handle, not an error.
+ */
+export const readManagedControlPlaneCredential = async (path: string): Promise<ControlPlaneCredential> =>
+  await readPrivateJson(path, ControlPlaneCredentialSchema);
 
 export const atomicWriteManagedConfig = async (path: string, value: unknown): Promise<void> => {
   const directory = dirname(path);

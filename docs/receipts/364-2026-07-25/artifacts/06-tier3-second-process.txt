@@ -1,0 +1,11 @@
+# Tier 3 (live) — run D: a second process on the same data directory, run C (pid 61438) alive
+# 2026-07-25T13:48:36Z   nonce n364-a0be3694c292
+
+$ cat $D/runtime.lock
+61438
+$ node dist/cli/main.js --data-dir $D --control-port 47475   # a free, different port
+ambient-agent: Another ambient-agent runtime (pid 61438) is already using $HOME/.ambient-agent-n364-a0be3694c292. Stop it before starting another; two runtimes on one data directory corrupt it.
+exit=1
+
+$ ps -p 61438 -o pid=,etime=,stat=   # the first process is untouched
+61438 00:04 S   

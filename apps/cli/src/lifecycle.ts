@@ -65,10 +65,14 @@ export const acquireInstanceLock = async (root: string): Promise<void> => {
   }
 };
 
-export const parseRuntimePort = (value: string): number => {
+/**
+ * `minimum` is 1 for a port that gets written to config — `ManagedConfigSchema` rejects 0 there, so
+ * the CLI must too — and 0 for the control plane, where 0 is a legal "bind an ephemeral port".
+ */
+export const parsePort = (value: string, label = "runtime port", minimum = 1): number => {
   const port = Number(value);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error("The runtime port must be an integer from 1 through 65535.");
+  if (!Number.isInteger(port) || port < minimum || port > 65_535) {
+    throw new Error(`The ${label} must be an integer from ${minimum} through 65535.`);
   }
   return port;
 };
