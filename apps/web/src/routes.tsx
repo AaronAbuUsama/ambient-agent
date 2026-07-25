@@ -113,9 +113,15 @@ export const ROUTES: readonly ConsoleRoute[] = [
   },
 ]
 
+/**
+ * Sidebar order is for humans; matching order is longest-path-first, so `/chats/archive` beats
+ * `/chats` whichever way round a screen node adds them.
+ */
+const BY_SPECIFICITY = [...ROUTES].sort((a, b) => b.path.length - a.path.length)
+
 /** Longest-prefix match, with Overview as the root and the answer for anything unrecognised. */
 export const routeFor = (pathname: string): ConsoleRoute =>
-  ROUTES.find(
+  BY_SPECIFICITY.find(
     (route) =>
       route.path !== "/" &&
       (pathname === route.path || pathname.startsWith(`${route.path}/`))

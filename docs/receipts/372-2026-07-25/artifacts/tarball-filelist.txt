@@ -11,8 +11,8 @@ package/dist/web/assets/geist-cyrillic-wght-normal-BEAKL7Jp.woff2
 package/dist/web/assets/geist-latin-ext-wght-normal-DC-KSUi6.woff2
 package/dist/web/assets/geist-latin-wght-normal-BgDaEnEv.woff2
 package/dist/web/assets/geist-vietnamese-wght-normal-6IgcOCM7.woff2
-package/dist/web/assets/index-CBPHa7aF.js
 package/dist/web/assets/index-CYOkFMUR.css
+package/dist/web/assets/index-FJ3lGdHB.js
 package/dist/web/index.html
 package/dist/web/vite.svg
 package/LICENSE

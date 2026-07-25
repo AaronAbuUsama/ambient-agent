@@ -229,9 +229,14 @@ describe("packed ambient-agent executable", () => {
     const index = await readFile(join(web, "index.html"), "utf8");
     expect(index).toContain('<div id="root">');
     const assets = await readdir(join(web, "assets"));
-    expect(assets.filter((asset) => asset.endsWith(".js")), "a built script").not.toHaveLength(0);
-    expect(assets.filter((asset) => asset.endsWith(".css")), "a built stylesheet").not.toHaveLength(0);
-    for (const asset of assets) expect(index.includes(asset) || asset.endsWith(".woff2")).toBe(true);
+    const scripts = assets.filter((asset) => asset.endsWith(".js"));
+    const stylesheets = assets.filter((asset) => asset.endsWith(".css"));
+    expect(scripts, "a built script").not.toHaveLength(0);
+    expect(stylesheets, "a built stylesheet").not.toHaveLength(0);
+    // The entry pair is what `index.html` loads. Later screens may split further chunks out; those
+    // are reached from the entry, not from here, so this asserts the entry only.
+    expect(scripts.some((script) => index.includes(script)), "the entry script is referenced").toBe(true);
+    expect(stylesheets.some((sheet) => index.includes(sheet)), "the entry stylesheet is referenced").toBe(true);
   });
 
   it("resolves the installed production runtime dependencies without test hooks or a checkout", async () => {

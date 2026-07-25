@@ -43,10 +43,15 @@ export class UnauthorizedError extends Error {
   }
 }
 
-const authorized = (token: string, init: RequestInit): RequestInit => ({
-  ...init,
-  headers: { ...init.headers, authorization: `Bearer ${token}` },
-})
+/**
+ * `new Headers` rather than a spread: `init.headers` may be a `Headers` or an array of pairs, and
+ * spreading either of those silently drops every header a caller set.
+ */
+const authorized = (token: string, init: RequestInit): RequestInit => {
+  const headers = new Headers(init.headers)
+  headers.set("authorization", `Bearer ${token}`)
+  return { ...init, headers }
+}
 
 /**
  * A `GET /api/...` (or any method via `init`) against the control plane, carrying the token.

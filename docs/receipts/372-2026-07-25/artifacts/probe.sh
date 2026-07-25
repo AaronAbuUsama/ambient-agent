@@ -14,12 +14,19 @@ curl -s -o /dev/null -w "  GET /api/unknown  token     -> %{http_code}\n" -H "Au
 
 echo
 echo "== the static shell is unauthenticated, and every route deep-links =="
-for path in / /chats /repositories /agents /runtime /secrets /logs /chats/120363000; do
+for path in / /chats /repositories /agents /runtime /secrets /logs /chats/120363000 "/chats/120363000@g.us"; do
   curl -s -o /dev/null -w "  GET $path -> %{http_code} %{content_type}\n" "$ORIGIN$path"
 done
 curl -s -o /dev/null -w "  GET /assets/missing.js -> %{http_code} (a named file that misses is a real 404)\n" "$ORIGIN/assets/missing.js"
-curl -s -o /dev/null -w "  GET /../../etc/passwd.js -> %{http_code} (no escape from the shell directory)\n" "$ORIGIN/../../etc/passwd.js"
-curl -s -o /dev/null -w "  GET /%2e%2e/%2e%2e/etc/passwd.js -> %{http_code}\n" "$ORIGIN/%2e%2e/%2e%2e/etc/passwd.js"
+
+echo
+echo "== nothing outside the shell directory, and nothing that throws =="
+# --path-as-is: curl must not normalise these away before they reach the server.
+for escape in /../../etc/passwd.js "/%2e%2e/%2e%2e/etc/passwd.js" /assets/../../secret.js /http:/evil.com/x.js "/%68ttp:/evil.com/x.js" /../web-secrets/token.js; do
+  curl -s --path-as-is -o /dev/null -w "  GET $escape -> %{http_code}\n" "$ORIGIN$escape"
+done
+curl -s -o /dev/null -w "  GET / -> %{http_code} (still serving: none of the above killed the process)\n" "$ORIGIN/"
+curl -s -o /dev/null -D - "$ORIGIN/" | grep -i "x-content-type-options\|cache-control" | sed 's/^/  /'
 
 echo
 echo "== the nonce this build was stamped with, read back off the wire =="

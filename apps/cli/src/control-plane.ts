@@ -35,7 +35,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, readFile } from "node:fs/promises";
-import { extname } from "node:path";
+import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -198,22 +198,31 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
 /**
  * Serve one file out of the built console, with the SPA fallback that makes deep links load.
  *
- * A request with no file extension is a route inside the application (`/agents`, `/logs`), not a
- * missing asset, so `index.html` answers it and the client-side router takes it from there. A
- * request that names a file and misses is a real 404 — falling back to the shell there would serve
- * HTML to a `<script>` tag and turn a broken build into a mystery.
+ * A request is an *asset* only when it ends in an extension this build actually emits. Everything
+ * else is a route inside the application and is answered with `index.html`, so `/agents` and
+ * `/chats/120363000@g.us` both cold-load — the extension of that second one is `.us`, which is why
+ * "has an extension" is the wrong test. An asset that misses is a real 404: falling back to the
+ * shell there would serve HTML to a `<script>` tag and turn a broken build into a mystery.
+ *
+ * Every failure path in here answers with a status code. This handler is reached *before* the token
+ * gate, so a throw would be an unauthenticated crash of a process that also hosts the runtime.
  */
 const serveShell = async (directory: URL, pathname: string, method: string, response: ServerResponse) => {
-  let file: URL;
+  const root = resolve(fileURLToPath(directory)) + sep;
+  let file: string;
   try {
-    // Decode first: `new URL` normalises `..` but not `%2e%2e`, so an encoded traversal would slip
-    // past the containment check below and only be decoded by `fileURLToPath`.
+    // Decode first: path normalisation does not see `%2e%2e`, so an encoded traversal would
+    // otherwise survive the containment check below.
     const requested = decodeURIComponent(pathname);
-    file = new URL(extname(requested) === "" ? "index.html" : requested.slice(1), directory);
+    const asset = CONTENT_TYPES[extname(requested).toLowerCase()] === undefined ? "index.html" : `.${requested}`;
+    // `resolve` against the root, never `new URL`: a path like `/http:/evil.com/x.js` parses as an
+    // absolute URL with a non-file scheme, and `fileURLToPath` throws on it.
+    file = resolve(root, asset);
   } catch {
     return respond(response, 400, { error: "bad-request" });
   }
-  if (!fileURLToPath(file).startsWith(fileURLToPath(directory))) return respond(response, 404, { error: "not-found" });
+  // The trailing separator matters: without it `dist/web-secrets` would pass as inside `dist/web`.
+  if (!file.startsWith(root)) return respond(response, 404, { error: "not-found" });
   let body: Buffer;
   try {
     body = await readFile(file);
@@ -221,8 +230,12 @@ const serveShell = async (directory: URL, pathname: string, method: string, resp
     return respond(response, 404, { error: "not-found" });
   }
   response.writeHead(200, {
-    "content-type": CONTENT_TYPES[extname(file.pathname)] ?? "application/octet-stream",
+    "content-type": CONTENT_TYPES[extname(file).toLowerCase()] ?? "application/octet-stream",
     "content-length": String(body.byteLength),
+    // The shell is the one unauthenticated surface; do not let a browser guess its way to a
+    // different interpretation of these bytes, and do not let a stale build linger in a cache.
+    "x-content-type-options": "nosniff",
+    "cache-control": "no-cache",
   });
   return response.end(method === "HEAD" ? undefined : body);
 };
@@ -243,7 +256,12 @@ export const createControlPlaneServer = (
     // installation state. Everything under /api/ keeps #364's gate, ahead of its own routing.
     if (!isApi(path)) {
       if (method !== "GET" && method !== "HEAD") return respond(response, 405, { error: "method-not-allowed" });
-      return void serveShell(shellDirectory, path, method, response);
+      // The last resort: an unauthenticated request must never be able to reject a promise nobody
+      // awaits, because an unhandled rejection ends a process that is also hosting the runtime.
+      return void serveShell(shellDirectory, path, method, response).catch(() => {
+        if (!response.headersSent) respond(response, 500, { error: "internal" });
+        response.end();
+      });
     }
     const presented = bearer(request.headers.authorization);
     // The gate runs before API routing, so an unknown API path is refused exactly like a known one

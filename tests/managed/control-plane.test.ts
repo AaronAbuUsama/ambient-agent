@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import type { Server } from "node:http";
+import { get, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -364,7 +364,22 @@ describe("the static console shell", () => {
     const address = server.address();
     if (address === null || typeof address === "string") throw new Error("The shell server bound no TCP address.");
     const origin = `http://127.0.0.1:${address.port}`;
-    return { origin, get: async (path: string) => await fetch(`${origin}${path}`) };
+    return {
+      origin,
+      get: async (path: string) => await fetch(`${origin}${path}`),
+      /**
+       * `fetch` normalises `..` out of a URL before it ever reaches the wire, which would make a
+       * traversal test pass without testing anything. This sends the request line verbatim.
+       */
+      raw: async (path: string) =>
+        await new Promise<number>((resolveStatus, reject) => {
+          const attempt = get({ host: "127.0.0.1", port: address.port, path }, (response) => {
+            response.resume();
+            resolveStatus(response.statusCode ?? 0);
+          });
+          attempt.on("error", reject);
+        }),
+    };
   };
 
   it("serves the shell and its assets without a bearer token", async () => {
@@ -383,22 +398,38 @@ describe("the static console shell", () => {
   it("answers a deep link with the shell, so a cold load of any route works", async () => {
     const shell = await shellServer();
 
-    for (const route of ["/agents", "/logs", "/chats/120363000"]) {
+    // The last one is the shape of a real WhatsApp chat id. Its extension is `.us`, so "does this
+    // path have an extension" is the wrong test for asset-versus-route.
+    for (const route of ["/agents", "/logs", "/chats/120363000", "/chats/120363000@g.us"]) {
       const response = await shell.get(route);
       expect(response.status, route).toBe(200);
       await expect(response.text(), route).resolves.toContain("<title>console</title>");
     }
-    // A path that names a file and misses is a real 404: falling back to the shell there would
-    // serve HTML to a <script> tag and turn a broken build into a mystery.
+    // A path that names a file this build emits and misses is a real 404: falling back to the shell
+    // there would serve HTML to a <script> tag and turn a broken build into a mystery.
     expect((await shell.get("/assets/missing.js")).status).toBe(404);
+    expect((await shell.get("/assets/missing.css")).status).toBe(404);
   });
 
-  it("refuses to serve anything outside the built shell", async () => {
+  it("refuses to serve anything outside the built shell, and never dies trying", async () => {
     const shell = await shellServer();
 
-    for (const escape of ["/../../etc/passwd.js", "/%2e%2e/%2e%2e/etc/passwd.js", "/assets/../../secret.js"]) {
-      expect((await shell.get(escape)).status, escape).toBe(404);
+    const escapes = [
+      "/../../etc/passwd.js",
+      "/%2e%2e/%2e%2e/etc/passwd.js",
+      "/assets/../../secret.js",
+      // Parsed as an absolute URL with a non-file scheme by anything that resolves it as a URL —
+      // and an unauthenticated request must never be able to throw inside this handler.
+      "/http:/evil.com/x.js",
+      "/%68ttp:/evil.com/x.js",
+      // A sibling directory whose name merely starts with the shell's own.
+      "/../web-secrets/token.js",
+    ];
+    for (const escape of escapes) {
+      expect(await shell.raw(escape), escape).toBe(404);
     }
+    // Still serving: none of the above took the process, or the server, down.
+    expect((await shell.get("/")).status).toBe(200);
   });
 
   it("keeps every /api/ path gated exactly as #364 merged it", async () => {

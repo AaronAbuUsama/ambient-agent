@@ -8,12 +8,12 @@ location**, not the working tree.
 ## The artifact under test
 
 ```
-npm pack  →  ambient-agent-0.4.0.tgz  (shasum eb348d0d9d8febb583ab295c2006805f8b35f87e)
+npm pack  →  ambient-agent-0.4.0.tgz  (sha1 e14994b8b93c622132e20117fb13b4ffbaa23d5e)
            →  installed with `npm install` into /tmp/372-live
            →  started: node node_modules/ambient-agent/dist/cli/main.js --data-dir … --control-port 4757
 ```
 
-**Nonce:** `372-20260725T151923Z-73f5f1bd`, minted at pack time, baked in as `VITE_BUILD_NONCE`,
+**Nonce:** `372-20260725T155848Z-c987dd0e`, minted at pack time, baked in as `VITE_BUILD_NONCE`,
 rendered into every placeholder route *and* into `index.html`, and read back off the served
 response of the installed tarball (`artifacts/tier4-readback.txt`).
 
@@ -21,9 +21,9 @@ response of the installed tarball (`artifacts/tier4-readback.txt`).
 
 | tier | what it proves | evidence |
 |---|---|---|
-| 1 mechanical | `pnpm run typecheck && pnpm test` green; the no-custom-styling criterion is enforced by a check | `tests/web/console.test.ts` (2 tests), `tests/speaker/hard-cut.test.ts`, `tests/managed/control-plane.test.ts` (11 tests). Suite: 85 files, 846 passed |
+| 1 mechanical | `pnpm run typecheck && pnpm test` green; the no-custom-styling criterion is enforced by a check | `tests/web/console.test.ts` (2 tests), `tests/speaker/hard-cut.test.ts`, `tests/managed/control-plane.test.ts` (11 tests). Suite: 85 files, 847 passed |
 | 2 integrated | N/A | N/A |
-| 3 live (branch) | every route visited in Chrome in both colour schemes, from the installed tarball, plus a deep link and a browser reload | `screenshots/{light,dark}-{overview,chats,repositories,agents,runtime,secrets,logs}.jpg`, `screenshots/dark-sign-in.jpg`, `screenshots/navigation.gif` |
+| 3 live (branch) | every route visited in Chrome in both colour schemes, from the installed tarball, plus a deep link and a browser reload | `screenshots/{light,dark}-{overview,chats,repositories,agents,runtime,secrets,logs}.jpg`, `screenshots/light-sign-in.jpg`, `screenshots/navigation.gif` |
 | 4 readback | the tarball's file list contains the built assets; the served bytes are the built bytes | `artifacts/tarball-filelist.txt`, `artifacts/tier4-readback.txt` |
 | 5 observed | N/A | N/A |
 
@@ -51,9 +51,18 @@ GET /api/unknown  no token  -> 401     ← gate before routing, unchanged
 GET /api/status   token     -> 200
 GET /api/unknown  token     -> 404
 GET /  /chats  /repositories  /agents  /runtime  /secrets  /logs  -> 200 text/html
+GET /chats/120363000@g.us -> 200 text/html   ← a dotted deep link is a route, not a missing asset
 GET /assets/missing.js -> 404          ← a named file that misses is a real 404
-GET /../../etc/passwd.js -> 404        ← and the encoded form too
+GET /../../etc/passwd.js -> 404        ← the encoded form too, and /http:/evil.com/x.js
+GET / -> 200                           ← still serving: none of the above killed the process
 ```
+
+The full probe, including the six containment cases and the `nosniff` / `no-cache` headers, is in
+`artifacts/tier4-readback.txt`. Independent review of this PR found two blockers in this file
+server — an unauthenticated request that could crash the process, and a deep link with a dot in it
+that 404'd. Both are fixed, both are now regression-tested in
+`tests/managed/control-plane.test.ts`, and **every tier here was re-captured against the fixed
+build** (hence the second nonce).
 
 ## Workspace re-inclusion
 
