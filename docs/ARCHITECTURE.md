@@ -3,6 +3,8 @@
 > This is the **code taxonomy** — which package owns what. For the definitive
 > description of how the agentic system _works_ (the Brain, Speakers, the Graph, the
 > Digest, the control loop), see [`SYSTEM-ARCHITECTURE.md`](./SYSTEM-ARCHITECTURE.md).
+> For the detailed path from Source Archives through knowledge-ready Attention and Work,
+> see [`INFORMATION-TO-ACCOUNTABILITY.md`](./INFORMATION-TO-ACCOUNTABILITY.md).
 
 The ratified taxonomy (#117 → #131, extended by #372): three packages, three apps, one arrow
 diagram — enforced, not aspirational (`tests/speaker/hard-cut.test.ts`).
@@ -44,7 +46,24 @@ use one. A future need for a shared type is a reason to re-open that row deliber
 reason to have left it off. Its built assets ship inside the published package (`dist/web`), and
 the control plane serves them — the shell unauthenticated, everything under `/api/` gated (#372).
 
-## How a message becomes work
+## How information becomes work
+
+The accepted conceptual path is:
+
+```text
+Source Archive / Happening
+  → deterministic facts and Scribe semantic projection
+  → Graph knowledge floor
+  → durable Attention Item
+  → Brain disposition
+  → durable Work Item or direct Effect
+  → observable outcome
+```
+
+Durable machinery belongs in `engine`; agent identity and judgement policy belong in
+`agents`; `apps/runtime` composes provider adapters and the Flue host. The current code has
+most of those durable primitives but does not yet connect them in that order. The sequence
+below is the **current implementation**, not the accepted target:
 
 ```mermaid
 sequenceDiagram
@@ -62,7 +81,7 @@ sequenceDiagram
   DB-->>SC: claim one bounded chronological<br/>cross-Surface Scribe Batch wave
   SC->>FLUE: bounded stateless attempt<br/>stable batchId + fresh attempt id + current Projection
   SC->>DB: append immutable Evidence Set Attestations<br/>refresh derived Belief Projection
-  SC->>DB: admit the durable proposal delta<br/>to the Brain up-inbox
+  SC->>DB: admit the durable proposal delta<br/>directly to the Brain up-inbox
   ENG->>SP: WindowDispatcher port → admitWindow (admission, retry, at-least-once)
   SP->>DB: escalate_intent (immutable evidence-backed admission)
   DB->>FLUE: wake one Brain Batch on instance global
@@ -81,21 +100,29 @@ sequenceDiagram
   FLUE-->>SP: lifecycle observations (dispatchId only)<br/>→ Window or Directive correlation
 ```
 
-The Speaker now mounts conversation, Intent escalation, Directive Saying, a work-status pull tool
+The Speaker mounts conversation, Intent escalation, Directive Saying, a work-status pull tool
 (`lookup_work`), and read-only Graph tools only. The Brain owns Coder launch, stable work identity,
 Flue admission reconciliation, terminal-result admission, the independent choice of reporting
 Surface, GitHub events (admitted to the same up-inbox and routed by Brain decision, never
 broadcast), and the proactive clock (Scheduled Wake + coalesced Proactive Sweep). The diagram above
-is the replacement path that exists now.
+is mechanically real, but two arrows are now known architecture gaps: raw GitHub events and
+Scribe proposal deltas enter as peer Brain inputs. The accepted target retains each external
+Happening, establishes its source-specific knowledge floor, and admits exactly one durable
+Attention Item. Brain Batch settlement must then prove a disposition for every claimed
+Attention Item. A thin Brain Work Item will sit above existing Effect and Specialist execution
+ledgers; those mechanisms are reused, not replaced.
 
 ## Where things live — quick answers
 
 - **"Any agent needs this"** → `packages/engine`. Precedent: operation-store and input
   contracts moved down in #131.
+- **"Durable source, Attention, Batch, Effect, or Work state"** → `packages/engine`.
+- **"Source-specific normalization and knowledge-readiness mechanics"** →
+  `packages/engine`; model judgement does not belong in the adapter.
 - **"A kind of work an agent can do"** → `packages/agents/src/capabilities/<name>/`
   (SKILL.md + tools + port). Shared across agents.
 - **"Who an agent is"** → `packages/agents/src/<agent>/` (instructions, composition,
-  dispatch).
+  dispatch). Scribe semantic projection and Brain disposition policy live here.
 - **"On-disk state of an install"** → `packages/installation`.
 - **Deployables** → `apps/` (cli = operate, server = host). Both are bundled; internal
   packages are compiled in, the server's `package.json` dependency list is the flue-build

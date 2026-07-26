@@ -19,9 +19,10 @@ _Avoid_: Bot, chatbot, one-to-one assistant, "the agent" (for a single per-chat 
 
 **The Brain** (Master Agent):
 The single global mind, owner, and decider — exactly one, process-wide. Silent (bound to no
-Surface, owns no chat) but not passive: it owns the Graph, runs the control loop off every
-hot path, runs on two clocks, owns all work, and chooses the Surface and voice for every
-utterance.
+Surface, owns no chat) but not passive: it rules on the Graph, dispositions accountable
+Attention, runs the control loop off every hot path, runs on two clocks, owns all work, and
+chooses the Surface and voice for every utterance. It judges knowledge; ordinary fact
+extraction belongs to deterministic ingesters and the Scribe.
 _Avoid_: Orchestrator (implies it only routes), the coworker (it is the mind, not the whole)
 
 **Speaker**:
@@ -66,9 +67,11 @@ The Speaker remains free to converse locally, but cannot claim that any global a
 _Avoid_: Dispatch, delegation, synchronous hand-off
 
 **Brain Batch**:
-The immutable set of ready up-inbox inputs claimed for one Brain decision. Inputs arriving
-after the claim wait for another Brain Batch. A crash recovers the same Batch and membership;
-settlement consumes exactly those inputs in one local transaction.
+The immutable set of ready Brain inputs claimed for one decision. It may contain pending
+Attention Items and already meaningful internal inputs such as Intents, outcomes, and wakes.
+Inputs arriving after the claim wait for another Brain Batch. A crash recovers the same Batch
+and membership; settlement requires an explicit disposition for every claimed Attention Item
+and consumes exactly its inputs in one local transaction.
 _Avoid_: Model turn, recomputed window, queue drain
 
 **Brain Effect**:
@@ -83,7 +86,9 @@ An independent, durable future prompt for the Brain to reconsider a stated conce
 _Avoid_: In-memory timer, global next wake, generic scheduled job
 
 **Proactive Sweep**:
-One coalesced liveness input that tells the Brain to inspect the global Belief Projection for open loops. Boot recovery and the deployment cron may request it, but they never decide or speak; one outstanding sweep is enough until the Brain settles it.
+One coalesced liveness input that tells the Brain to inspect the Belief Projection and
+accountability ledgers for Open Loops. Boot recovery and the deployment cron may request it,
+but they never decide or speak; one outstanding sweep is enough until the Brain settles it.
 _Avoid_: Cron job history, Graph watcher, a second Brain
 
 **Digest**:
@@ -108,6 +113,42 @@ _Avoid_: Speaker transcript, dispatch receipt, best-effort log
 A Brain-assembled, Directive-specific packet of selected context that names its origins and links each important item to durable source evidence. It may combine source excerpts, provider facts, workflow results, and Graph beliefs; unlike a Digest, it explains this decision rather than ambient memory.
 _Avoid_: Second Digest, context dump, unprovenanced summary
 
+### Information and accountability
+
+**Source Archive**:
+The durable, provider-specific record of external occurrences and their stable evidence
+identity. It retains receipt, ordering, redelivery, and exact-source detail according to that
+provider's rules. The Conversation Archive is the WhatsApp Source Archive; other providers
+retain equivalent truth without being copied wholesale into the Graph.
+_Avoid_: Graph, Brain Inbox, provider mirror inside the ontology
+
+**Happening**:
+An immutable, provenance-bearing record that something occurred outside the coworker's
+judgment. It proves receipt, not what the occurrence means, whether it matters, or what
+should happen next; the provider-specific Source Archive remains truth and gives the
+Happening its stable evidence identity.
+_Avoid_: Decision, task, Graph fact, Brain Effect
+
+**Attention Item**:
+A durable, knowledge-ready Brain obligation to disposition one or more Happenings. It
+references their immutable evidence and the fact Attestations or Projection version that
+established the knowledge floor; it never copies the Graph. Pending Attention is claimable
+through the Brain Inbox, while held, transferred, and resolved Attention remains durable as
+the accountability history. `stay_silent` settles speech, never Attention.
+_Avoid_: Notification, inbox row, Scheduled Wake, model turn
+
+**Work Item**:
+Durable operational responsibility owned by the Brain from creation through an observable
+outcome. A Work Item may use a Bounded Workflow or provider mutation to execute, but is
+neither that mechanism nor a belief that somebody made a promise.
+_Avoid_: Commitment, Intent, Brain Effect, workflow run
+
+**Open Loop**:
+The derived condition that an Attention Item, Work Item, or Commitment remains unresolved.
+It is visible to the Brain's proactive clock; a Scheduled Wake may prompt reconsideration
+but is not the loop itself.
+_Avoid_: Timer, free-text reminder, standalone Graph Entity
+
 **Capability**:
 A cohesive kind of work the coworker can perform. Capabilities are a canonical way the
 product grows.
@@ -129,8 +170,8 @@ _Avoid_: Database row, raw provider event, message snapshot
 
 **Historical Replay**:
 The initial reconstruction of the coworker's understanding from archived observations across
-all Surfaces, ordered by when the observations occurred and fed through the same
-Scribe-to-Brain loop as live ingestion.
+all Surfaces, ordered by when the observations occurred and fed through the same knowledge
+formation and Attention-readiness path as live ingestion.
 _Avoid_: Per-chat backfill, transcript import
 
 **Managed Chat**:
@@ -163,11 +204,19 @@ derived Belief Projection. Raw sources remain truth; Scribe proposals, determini
 claims, and Brain rulings remain permanently attributable and never overwrite one another.
 _Avoid_: Knowledge base, mutable fact table, GitHub mirror, second transcript
 
+**Deterministic ingester**:
+Trusted application code that turns facts explicit in a Source Archive record into anchored,
+provenance-bearing Attestations without model judgment. It establishes the minimum knowledge
+floor for structured Happenings before they become Brain Attention.
+_Avoid_: Scribe, parser agent, routing rule
+
 **Scribe**:
-The coworker's single, silent, global ingestion arm. Stateless Scribe attempts may run
-concurrently to turn cross-Surface Scribe Batches into low-Confidence Attestations; they hold
-no memory or authority, and their durable proposals return to the Brain for integration.
-_Avoid_: Per-thread Scribe, second mind, logger, second Speaker
+The coworker's single, silent, asynchronous semantic projector. Stateless Scribe attempts
+may run concurrently to turn ambiguous cross-Surface evidence into low-Confidence
+Attestations; they hold no memory, work, or authority. Routine proposals update the Graph
+without requiring Brain judgment; a semantic result enters Brain Attention only when
+accountability or an authoritative ruling is actually owed.
+_Avoid_: Per-thread Scribe, second mind, deterministic ingester, logger, second Speaker
 
 **Scribe Batch**:
 A bounded, cross-Surface group of raw observations presented to one stateless Scribe attempt

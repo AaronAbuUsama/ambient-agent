@@ -1,0 +1,205 @@
+# #406 research — durable attention disposition
+
+## Finding
+
+The missing invariant is not “every Brain Batch has an Effect.” It is:
+
+> Every Attention Item claimed by a Brain Batch must leave that Batch with an
+> explicit durable disposition, and any disposition that continues
+> responsibility must name the durable successor that now owns it.
+
+`stay_silent` is orthogonal. It answers only “should a Surface communicate?”
+It may accompany dismissal, holding, or transfer, but cannot be the Attention
+Item's disposition.
+
+## Current failure path
+
+The current inbox already gives pending judgment a durable home:
+
+- each source row has a nullable `batch_id`, and a Brain Batch has durable
+  `settled_at` ([`packages/engine/src/brain/inbox.ts:614`](../../packages/engine/src/brain/inbox.ts#L614),
+  [`packages/engine/src/brain/inbox.ts:668`](../../packages/engine/src/brain/inbox.ts#L668));
+- `claimBatch()` reuses an existing open Batch and transactionally claims exact
+  input membership ([`packages/engine/src/brain/inbox.ts:1390`](../../packages/engine/src/brain/inbox.ts#L1390));
+- restart tests prove the same open Batch and membership are recovered
+  ([`tests/brain/intent-admission.test.ts:102`](../../tests/brain/intent-admission.test.ts#L102)).
+
+The loss happens at settlement:
+
+```ts
+const total = effectCount(batchId) + specialistLaunchCount(batchId);
+const pending = unsettledEffectCount(batchId);
+const pendingWork = pendingSpecialistLaunchCount(batchId);
+if (total === 0 || pending + pendingWork > 0) throw ...
+settle.run(settledAt, batchId);
+```
+
+[`packages/engine/src/brain/inbox.ts:1598`](../../packages/engine/src/brain/inbox.ts#L1598)
+
+This proves only that the Batch has *some* accepted/completed consequence. It
+does not prove which input that consequence covers. A Batch may contain up to
+100 unrelated inputs, while one `stay_silent` row is immediately `completed`
+and therefore settles all of them
+([`packages/engine/src/brain/inbox.ts:1398`](../../packages/engine/src/brain/inbox.ts#L1398),
+[`packages/engine/src/brain/inbox.ts:1468`](../../packages/engine/src/brain/inbox.ts#L1468),
+[`tests/brain/effects.test.ts:404`](../../tests/brain/effects.test.ts#L404)).
+
+This is the accountability gap:
+
+```text
+durable input -> immutable Batch -> one unrelated completed Effect -> settled
+                                       ^
+                                  stay_silent qualifies
+```
+
+### Existing continuation and recovery mechanisms
+
+- A Scheduled Wake is durably inserted with its creating Effect and survives
+  restart, but it has only a free-text `reason`; it does not reference the loop
+  or Attention Item it reconsiders
+  ([`packages/engine/src/brain/inbox.ts:1183`](../../packages/engine/src/brain/inbox.ts#L1183)).
+- A Proactive Sweep is coalesced until its Batch settles, but its current prompt
+  asks the Brain to inspect Graph commitments/open loops. Application-owned
+  Attention Items are not yet in that view
+  ([`packages/engine/src/brain/inbox.ts:884`](../../packages/engine/src/brain/inbox.ts#L884),
+  [`packages/agents/src/prompts/catalog.ts:94`](../../packages/agents/src/prompts/catalog.ts#L94)).
+- Pending prompt, issue-filing, and issue-mutation Effects have boot recovery;
+  filings and mutations reconcile by stable operation identity
+  ([`packages/agents/src/brain/effects-runtime.ts:61`](../../packages/agents/src/brain/effects-runtime.ts#L61)).
+- Accepted specialist work survives as visible work state; terminal or
+  interrupted results are admitted back to a later Brain Batch
+  ([`packages/agents/src/capabilities/delegation/bridge.ts:27`](../../packages/agents/src/capabilities/delegation/bridge.ts#L27),
+  [`tests/delegation/work-state.test.ts:89`](../../tests/delegation/work-state.test.ts#L89)).
+- Directive Outcomes are durably recorded after accepted speech, but the
+  runtime currently stores them without admitting the outcome back to the
+  Brain ([`apps/runtime/src/host/whatsapp-runtime.ts:544`](../../apps/runtime/src/host/whatsapp-runtime.ts#L544),
+  [`packages/engine/src/surfaces/delivery.ts:23`](../../packages/engine/src/surfaces/delivery.ts#L23)).
+
+The new state should reuse these recovery owners rather than duplicate them.
+
+## Minimal durable states
+
+```ts
+type AttentionState =
+  | { kind: "pending" }
+  | { kind: "held"; reason: string; wakeId?: string }
+  | {
+      kind: "transferred";
+      target: { kind: "brain_effect" | "work_item"; id: string };
+    }
+  | {
+      kind: "resolved";
+      outcome: "dismissed" | "completed" | "superseded";
+      reason: string;
+    };
+```
+
+- **pending** — no accountable decision yet; blocks Batch settlement.
+- **held** — the Brain deliberately retains responsibility. It remains an Open
+  Loop; a Scheduled Wake may name it, but the wake is a prompt, not the owner.
+- **transferred** — responsibility continues under an existing durable Effect
+  or Work Item. The successor lifecycle, not the model transcript, determines
+  closure or re-admission.
+- **resolved** — no responsibility remains; dismissal is explicit and reasoned,
+  never inferred from silence.
+
+No separate `open_loop` row is required. An Open Loop remains the projection of
+`pending | held`, unresolved transferred successors, unfinished Work Items, and
+unfulfilled Commitments, matching the accepted vocabulary in
+[`CONTEXT.md:119`](../../CONTEXT.md#L119).
+
+## Minimal schema seam
+
+Keep the existing source tables and Batch claim machinery. Add one per-input
+Attention overlay rather than replacing the inbox:
+
+```sql
+CREATE TABLE brain_attention_items (
+  attention_id TEXT PRIMARY KEY,
+  source_kind TEXT NOT NULL,
+  source_id TEXT NOT NULL UNIQUE,
+  evidence_ids_json TEXT NOT NULL,
+  batch_id TEXT REFERENCES brain_batches(batch_id),
+  state TEXT NOT NULL
+    CHECK (state IN ('pending', 'held', 'transferred', 'resolved')),
+  disposition_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+```
+
+Create the row transactionally when an accountability-bearing input is admitted
+or normalized. Claim it with the same Batch as its source input. Trusted code
+validates disposition references:
+
+```ts
+dispositionAttention({
+  batchId,
+  attentionId,
+  disposition:
+    | { kind: "held"; reason; wakeId? }
+    | { kind: "transferred"; target: { kind: "brain_effect" | "work_item"; id } }
+    | { kind: "resolved"; outcome; reason },
+});
+```
+
+For `transferred`, the target must exist and have reached the handoff boundary
+already used by settlement: a local/completed Effect, an accepted asynchronous
+Effect, or an accepted Work Item. `stay_silent` is explicitly rejected as a
+transfer target because it has no downstream accountability owner. A Scheduled
+Wake may be attached to `held`, but cannot discharge attention by itself.
+
+Settlement becomes coverage, not counting:
+
+```ts
+const uncovered = attentionItemsForBatch(batchId)
+  .filter(({ state }) => state === "pending");
+if (uncovered.length > 0) throw new Error(...);
+
+validateTransferredSuccessors(batchId);
+validateExistingEffectsAndWork(batchId);
+settle.run(settledAt, batchId);
+```
+
+Examples:
+
+```ts
+// Irrelevant event: no speech, explicit accountable dismissal.
+staySilent(batchId, "No external communication warranted.");
+resolveAttention(attentionId, "dismissed", "Bot-authored label echo.");
+
+// Worth revisiting: no speech, but responsibility remains visible.
+staySilent(batchId, "Do not interrupt a Surface yet.");
+holdAttention(attentionId, "Review after CI finishes.", wakeId);
+
+// Work begins without speech: responsibility moves, not disappears.
+staySilent(batchId, "No notification warranted.");
+transferAttention(attentionId, { kind: "work_item", id: workId });
+```
+
+## Options
+
+| Option | Concrete change | Floor-first | Reversible | Small blast radius | Integrity | Parallelizable | Fit |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Batch-level disposition | One `brain_batch_disposition` row | 2 | 5 | 5 | 1 | 4 | 3 |
+| **Per-input Attention overlay** | Add the table/state/tool and make settlement require full coverage | **5** | **4** | **4** | **5** | **5** | **5** |
+| Unified Attention inbox | Replace the five source queues with one first-class Attention queue | 3 | 2 | 1 | 5 | 2 | 3 |
+| Graph-only state | Model attention as entities/relations | 1 | 3 | 3 | 1 | 3 | 1 |
+
+Batch-level disposition is insufficient because coalescing destroys coverage.
+A unified inbox may later become worthwhile, but is unnecessary to establish
+the invariant. Graph-only state gives tentative beliefs authority over
+operational responsibility and violates the accepted Graph/Brain boundary.
+
+## Recommendation
+
+Adopt the **per-input Attention overlay** and the four states above. It is the
+smallest change that closes the real failure mode while retaining current Batch,
+Effect, Work Item, and recovery machinery.
+
+The implementation expedition must include three focused proofs:
+
+1. one silence cannot settle a Batch with any `pending` Attention Item;
+2. `held` survives restart and appears in the proactive open-loop projection;
+3. a transferred successor has no invisible gap: it is either still durably
+   owned, terminally resolved, or re-admitted for Brain attention.
