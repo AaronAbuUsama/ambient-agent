@@ -281,18 +281,58 @@ Brain and produce no knowledge. **Open:** does the Scribe grow a second intake f
 does a new specialised Scribe appear, or does the Brain keep it? This is an architectural boundary
 question, not a prompt fix.
 
-### 6.4 Are routing decisions rules or judgment?
+### 6.4 Routing is **not** an open decision — it is settled canon the code violates
 
-The owner's position:
+This started as an open question and closed while writing this document. The owner's position tonight:
 
 > *The routing — saying "this thread goes to here" deterministically — was the problem. It should be
 > the agent that decides what it wants to do. It might message me in a direct message, it might
 > message a group, it might message nobody. It depends on what it knows, its memories, its reasoning
 > at the time. Those decisions did need a model.*
 
-This rejects **both** the current `works_on` rule **and** #398 §4.5's provenance-routing replacement,
-on the same grounds: both are deterministic decision trees. **If accepted, #398 §4.5 and Build B
-Rule 2 are dead and need replacing.** Build A (stateless Brain) is untouched by this and survives.
+**`docs/SYSTEM-ARCHITECTURE.md` already says exactly this**, and has for some time:
+
+> **Why nothing drops.** Because the Brain is the home of last resort. An event that correlates to no
+> surface still lands in the inbox; **the Brain decides where it belongs (route it, DM someone, open a
+> loop, or deliberately hold it). "Uncorrelated" is a decision the Brain makes, never a silent
+> discard.** — §on ingress, `:278`
+
+> **Multiple projects per surface, or multiple surfaces per project.** … the mapping of "which surface
+> cares about which project" is **data in the Graph, not hard-wired configuration — the Brain resolves
+> it per decision.** — §11, `:601-604`
+
+> **New event sources** (monitors, calendars, CI, external webhooks). … **No new routing concept is
+> needed — routing is "the Brain decides," and it already does.** — §11, `:592`
+
+> The Brain chooses **surface and voice** as part of every decision. — `:529`
+
+> the Brain decides which Surface, if any, hears each event — §13 table, `:660`
+
+**So the code is in violation of its own documented architecture, in two places:**
+
+1. `github.surfaceRepositories` seeds the `thread --works_on--> repository` edge
+   (`packages/agents/src/capabilities/graph/seed-repositories.ts:66-75`) — hard-wired configuration
+   routing, which `:604` explicitly forbids. That file's own author flagged the discomfort in a
+   `ponytail:` comment.
+2. The Brain's instruction mandates `stay_silent` when the lookup fails — **a silent discard**, which
+   `:278` explicitly forbids. Canon says the failure mode is *open a loop or deliberately hold it*,
+   both of which imply a memory. §3's zero-GitHub-knowledge finding is this violation's measurable
+   consequence.
+
+**And #398 §4.5's provenance routing violates the same canon** — `source_surface_id` is another
+hard-wired rule, just keyed differently. It should be rejected on canon grounds, not on preference.
+
+> ### ⚠ This correction has now been made at least twice
+> A session on **2026-07-23** recorded the identical finding — that `surfaceRepositories` and
+> `file_issue`'s surface resolution are *"DRIFT / a routing shortcut to REMOVE, not the design"*, with
+> the note **"NEVER re-propose config-mapped or surface-hardcoded routing."** #398 was written two
+> days later and re-proposed exactly that, in a new form. **This is class-recurrence, and the class is
+> "a routing rule keeps getting reinvented in config because the Brain was never given what it needs
+> to decide."** Treat any future proposal that resolves a Surface from a table as this same defect.
+
+**What remains genuinely open** is not *whether* the Brain decides, but *what it needs in order to
+decide well* — which is §6.2 and §6.3, and is the real work. Build A (stateless Brain) is untouched
+by any of this and survives.
 
 ### 6.5 Do the evals get repaired, or designed?
 
@@ -363,11 +403,17 @@ A **map is within one effort**; what is missing is the level above it. That is w
 
 Deliberately not a plan — the plan is §6.1's to decide.
 
-1. **Read this file, then #400, then #398** — in that order. #398 is excellent measurement with a
-   diagnosis §3 partly invalidates; read it for its numbers, not its conclusions.
-2. **Do not run `/dag:plan`** until §6.1 is settled.
-3. **Settle §6.2 first.** It gates §6.3, §6.4 and most of #398. Nothing else is worth planning until
-   "what is the Brain for" has an answer.
+1. **Read `docs/SYSTEM-ARCHITECTURE.md` §11 and `:270-282` before anything else.** §6.4 shows the
+   code is in violation of it, and §11 is explicitly the extensibility section — it already answers
+   part of "is this the right architecture for a system that isn't only GitHub" (new event sources,
+   new backstage agents, multiple surfaces per project). It does **not** answer the unmodeled-primitive
+   question (tasks, to-do lists), which is genuinely new ground.
+2. **Then read this file, then #400, then #398** — in that order. #398 is excellent measurement with a
+   diagnosis §3 and §6.4 partly invalidate; read it for its numbers, not its conclusions.
+3. **Do not run `/dag:plan`** until §6.1 is settled.
+4. **Settle §6.2 first.** It gates §6.3 and most of #398. Nothing else is worth planning until "what
+   is the Brain for" has an answer. §6.4 is already answered — by the architecture doc, not by a
+   fresh decision.
 4. Treat the rig as healthy and leave it alone. The only live risk is #400 re-forming, which presents
    as the coworker going quiet while `/health` still reads `healthy` — check
    `SELECT count(*) FROM brain_batches WHERE settled_at IS NULL` before believing any health output.
