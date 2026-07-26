@@ -407,7 +407,9 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   const brainInbox = createBrainInbox(options.applicationDatabase, {
     providerChatIdForSurface: (surfaceId) => surfaces.activeBinding(surfaceId)?.providerChatId,
   });
-  let stopBrainDispatchRecovery = (): void => undefined;
+  // Register persisted attempts before authentication/pairing can hold boot open. Terminal observations
+  // reconcile durably now; retry timers stay off until every Brain port is usable.
+  const brainDispatchRecovery = configureBrainDispatchRecovery(brainInbox);
   // GitHub events flow UP into the single Brain up-inbox (§4). Admission is the durable step and is
   // always safe. Waking the Brain is gated on `brainReady`: dispatching a Batch before the Brain's
   // Effects/participation runtime exists would mark the Batch dispatched, then fail its tools, and the
@@ -575,7 +577,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
         brainInbox.close();
       }),
     );
-    yield* Effect.addFinalizer(() => Effect.sync(stopBrainDispatchRecovery));
+    yield* Effect.addFinalizer(() => Effect.sync(() => brainDispatchRecovery.stop()));
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         if (proactiveClockTimer !== undefined) clearInterval(proactiveClockTimer);
@@ -722,9 +724,8 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
       ...(options.dispatch === undefined ? {} : { dispatch: options.dispatch }),
       ...(options.coalescer === undefined ? {} : { coalescer: options.coalescer }),
       afterParticipationReady: async () => {
-        // The participation and Effects ports are now live: only at this point may a due recovered
-        // attempt redispatch. Public terminal observations seen earlier stayed buffered by the correlator.
-        stopBrainDispatchRecovery = configureBrainDispatchRecovery(brainInbox);
+        // The participation and Effects ports are now live: due recovered attempts may redispatch.
+        brainDispatchRecovery.activate();
         await recoverPendingPrompts();
         await recoverPendingIssueFilings();
         await recoverPendingIssueMutations();

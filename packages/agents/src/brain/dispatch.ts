@@ -70,16 +70,23 @@ export interface BrainDispatchRecoveryOptions {
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
 }
 
-/** Wire public Flue terminal observations to the application-owned fenced attempt ledger. */
+export interface BrainDispatchRecovery {
+  /** Enable retry timers after every Brain port is ready. Terminal observations persist before this. */
+  activate(): void;
+  stop(): void;
+}
+
+/** Persist public Flue terminals immediately; dispatch retries only after activate(). */
 export const configureBrainDispatchRecovery = (
   inbox: BrainInbox,
   options: BrainDispatchRecoveryOptions = {},
-): (() => void) => {
+): BrainDispatchRecovery => {
   const logger = options.logger ?? getLogger("brain");
   const now = options.now ?? Date.now;
   const setTimer = options.setTimer ?? setTimeout;
   const clearTimer = options.clearTimer ?? clearTimeout;
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  let active = false;
 
   const schedule = (state: BrainBatchRecovery): void => {
     if (state.nextRetryAt === undefined) return;
@@ -136,7 +143,7 @@ export const configureBrainDispatchRecovery = (
         },
         state.nextRetryAt === undefined ? "Brain Batch dispatch settled" : "Brain Batch dispatch released for retry",
       );
-      schedule(state);
+      if (active) schedule(state);
     } catch (cause) {
       logger.error(
         {
@@ -156,13 +163,20 @@ export const configureBrainDispatchRecovery = (
     return active === undefined ? undefined : { batchId: active.batchId };
   });
   for (const state of inbox.dispatchRecovery()) {
-    if (state.dispatchId === undefined) schedule(state);
-    else brainDispatches.accepted(state.dispatchId, { batchId: state.batchId });
+    if (state.dispatchId !== undefined) brainDispatches.accepted(state.dispatchId, { batchId: state.batchId });
   }
 
-  return () => {
-    unsubscribe();
-    for (const timer of timers.values()) clearTimer(timer);
-    timers.clear();
+  return {
+    activate(): void {
+      if (active) return;
+      active = true;
+      for (const state of inbox.dispatchRecovery()) schedule(state);
+    },
+    stop(): void {
+      active = false;
+      unsubscribe();
+      for (const timer of timers.values()) clearTimer(timer);
+      timers.clear();
+    },
   };
 };

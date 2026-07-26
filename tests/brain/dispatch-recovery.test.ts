@@ -100,7 +100,7 @@ describe("Brain Batch dispatch recovery", () => {
       if (calls === 1) observeBrainDispatch(operation(dispatchId));
       return { dispatchId, acceptedAt: now() };
     };
-    const stop = configureBrainDispatchRecovery(inbox, {
+    const recovery = configureBrainDispatchRecovery(inbox, {
       deliver,
       logger,
       now: () => clock,
@@ -110,6 +110,7 @@ describe("Brain Batch dispatch recovery", () => {
       },
       clearTimer: () => undefined,
     });
+    recovery.activate();
 
     const first = await wakeBrain(inbox, deliver, () => clock);
     expect(first?.id).toMatch(/^brain-batch:/u);
@@ -146,7 +147,7 @@ describe("Brain Batch dispatch recovery", () => {
     ]);
     expect(inbox.dispatchAttempts(retried.id)[1]).not.toHaveProperty("nextRetryAt");
     expect(inbox.dispatchRecovery()).toEqual([]);
-    stop();
+    recovery.stop();
     inbox.close();
   });
 
@@ -160,13 +161,14 @@ describe("Brain Batch dispatch recovery", () => {
     first.close();
 
     const reopened = openInbox(databasePath, now);
-    const stop = configureBrainDispatchRecovery(reopened, {
+    const recovery = configureBrainDispatchRecovery(reopened, {
       logger,
       now: () => clock,
       setTimer: () => ({ unref: () => undefined }) as unknown as ReturnType<typeof setTimeout>,
       clearTimer: () => undefined,
     });
     observeBrainDispatch(recoverySettlement("dispatch:restart"));
+    recovery.activate();
 
     expect(reopened.claimBatch()).toMatchObject({
       id: batch!.id,
@@ -177,7 +179,7 @@ describe("Brain Batch dispatch recovery", () => {
     expect(reopened.dispatchAttempts(batch!.id)).toMatchObject([
       { dispatchId: "dispatch:restart", terminalOutcome: "settled" },
     ]);
-    stop();
+    recovery.stop();
     reopened.close();
   });
 
@@ -209,6 +211,56 @@ describe("Brain Batch dispatch recovery", () => {
     inbox.close();
   });
 
+  it("persists a terminal before retry activation despite long delay, restart, and unrelated event pressure", async () => {
+    const databasePath = fixture();
+    let clock = Date.parse("2026-07-26T01:45:00.000Z");
+    const now = () => new Date(clock).toISOString();
+    const first = openInbox(databasePath, now);
+    const intent = admit(first);
+    const batch = first.claimBatch()!;
+    first.markBatchDispatched(batch.id, { dispatchId: "dispatch:pre-ready", acceptedAt: now() });
+    first.close();
+
+    const offline = openInbox(databasePath, now);
+    const capture = configureBrainDispatchRecovery(offline, { logger, now: () => clock });
+    observeBrainDispatch(recoverySettlement("dispatch:pre-ready"));
+    for (let index = 0; index < 101; index++) {
+      observeBrainDispatch(recoverySettlement(`dispatch:unrelated:${index}`));
+    }
+    expect(offline.dispatchAttempts(batch.id)).toMatchObject([
+      { dispatchId: "dispatch:pre-ready", terminalOutcome: "settled" },
+    ]);
+    capture.stop();
+    offline.close();
+
+    clock += 24 * 60 * 60 * 1_000;
+    const restarted = openInbox(databasePath, now);
+    const timers: Array<() => void> = [];
+    const recovery = configureBrainDispatchRecovery(restarted, {
+      logger,
+      now: () => clock,
+      deliver: async () => ({ dispatchId: "dispatch:after-long-boot", acceptedAt: now() }),
+      setTimer: (callback) => {
+        timers.push(callback);
+        return { unref: () => undefined } as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: () => undefined,
+    });
+    expect(timers).toEqual([]);
+    recovery.activate();
+    timers.shift()?.();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(restarted.claimBatch()).toMatchObject({
+      id: batch.id,
+      intents: [intent],
+      dispatch: { dispatchId: "dispatch:after-long-boot" },
+      retryCount: 1,
+    });
+    recovery.stop();
+    restarted.close();
+  });
+
   it("ignores a stale terminal writer after a replacement dispatch is active", async () => {
     let clock = Date.parse("2026-07-26T02:00:00.000Z");
     const now = () => new Date(clock).toISOString();
@@ -219,12 +271,13 @@ describe("Brain Batch dispatch recovery", () => {
       async () => ({ dispatchId: "dispatch:stale:1", acceptedAt: now() }),
       () => clock,
     );
-    const stop = configureBrainDispatchRecovery(inbox, {
+    const recovery = configureBrainDispatchRecovery(inbox, {
       logger,
       now: () => clock,
       setTimer: () => ({ unref: () => undefined }) as unknown as ReturnType<typeof setTimeout>,
       clearTimer: () => undefined,
     });
+    recovery.activate();
     observeBrainDispatch(operation("dispatch:stale:1", true));
     expect(inbox.dispatchAttempts(first!.id)[0]).toMatchObject({
       terminalOutcome: "failed",
@@ -249,7 +302,7 @@ describe("Brain Batch dispatch recovery", () => {
       { dispatchId: "dispatch:stale:2" },
     ]);
     expect(inbox.dispatchAttempts(first!.id)[1]).not.toHaveProperty("terminalOutcome");
-    stop();
+    recovery.stop();
     inbox.close();
   });
 });
