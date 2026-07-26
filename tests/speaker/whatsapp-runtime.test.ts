@@ -1650,13 +1650,23 @@ describe("foreground runtime terminal logged_out", () => {
     const fake = fakeSession();
     let observer: import("../../packages/agents/src/speaker/observer.ts").SpeakerObserver | undefined;
     let canaryDispatches = 0;
+    // Longer than the canary's wall-time timeout: this test must fail if the injected Effect clock is ignored.
+    const debounceWindow = Duration.seconds(60);
+    const clock = await Effect.runPromise(Effect.scoped(TestClock.make()));
+    let participationReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      participationReady = resolve;
+    });
     const runtime = startWhatsAppRuntime({
       storeDirectory,
       applicationDatabase,
       managedChats: [CHAT],
       canaryChat: CHAT,
       sessionFactory: () => fake.session,
-      coalescer: { debounceWindow: Duration.millis(10), maxWait: Duration.millis(20) },
+      coalescer: { debounceWindow, maxWait: Duration.seconds(120) },
+      clock,
+      proactiveClockIntervalMs: 0,
+      afterParticipationReady: participationReady,
       observeActivity: (next) => {
         observer = next;
         queueMicrotask(() => {
@@ -1695,16 +1705,24 @@ describe("foreground runtime terminal logged_out", () => {
         return { dispatchId, acceptedAt: "2026-07-16T18:00:00.000Z" };
       },
     });
-    await vi.waitFor(() => expect(getWhatsAppRuntimeStatus().phase).toBe("online"));
+    try {
+      await ready;
+      await Effect.runPromise(clock.adjust(Duration.zero));
 
-    await expect(runtime.smokeCanary("abc123", 1_000)).resolves.toEqual({
-      chatId: CHAT,
-      text: "SMOKE abc123 — ignore",
-      stages: ["admission", "dispatch", "settled-silent"],
-    });
-    expect(canaryDispatches).toBe(1);
-    expect(fake.sent).toEqual([{ chatId: CHAT, content: { text: "SMOKE abc123 — ignore" } }]);
-    await runtime.stop();
+      const canary = runtime.smokeCanary("abc123", 250);
+      void canary.catch(() => undefined);
+      await Promise.resolve();
+      await Effect.runPromise(clock.adjust(debounceWindow));
+      expect(canaryDispatches).toBe(1);
+      await expect(canary).resolves.toEqual({
+        chatId: CHAT,
+        text: "SMOKE abc123 — ignore",
+        stages: ["admission", "dispatch", "settled-silent"],
+      });
+      expect(fake.sent).toEqual([{ chatId: CHAT, content: { text: "SMOKE abc123 — ignore" } }]);
+    } finally {
+      await runtime.stop();
+    }
   });
 
   it("handles the observer lifecycle rejection when the provider send fails first", async () => {
