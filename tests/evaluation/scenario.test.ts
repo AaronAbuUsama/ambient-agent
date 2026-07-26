@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -77,6 +78,36 @@ describe("Evaluation Scenario repository artifacts", () => {
         { repositoryRoot },
       ),
     ).toThrow("fixture must be a file inside the repository");
+    const unsafeFixture = JSON.stringify({ messages: ["customer@example.com"], token: "secret" });
+    await writeFile(join(repositoryRoot, "unsafe.json"), unsafeFixture);
+    expect(() =>
+      validateEvaluationScenario(
+        {
+          ...positive,
+          fixture: {
+            ...positiveFixture,
+            ref: "unsafe.json",
+            sha256: createHash("sha256").update(unsafeFixture).digest("hex"),
+          },
+        },
+        { repositoryRoot },
+      ),
+    ).toThrow("Unsafe inline production content");
+    const invalidFixture = "not json\n";
+    await writeFile(join(repositoryRoot, "invalid.json"), invalidFixture);
+    expect(() =>
+      validateEvaluationScenario(
+        {
+          ...positive,
+          fixture: {
+            ...positiveFixture,
+            ref: "invalid.json",
+            sha256: createHash("sha256").update(invalidFixture).digest("hex"),
+          },
+        },
+        { repositoryRoot },
+      ),
+    ).toThrow("fixture must be sanitized JSON");
     expect(
       validateEvaluationScenario({ ...evidence.normalizedScenario, holdoutMemberships: [] }).normalizedScenario.maturity,
     ).toBe("capability");
@@ -153,16 +184,47 @@ describe("Evaluation Scenario repository artifacts", () => {
     const cli = cliOutput();
 
     expect(
-      await runCli(["evaluation-scenario", "validate", input, "--output", localEvidence], {
+      await runCli(
+        [
+          "evaluation-scenario",
+          "validate",
+          input,
+          "--output",
+          localEvidence,
+          "--repository-root",
+          process.cwd(),
+        ],
+        {
         output: cli.output,
         migrateManagedData: async () => {
           throw new Error("repository artifact validation invoked managed-data migration");
         },
-      }),
+        },
+      ),
     ).toBe(0);
     expect(cli.stderr()).toBe("");
     expect(await readFile(localEvidence, "utf8")).toBe(cli.stdout());
     expect(cli.stdout()).toContain("scenario-runtime-nonce");
+  });
+
+  it("derives the repository root from the artifact path", async () => {
+    const cli = cliOutput();
+    const path = join(process.cwd(), "tests/fixtures/evaluation-scenarios/positive.json");
+
+    expect(await runCli(["evaluation-scenario", "validate", path], { output: cli.output })).toBe(0);
+    expect(cli.stderr()).toBe("");
+    expect(cli.stdout()).toContain("scenario-synthetic-positive");
+  });
+
+  it("rejects a detached artifact unless its repository root is explicit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "evaluation-scenario-detached-"));
+    roots.push(root);
+    const input = join(root, "scenario.json");
+    await writeFile(input, JSON.stringify(await fixture("positive")));
+    const cli = cliOutput();
+
+    expect(await runCli(["evaluation-scenario", "validate", input], { output: cli.output })).toBe(1);
+    expect(cli.stderr()).toContain("Could not find the repository root");
   });
 
   it.each(["negative", "pressure"])("rejects the %s fixture through the CLI", async (name) => {

@@ -201,9 +201,20 @@ const validateFixture = (scenario: EvaluationScenario, repositoryRoot: string): 
   if (fromRoot === ".." || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot) || !statSync(fixturePath).isFile()) {
     throw new Error(`Evaluation Scenario fixture must be a file inside the repository: ${scenario.fixture.ref}`);
   }
-  const digest = createHash("sha256").update(readFileSync(fixturePath)).digest("hex");
+  const contents = readFileSync(fixturePath);
+  const digest = createHash("sha256").update(contents).digest("hex");
   if (digest !== scenario.fixture.sha256) {
     throw new Error(`Evaluation Scenario fixture SHA-256 does not match: ${scenario.fixture.ref}`);
+  }
+  let fixture: unknown;
+  try {
+    fixture = JSON.parse(contents.toString("utf8"));
+  } catch {
+    throw new Error(`Evaluation Scenario fixture must be sanitized JSON: ${scenario.fixture.ref}`);
+  }
+  const unsafe = unsafeInlinePath(fixture, "$fixture");
+  if (unsafe !== undefined) {
+    throw new Error(`Unsafe inline production content or credential material at ${unsafe}; sanitize the fixture instead.`);
   }
   return `sha256:${digest}`;
 };

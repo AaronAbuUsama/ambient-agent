@@ -1,6 +1,6 @@
 import { chmod, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Command, CommanderError } from "@commander-js/extra-typings";
 import packageManifest from "../../../package.json" with { type: "json" };
 
@@ -155,6 +155,32 @@ const regularFileExists = async (path: string): Promise<boolean> => {
   }
 };
 
+const pathExists = async (path: string): Promise<boolean> => {
+  try {
+    await lstat(path);
+    return true;
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw cause;
+  }
+};
+
+const repositoryRootForArtifact = async (file: string): Promise<string> => {
+  let directory = dirname(resolve(file));
+  while (true) {
+    if (
+      (await regularFileExists(join(directory, "package.json"))) &&
+      (await pathExists(join(directory, ".git")))
+    ) {
+      return directory;
+    }
+    const parent = dirname(directory);
+    if (parent === directory) {
+      throw new Error(`Could not find the repository root for Evaluation Scenario ${file}.`);
+    }
+    directory = parent;
+  }
+};
 
 /** Read three App triples from a private JSON file for headless (non-interactive) setup. */
 const readGitHubAppTriplesFile = async (path: string): Promise<GitHubAppTriples> => {
@@ -773,6 +799,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .command("validate <file>")
     .description("validate one sanitized Evaluation Scenario without starting the runtime")
     .option("--output <path>", "write the exact versioned local validation evidence")
+    .option("--repository-root <path>", "resolve fixture references from this repository root")
     .action(async (file, options) => {
       let input: unknown;
       try {
@@ -780,7 +807,8 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
       } catch {
         throw new Error(`Could not read Evaluation Scenario JSON from ${file}.`);
       }
-      const serialized = serializeEvaluationScenarioEvidence(validateEvaluationScenario(input));
+      const repositoryRoot = options.repositoryRoot ?? (await repositoryRootForArtifact(file));
+      const serialized = serializeEvaluationScenarioEvidence(validateEvaluationScenario(input, { repositoryRoot }));
       if (options.output !== undefined) await writeFile(options.output, serialized, { flag: "wx" });
       output.stdout(serialized);
     });
