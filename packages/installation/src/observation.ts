@@ -463,14 +463,16 @@ export const whatsappLiveness = (
       : reported === "starting" && booted
         ? "degraded"
         : reported;
-  const reason = derived?.reason ?? status.error;
+  const reason = derived?.reason ?? status.terminal?.reason ?? status.error;
   return {
     phase,
     ...(reason === undefined ? {} : { reason }),
     since: phaseSince(phase, now),
     ...(derived?.nextRetryAt === undefined ? {} : { retryAt: derived.nextRetryAt }),
     ...(derived?.retryAttempt === undefined ? {} : { retryAttempt: derived.retryAttempt }),
-    ...(derived !== undefined && TERMINAL_TRANSPORT.has(derived.phase) ? { terminal: true as const } : {}),
+    ...(status.terminal !== undefined || (derived !== undefined && TERMINAL_TRANSPORT.has(derived.phase))
+      ? { terminal: true as const }
+      : {}),
     ...(status.accountJid === undefined ? {} : { accountJid: status.accountJid }),
     ...(status.chatTarget === undefined ? {} : { chatTarget: status.chatTarget }),
     boundMs: WHATSAPP_LIVENESS_BOUND_MS,

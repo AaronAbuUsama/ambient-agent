@@ -40,7 +40,11 @@ import {
 import { makeManagedChatGate, type ChatGate } from "@ambient-agent/engine/coalescer/chat-gate.ts";
 import * as Coalescer from "@ambient-agent/engine/coalescer/coalescer.ts";
 import { configLayer, type CoalescerConfigValues } from "@ambient-agent/engine/coalescer/config.ts";
-import { botIdsOf, whatsappEventSource } from "@ambient-agent/engine/coalescer/whatsapp.ts";
+import {
+  botIdsOf,
+  WhatsAppEventSourceTerminalError,
+  whatsappEventSource,
+} from "@ambient-agent/engine/coalescer/whatsapp.ts";
 import { createConversationArchive } from "@ambient-agent/engine/intake/conversation-archive.ts";
 import { createBrainInbox } from "@ambient-agent/engine/brain/inbox.ts";
 import { configureGitHubUpInbox } from "@ambient-agent/engine/github/up-inbox.ts";
@@ -753,26 +757,45 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   );
   void Effect.runPromise(Fiber.await(fiber)).then((exit) => {
     if (Exit.isFailure(exit) && !stopping) {
-      setRuntimeStatus({ phase: "failed", chatTarget: gate.describe(), error: String(exit.cause) });
+      const defects = exit.cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect);
+      const terminalTransport = defects.find(
+        (defect): defect is WhatsAppEventSourceTerminalError => defect instanceof WhatsAppEventSourceTerminalError,
+      );
+      const terminalAccount = defects.find(
+        (defect): defect is WhatsAppAccountError =>
+          defect instanceof WhatsAppAccountError && (defect.code === "logged_out" || defect.code === "suspended"),
+      );
+      const terminalStatus = terminalTransport?.status ?? terminalAccount?.terminalStatus;
+      // Real authentication terminal errors carry whatsappd's exact FaultReason. Keep the code
+      // fallback only for older/injected account errors that predate that typed status payload.
+      const terminalReason = terminalStatus?.reason ?? terminalAccount?.code;
+      setRuntimeStatus({
+        phase: "failed",
+        chatTarget: gate.describe(),
+        error: terminalReason ?? String(exit.cause),
+        ...(terminalStatus === undefined ? {} : { terminal: terminalStatus }),
+      });
       // Settle the setup channel too, when the failure landed mid-pairing. Leaving it on
       // `awaiting_scan` would make a setup page infer failure from a QR going stale, one channel
       // over, when the seam has a `failed` state that says it outright.
-      publishPairingSettled({ reason: String(exit.cause) });
+      publishPairingSettled({ reason: terminalReason ?? String(exit.cause) });
       // On the operator feed too, not only in the phase: the fiber dying is the other way the
       // coworker goes offline, and a Logs screen that narrates transport faults but stays silent
       // when the runtime itself fails would be telling half the story.
-      log.error(
-        { operatorEvent: "agent.offline", detail: "the WhatsApp runtime failed", cause: String(exit.cause) },
-        "WhatsApp runtime failed",
-      );
-      const loggedOut = exit.cause.reasons
-        .filter(Cause.isDieReason)
-        .some(({ defect }) => defect instanceof WhatsAppAccountError && defect.code === "logged_out");
+      // A terminal transport was already narrated by the process-lifetime status subscription.
+      // Do not emit a second offline event when that same typed status ends the scoped fiber.
+      if (terminalReason === undefined) {
+        log.error(
+          { operatorEvent: "agent.offline", detail: "the WhatsApp runtime failed", cause: String(exit.cause) },
+          "WhatsApp runtime failed",
+        );
+      }
+      const loggedOut = terminalStatus?.phase === "logged_out" || terminalAccount?.code === "logged_out";
       if (loggedOut) {
         // whatsappd clears its store on terminal logged_out; the session is unrecoverable
         // in-process. Exit cleanly (finalizers already ran) and point at the guided repair.
         process.stderr.write(
-          "WhatsApp authentication ended in logged_out and the session store is no longer usable.\n" +
+          `WhatsApp authentication ended in logged_out (${terminalReason ?? "reason unavailable"}) and the session store is no longer usable.\n` +
             "Run ambient-agent repair whatsapp to pair again; configuration, credentials, and history are preserved.\n",
         );
         (options.exit ?? process.exit)(1);

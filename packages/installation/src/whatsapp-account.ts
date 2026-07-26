@@ -95,15 +95,21 @@ export interface CreateWhatsAppAccountOptions {
   readonly syncTimeoutMillis?: number;
 }
 
+export type TerminalWhatsAppStatus = Extract<Status, { readonly phase: "logged_out" | "suspended" }>;
+
+const isTerminalWhatsAppStatus = (status: Status): status is TerminalWhatsAppStatus => isTerminal(status);
+
 export class WhatsAppAccountError extends Error {
   override readonly name = "WhatsAppAccountError";
+  readonly terminalStatus?: TerminalWhatsAppStatus;
 
   constructor(
     readonly code: "cancelled" | "timeout" | "logged_out" | "suspended" | "start_failed" | "not_authenticated",
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { readonly terminalStatus?: TerminalWhatsAppStatus },
   ) {
     super(message, options);
+    this.terminalStatus = options?.terminalStatus;
   }
 }
 
@@ -378,9 +384,15 @@ export const createWhatsAppAccount = (options: CreateWhatsAppAccountOptions): Ma
         }
         if (isOnline(status)) {
           settle({ account: accountIdentity(session.identity()) });
-        } else if (isTerminal(status)) {
+        } else if (isTerminalWhatsAppStatus(status)) {
           const code = status.phase === "logged_out" ? "logged_out" : "suspended";
-          settle({ error: new WhatsAppAccountError(code, `WhatsApp authentication ended in ${status.phase}.`) });
+          settle({
+            error: new WhatsAppAccountError(
+              code,
+              `WhatsApp authentication ended in ${status.phase}: ${status.reason}.`,
+              { terminalStatus: status },
+            ),
+          });
         }
       });
       signal?.addEventListener("abort", onAbort, { once: true });
