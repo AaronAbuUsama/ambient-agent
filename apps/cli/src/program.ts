@@ -800,6 +800,7 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     .description("validate one sanitized Evaluation Scenario without starting the runtime")
     .option("--output <path>", "write the exact versioned local validation evidence")
     .option("--repository-root <path>", "resolve fixture references from this repository root")
+    .option("--canon-ref <ref>", "require the architecture epoch to be reachable from this canon ref")
     .action(async (file, options) => {
       let input: unknown;
       try {
@@ -808,7 +809,12 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
         throw new Error(`Could not read Evaluation Scenario JSON from ${file}.`);
       }
       const repositoryRoot = options.repositoryRoot ?? (await repositoryRootForArtifact(file));
-      const serialized = serializeEvaluationScenarioEvidence(validateEvaluationScenario(input, { repositoryRoot }));
+      const serialized = serializeEvaluationScenarioEvidence(
+        validateEvaluationScenario(input, {
+          repositoryRoot,
+          ...(options.canonRef === undefined ? {} : { canonRef: options.canonRef }),
+        }),
+      );
       if (options.output !== undefined) await writeFile(options.output, serialized, { flag: "wx" });
       output.stdout(serialized);
     });

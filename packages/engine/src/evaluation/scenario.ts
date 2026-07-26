@@ -159,6 +159,7 @@ export interface EvaluationScenarioValidationEvidence {
 
 export interface EvaluationScenarioValidationOptions {
   readonly repositoryRoot?: string;
+  readonly canonRef?: string;
 }
 
 const INLINE_CONTENT_KEYS = new Set([
@@ -259,20 +260,35 @@ const validateFixture = (scenario: EvaluationScenario, repositoryRoot: string): 
   return `sha256:${digest}`;
 };
 
-const validateCanonCommit = (scenario: EvaluationScenario, repositoryRoot: string): void => {
+const resolveGitCommit = (repositoryRoot: string, revision: string, label: string): string => {
+  try {
+    return execFileSync(
+      "git",
+      ["-C", realpathSync(repositoryRoot), "rev-parse", "--verify", "--end-of-options", `${revision}^{commit}`],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    ).trim();
+  } catch {
+    throw new Error(`Evaluation Scenario ${label} does not resolve in the repository: ${revision}`);
+  }
+};
+
+const validateCanonCommit = (scenario: EvaluationScenario, repositoryRoot: string, canonRef: string): void => {
   if (isUnresolved(scenario.architectureEpoch)) return;
   const commit = scenario.architectureEpoch.canonCommit;
-  let resolved: string;
-  try {
-    resolved = execFileSync("git", ["-C", realpathSync(repositoryRoot), "rev-parse", "--verify", `${commit}^{commit}`], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    throw new Error(`Evaluation Scenario canon commit does not resolve in the repository: ${commit}`);
-  }
+  const resolved = resolveGitCommit(repositoryRoot, commit, "canon commit");
   if (resolved !== commit) {
     throw new Error(`Evaluation Scenario canon commit did not resolve uniquely: ${commit}`);
+  }
+  const resolvedCanonRef = resolveGitCommit(repositoryRoot, canonRef, "designated canon ref");
+  try {
+    execFileSync("git", ["-C", realpathSync(repositoryRoot), "merge-base", "--is-ancestor", commit, resolvedCanonRef], {
+      stdio: "ignore",
+    });
+  } catch {
+    throw new Error(`Evaluation Scenario canon commit is not reachable from designated canon ref ${canonRef}: ${commit}`);
   }
 };
 
@@ -296,7 +312,7 @@ export const validateEvaluationScenario = (
   }
   const repositoryRoot = options.repositoryRoot ?? process.cwd();
   const fixtureDigest = validateFixture(result.output, repositoryRoot);
-  validateCanonCommit(result.output, repositoryRoot);
+  validateCanonCommit(result.output, repositoryRoot, options.canonRef ?? "HEAD");
   const normalized = JSON.stringify(canonicalValue(result.output));
   const digest = createHash("sha256").update(JSON.stringify([normalized, fixtureDigest ?? null])).digest("hex");
   return {

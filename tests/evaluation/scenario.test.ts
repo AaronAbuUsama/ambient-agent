@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -222,6 +223,48 @@ describe("Evaluation Scenario repository artifacts", () => {
     );
   });
 
+  it("requires the architecture epoch to be reachable from the designated canon ref", async () => {
+    const repositoryRoot = await mkdtemp(join(tmpdir(), "evaluation-canon-repository-"));
+    roots.push(repositoryRoot);
+    const fixtureContents = await readFile(
+      join(process.cwd(), "tests/fixtures/evaluation-scenarios/synthetic-provider-state-v1.json"),
+      "utf8",
+    );
+    await writeFile(join(repositoryRoot, "fixture.json"), fixtureContents);
+    execFileSync("git", ["init", "-b", "main"], { cwd: repositoryRoot });
+    execFileSync("git", ["config", "user.email", "evaluation@example.invalid"], { cwd: repositoryRoot });
+    execFileSync("git", ["config", "user.name", "Evaluation Fixture"], { cwd: repositoryRoot });
+    execFileSync("git", ["add", "fixture.json"], { cwd: repositoryRoot });
+    execFileSync("git", ["commit", "-m", "main canon"], { cwd: repositoryRoot });
+    const mainCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot, encoding: "utf8" }).trim();
+    execFileSync("git", ["checkout", "--orphan", "side"], { cwd: repositoryRoot });
+    await writeFile(join(repositoryRoot, "side-marker"), "side\n");
+    execFileSync("git", ["add", "."], { cwd: repositoryRoot });
+    execFileSync("git", ["commit", "-m", "side object"], { cwd: repositoryRoot });
+    const sideCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot, encoding: "utf8" }).trim();
+    execFileSync("git", ["checkout", "main"], { cwd: repositoryRoot });
+    const positive = (await fixture("positive")) as Record<string, unknown>;
+    const scenarioFor = (canonCommit: string) => ({
+      ...positive,
+      architectureEpoch: {
+        ...(positive.architectureEpoch as Record<string, unknown>),
+        canonCommit,
+      },
+      fixture: {
+        ...(positive.fixture as Record<string, unknown>),
+        ref: "fixture.json",
+        sha256: createHash("sha256").update(fixtureContents).digest("hex"),
+      },
+    });
+
+    expect(validateEvaluationScenario(scenarioFor(mainCommit), { repositoryRoot, canonRef: "main" }).scenarioId).toBe(
+      positive.scenarioId,
+    );
+    expect(() =>
+      validateEvaluationScenario(scenarioFor(sideCommit), { repositoryRoot, canonRef: "main" }),
+    ).toThrow("not reachable from designated canon ref main");
+  });
+
   it("rejects missing epoch and owner through the public validator", async () => {
     const negative = await fixture("negative");
     expect(() => validateEvaluationScenario(negative)).toThrow(/architectureEpoch.*owners/su);
@@ -292,6 +335,8 @@ describe("Evaluation Scenario repository artifacts", () => {
           localEvidence,
           "--repository-root",
           process.cwd(),
+          "--canon-ref",
+          "HEAD",
         ],
         {
         output: cli.output,
