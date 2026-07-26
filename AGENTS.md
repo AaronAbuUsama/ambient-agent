@@ -55,3 +55,19 @@ pnpm test
 
 Separate mechanically-green from runtime-proven from human-only proof; never imply a claim
 passed when it was not verified.
+
+## DAG suite
+
+Issues live on GitHub; native blocking is confirmed working. Labels: `dag:atlas` (Wayfinding index),
+`dag:map` (map issue), `dag:preflighted` (pre-flight signed), `dag:halted` (execution stopped it;
+re-plan before re-signing), `dag:needs-grilling` / `dag:needs-research` / `dag:needs-prototype`
+(readiness — absent means clear). Domain docs: single-context, see `CONTEXT.md`. See the DAG suite's
+`GLOSSARY.md` and planning door for its terms and skills (`/dag:plan` in Claude Code, `$dag:plan` in
+Codex).
+
+The suite is supplied by the external
+[`dag-engineering`](https://github.com/AaronAbuUsama/dag-engineering) plugin; this repository does not
+vendor its `GLOSSARY.md` or skills. Bootstrap it with `/plugin marketplace add
+AaronAbuUsama/dag-plugin` then `/plugin install dag@dag-engineering` in Claude Code, or
+`codex plugin marketplace add AaronAbuUsama/dag-plugin` then `codex plugin add dag@dag-engineering`
+in Codex, and restart the host.
