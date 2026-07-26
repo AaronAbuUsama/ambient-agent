@@ -59,7 +59,7 @@ const Provenance = v.strictObject({
 });
 const Fixture = v.strictObject({
   ref: RepositoryReference,
-  environmentVersion: MachineReference,
+  environmentVersion: v.literal("environment:synthetic-provider-v1"),
   sha256: v.pipe(NonBlankString, v.regex(/^[0-9a-f]{64}$/u, "Expected the sanitized fixture SHA-256")),
 });
 const SanitizedSyntheticProviderFixture = v.strictObject({

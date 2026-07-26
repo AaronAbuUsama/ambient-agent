@@ -58,6 +58,12 @@ describe("Evaluation Scenario repository artifacts", () => {
         fixture: { ...positiveFixture, sha256: "0".repeat(64) },
       }),
     ).toThrow("fixture SHA-256 does not match");
+    expect(() =>
+      validateEvaluationScenario({
+        ...positive,
+        fixture: { ...positiveFixture, environmentVersion: "environment:totally-different-v99" },
+      }),
+    ).toThrow("Invalid Evaluation Scenario");
     const fixtureBoundary = await mkdtemp(join(tmpdir(), "evaluation-fixture-boundary-"));
     roots.push(fixtureBoundary);
     const repositoryRoot = join(fixtureBoundary, "repository");
