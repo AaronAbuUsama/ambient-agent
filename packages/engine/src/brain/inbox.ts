@@ -131,6 +131,30 @@ export interface BrainBatch {
   readonly githubEvents: readonly GitHubEvent[];
   readonly scheduledWakes: readonly ScheduledWake[];
   readonly dispatch?: DispatchReceipt;
+  /** Number of terminal attempts already released for this immutable Batch. */
+  readonly retryCount?: number;
+  /** Earliest time the next fenced attempt may be dispatched. */
+  readonly nextRetryAt?: string;
+}
+
+export type BrainDispatchTerminalOutcome = "failed" | "completed" | "settled";
+
+export interface BrainDispatchAttempt {
+  readonly batchId: string;
+  readonly dispatchId: string;
+  readonly acceptedAt: string;
+  readonly retryCount: number;
+  readonly terminalOutcome?: BrainDispatchTerminalOutcome;
+  readonly terminalError?: string;
+  readonly terminalAt?: string;
+  readonly nextRetryAt?: string;
+}
+
+export interface BrainBatchRecovery {
+  readonly batchId: string;
+  readonly retryCount: number;
+  readonly dispatchId?: string;
+  readonly nextRetryAt?: string;
 }
 
 export interface DirectiveBrief {
@@ -356,6 +380,19 @@ interface BatchRow {
   dispatch_id: string | null;
   accepted_at: string | null;
   settled_at: string | null;
+  retry_count: number;
+  next_retry_at: string | null;
+}
+
+interface DispatchAttemptRow {
+  batch_id: string;
+  dispatch_id: string;
+  accepted_at: string;
+  retry_count: number;
+  terminal_outcome: BrainDispatchTerminalOutcome | null;
+  terminal_error: string | null;
+  terminal_at: string | null;
+  next_retry_at: string | null;
 }
 
 interface EffectRow {
@@ -419,6 +456,14 @@ export interface BrainInbox {
   pendingScheduledWakes(): readonly ScheduledWake[];
   claimBatch(limit?: number): BrainBatch | undefined;
   markBatchDispatched(batchId: string, receipt: DispatchReceipt): BrainBatch;
+  dispatchRecovery(): readonly BrainBatchRecovery[];
+  dispatchAttempts(batchId: string): readonly BrainDispatchAttempt[];
+  reconcileDispatchTerminal(input: {
+    readonly batchId: string;
+    readonly dispatchId: string;
+    readonly outcome: BrainDispatchTerminalOutcome;
+    readonly error?: string;
+  }): BrainBatchRecovery | undefined;
   recordPrompt(input: {
     readonly batchId: string;
     readonly surfaceId: string;
@@ -454,6 +499,7 @@ export interface BrainInboxOptions {
   /** Resolve the Surface's current provider chat binding in trusted application code. */
   readonly providerChatIdForSurface: (surfaceId: string) => string | undefined;
   readonly now?: () => string;
+  readonly retryBackoffMs?: (retryCount: number) => number;
 }
 
 const hydrate = (row: IntentRow): Intent => ({
@@ -616,7 +662,9 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
       created_at TEXT NOT NULL,
       dispatch_id TEXT,
       accepted_at TEXT,
-      settled_at TEXT
+      settled_at TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      next_retry_at TEXT
     ) STRICT;
     CREATE TABLE IF NOT EXISTS brain_inbox_inputs (
       input_id TEXT PRIMARY KEY,
@@ -698,6 +746,35 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
       completed_at TEXT,
       created_at TEXT NOT NULL
     ) STRICT;
+  `);
+
+  const batchColumns = new Set(
+    (database.prepare("PRAGMA table_info(brain_batches)").all() as unknown as Array<{ name: string }>).map(
+      ({ name }) => name,
+    ),
+  );
+  if (!batchColumns.has("retry_count")) {
+    database.exec("ALTER TABLE brain_batches ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!batchColumns.has("next_retry_at")) {
+    database.exec("ALTER TABLE brain_batches ADD COLUMN next_retry_at TEXT");
+  }
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS brain_dispatch_attempts (
+      batch_id TEXT NOT NULL REFERENCES brain_batches(batch_id),
+      dispatch_id TEXT NOT NULL,
+      accepted_at TEXT NOT NULL,
+      retry_count INTEGER NOT NULL,
+      terminal_outcome TEXT CHECK (terminal_outcome IN ('failed', 'completed', 'settled')),
+      terminal_error TEXT,
+      terminal_at TEXT,
+      next_retry_at TEXT,
+      PRIMARY KEY (batch_id, dispatch_id)
+    ) STRICT;
+    INSERT OR IGNORE INTO brain_dispatch_attempts (batch_id, dispatch_id, accepted_at, retry_count)
+      SELECT batch_id, dispatch_id, accepted_at, retry_count
+        FROM brain_batches
+       WHERE dispatch_id IS NOT NULL AND accepted_at IS NOT NULL;
   `);
 
   // The brain_effects kind CHECK is on a STRICT table — an in-place ALTER cannot widen it, so an
@@ -937,7 +1014,7 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
     SELECT * FROM brain_specialist_results WHERE batch_id IS NULL ORDER BY admitted_at, rowid
   `);
   const selectOpenBatch = database.prepare(`
-    SELECT batch_id, created_at, dispatch_id, accepted_at, settled_at FROM brain_batches
+    SELECT * FROM brain_batches
      WHERE settled_at IS NULL
      ORDER BY created_at, batch_id
      LIMIT 1
@@ -982,15 +1059,34 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
     "UPDATE brain_specialist_results SET batch_id = ? WHERE result_id = ? AND batch_id IS NULL",
   );
   const updateBatchDispatch = database.prepare(`
-    UPDATE brain_batches SET dispatch_id = ?, accepted_at = ?
+    UPDATE brain_batches SET dispatch_id = ?, accepted_at = ?, next_retry_at = NULL
      WHERE batch_id = ? AND dispatch_id IS NULL
   `);
-  const selectBatch = database.prepare(`
-    SELECT batch_id, created_at, dispatch_id, accepted_at, settled_at FROM brain_batches WHERE batch_id = ?
+  const insertDispatchAttempt = database.prepare(`
+    INSERT INTO brain_dispatch_attempts (batch_id, dispatch_id, accepted_at, retry_count)
+    VALUES (?, ?, ?, ?)
   `);
+  const selectDispatchAttempts = database.prepare(`
+    SELECT * FROM brain_dispatch_attempts WHERE batch_id = ? ORDER BY retry_count, accepted_at, dispatch_id
+  `);
+  const selectDispatchRecovery = database.prepare(`
+    SELECT batch_id, dispatch_id, retry_count, next_retry_at
+      FROM brain_batches WHERE settled_at IS NULL
+     ORDER BY created_at, batch_id
+  `);
+  const markDispatchTerminal = database.prepare(`
+    UPDATE brain_dispatch_attempts
+       SET terminal_outcome = ?, terminal_error = ?, terminal_at = ?, next_retry_at = ?
+     WHERE batch_id = ? AND dispatch_id = ? AND terminal_at IS NULL
+  `);
+  const releaseBatchDispatch = database.prepare(`
+    UPDATE brain_batches
+       SET dispatch_id = NULL, accepted_at = NULL, retry_count = ?, next_retry_at = ?
+     WHERE batch_id = ? AND dispatch_id = ? AND settled_at IS NULL
+  `);
+  const selectBatch = database.prepare("SELECT * FROM brain_batches WHERE batch_id = ?");
   const selectOpenBatchById = database.prepare(`
-    SELECT batch_id, created_at, dispatch_id, accepted_at, settled_at
-      FROM brain_batches WHERE batch_id = ? AND settled_at IS NULL
+    SELECT * FROM brain_batches WHERE batch_id = ? AND settled_at IS NULL
   `);
   const selectEffect = database.prepare("SELECT * FROM brain_effects WHERE effect_id = ?");
   const selectEffects = database.prepare("SELECT * FROM brain_effects WHERE batch_id = ? ORDER BY created_at, effect_id");
@@ -1109,6 +1205,18 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
     ...(row.dispatch_id === null || row.accepted_at === null
       ? {}
       : { dispatch: { dispatchId: row.dispatch_id, acceptedAt: row.accepted_at } }),
+    ...(row.retry_count === 0 ? {} : { retryCount: row.retry_count }),
+    ...(row.next_retry_at === null ? {} : { nextRetryAt: row.next_retry_at }),
+  });
+  const hydrateDispatchAttempt = (row: DispatchAttemptRow): BrainDispatchAttempt => ({
+    batchId: row.batch_id,
+    dispatchId: row.dispatch_id,
+    acceptedAt: row.accepted_at,
+    retryCount: row.retry_count,
+    ...(row.terminal_outcome === null ? {} : { terminalOutcome: row.terminal_outcome }),
+    ...(row.terminal_error === null ? {} : { terminalError: row.terminal_error }),
+    ...(row.terminal_at === null ? {} : { terminalAt: row.terminal_at }),
+    ...(row.next_retry_at === null ? {} : { nextRetryAt: row.next_retry_at }),
   });
 
   return {
@@ -1425,6 +1533,8 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
           dispatch_id: null,
           accepted_at: null,
           settled_at: null,
+          retry_count: 0,
+          next_retry_at: null,
         });
       } catch (cause) {
         database.exec("ROLLBACK");
@@ -1435,10 +1545,73 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
       if (!receipt.dispatchId || !Number.isFinite(Date.parse(receipt.acceptedAt))) {
         throw new Error(`Brain Batch ${id} has an invalid Flue admission receipt.`);
       }
-      updateBatchDispatch.run(receipt.dispatchId, receipt.acceptedAt, id);
-      const row = selectBatch.get(id) as BatchRow | undefined;
-      if (row === undefined) throw new Error(`Brain Batch ${id} does not exist.`);
-      return hydrateBatch(row);
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        const current = selectBatch.get(id) as BatchRow | undefined;
+        if (current === undefined) throw new Error(`Brain Batch ${id} does not exist.`);
+        if (current.settled_at !== null) throw new Error(`Brain Batch ${id} is already settled.`);
+        if (current.dispatch_id === receipt.dispatchId && current.accepted_at === receipt.acceptedAt) {
+          database.exec("COMMIT");
+          return hydrateBatch(current);
+        }
+        if (current.dispatch_id !== null) {
+          throw new Error(`Brain Batch ${id} already has active dispatch ${current.dispatch_id}.`);
+        }
+        const updated = updateBatchDispatch.run(receipt.dispatchId, receipt.acceptedAt, id);
+        if (updated.changes !== 1) throw new Error(`Brain Batch ${id} could not fence dispatch ${receipt.dispatchId}.`);
+        insertDispatchAttempt.run(id, receipt.dispatchId, receipt.acceptedAt, current.retry_count);
+        const row = selectBatch.get(id) as unknown as BatchRow;
+        database.exec("COMMIT");
+        return hydrateBatch(row);
+      } catch (cause) {
+        database.exec("ROLLBACK");
+        throw cause;
+      }
+    },
+    dispatchRecovery: () =>
+      (selectDispatchRecovery.all() as unknown as Array<{
+        batch_id: string;
+        dispatch_id: string | null;
+        retry_count: number;
+        next_retry_at: string | null;
+      }>).map((row) => ({
+        batchId: row.batch_id,
+        retryCount: row.retry_count,
+        ...(row.dispatch_id === null ? {} : { dispatchId: row.dispatch_id }),
+        ...(row.next_retry_at === null ? {} : { nextRetryAt: row.next_retry_at }),
+      })),
+    dispatchAttempts: (id) =>
+      (selectDispatchAttempts.all(id) as unknown as DispatchAttemptRow[]).map(hydrateDispatchAttempt),
+    reconcileDispatchTerminal: ({ batchId: id, dispatchId, outcome, error }) => {
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        const current = selectBatch.get(id) as BatchRow | undefined;
+        if (current === undefined || current.dispatch_id !== dispatchId) {
+          database.exec("COMMIT");
+          return undefined;
+        }
+        const terminalAt = options.now?.() ?? new Date().toISOString();
+        if (current.settled_at !== null) {
+          markDispatchTerminal.run(outcome, error ?? null, terminalAt, null, id, dispatchId);
+          database.exec("COMMIT");
+          return { batchId: id, dispatchId, retryCount: current.retry_count };
+        }
+        const retryCount = current.retry_count + 1;
+        const backoffMs = Math.max(
+          0,
+          Math.min(options.retryBackoffMs?.(retryCount) ?? 1_000 * 2 ** Math.min(retryCount - 1, 6), 60_000),
+        );
+        const nextRetryAt = new Date(Date.parse(terminalAt) + backoffMs).toISOString();
+        const marked = markDispatchTerminal.run(outcome, error ?? null, terminalAt, nextRetryAt, id, dispatchId);
+        if (marked.changes !== 1) throw new Error(`Brain dispatch attempt ${dispatchId} is already terminal.`);
+        const released = releaseBatchDispatch.run(retryCount, nextRetryAt, id, dispatchId);
+        if (released.changes !== 1) throw new Error(`Brain dispatch attempt ${dispatchId} lost its active fence.`);
+        database.exec("COMMIT");
+        return { batchId: id, retryCount, nextRetryAt };
+      } catch (cause) {
+        database.exec("ROLLBACK");
+        throw cause;
+      }
     },
     recordPrompt: ({ batchId: rawBatchId, surfaceId: rawSurfaceId, objective: rawObjective, brief }) => {
       const claimedBatchId = required(rawBatchId, "Brain Batch id");

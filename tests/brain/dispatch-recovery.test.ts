@@ -1,0 +1,255 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+
+import type { FlueObservation } from "@flue/runtime";
+import { afterEach, describe, expect, it } from "vite-plus/test";
+
+import {
+  configureBrainDispatchRecovery,
+  observeBrainDispatch,
+  wakeBrain,
+  type DispatchBrain,
+} from "../../packages/agents/src/brain/dispatch.ts";
+import { createBrainInbox, type BrainInbox } from "../../packages/engine/src/brain/inbox.ts";
+import { createConversationArchive } from "../../packages/engine/src/intake/conversation-archive.ts";
+import type { ConversationArrival } from "../../packages/engine/src/intake/conversation-event.ts";
+
+const roots: string[] = [];
+
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+const fixture = (): string => {
+  const root = mkdtempSync(join(tmpdir(), "ambient-brain-recovery-"));
+  roots.push(root);
+  const databasePath = join(root, "application.sqlite");
+  const archive = createConversationArchive(databasePath);
+  const arrival: ConversationArrival = {
+    id: "evidence:recovery",
+    kind: "arrival",
+    providerMessageId: "message:recovery",
+    chatId: "team@g.us",
+    senderId: "alice@s.whatsapp.net",
+    senderName: "Alice",
+    direction: "inbound",
+    occurredAt: 1_000,
+    payload: { live: true, isGroup: true, messageKind: "text", text: "nonce-recovery" },
+  };
+  archive.append(arrival);
+  archive.close();
+  return databasePath;
+};
+
+const openInbox = (databasePath: string, now: () => string, retryBackoffMs = () => 1_000): BrainInbox =>
+  createBrainInbox(databasePath, {
+    providerChatIdForSurface: () => "team@g.us",
+    now,
+    retryBackoffMs,
+  });
+
+const admit = (inbox: BrainInbox) =>
+  inbox.admitIntent({
+    sourceSurfaceId: "surface:team",
+    interpretation: "Recover this exact immutable input.",
+    evidenceIds: ["evidence:recovery"],
+  });
+
+const operation = (dispatchId: string, isError = false): FlueObservation =>
+  ({
+    v: 3,
+    eventIndex: 2,
+    timestamp: new Date().toISOString(),
+    type: "operation",
+    instanceId: "global",
+    dispatchId,
+    operationId: `operation:${dispatchId}`,
+    operationKind: "prompt",
+    durationMs: 10,
+    isError,
+    ...(isError ? { error: new Error("provider terminal failure") } : {}),
+  }) as FlueObservation;
+
+const recoverySettlement = (dispatchId: string): FlueObservation =>
+  ({
+    v: 3,
+    eventIndex: 3,
+    timestamp: new Date().toISOString(),
+    type: "submission_settled",
+    instanceId: "global",
+    dispatchId,
+    submissionId: dispatchId,
+    outcome: "completed",
+  }) as FlueObservation;
+
+const logger = { info: () => undefined, warn: () => undefined, error: () => undefined } as any;
+
+describe("Brain Batch dispatch recovery", () => {
+  it("fences a receipt race, honors durable backoff, and settles the same immutable Batch on retry", async () => {
+    let clock = Date.parse("2026-07-26T00:00:00.000Z");
+    const now = () => new Date(clock).toISOString();
+    const inbox = openInbox(fixture(), now);
+    const intent = admit(inbox);
+    const timers: Array<() => void> = [];
+    let calls = 0;
+    const deliver: DispatchBrain = async () => {
+      calls++;
+      const dispatchId = `dispatch:race:${calls}`;
+      if (calls === 1) observeBrainDispatch(operation(dispatchId));
+      return { dispatchId, acceptedAt: now() };
+    };
+    const stop = configureBrainDispatchRecovery(inbox, {
+      deliver,
+      logger,
+      now: () => clock,
+      setTimer: (callback) => {
+        timers.push(callback);
+        return { unref: () => undefined } as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: () => undefined,
+    });
+
+    const first = await wakeBrain(inbox, deliver, () => clock);
+    expect(first?.id).toMatch(/^brain-batch:/u);
+    expect(inbox.claimBatch()).toMatchObject({
+      id: first!.id,
+      intents: [intent],
+      retryCount: 1,
+      nextRetryAt: "2026-07-26T00:00:01.000Z",
+    });
+    expect(inbox.dispatchAttempts(first!.id)).toMatchObject([
+      { dispatchId: "dispatch:race:1", terminalOutcome: "completed", retryCount: 0 },
+    ]);
+
+    expect(await wakeBrain(inbox, deliver, () => clock)).toMatchObject({ id: first!.id, retryCount: 1 });
+    expect(calls).toBe(1);
+
+    clock += 1_000;
+    timers.shift()?.();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const retried = inbox.claimBatch()!;
+    expect(retried).toMatchObject({
+      id: first!.id,
+      intents: [intent],
+      retryCount: 1,
+      dispatch: { dispatchId: "dispatch:race:2" },
+    });
+
+    inbox.recordSilence(retried.id, "Handled after provider recovery.");
+    inbox.settleBatch(retried.id);
+    observeBrainDispatch(operation("dispatch:race:2"));
+    expect(inbox.dispatchAttempts(retried.id)).toMatchObject([
+      { dispatchId: "dispatch:race:1", terminalOutcome: "completed" },
+      { dispatchId: "dispatch:race:2", terminalOutcome: "completed" },
+    ]);
+    expect(inbox.dispatchAttempts(retried.id)[1]).not.toHaveProperty("nextRetryAt");
+    expect(inbox.dispatchRecovery()).toEqual([]);
+    stop();
+    inbox.close();
+  });
+
+  it("registers a persisted active dispatch on restart and releases it from recovery-only settlement", async () => {
+    const databasePath = fixture();
+    let clock = Date.parse("2026-07-26T01:00:00.000Z");
+    const now = () => new Date(clock).toISOString();
+    const first = openInbox(databasePath, now);
+    admit(first);
+    const batch = await wakeBrain(first, async () => ({ dispatchId: "dispatch:restart", acceptedAt: now() }), () => clock);
+    first.close();
+
+    const reopened = openInbox(databasePath, now);
+    const stop = configureBrainDispatchRecovery(reopened, {
+      logger,
+      now: () => clock,
+      setTimer: () => ({ unref: () => undefined }) as unknown as ReturnType<typeof setTimeout>,
+      clearTimer: () => undefined,
+    });
+    observeBrainDispatch(recoverySettlement("dispatch:restart"));
+
+    expect(reopened.claimBatch()).toMatchObject({
+      id: batch!.id,
+      retryCount: 1,
+      nextRetryAt: "2026-07-26T01:00:01.000Z",
+    });
+    expect(reopened.claimBatch()).not.toHaveProperty("dispatch");
+    expect(reopened.dispatchAttempts(batch!.id)).toMatchObject([
+      { dispatchId: "dispatch:restart", terminalOutcome: "settled" },
+    ]);
+    stop();
+    reopened.close();
+  });
+
+  it("backfills the active pre-ledger dispatch during upgrade", () => {
+    const databasePath = fixture();
+    const database = new DatabaseSync(databasePath);
+    database.exec(`
+      CREATE TABLE brain_batches (
+        batch_id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL,
+        dispatch_id TEXT,
+        accepted_at TEXT,
+        settled_at TEXT
+      ) STRICT;
+      INSERT INTO brain_batches VALUES (
+        'brain-batch:legacy',
+        '2026-07-26T01:30:00.000Z',
+        'dispatch:legacy',
+        '2026-07-26T01:30:00.000Z',
+        NULL
+      );
+    `);
+    database.close();
+
+    const inbox = openInbox(databasePath, () => "2026-07-26T01:31:00.000Z");
+    expect(inbox.dispatchAttempts("brain-batch:legacy")).toMatchObject([
+      { dispatchId: "dispatch:legacy", retryCount: 0 },
+    ]);
+    inbox.close();
+  });
+
+  it("ignores a stale terminal writer after a replacement dispatch is active", async () => {
+    let clock = Date.parse("2026-07-26T02:00:00.000Z");
+    const now = () => new Date(clock).toISOString();
+    const inbox = openInbox(fixture(), now, () => 0);
+    admit(inbox);
+    const first = await wakeBrain(
+      inbox,
+      async () => ({ dispatchId: "dispatch:stale:1", acceptedAt: now() }),
+      () => clock,
+    );
+    const stop = configureBrainDispatchRecovery(inbox, {
+      logger,
+      now: () => clock,
+      setTimer: () => ({ unref: () => undefined }) as unknown as ReturnType<typeof setTimeout>,
+      clearTimer: () => undefined,
+    });
+    observeBrainDispatch(operation("dispatch:stale:1", true));
+    expect(inbox.dispatchAttempts(first!.id)[0]).toMatchObject({
+      terminalOutcome: "failed",
+      terminalError: "provider terminal failure",
+    });
+    const second = await wakeBrain(
+      inbox,
+      async () => ({ dispatchId: "dispatch:stale:2", acceptedAt: now() }),
+      () => clock,
+    );
+
+    expect(
+      inbox.reconcileDispatchTerminal({
+        batchId: first!.id,
+        dispatchId: "dispatch:stale:1",
+        outcome: "settled",
+      }),
+    ).toBeUndefined();
+    expect(inbox.claimBatch()).toEqual(second);
+    expect(inbox.dispatchAttempts(first!.id)).toMatchObject([
+      { dispatchId: "dispatch:stale:1", terminalOutcome: "failed" },
+      { dispatchId: "dispatch:stale:2" },
+    ]);
+    expect(inbox.dispatchAttempts(first!.id)[1]).not.toHaveProperty("terminalOutcome");
+    stop();
+    inbox.close();
+  });
+});
