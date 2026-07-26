@@ -39,12 +39,12 @@ Relevant findings:
 - Flue deliberately does not define an application evaluation framework. Ordinary logic uses
   ordinary tests; full agent/workflow loops can be driven through the same public in-process
   or HTTP SDK surfaces used by the application.
-- A fresh conversation or workflow run per case prevents state leakage. Outcomes and
-  observable effects are safer assertions than exact generated text.
+- A fresh conversation or workflow run per Evaluation Scenario prevents state leakage.
+  Outcomes and observable effects are safer assertions than exact generated text.
 - Deterministic assertions should decide exact behavior. Model judges are for semantic
   variation.
 - `vitest-evals` supplies execution/reporting conventions. Braintrust tracing is independent;
-  it does not create cases, assertions, or release gates.
+  it does not create Evaluation Scenarios, assertions, or release gates.
 - Flue observation events expose runs, model turns, tools, tasks, compaction, usage, cost, and
   correlation ids. The live observer is process/isolate scoped; durable application/SDK
   records remain necessary for replay and outcome truth.
@@ -97,8 +97,8 @@ Relevant findings:
   measures quality, cost, and speed rather than importing a general leaderboard.
 
 Boundary: Braintrust is a dataset, experiment, scoring, comparison, tracing, and review
-surface. Ambient Agent must own architecture epochs, case policy, privacy admission, hard
-gates, and release decisions.
+surface. Ambient Agent must own architecture epochs, Evaluation Scenario policy, privacy
+admission, hard gates, and release decisions.
 
 ## Anthropic agent-evaluation roadmap
 
@@ -115,7 +115,8 @@ Annotated roadmap:
 1. Start from observed failures, support/operator corrections, and domain-expert designed
    boundaries.
 2. Define a task/case, repeated trial, full transcript/trace, environment outcome, grader,
-   harness, and suite separately.
+   harness, and suite separately. Ambient Agent maps this source's task/case unit to its
+   ratified Evaluation Scenario.
 3. Evaluate multi-turn agents through both their process evidence and resulting environment
    state; final prose alone is insufficient.
 4. Use deterministic code graders wherever possible, model graders for legitimate semantic
@@ -124,14 +125,14 @@ Annotated roadmap:
    reliably solved may graduate into regressions.
 6. Keep tasks unambiguous and prove the fixture and graders with a reference solution or
    known-good run. Persistent zero scores may mean the evaluation is broken.
-7. Balance positive and negative cases and use isolated, stable environments.
+7. Balance positive and negative scenarios and use isolated, stable environments.
 8. Calibrate model graders against domain experts, allow insufficient-evidence results, score
    dimensions separately, and inspect transcripts.
 9. Grade outcomes rather than unnecessarily rigid tool paths.
 10. Combine offline evaluation with production monitoring, user feedback, and systematic
     human review.
 11. For model comparisons, account for sampling error and correlation: retain repeated
-    samples, report uncertainty, and prefer paired differences on the same cases.
+    samples, report uncertainty, and prefer paired differences on the same scenarios.
 
 ## vitest-evals
 
@@ -158,4 +159,5 @@ Relevant findings:
   provider/application fixtures and durable owner readbacks.
 
 Boundary: keep Vitest as the test runner and use a custom vitest-evals harness only after the
-case contract and one current-epoch runtime seam exist. No new framework is warranted.
+Evaluation Scenario contract and one current-epoch runtime seam exist. No new framework is
+warranted.
