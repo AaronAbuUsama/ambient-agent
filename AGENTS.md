@@ -64,3 +64,10 @@ re-plan before re-signing), `dag:needs-grilling` / `dag:needs-research` / `dag:n
 (readiness — absent means clear). Domain docs: single-context, see `CONTEXT.md`. See the DAG suite's
 `GLOSSARY.md` and planning door for its terms and skills (`/dag:plan` in Claude Code, `$dag:plan` in
 Codex).
+
+The suite is supplied by the external
+[`dag-engineering`](https://github.com/AaronAbuUsama/dag-engineering) plugin; this repository does not
+vendor its `GLOSSARY.md` or skills. Bootstrap it with `/plugin marketplace add
+AaronAbuUsama/dag-plugin` then `/plugin install dag@dag-engineering` in Claude Code, or
+`codex plugin marketplace add AaronAbuUsama/dag-plugin` then `codex plugin add dag@dag-engineering`
+in Codex, and restart the host.
