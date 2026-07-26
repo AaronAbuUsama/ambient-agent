@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
@@ -10,6 +11,7 @@ const MachineReference = v.pipe(
     /^[a-z][a-z0-9-]*:[a-z0-9][a-z0-9._/-]*$/u,
     "Expected a namespaced lowercase machine reference, not inline descriptive content",
   ),
+  v.check((reference) => !/\d{10,}/u.test(reference), "Expected no compact phone-like digit sequence"),
 );
 const NonEmptyReferences = v.pipe(v.array(MachineReference), v.nonEmpty());
 const RepositoryReference = v.pipe(
@@ -18,7 +20,8 @@ const RepositoryReference = v.pipe(
     (reference) =>
       !reference.startsWith("/") &&
       !reference.split("/").includes("..") &&
-      !/^[a-z][a-z0-9+.-]*:/iu.test(reference),
+      !/^[a-z][a-z0-9+.-]*:/iu.test(reference) &&
+      !/\d{10,}/u.test(reference),
     "Expected a repository-relative fixture reference",
   ),
 );
@@ -36,7 +39,7 @@ const requiredOrUnresolved = <TSchema extends v.BaseSchema<unknown, unknown, v.B
   v.union([schema, Unresolved]);
 
 const ArchitectureEpoch = v.strictObject({
-  canonCommit: v.pipe(NonBlankString, v.regex(/^[0-9a-f]{7,40}$/u, "Expected a canon commit SHA")),
+  canonCommit: v.pipe(NonBlankString, v.regex(/^[0-9a-f]{40}$/u, "Expected a full 40-hex canon commit SHA")),
   decisions: NonEmptyReferences,
   schemaVersion: v.literal(1),
 });
@@ -65,6 +68,7 @@ const SanitizedSyntheticProviderFixture = v.strictObject({
   deliveryId: v.pipe(
     NonBlankString,
     v.regex(/^[a-z0-9][a-z0-9._:-]*$/u, "Expected a synthetic delivery identifier"),
+    v.check((identifier) => !/\d{10,}/u.test(identifier), "Expected no compact phone-like digit sequence"),
   ),
   repository: v.pipe(
     NonBlankString,
@@ -72,8 +76,9 @@ const SanitizedSyntheticProviderFixture = v.strictObject({
       /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/u,
       "Expected a synthetic owner/repository identifier",
     ),
+    v.check((identifier) => !/\d{10,}/u.test(identifier), "Expected no compact phone-like digit sequence"),
   ),
-  issueNumber: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  issueNumber: v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(999_999_999)),
 });
 const Expectations = v.strictObject({
   requiredInvariants: requiredOrUnresolved(NonEmptyReferences),
@@ -101,6 +106,7 @@ export const EvaluationScenarioSchema = v.pipe(
     scenarioId: v.pipe(
       NonBlankString,
       v.regex(/^[a-z0-9][a-z0-9._:-]*$/u, "Expected a stable lowercase scenario identifier"),
+      v.check((identifier) => !/\d{10,}/u.test(identifier), "Expected no compact phone-like digit sequence"),
     ),
     title: MachineReference,
     lifecycle: v.picklist(["draft", "adjudicated"]),
@@ -253,6 +259,23 @@ const validateFixture = (scenario: EvaluationScenario, repositoryRoot: string): 
   return `sha256:${digest}`;
 };
 
+const validateCanonCommit = (scenario: EvaluationScenario, repositoryRoot: string): void => {
+  if (isUnresolved(scenario.architectureEpoch)) return;
+  const commit = scenario.architectureEpoch.canonCommit;
+  let resolved: string;
+  try {
+    resolved = execFileSync("git", ["-C", realpathSync(repositoryRoot), "rev-parse", "--verify", `${commit}^{commit}`], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    throw new Error(`Evaluation Scenario canon commit does not resolve in the repository: ${commit}`);
+  }
+  if (resolved !== commit) {
+    throw new Error(`Evaluation Scenario canon commit did not resolve uniquely: ${commit}`);
+  }
+};
+
 export const validateEvaluationScenario = (
   input: unknown,
   options: EvaluationScenarioValidationOptions = {},
@@ -271,7 +294,9 @@ export const validateEvaluationScenario = (
       .join("; ");
     throw new Error(`Invalid Evaluation Scenario: ${issues}`);
   }
-  const fixtureDigest = validateFixture(result.output, options.repositoryRoot ?? process.cwd());
+  const repositoryRoot = options.repositoryRoot ?? process.cwd();
+  const fixtureDigest = validateFixture(result.output, repositoryRoot);
+  validateCanonCommit(result.output, repositoryRoot);
   const normalized = JSON.stringify(canonicalValue(result.output));
   const digest = createHash("sha256").update(JSON.stringify([normalized, fixtureDigest ?? null])).digest("hex");
   return {

@@ -4,7 +4,7 @@
   "title": "title:synthetic-issue-admission-owner-preserved",
   "lifecycle": "adjudicated",
   "architectureEpoch": {
-    "canonCommit": "8c157c3",
+    "canonCommit": "8c157c3d469faaff2c49cfd6acd2de845a474cb1",
     "decisions": ["issue:406"],
     "schemaVersion": 1
   },

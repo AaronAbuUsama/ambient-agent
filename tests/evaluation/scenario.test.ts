@@ -166,9 +166,33 @@ describe("Evaluation Scenario repository artifacts", () => {
         holdoutMemberships: [{ ...syntheticMembership, admittedAt: "2026-02-30T00:00:00Z" }],
       }),
     ).toThrow("real calendar instant");
+    expect(() =>
+      validateEvaluationScenario({
+        ...evidence.normalizedScenario,
+        owners: ["actor:12025550199"],
+      }),
+    ).toThrow("compact phone-like digit sequence");
+    expect(() =>
+      validateEvaluationScenario({
+        ...evidence.normalizedScenario,
+        architectureEpoch: {
+          ...(evidence.normalizedScenario.architectureEpoch as Record<string, unknown>),
+          canonCommit: "8c157c3",
+        },
+      }),
+    ).toThrow("full 40-hex canon commit SHA");
+    expect(() =>
+      validateEvaluationScenario({
+        ...evidence.normalizedScenario,
+        architectureEpoch: {
+          ...(evidence.normalizedScenario.architectureEpoch as Record<string, unknown>),
+          canonCommit: "f".repeat(40),
+        },
+      }),
+    ).toThrow("canon commit does not resolve");
     expect(evidence.evidenceId).toContain(evidence.scenarioId);
     expect(evidence.evidenceId).toBe(
-      "evaluation-scenario-validation:v1:scenario-synthetic-positive:sha256:7190d030bffdc64fbd67d678628cfb6ac380a63222e897db206cdd778aef1c42",
+      "evaluation-scenario-validation:v1:scenario-synthetic-positive:sha256:4d33626bafbcf9795a91bd9983ab72c763fe93ceda61332ec9dc1d6c7b2698a9",
     );
     expect(serializeEvaluationScenarioEvidence(evidence)).toContain(evidence.evidenceId);
   });
