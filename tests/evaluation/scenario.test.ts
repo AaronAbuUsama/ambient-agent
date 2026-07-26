@@ -227,6 +227,8 @@ describe("Evaluation Scenario repository artifacts", () => {
     expect(
       await runCli(
         [
+          "--control-port",
+          "1234",
           "evaluation-scenario",
           "validate",
           input,

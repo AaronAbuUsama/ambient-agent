@@ -966,7 +966,20 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     const args = [...argv];
     const informational = args.some((arg) => arg === "--help" || arg === "-h" || arg === "--version" || arg === "-V");
     const overridden = args.some((arg) => arg === "--data-dir" || arg.startsWith("--data-dir="));
-    const repositoryArtifactCommand = args[0] === "evaluation-scenario";
+    let commandIndex = 0;
+    while (commandIndex < args.length) {
+      const arg = args[commandIndex]!;
+      if (arg === "--data-dir" || arg === "--control-port") {
+        commandIndex += 2;
+        continue;
+      }
+      if (arg.startsWith("--data-dir=") || arg.startsWith("--control-port=")) {
+        commandIndex += 1;
+        continue;
+      }
+      break;
+    }
+    const repositoryArtifactCommand = args[commandIndex] === "evaluation-scenario";
     if (!informational && !overridden && !repositoryArtifactCommand) {
       // ADR 0015: adopt a pre-existing platform-native installation before any
       // component opens a database or credential file. --data-dir skips it.
