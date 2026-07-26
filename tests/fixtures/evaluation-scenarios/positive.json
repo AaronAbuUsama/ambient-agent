@@ -9,14 +9,7 @@
     "schemaVersion": 1
   },
   "maturity": "capability",
-  "holdoutMemberships": [
-    {
-      "datasetId": "holdout-accountability-v1",
-      "accessPolicyId": "policy-evaluation-holdout-v1",
-      "admittedBy": ["evaluation-owner"],
-      "admittedAt": "2026-07-26T00:00:00Z"
-    }
-  ],
+  "holdoutMemberships": [],
   "owners": ["happening-admission"],
   "slices": ["source:github", "outcome:admitted"],
   "provenance": {

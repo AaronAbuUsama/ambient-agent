@@ -140,6 +140,7 @@ const INLINE_CONTENT_KEYS = new Set([
   "privatekey",
   "prompt",
   "session",
+  "text",
   "token",
   "toolarguments",
   "toolresults",

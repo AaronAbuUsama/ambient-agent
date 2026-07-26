@@ -36,13 +36,13 @@ const cliOutput = (): { output: CliOutput; stdout: () => string; stderr: () => s
 };
 
 describe("Evaluation Scenario repository artifacts", () => {
-  it("normalizes a valid scenario while preserving independent maturity and holdout membership", async () => {
+  it("normalizes a valid public scenario without claiming restricted holdout membership", async () => {
     const positive = (await fixture("positive")) as Record<string, unknown>;
     const positiveFixture = positive.fixture as Record<string, unknown>;
     const evidence = validateEvaluationScenario(positive);
 
     expect(evidence.normalizedScenario.maturity).toBe("capability");
-    expect(evidence.normalizedScenario.holdoutMemberships).toHaveLength(1);
+    expect(evidence.normalizedScenario.holdoutMemberships).toHaveLength(0);
     expect(evidence.fixtureDigest).toBe(
       "sha256:5a3beca1a771070a4c05faca73fcef5c87584c7c400de10c13ba7256e9fa16b9",
     );
@@ -93,6 +93,21 @@ describe("Evaluation Scenario repository artifacts", () => {
         { repositoryRoot },
       ),
     ).toThrow("Unsafe inline production content");
+    const genericTextFixture = JSON.stringify({ events: [{ text: "copied private conversation" }] });
+    await writeFile(join(repositoryRoot, "generic-text.json"), genericTextFixture);
+    expect(() =>
+      validateEvaluationScenario(
+        {
+          ...positive,
+          fixture: {
+            ...positiveFixture,
+            ref: "generic-text.json",
+            sha256: createHash("sha256").update(genericTextFixture).digest("hex"),
+          },
+        },
+        { repositoryRoot },
+      ),
+    ).toThrow("$fixture.events[0].text");
     const invalidFixture = "not json\n";
     await writeFile(join(repositoryRoot, "invalid.json"), invalidFixture);
     expect(() =>
@@ -108,13 +123,22 @@ describe("Evaluation Scenario repository artifacts", () => {
         { repositoryRoot },
       ),
     ).toThrow("fixture must be sanitized JSON");
-    expect(
-      validateEvaluationScenario({ ...evidence.normalizedScenario, holdoutMemberships: [] }).normalizedScenario.maturity,
-    ).toBe("capability");
+    const syntheticMembership = {
+      datasetId: "synthetic-membership-shape",
+      accessPolicyId: "synthetic-access-policy",
+      admittedBy: ["evaluation-owner"],
+      admittedAt: "2026-07-26T00:00:00Z",
+    };
+    const memberEvidence = validateEvaluationScenario({
+      ...evidence.normalizedScenario,
+      holdoutMemberships: [syntheticMembership],
+    });
+    expect(memberEvidence.normalizedScenario.maturity).toBe("capability");
+    expect(memberEvidence.normalizedScenario.holdoutMemberships[0]?.accessPolicyId).toBe("synthetic-access-policy");
     expect(() =>
       validateEvaluationScenario({
         ...evidence.normalizedScenario,
-        holdoutMemberships: [{ ...evidence.normalizedScenario.holdoutMemberships[0]!, accessPolicyId: "" }],
+        holdoutMemberships: [{ ...syntheticMembership, accessPolicyId: "" }],
       }),
     ).toThrow("accessPolicyId");
     expect(evidence.evidenceId).toContain(evidence.scenarioId);
