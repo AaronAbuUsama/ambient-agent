@@ -129,9 +129,11 @@ Queried against the live graph on the rig:
 Graph totals: 124 entities, 168 relations, 536 attestations. Authors: `scribe` 385, `migration`
 (legacy) 126, `brain` 17, `ingester` 8.
 
-**151 GitHub events have passed through this system and left zero trace.** The coworker does not know
-that any issue was opened, any pull request raised, any review submitted. Not "knows and stayed
-quiet" — does not know.
+**151 GitHub events have passed through this system and left zero durable knowledge or accountability
+trace.** Their full payloads remain recoverable in `brain_github_events`, so the occurrence archive did
+not lose them. But none produced a Graph attestation, an accountable disposition, or another
+coworker-level record that can answer what happened or whether it still matters. The failure is not raw
+payload loss; it is retained source truth that never became retrievable knowledge or accountable work.
 
 ### It is not a missing capability
 
@@ -257,17 +259,19 @@ first (see §8)? Re-planning #363 in isolation would sign a chart whose destinat
 
 ### 6.2 What is the Brain *for*?
 
-Two incompatible models are live in the codebase and the documents:
+The implementation already has two distinct retention layers, and the original version of this
+handoff incorrectly collapsed them into a dropped-versus-remembered choice:
 
-- **Model A (implemented):** the Brain decides **whether and whom to speak to**. `stay_silent` is a
-  legitimate terminal outcome. GitHub events are routed or dropped.
-- **Model B (the owner's):** the Brain's purpose is to **process information and make it retrievable**.
-  Speaking is one optional consequence. An event that produces no memory is a failure regardless of
-  whether speech was warranted.
+- **Occurrence retention exists:** the settled Brain inbox keeps each full GitHub event payload in
+  `brain_github_events`. Recovery can identify the delivery and replay it.
+- **Coworker knowledge and accountability do not:** `stay_silent` can settle the Batch without a Graph
+  attestation, an accountable disposition, or a durable owner for what the occurrence means.
 
-Model B makes §3 a severe bug. Model A makes it working-as-designed. **Everything downstream depends
-on which is true**, including whether #398's Build B Rule 2 (don't wake for an unclaimed event) is a
-saving or a permanent lobotomy.
+The question is therefore not whether the raw event survives. It does. The architectural question is
+what durable interpretation and accountability every retained occurrence owes before settlement.
+Speaking remains optional. This distinction determines whether #398's Build B Rule 2 (don't wake for an
+unclaimed event) is a useful admission policy or a way to preserve raw payloads that the coworker can
+never retrieve as knowledge.
 
 ### 6.3 Whose job is recording a happening?
 
@@ -314,10 +318,10 @@ This started as an open question and closed while writing this document. The own
    (`packages/agents/src/capabilities/graph/seed-repositories.ts:66-75`) — hard-wired configuration
    routing, which `:604` explicitly forbids. That file's own author flagged the discomfort in a
    `ponytail:` comment.
-2. The Brain's instruction mandates `stay_silent` when the lookup fails — **a silent discard**, which
-   `:278` explicitly forbids. Canon says the failure mode is *open a loop or deliberately hold it*,
-   both of which imply a memory. §3's zero-GitHub-knowledge finding is this violation's measurable
-   consequence.
+2. The Brain's instruction mandates `stay_silent` when the lookup fails — settlement without a durable
+   interpretation or accountable owner. Canon says the failure mode is *open a loop or deliberately
+   hold it*, both of which imply a coworker-level record. §3's zero-GitHub-knowledge finding is this
+   violation's measurable consequence.
 
 **And #398 §4.5's provenance routing violates the same canon** — `source_surface_id` is another
 hard-wired rule, just keyed differently. It should be rejected on canon grounds, not on preference.
@@ -360,7 +364,28 @@ where the owner stated intended behaviour in his own words.
 |---|---|---|
 | Provider → `opencode-go` | yes | `config.json.bak-preopencode-20260725T210315Z` and the matching key-file backup, both on the box |
 | Wedge cleared: 1 dead Batch settled | yes | `~/backups/application-prewedgefix-20260726T050502Z.sqlite` — but restoring re-wedges the Brain |
-| 73 GitHub events + 2 wakes absorbed into the dead Batch | yes | rows intact with full payloads; `UPDATE brain_github_events SET batch_id=NULL WHERE batch_id='brain-batch:c908eb74…'` |
+| 73 GitHub events + 2 wakes absorbed into the dead Batch | yes | rows intact with full payloads; use the checked recovery below |
+
+The exact settled Batch is
+`brain-batch:c908eb7434eac206f4168c5b2c79b2b7fc460ca7657bb606110016b1fe72aa2c`.
+The live database returned exactly 73 GitHub events and 2 wakes for that identifier. Requeue both input
+classes in one transaction and verify the changed-row counts before committing:
+
+```sql
+BEGIN IMMEDIATE;
+
+UPDATE brain_github_events
+SET batch_id = NULL
+WHERE batch_id = 'brain-batch:c908eb7434eac206f4168c5b2c79b2b7fc460ca7657bb606110016b1fe72aa2c';
+SELECT changes() AS requeued_github_events; -- must be 73
+
+UPDATE brain_scheduled_wakes
+SET batch_id = NULL
+WHERE batch_id = 'brain-batch:c908eb7434eac206f4168c5b2c79b2b7fc460ca7657bb606110016b1fe72aa2c';
+SELECT changes() AS requeued_wakes; -- must be 2
+
+COMMIT;
+```
 
 **Nothing was deleted.** No code was changed. `whatsapp/` was never copied — the map's single-home
 constraint held throughout.
