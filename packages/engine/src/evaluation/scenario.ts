@@ -111,7 +111,7 @@ export const EvaluationScenarioSchema = v.pipe(
     title: MachineReference,
     lifecycle: v.picklist(["draft", "adjudicated"]),
     architectureEpoch: requiredOrUnresolved(ArchitectureEpoch),
-    maturity: v.picklist(["candidate", "capability", "regression", "retired"]),
+    maturity: v.picklist(["draft", "candidate", "capability", "regression", "retired"]),
     holdoutMemberships: v.array(HoldoutMembership),
     owners: requiredOrUnresolved(NonEmptyReferences),
     slices: NonEmptyReferences,
@@ -137,8 +137,8 @@ export const EvaluationScenarioSchema = v.pipe(
     "Only a draft Evaluation Scenario may contain explicitly unresolved fields",
   ),
   v.check(
-    (scenario) => scenario.lifecycle !== "draft" || scenario.maturity === "candidate",
-    "A draft Evaluation Scenario must have candidate maturity",
+    (scenario) => (scenario.lifecycle === "draft") === (scenario.maturity === "draft"),
+    "Draft lifecycle and draft maturity must be declared together; Candidate requires complete adjudication",
   ),
   v.check(
     (scenario) => (scenario.maturity === "retired") === (scenario.retirement !== undefined),

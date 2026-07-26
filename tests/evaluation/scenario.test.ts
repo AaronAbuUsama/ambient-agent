@@ -203,16 +203,22 @@ describe("Evaluation Scenario repository artifacts", () => {
     expect(serializeEvaluationScenarioEvidence(evidence)).toContain(evidence.evidenceId);
   });
 
-  it("accepts explicit draft gaps and rejects them once adjudicated", async () => {
+  it("keeps unresolved drafts pre-candidate and requires Candidates to be complete", async () => {
     const draft = (await fixture("pressure")) as Record<string, unknown>;
     draft.expectations = {
       ...(draft.expectations as Record<string, unknown>),
       prohibitedOutcomes: { unresolved: "gap:pending-adjudication" },
     };
 
-    expect(validateEvaluationScenario(draft).normalizedScenario.lifecycle).toBe("draft");
-    expect(() => validateEvaluationScenario({ ...draft, lifecycle: "adjudicated" })).toThrow(
+    const draftEvidence = validateEvaluationScenario(draft);
+    expect(draftEvidence.normalizedScenario.lifecycle).toBe("draft");
+    expect(draftEvidence.normalizedScenario.maturity).toBe("draft");
+    expect(() => validateEvaluationScenario({ ...draft, lifecycle: "adjudicated", maturity: "candidate" })).toThrow(
       "Only a draft Evaluation Scenario may contain explicitly unresolved fields",
+    );
+    const complete = (await fixture("positive")) as Record<string, unknown>;
+    expect(validateEvaluationScenario({ ...complete, maturity: "candidate" }).normalizedScenario.maturity).toBe(
+      "candidate",
     );
   });
 
@@ -235,7 +241,7 @@ describe("Evaluation Scenario repository artifacts", () => {
       }),
     ).toThrow("other maturities prohibit them");
     expect(() => validateEvaluationScenario({ ...valid, lifecycle: "draft" })).toThrow(
-      "A draft Evaluation Scenario must have candidate maturity",
+      "Draft lifecycle and draft maturity must be declared together",
     );
     expect(() => validateEvaluationScenario({ ...valid, transcript: ["raw production content"] })).toThrow(
       "Unsafe inline production content",
