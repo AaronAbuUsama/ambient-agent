@@ -94,10 +94,12 @@ the knowledge derived from it, and a later Graph delta is never treated as a sec
 occurrence. The Brain sees one knowledge-ready Attention Item with evidence references,
 then reads the current Graph and exact source evidence when deciding.
 
-Internal inputs that are already meaningful—Speaker Intents, workflow outcomes, Directive
-Outcomes, Scheduled Wakes, and Proactive Sweeps—enter the same accountability mechanism at
-the readiness level appropriate to their contract. They do not need to pretend to be
-provider Happenings.
+Internal signals that are already meaningful—Speaker Intents, workflow outcomes, Directive
+Outcomes, Scheduled Wakes, and Proactive Sweeps—do not pretend to be provider Happenings,
+but they also do not enter the Brain as unowned peers. Before claim, each signal must
+correlate to the Attention, Work, Effect, or Directive responsibility it advances. A signal
+with no durable owner first creates an Attention obligation; a Proactive Sweep is only a
+claim trigger and never a Batch obligation of its own.
 
 ---
 
@@ -259,6 +261,25 @@ The Brain reads the live Belief Projection when deciding. If current belief diff
 the recorded readiness version, that is useful context, not corruption. When exact detail
 matters, the Brain follows the evidence references to the Source Archive.
 
+### Internal input ownership
+
+Internal signals reuse the accountability owner that already exists. This prevents one
+WhatsApp message from producing both a source-derived Attention Item and a second,
+uncorrelated Speaker Intent obligation.
+
+| Signal | Required durable correlation before Brain claim |
+| --- | --- |
+| Speaker Intent derived from a message | The originating Happening's Attention Item; it is context for that obligation, not a peer obligation |
+| Workflow or Directive Outcome | The exact Work Item, Effect, or Directive whose state it advances |
+| Scheduled Wake | The held Attention Item or unfinished Work Item being reconsidered |
+| Proactive Sweep | None; it triggers claiming existing pending or due owners and is not itself a Batch input |
+| Independent internal intent with no owner | A newly admitted Attention Item referencing the durable internal-input record |
+
+Every claimed internal signal retains its own stable input identity for crash recovery, but
+settlement must also name the durable owner and state transition that consumed it. An
+ambiguous outcome may reopen its existing Attention Item or admit a new one for fresh
+judgement. Merely including the signal in a settled Batch is not coverage.
+
 ### Attention state
 
 ```mermaid
@@ -289,8 +310,9 @@ table that needs a parallel lifecycle.
 
 ## 7. Brain judgement and disposition
 
-Trusted application code claims a bounded immutable set of pending Attention Items as one
-Brain Batch. The Brain may consider them together, but settlement is checked per item.
+Trusted application code claims a bounded immutable set of pending Attention Items and
+owner-correlated internal signals as one Brain Batch. The Brain may consider them together,
+but settlement is checked per input.
 
 Every claimed item must end the Batch in one of these states:
 
@@ -308,13 +330,20 @@ type AttentionDisposition =
     };
 ```
 
-Settlement is therefore a coverage check:
+Settlement is therefore a coverage check over every claimed input:
 
 ```text
-for every Attention Item claimed by this Brain Batch:
+for every claimed Attention Item:
   state must no longer be pending
   any transferred successor must exist durably
-  any accepted asynchronous consequence must have a recovery owner
+
+for every claimed internal signal:
+  its durable Attention, Work, Effect, or Directive owner must be named
+  the state transition or explicit consumption must be recorded
+  any new judgement obligation must exist as Attention
+
+for every accepted asynchronous consequence:
+  a recovery owner must exist
 ```
 
 Batch-level effect counting is insufficient because one consequence may cover only one of

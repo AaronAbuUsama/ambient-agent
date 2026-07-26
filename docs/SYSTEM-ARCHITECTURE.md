@@ -294,10 +294,15 @@ flowchart TB
   subgraph internal["Already meaningful internal inputs"]
     I1["Speaker Intent"]
     I2["Workflow or Directive Outcome"]
-    I3["Scheduled Wake / Proactive Sweep"]
+    I3["Scheduled Wake"]
+    I4["Proactive Sweep"]
+    CORRELATE["Correlate to existing<br/>Attention · Work · Effect · Directive"]
+    OWNED["Owner-correlated internal input"]
+    I1 & I2 & I3 --> CORRELATE --> OWNED
   end
 
-  ATTENTION & I1 & I2 & I3 --> INBOX{{"Brain inbox<br/>coalesced · non-blocking"}}
+  ATTENTION & OWNED --> INBOX{{"Brain inbox<br/>coalesced · non-blocking"}}
+  I4 -->|"claim trigger only"| INBOX
   INBOX --> DECIDE["Brain judges<br/>reads live Graph + exact evidence"]
 
   DECIDE --> A1["Disposition each Attention Item<br/>hold · transfer · resolve"]
@@ -313,8 +318,11 @@ are not peer decisions. They are stages of one occurrence becoming judgeable. So
 archives retain what happened, deterministic ingesters and the Scribe establish the
   minimum knowledge floor, and Attention admission creates exactly one accountable
   obligation for every accepted, in-scope Happening. Intents, outcomes, and wakes already
-  carry defined meaning and join at the
-accountability boundary rather than pretending to be provider events.
+  carry defined meaning, but must correlate to their existing Attention, Work, Effect, or
+  Directive owner before they are claimed. A source-derived Speaker Intent is context for
+  the originating Attention Item, not a second obligation. A signal with no durable owner
+  first admits Attention. A Proactive Sweep only triggers a claim and is never a Batch
+  obligation of its own.
 
 **Why non-blocking.** The up-inbox is coalesced (§9) and the Brain reasons off every hot
 path. A person waiting for a reply waits on their Speaker, not the Brain. A Speaker
@@ -331,12 +339,14 @@ never a silent discard.
 ready inbox inputs as one Brain Batch. New arrivals wait for another Batch; crash recovery
 reuses the open Batch and exact membership. The Brain chooses consequences through separate
 typed tools. Before settlement, every claimed Attention Item must be held, transferred to
-a named durable successor, or explicitly resolved. `stay_silent` cannot provide that
-coverage. Asynchronous Brain Effects are first recorded in an application-owned durable
-outbox, then delivered at least once to the existing Speaker, provider, or workflow seam
-with stable application identity. Final settlement validates Attention coverage and
-successor existence, then atomically settles the Batch and exactly its claimed inputs; the
-model never serves as the receipt ledger.
+a named durable successor, or explicitly resolved. Every claimed internal signal must name
+the durable owner and state transition that consumed it; any fresh judgement it creates
+must exist as Attention. `stay_silent` cannot provide either kind of coverage.
+Asynchronous Brain Effects are first recorded in an application-owned durable outbox, then
+delivered at least once to the existing Speaker, provider, or workflow seam with stable
+application identity. Final settlement validates per-input coverage and successor
+existence, then atomically settles the Batch and exactly its claimed inputs; the model never
+serves as the receipt ledger.
 
 **How speech flows down.** The Brain sends an authoritative Directive to one selected
 Surface's Speaker. It carries a bounded Brief whose important items link to immutable source
