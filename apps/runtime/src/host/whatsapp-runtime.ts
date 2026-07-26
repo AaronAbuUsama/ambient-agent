@@ -765,11 +765,15 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
         (defect): defect is WhatsAppAccountError =>
           defect instanceof WhatsAppAccountError && (defect.code === "logged_out" || defect.code === "suspended"),
       );
-      const terminalReason = terminalTransport?.status.reason ?? terminalAccount?.code;
+      const terminalStatus = terminalTransport?.status ?? terminalAccount?.terminalStatus;
+      // Real authentication terminal errors carry whatsappd's exact FaultReason. Keep the code
+      // fallback only for older/injected account errors that predate that typed status payload.
+      const terminalReason = terminalStatus?.reason ?? terminalAccount?.code;
       setRuntimeStatus({
         phase: "failed",
         chatTarget: gate.describe(),
         error: terminalReason ?? String(exit.cause),
+        ...(terminalStatus === undefined ? {} : { terminal: terminalStatus }),
       });
       // Settle the setup channel too, when the failure landed mid-pairing. Leaving it on
       // `awaiting_scan` would make a setup page infer failure from a QR going stale, one channel
@@ -786,9 +790,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
           "WhatsApp runtime failed",
         );
       }
-      const loggedOut =
-        terminalTransport?.status.phase === "logged_out" ||
-        (terminalAccount instanceof WhatsAppAccountError && terminalAccount.code === "logged_out");
+      const loggedOut = terminalStatus?.phase === "logged_out" || terminalAccount?.code === "logged_out";
       if (loggedOut) {
         // whatsappd clears its store on terminal logged_out; the session is unrecoverable
         // in-process. Exit cleanly (finalizers already ran) and point at the guided repair.

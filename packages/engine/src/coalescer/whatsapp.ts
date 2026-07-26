@@ -171,12 +171,16 @@ export const whatsappEventSource = (
         const accepted = durable === undefined ? update : durable.accepted(update);
         if (accepted !== undefined) Queue.offerUnsafe(queue, accepted);
       });
-      const unsubStatus = session.onStatus((status) => {
+      const signalTerminal = (status: Status): void => {
         if (!isTerminalWhatsAppStatus(status)) return;
-        return Effect.runPromise(Deferred.die(terminal, new WhatsAppEventSourceTerminalError(status))).then(
-          () => undefined,
-        );
-      });
+        Effect.runSync(Deferred.die(terminal, new WhatsAppEventSourceTerminalError(status)));
+      };
+      const unsubStatus = session.onStatus(signalTerminal);
+      // whatsappd status subscriptions deliver future transitions only. Close the gap between
+      // authentication and this scoped layer: a terminal transition during boot recovery is
+      // already reflected by the getter even though its one-shot event has passed.
+      const currentStatus = (session as WhatsAppSession & { readonly status?: Status }).status;
+      if (currentStatus !== undefined) signalTerminal(currentStatus);
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           unsubStatus();
