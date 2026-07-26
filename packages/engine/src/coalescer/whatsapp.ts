@@ -7,8 +7,14 @@
  * The event source swaps in behind the same port the timing tests satisfy. The
  * session is a scoped resource: it is stopped and unsubscribed on scope close.
  */
-import { Effect, Layer, Queue, Stream } from "effect";
-import { type IncomingMessage as WaMessage, type Update, type WhatsAppSession } from "whatsappd";
+import { Deferred, Effect, Layer, Queue, Stream } from "effect";
+import {
+  isTerminal,
+  type IncomingMessage as WaMessage,
+  type Status,
+  type Update,
+  type WhatsAppSession,
+} from "whatsappd";
 import { conversationUpdate } from "../intake/conversation-event.ts";
 import { getLogger } from "../logging/logging.ts";
 import { isGroupJid } from "../shared/whatsapp-jid.ts";
@@ -112,6 +118,19 @@ export interface DurableWhatsAppIntake {
   readonly accepted: (event: CoalescerEvent) => CoalescerEvent | undefined;
 }
 
+type TerminalWhatsAppStatus = Extract<Status, { readonly phase: "logged_out" | "suspended" }>;
+
+const isTerminalWhatsAppStatus = (status: Status): status is TerminalWhatsAppStatus => isTerminal(status);
+
+/** Typed terminal defect carried from whatsappd's process-lifetime status stream into the scoped runtime fiber. */
+export class WhatsAppEventSourceTerminalError extends Error {
+  override readonly name = "WhatsAppEventSourceTerminalError";
+
+  constructor(readonly status: TerminalWhatsAppStatus) {
+    super(`WhatsApp transport ended in ${status.phase}: ${status.reason}.`);
+  }
+}
+
 const toUpdate = (update: Update): ConversationUpdate | undefined => {
   const event = conversationUpdate(update);
   return event.kind === "receipt" ? undefined : event;
@@ -132,6 +151,7 @@ export const whatsappEventSource = (
     EventSource,
     Effect.gen(function* () {
       const queue = yield* Queue.unbounded<CoalescerEvent>();
+      const terminal = yield* Deferred.make<never>();
       const unsubMessage = session.onMessage((msg) => {
         const allowed = allow(msg.chatId, msg.isGroup);
         if (!allowed) {
@@ -151,8 +171,15 @@ export const whatsappEventSource = (
         const accepted = durable === undefined ? update : durable.accepted(update);
         if (accepted !== undefined) Queue.offerUnsafe(queue, accepted);
       });
+      const unsubStatus = session.onStatus((status) => {
+        if (!isTerminalWhatsAppStatus(status)) return;
+        return Effect.runPromise(Deferred.die(terminal, new WhatsAppEventSourceTerminalError(status))).then(
+          () => undefined,
+        );
+      });
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
+          unsubStatus();
           unsubUpdate();
           unsubMessage();
         }),
@@ -164,7 +191,7 @@ export const whatsappEventSource = (
         events: Stream.concat(
           Stream.fromIterable(replay),
           Stream.fromQueue(queue).pipe(Stream.filter(isNotReplayOverlap)),
-        ),
+        ).pipe(Stream.interruptWhen(Deferred.await(terminal))),
       };
     }),
   );

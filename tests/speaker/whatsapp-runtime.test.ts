@@ -890,6 +890,11 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
               },
             }),
           );
+          // Let the fork acquire its scoped event source and replay the durable arrival before
+          // advancing the debounce clock. The source now also acquires a terminal-status signal,
+          // so assuming all layer acquisition completes in the fork's first scheduler turn is
+          // intentionally no longer part of this replay test.
+          yield* Effect.yieldNow;
           yield* TestClock.adjust(Duration.millis(40));
 
           expect(dispatches).toEqual([
@@ -1283,7 +1288,7 @@ describe("runtime pairing and bridge control", () => {
   };
 
   /** Boot a runtime over a drivable session and wait until the startup record itself says online. */
-  const bootedRuntime = async () => {
+  const bootedRuntime = async (exit?: (code: number) => void) => {
     const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
     archive.close();
     const { session, transition, settle } = observableSession();
@@ -1292,6 +1297,7 @@ describe("runtime pairing and bridge control", () => {
       applicationDatabase,
       managedChats: [CHAT],
       sessionFactory: () => session,
+      ...(exit === undefined ? {} : { exit }),
     });
     // The #312 state is precisely the one where the *startup record* has reached `online`, because
     // that is the value that used to be reported forever afterwards. An explicit budget, well clear
@@ -1465,17 +1471,18 @@ describe("runtime pairing and bridge control", () => {
   it("reports a terminal logged_out as failed rather than as something that will retry", async () => {
     // `connection_replaced` wipes whatsappd's credential store, so "reconnecting…" would be a second
     // lie on top of the first. It is terminal, and the reported phase says so (#373 §3).
-    const { runtime, transition } = await bootedRuntime();
+    const exits: number[] = [];
+    const { runtime, transition } = await bootedRuntime((code) => exits.push(code));
     try {
       await transition({ phase: "logged_out", reason: "connection_replaced" });
       await vi.waitFor(() => expect(getWhatsAppRuntimeStatus().phase).toBe("failed"), { timeout: 4_000 });
       expect(whatsappObservation().snapshot().value.liveness).toMatchObject({
         phase: "failed",
         reason: "connection_replaced",
-        terminal: true,
       });
       // No retry countdown is offered, because there is nothing to count down to.
       expect(whatsappObservation().snapshot().value.liveness.retryAt).toBeUndefined();
+      await vi.waitFor(() => expect(exits).toEqual([1]));
     } finally {
       await runtime.stop();
     }
@@ -1644,6 +1651,65 @@ describe("runtime pairing and bridge control", () => {
 });
 
 describe("foreground runtime terminal logged_out", () => {
+  const parkedStatusSession = () => {
+    const statusListeners = new Set<(status: Status) => void | Promise<void>>();
+    const messageListeners = new Set<(message: WhatsAppMessage) => void | Promise<void>>();
+    const updateListeners = new Set<(update: Update) => void | Promise<void>>();
+    let statusRegistrations = 0;
+    let current: Status = { phase: "connecting" };
+    let finishStart!: () => void;
+    const startBarrier = new Promise<void>((resolve) => {
+      finishStart = resolve;
+    });
+    let startReturned = false;
+    let stopCalls = 0;
+    const transition = async (next: Status): Promise<void> => {
+      current = next;
+      for (const listener of new Set(statusListeners)) await listener(next);
+    };
+    const session = {
+      get status() {
+        return current;
+      },
+      onStatus(listener: (status: Status) => void | Promise<void>) {
+        statusRegistrations += 1;
+        statusListeners.add(listener);
+        return () => statusListeners.delete(listener);
+      },
+      onMessage(listener: (message: WhatsAppMessage) => void | Promise<void>) {
+        messageListeners.add(listener);
+        return () => messageListeners.delete(listener);
+      },
+      onUpdate(listener: (update: Update) => void | Promise<void>) {
+        updateListeners.add(listener);
+        return () => updateListeners.delete(listener);
+      },
+      onConversationSync: () => () => undefined,
+      async start() {
+        await transition({ phase: "online" });
+        await startBarrier;
+        startReturned = true;
+      },
+      async stop() {
+        stopCalls += 1;
+        finishStart();
+      },
+      identity: () => ({ jid: "15550000000:7@s.whatsapp.net" }),
+    } as unknown as WhatsAppSession;
+    return {
+      session,
+      transition,
+      startReturned: () => startReturned,
+      stopCalls: () => stopCalls,
+      statusRegistrations: () => statusRegistrations,
+      listeners: () => ({
+        status: statusListeners.size,
+        message: messageListeners.size,
+        update: updateListeners.size,
+      }),
+    };
+  };
+
   it("sends the configured canary through WhatsApp and resolves only after observer-backed silent settlement", async () => {
     const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
     archive.close();
@@ -1741,45 +1807,97 @@ describe("foreground runtime terminal logged_out", () => {
     await runtime.stop();
   });
 
-  it("fails the runtime status and exits cleanly pointing at the guided re-pair", async () => {
+  it("ends a genuinely parked stream on terminal logged_out, finalizes, then exits through guided repair once", async () => {
     const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
     archive.close();
-    const statusListeners = new Set<(status: Status) => void | Promise<void>>();
-    const session = {
-      onStatus(listener: (status: Status) => void | Promise<void>) {
-        statusListeners.add(listener);
-        return () => statusListeners.delete(listener);
-      },
-      onMessage: () => () => undefined,
-      onUpdate: () => () => undefined,
-      onConversationSync: () => () => undefined,
-      async start() {
-        for (const listener of statusListeners) await listener({ phase: "logged_out" } as Status);
-      },
-      async stop() {},
-      identity: () => undefined,
-    } as unknown as WhatsAppSession;
-    const exits: number[] = [];
+    const parked = parkedStatusSession();
+    const exits: Array<{ readonly code: number; readonly stopCalls: number; readonly listeners: object }> = [];
+    const offline: Array<{ readonly reason?: unknown; readonly terminal?: unknown }> = [];
+    resetOperatorFeed();
+    const unsubscribeFeed = operatorFeed().subscribe((record) => {
+      if (record.operatorEvent === "agent.offline") {
+        offline.push({ reason: record.reason, terminal: record.terminal });
+      }
+    });
     const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let runtime: ReturnType<typeof startWhatsAppRuntime> | undefined;
     try {
-      const runtime = startWhatsAppRuntime({
+      runtime = startWhatsAppRuntime({
         storeDirectory,
         applicationDatabase,
         managedChats: [CHAT],
-        sessionFactory: () => session,
+        sessionFactory: () => parked.session,
         exit: (code) => {
-          exits.push(code);
+          exits.push({ code, stopCalls: parked.stopCalls(), listeners: parked.listeners() });
         },
       });
-      await vi.waitFor(() => expect(exits).toEqual([1]));
-      expect(getWhatsAppRuntimeStatus().phase).toBe("failed");
+
+      // Authentication has settled, session.start remains unresolved, and the event stream is parked
+      // on its empty Effect queue with all process-lifetime listeners installed.
+      await vi.waitFor(() => expect(parked.statusRegistrations()).toBeGreaterThanOrEqual(4));
+      expect(parked.listeners()).toEqual({ status: 3, message: 1, update: 1 });
+      expect(parked.startReturned()).toBe(false);
+      expect(exits).toEqual([]);
+
+      await parked.transition({ phase: "logged_out", reason: "connection_replaced" });
+      await parked.transition({ phase: "logged_out", reason: "connection_replaced" });
+      await vi.waitFor(() => expect(exits).toHaveLength(1), { timeout: 1_000 });
+
+      expect(exits).toEqual([{ code: 1, stopCalls: 1, listeners: { status: 0, message: 0, update: 0 } }]);
+      expect(getWhatsAppRuntimeStatus()).toMatchObject({
+        phase: "failed",
+        error: "connection_replaced",
+      });
+      expect(offline).toEqual([{ reason: "connection_replaced", terminal: true }]);
       const written = stderrSpy.mock.calls.map(([chunk]) => String(chunk)).join("");
       expect(written).toContain("logged_out");
       expect(written).toContain("ambient-agent repair whatsapp");
-      await runtime.stop();
     } finally {
+      unsubscribeFeed();
+      if (exits.length === 0) await runtime?.stop();
       stderrSpy.mockRestore();
     }
+  });
+
+  it("keeps the genuinely parked stream alive through recoverable whatsappd backoff", async () => {
+    const { applicationDatabase, storeDirectory, archive } = temporaryArchive();
+    archive.close();
+    const parked = parkedStatusSession();
+    const exits: number[] = [];
+    const runtime = startWhatsAppRuntime({
+      storeDirectory,
+      applicationDatabase,
+      managedChats: [CHAT],
+      sessionFactory: () => parked.session,
+      exit: (code) => exits.push(code),
+    });
+
+    try {
+      await vi.waitFor(() => expect(parked.statusRegistrations()).toBeGreaterThanOrEqual(4));
+      expect(parked.listeners()).toEqual({ status: 3, message: 1, update: 1 });
+      expect(parked.startReturned()).toBe(false);
+
+      await parked.transition({
+        phase: "backing_off",
+        reason: "connection_lost",
+        retryAttempt: 1,
+        nextRetryAt: Date.now() + 1_000,
+      });
+      expect(getWhatsAppRuntimeStatus()).toMatchObject({ phase: "degraded" });
+      expect(parked.listeners()).toEqual({ status: 3, message: 1, update: 1 });
+      expect(parked.stopCalls()).toBe(0);
+      expect(exits).toEqual([]);
+
+      await parked.transition({ phase: "connecting", retryAttempt: 1 });
+      await parked.transition({ phase: "online" });
+      expect(getWhatsAppRuntimeStatus().phase).toBe("online");
+      expect(parked.listeners()).toEqual({ status: 3, message: 1, update: 1 });
+      expect(exits).toEqual([]);
+    } finally {
+      await runtime.stop();
+    }
+    expect(parked.stopCalls()).toBe(1);
+    expect(parked.listeners()).toEqual({ status: 0, message: 0, update: 0 });
   });
 });
 
