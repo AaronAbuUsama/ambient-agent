@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "provider": "synthetic-github",
+  "deliveryId": "synthetic-delivery-1",
+  "repository": "synthetic/widgets",
+  "issueNumber": 1
+}

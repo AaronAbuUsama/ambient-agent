@@ -29,7 +29,8 @@
   },
   "fixture": {
     "ref": "tests/fixtures/evaluation-scenarios/synthetic-provider-state-v1.json",
-    "environmentVersion": "synthetic-provider-v1"
+    "environmentVersion": "synthetic-provider-v1",
+    "sha256": "5a3beca1a771070a4c05faca73fcef5c87584c7c400de10c13ba7256e9fa16b9"
   },
   "expectations": {
     "requiredInvariants": ["one stable source identity is admitted"],

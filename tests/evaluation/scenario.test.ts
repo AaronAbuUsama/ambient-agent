@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
@@ -36,10 +36,47 @@ const cliOutput = (): { output: CliOutput; stdout: () => string; stderr: () => s
 
 describe("Evaluation Scenario repository artifacts", () => {
   it("normalizes a valid scenario while preserving independent maturity and holdout membership", async () => {
-    const evidence = validateEvaluationScenario(await fixture("positive"));
+    const positive = (await fixture("positive")) as Record<string, unknown>;
+    const positiveFixture = positive.fixture as Record<string, unknown>;
+    const evidence = validateEvaluationScenario(positive);
 
     expect(evidence.normalizedScenario.maturity).toBe("capability");
     expect(evidence.normalizedScenario.holdoutMemberships).toHaveLength(1);
+    expect(evidence.fixtureDigest).toBe(
+      "sha256:5a3beca1a771070a4c05faca73fcef5c87584c7c400de10c13ba7256e9fa16b9",
+    );
+    expect(() =>
+      validateEvaluationScenario({
+        ...positive,
+        fixture: { ...positiveFixture, ref: "tests/fixtures/evaluation-scenarios/missing.json" },
+      }),
+    ).toThrow("fixture does not resolve");
+    expect(() =>
+      validateEvaluationScenario({
+        ...positive,
+        fixture: { ...positiveFixture, sha256: "0".repeat(64) },
+      }),
+    ).toThrow("fixture SHA-256 does not match");
+    const fixtureBoundary = await mkdtemp(join(tmpdir(), "evaluation-fixture-boundary-"));
+    roots.push(fixtureBoundary);
+    const repositoryRoot = join(fixtureBoundary, "repository");
+    const externalFixture = join(fixtureBoundary, "external.json");
+    await mkdir(repositoryRoot);
+    await writeFile(externalFixture, "{}\n");
+    await symlink(externalFixture, join(repositoryRoot, "fixture.json"));
+    expect(() =>
+      validateEvaluationScenario(
+        {
+          ...positive,
+          fixture: {
+            ...positiveFixture,
+            ref: "fixture.json",
+            sha256: "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+          },
+        },
+        { repositoryRoot },
+      ),
+    ).toThrow("fixture must be a file inside the repository");
     expect(
       validateEvaluationScenario({ ...evidence.normalizedScenario, holdoutMemberships: [] }).normalizedScenario.maturity,
     ).toBe("capability");
@@ -55,7 +92,10 @@ describe("Evaluation Scenario repository artifacts", () => {
 
   it("accepts explicit draft gaps and rejects them once adjudicated", async () => {
     const draft = (await fixture("pressure")) as Record<string, unknown>;
-    delete draft.transcript;
+    draft.expectations = {
+      ...(draft.expectations as Record<string, unknown>),
+      prohibitedOutcomes: { unresolved: "pending adjudication" },
+    };
 
     expect(validateEvaluationScenario(draft).normalizedScenario.lifecycle).toBe("draft");
     expect(() => validateEvaluationScenario({ ...draft, lifecycle: "adjudicated" })).toThrow(
@@ -84,9 +124,22 @@ describe("Evaluation Scenario repository artifacts", () => {
     expect(() => validateEvaluationScenario({ ...valid, lifecycle: "draft" })).toThrow(
       "A draft Evaluation Scenario must have candidate maturity",
     );
-    expect(() => validateEvaluationScenario({ ...valid, title: "credential sk-inline-secret-value" })).toThrow(
+    expect(() => validateEvaluationScenario({ ...valid, transcript: ["raw production content"] })).toThrow(
       "Unsafe inline production content",
     );
+  });
+
+  it.each([
+    "credential sk-inline-secret-value",
+    "customer@example.com",
+    "call +1 202 555 0199",
+    "120363000000@g.us",
+    "https://provider.example/private",
+    "customer: copied conversation text",
+    "first line\nsecond line",
+  ])("rejects unsafe schema-valid content: %s", async (unsafe) => {
+    const valid = (await fixture("positive")) as Record<string, unknown>;
+    expect(() => validateEvaluationScenario({ ...valid, title: unsafe })).toThrow("Unsafe inline production content");
   });
 
   it("validates through the CLI, emits exact local evidence, and never touches managed runtime state", async () => {

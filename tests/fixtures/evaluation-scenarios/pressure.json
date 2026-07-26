@@ -25,13 +25,10 @@
     "allowedOutcomes": {
       "unresolved": "pending adjudication"
     },
-    "prohibitedOutcomes": {
-      "unresolved": "pending adjudication"
-    },
+    "prohibitedOutcomes": ["customer@example.com said call +1 202 555 0199"],
     "semanticDimensions": []
   },
   "scorers": {
     "unresolved": "pending deterministic scorer selection"
-  },
-  "transcript": ["raw production conversation must never be stored here"]
+  }
 }
