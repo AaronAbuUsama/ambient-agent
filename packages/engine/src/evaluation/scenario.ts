@@ -47,6 +47,22 @@ const Fixture = v.strictObject({
   environmentVersion: NonBlankString,
   sha256: v.pipe(NonBlankString, v.regex(/^[0-9a-f]{64}$/u, "Expected the sanitized fixture SHA-256")),
 });
+const SanitizedSyntheticProviderFixture = v.strictObject({
+  schemaVersion: v.literal(1),
+  provider: v.literal("synthetic-github"),
+  deliveryId: v.pipe(
+    NonBlankString,
+    v.regex(/^[a-z0-9][a-z0-9._:-]*$/u, "Expected a synthetic delivery identifier"),
+  ),
+  repository: v.pipe(
+    NonBlankString,
+    v.regex(
+      /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/u,
+      "Expected a synthetic owner/repository identifier",
+    ),
+  ),
+  issueNumber: v.pipe(v.number(), v.integer(), v.minValue(1)),
+});
 const Expectations = v.strictObject({
   requiredInvariants: requiredOrUnresolved(NonEmptyStrings),
   allowedOutcomes: requiredOrUnresolved(NonEmptyStrings),
@@ -216,6 +232,11 @@ const validateFixture = (scenario: EvaluationScenario, repositoryRoot: string): 
   const unsafe = unsafeInlinePath(fixture, "$fixture");
   if (unsafe !== undefined) {
     throw new Error(`Unsafe inline production content or credential material at ${unsafe}; sanitize the fixture instead.`);
+  }
+  if (!v.safeParse(SanitizedSyntheticProviderFixture, fixture).success) {
+    throw new Error(
+      `Evaluation Scenario fixture does not match the sanitized synthetic-provider-v1 schema: ${scenario.fixture.ref}`,
+    );
   }
   return `sha256:${digest}`;
 };

@@ -108,6 +108,23 @@ describe("Evaluation Scenario repository artifacts", () => {
         { repositoryRoot },
       ),
     ).toThrow("$fixture.events[0].text");
+    for (const key of ["value", "description", "comment"]) {
+      const disguisedContentFixture = JSON.stringify({ events: [{ [key]: "copied private conversation" }] });
+      await writeFile(join(repositoryRoot, `${key}.json`), disguisedContentFixture);
+      expect(() =>
+        validateEvaluationScenario(
+          {
+            ...positive,
+            fixture: {
+              ...positiveFixture,
+              ref: `${key}.json`,
+              sha256: createHash("sha256").update(disguisedContentFixture).digest("hex"),
+            },
+          },
+          { repositoryRoot },
+        ),
+      ).toThrow("does not match the sanitized synthetic-provider-v1 schema");
+    }
     const invalidFixture = "not json\n";
     await writeFile(join(repositoryRoot, "invalid.json"), invalidFixture);
     expect(() =>
