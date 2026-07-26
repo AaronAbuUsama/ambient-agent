@@ -70,8 +70,10 @@ _Avoid_: Dispatch, delegation, synchronous hand-off
 The immutable set of ready Brain inputs claimed for one decision. It may contain pending
 Attention Items and already meaningful internal inputs such as Intents, outcomes, and wakes.
 Inputs arriving after the claim wait for another Brain Batch. A crash recovers the same Batch
-and membership; settlement requires an explicit disposition for every claimed Attention Item
-and consumes exactly its inputs in one local transaction.
+and membership. Execution attempts are replaceable: a terminal Flue attempt releases only
+that attempt and retries the same Batch through the public dispatch-event seam. Settlement
+requires an explicit disposition for every claimed Attention Item and consumes exactly its
+inputs in one local transaction.
 _Avoid_: Model turn, recomputed window, queue drain
 
 **Brain Effect**:
@@ -125,8 +127,9 @@ _Avoid_: Graph, Brain Inbox, provider mirror inside the ontology
 **Happening**:
 An immutable, provenance-bearing record that something occurred outside the coworker's
 judgment. It proves receipt, not what the occurrence means, whether it matters, or what
-should happen next; the provider-specific Source Archive remains truth and gives the
-Happening its stable evidence identity.
+should happen next. A thin source-neutral registry holds its identity and provenance pointer;
+the provider-specific Source Archive remains payload truth and gives the Happening its stable
+source identity.
 _Avoid_: Decision, task, Graph fact, Brain Effect
 
 **Attention Item**:
@@ -140,7 +143,9 @@ _Avoid_: Notification, inbox row, Scheduled Wake, model turn
 **Work Item**:
 Durable operational responsibility owned by the Brain from creation through an observable
 outcome. A Work Item may use a Bounded Workflow or provider mutation to execute, but is
-neither that mechanism nor a belief that somebody made a promise.
+neither that mechanism nor a belief that somebody made a promise. A pre-bound exact Effect
+outcome may close it deterministically; every ambiguous result returns for Brain judgment.
+Closing Work and resolving its transferred Attention happen atomically.
 _Avoid_: Commitment, Intent, Brain Effect, workflow run
 
 **Open Loop**:

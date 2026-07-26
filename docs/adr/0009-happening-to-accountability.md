@@ -22,9 +22,41 @@ durable after it is held, transferred, or resolved. `stay_silent` records only t
 communication is warranted and cannot settle Attention; Graph beliefs cannot substitute for
 operational work state.
 
+## Settled implementation boundaries
+
+- A thin source-neutral Happening registry owns stable identity and provenance pointers. It
+  does not duplicate provider payloads; provider-specific Source Archives remain payload
+  truth.
+- A terminal Brain dispatch releases only its application-owned execution attempt, correlated
+  through Flue's public terminal events. The same immutable Brain Batch and exact Attention
+  membership retry with bounded backoff; execution failure never manufactures settlement.
+- A terminal mechanism result is not automatically a completed Work Item. Trusted code may
+  close Work only when the result matches an exact completion outcome bound in advance.
+  Ambiguous, interrupted, uncertain, or otherwise unmatched results return for Brain
+  judgment. Work closure and resolution of its transferred Attention are one transaction.
+
+## Initial cutover
+
+The first rollout is a clean-room reset, not a historical accountability migration. There
+are no production users or obligations to preserve. Before enabling the new path, execution
+will inventory and then clear the existing development runtime state: provider archives,
+Graph projections and attestations, Scribe and Brain queues, Batches, Effects, deliveries,
+Flue conversations and execution records, and other derived operational ledgers. Code,
+migrations, GitHub planning history, test fixtures, and proof receipts are not runtime state
+and remain. Deployment configuration, credentials, provider authentication sessions, and
+configured source/surface authorization also remain so the reset does not become a needless
+re-pairing or secret-rotation exercise.
+
+The new Happening, Graph, Attention, and Work history begins from the first fresh post-reset
+source event. Historical Replay remains a supported architectural capability for future real
+archives; it is not part of this initial migration.
+
 ## Rejected
 
 - Raw Happenings and later knowledge deltas as independent peer inputs to the Brain.
 - Treating a Graph change as the occurrence identity or using the Graph as the Brain queue.
 - Collapsing semantic extraction, authoritative rulings, Attention, and action into the Brain.
 - Waking the Brain for every routine Scribe projection.
+- Duplicating provider payloads in a universal Happening archive.
+- Retrofitting accountable Attention onto pre-architecture development history.
+- Treating execution completion, prompt acceptance, or a Scheduled Wake as Work completion.
