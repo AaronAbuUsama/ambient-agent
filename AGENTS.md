@@ -55,3 +55,12 @@ pnpm test
 
 Separate mechanically-green from runtime-proven from human-only proof; never imply a claim
 passed when it was not verified.
+
+## DAG suite
+
+Issues live on GitHub; native blocking is confirmed working. Labels: `dag:atlas` (Wayfinding index),
+`dag:map` (map issue), `dag:preflighted` (pre-flight signed), `dag:halted` (execution stopped it;
+re-plan before re-signing), `dag:needs-grilling` / `dag:needs-research` / `dag:needs-prototype`
+(readiness — absent means clear). Domain docs: single-context, see `CONTEXT.md`. See the DAG suite's
+`GLOSSARY.md` and planning door for its terms and skills (`/dag:plan` in Claude Code, `$dag:plan` in
+Codex).
