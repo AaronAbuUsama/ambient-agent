@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "scenario-synthetic-negative",
+  "title": "Malformed scenario without epoch or owner",
+  "lifecycle": "adjudicated",
+  "maturity": "candidate",
+  "holdoutMemberships": [],
+  "slices": ["validation:missing-required"],
+  "provenance": {
+    "kind": "designed_boundary",
+    "restrictedSourceRefs": ["issue:426"],
+    "sanitizedBy": "evaluation-owner",
+    "sanitizationVersion": "v1",
+    "adjudicatedBy": ["evaluation-owner"],
+    "adjudicatedAt": "2026-07-26T00:00:00Z"
+  },
+  "fixture": {
+    "ref": "tests/fixtures/evaluation-scenarios/synthetic-provider-state-v1.json",
+    "environmentVersion": "synthetic-provider-v1"
+  },
+  "expectations": {
+    "requiredInvariants": ["validation rejects the artifact"],
+    "allowedOutcomes": ["rejected"],
+    "prohibitedOutcomes": ["accepted"],
+    "semanticDimensions": []
+  },
+  "scorers": [
+    {
+      "id": "schema-validation",
+      "version": "v1",
+      "kind": "deterministic",
+      "owner": "evaluation"
+    }
+  ]
+}

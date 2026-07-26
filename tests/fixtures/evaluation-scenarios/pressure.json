@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "scenario-production-pressure",
+  "title": "Unsafe production-derived artifact",
+  "lifecycle": "draft",
+  "architectureEpoch": {
+    "unresolved": "pending owner adjudication"
+  },
+  "maturity": "candidate",
+  "holdoutMemberships": [],
+  "owners": {
+    "unresolved": "pending owner adjudication"
+  },
+  "slices": ["privacy:inline-production-content"],
+  "provenance": {
+    "unresolved": "raw source remains restricted"
+  },
+  "fixture": {
+    "unresolved": "sanitized fixture not yet produced"
+  },
+  "expectations": {
+    "requiredInvariants": {
+      "unresolved": "pending sanitization"
+    },
+    "allowedOutcomes": {
+      "unresolved": "pending adjudication"
+    },
+    "prohibitedOutcomes": {
+      "unresolved": "pending adjudication"
+    },
+    "semanticDimensions": []
+  },
+  "scorers": {
+    "unresolved": "pending deterministic scorer selection"
+  },
+  "transcript": ["raw production conversation must never be stored here"]
+}

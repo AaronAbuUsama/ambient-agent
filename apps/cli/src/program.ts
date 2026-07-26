@@ -1,10 +1,14 @@
-import { chmod, lstat, mkdir, readFile, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { Command, CommanderError } from "@commander-js/extra-typings";
 import packageManifest from "../../../package.json" with { type: "json" };
 
 import { upstreamWhatsAppLogger } from "@ambient-agent/engine/logging/logging.ts";
+import {
+  serializeEvaluationScenarioEvidence,
+  validateEvaluationScenario,
+} from "@ambient-agent/engine/evaluation/scenario.ts";
 import {
   acquireSetupLock,
   githubAppCredentialFrom,
@@ -764,6 +768,24 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     });
 
   program
+    .command("evaluation-scenario")
+    .description("validate repository-owned Evaluation Scenario artifacts")
+    .command("validate <file>")
+    .description("validate one sanitized Evaluation Scenario without starting the runtime")
+    .option("--output <path>", "write the exact versioned local validation evidence")
+    .action(async (file, options) => {
+      let input: unknown;
+      try {
+        input = JSON.parse(await readFile(file, "utf8"));
+      } catch {
+        throw new Error(`Could not read Evaluation Scenario JSON from ${file}.`);
+      }
+      const serialized = serializeEvaluationScenarioEvidence(validateEvaluationScenario(input));
+      if (options.output !== undefined) await writeFile(options.output, serialized, { flag: "wx" });
+      output.stdout(serialized);
+    });
+
+  program
     .command("start")
     .description("start the generated Flue server in the foreground")
     .option("--debug", "verbose diagnostic logging, including raw upstream WhatsApp records")
@@ -916,7 +938,8 @@ export const runCli = async (argv: readonly string[], dependencies: CliDependenc
     const args = [...argv];
     const informational = args.some((arg) => arg === "--help" || arg === "-h" || arg === "--version" || arg === "-V");
     const overridden = args.some((arg) => arg === "--data-dir" || arg.startsWith("--data-dir="));
-    if (!informational && !overridden) {
+    const repositoryArtifactCommand = args[0] === "evaluation-scenario";
+    if (!informational && !overridden && !repositoryArtifactCommand) {
       // ADR 0015: adopt a pre-existing platform-native installation before any
       // component opens a database or credential file. --data-dir skips it.
       const migration = await (dependencies.migrateManagedData ?? migrateLegacyManagedData)();
