@@ -1600,12 +1600,20 @@ describe("runtime pairing and bridge control", () => {
     const fake = fakeSession();
     const dispatched: SpeakerDispatchRequest[] = [];
     let dispatchSeq = 0;
+    const clock = await Effect.runPromise(Effect.scoped(TestClock.make()));
+    let participationReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      participationReady = resolve;
+    });
     const runtime = startWhatsAppRuntime({
       storeDirectory,
       applicationDatabase,
       managedChats: [CHAT], // note: PERSON_DM is NOT here — the static gate alone would reject it.
       sessionFactory: () => fake.session,
       coalescer: { debounceWindow: Duration.millis(10), maxWait: Duration.millis(20) },
+      clock,
+      proactiveClockIntervalMs: 0,
+      afterParticipationReady: participationReady,
       dispatch: async (request) => {
         dispatched.push(request);
         return { dispatchId: `dispatch:${request.id}:${dispatchSeq++}`, acceptedAt: "2026-07-24T00:00:00.000Z" };
@@ -1616,25 +1624,18 @@ describe("runtime pairing and bridge control", () => {
     };
     let n = 0; // Unique ids: an archived arrival dedupes, so each admit needs a fresh message to re-evaluate.
     try {
-      // Poll-inject a fresh known-person reply until one dispatches — proving the DM was admitted through
-      // intake once the runtime is fully up (auth done, event source subscribed, so `admit` sees the binding).
-      await vi.waitFor(
-        async () => {
-          await inject({ id: `dm-reply-${n++}`, chatId: PERSON_DM, isGroup: false, text: "thanks, got it" });
-          expect(dispatched.some((request) => request.id === PERSON_DM)).toBe(true);
-        },
-        { timeout: 4_000, interval: 50 },
-      );
-      // The path is live. A stranger's unsolicited DM (never opened via activateDirect) is injected, then
-      // more known-person replies until a second one dispatches — by then the stranger has had its chance.
+      await ready;
+      await Effect.runPromise(clock.adjust(Duration.zero));
+      await inject({ id: `dm-reply-${n++}`, chatId: PERSON_DM, isGroup: false, text: "thanks, got it" });
+      await Effect.runPromise(clock.adjust(Duration.millis(10)));
+      expect(dispatched.some((request) => request.id === PERSON_DM)).toBe(true);
+
+      // A stranger's unsolicited DM (never opened via activateDirect) stays closed while another known-person
+      // reply crosses the same virtual debounce boundary.
       await inject({ id: "stranger-31", chatId: OTHER_CHAT, isGroup: false, text: "who are you" });
-      await vi.waitFor(
-        async () => {
-          await inject({ id: `dm-reply-${n++}`, chatId: PERSON_DM, isGroup: false, text: "one more" });
-          expect(dispatched.filter((request) => request.id === PERSON_DM).length).toBeGreaterThanOrEqual(2);
-        },
-        { timeout: 4_000, interval: 50 },
-      );
+      await inject({ id: `dm-reply-${n++}`, chatId: PERSON_DM, isGroup: false, text: "one more" });
+      await Effect.runPromise(clock.adjust(Duration.millis(10)));
+      expect(dispatched.filter((request) => request.id === PERSON_DM)).toHaveLength(2);
       expect(dispatched.map((request) => request.id)).not.toContain(OTHER_CHAT); // fail-closed preserved.
     } finally {
       await runtime.stop();

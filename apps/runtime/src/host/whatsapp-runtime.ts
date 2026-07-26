@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Fiber, Layer, type Scope } from "effect";
+import { Cause, Clock, Effect, Exit, Fiber, Layer, type Scope } from "effect";
 import type { MessageRef, WhatsAppSession } from "whatsappd";
 
 import {
@@ -371,6 +371,8 @@ export interface WhatsAppRuntimeOptions {
   readonly dispatch?: DispatchSpeaker;
   readonly coalescer?: Partial<CoalescerConfigValues>;
   readonly observeActivity?: (observer: SpeakerObserver) => () => void;
+  /** Test seam: drive the runtime's Effect debounce boundary without wall-clock polling. */
+  readonly clock?: Clock.Clock;
   /** Run once after the participation port is wired — e.g. the delegation boot sweep. */
   readonly afterParticipationReady?: () => void;
   /** The proactive clock's cron-floor cadence (§6). Default 5 min; 0 disables the interval (boot sweep only). */
@@ -745,7 +747,10 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
     });
   });
 
-  const fiber = Effect.runFork(Effect.scoped(program).pipe(Effect.provide(effectLoggerLayer(log))));
+  const runtimeProgram = Effect.scoped(program).pipe(Effect.provide(effectLoggerLayer(log)));
+  const fiber = Effect.runFork(
+    options.clock === undefined ? runtimeProgram : runtimeProgram.pipe(Effect.provideService(Clock.Clock, options.clock)),
+  );
   void Effect.runPromise(Fiber.await(fiber)).then((exit) => {
     if (Exit.isFailure(exit) && !stopping) {
       setRuntimeStatus({ phase: "failed", chatTarget: gate.describe(), error: String(exit.cause) });
