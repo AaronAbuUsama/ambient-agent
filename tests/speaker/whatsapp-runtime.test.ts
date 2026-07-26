@@ -1650,6 +1650,11 @@ describe("foreground runtime terminal logged_out", () => {
     const fake = fakeSession();
     let observer: import("../../packages/agents/src/speaker/observer.ts").SpeakerObserver | undefined;
     let canaryDispatches = 0;
+    const clock = await Effect.runPromise(Effect.scoped(TestClock.make()));
+    let participationReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      participationReady = resolve;
+    });
     const runtime = startWhatsAppRuntime({
       storeDirectory,
       applicationDatabase,
@@ -1657,6 +1662,9 @@ describe("foreground runtime terminal logged_out", () => {
       canaryChat: CHAT,
       sessionFactory: () => fake.session,
       coalescer: { debounceWindow: Duration.millis(10), maxWait: Duration.millis(20) },
+      clock,
+      proactiveClockIntervalMs: 0,
+      afterParticipationReady: participationReady,
       observeActivity: (next) => {
         observer = next;
         queueMicrotask(() => {
@@ -1695,9 +1703,13 @@ describe("foreground runtime terminal logged_out", () => {
         return { dispatchId, acceptedAt: "2026-07-16T18:00:00.000Z" };
       },
     });
-    await vi.waitFor(() => expect(getWhatsAppRuntimeStatus().phase).toBe("online"));
+    await ready;
+    await Effect.runPromise(clock.adjust(Duration.zero));
 
-    await expect(runtime.smokeCanary("abc123", 1_000)).resolves.toEqual({
+    const canary = runtime.smokeCanary("abc123", 1_000);
+    await Promise.resolve();
+    await Effect.runPromise(clock.adjust(Duration.millis(10)));
+    await expect(canary).resolves.toEqual({
       chatId: CHAT,
       text: "SMOKE abc123 — ignore",
       stages: ["admission", "dispatch", "settled-silent"],
