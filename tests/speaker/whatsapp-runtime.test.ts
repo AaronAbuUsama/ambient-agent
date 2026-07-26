@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Duration, Effect } from "effect";
+import { TestClock } from "effect/testing";
 import type {
   ConversationSyncBatch,
   IncomingMessage as WhatsAppMessage,
@@ -49,6 +50,8 @@ import { createSayDirectiveTool } from "../../packages/agents/src/capabilities/d
 const CHAT = "managed-31@g.us";
 const OTHER_CHAT = "unmanaged-31@g.us";
 const dirs: string[] = [];
+const runWithTestClock = <A, E>(effect: Effect.Effect<A, E>) =>
+  Effect.runPromise(effect.pipe(Effect.provide(TestClock.layer())));
 
 afterEach(() => {
   for (const directory of dirs.splice(0)) rmSync(directory, { recursive: true, force: true });
@@ -177,7 +180,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
     await account.authenticate({});
     const dispatches: SpeakerDispatchRequest[] = [];
 
-    await Effect.runPromise(
+    await runWithTestClock(
       Effect.scoped(
         Effect.gen(function* () {
           yield* Effect.forkScoped(
@@ -201,7 +204,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
             }
             await account.sendSmokeCanary!(CHAT, canaryText);
           });
-          yield* Effect.sleep(Duration.millis(40));
+          yield* TestClock.adjust(Duration.millis(40));
         }),
       ),
     );
@@ -352,7 +355,11 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
     // port. A successful send landing in THIS session's `fake.sent` proves the port was wired
     // to this session before the callback ran — the exact ordering the bug got wrong.
     let sweepSay: Promise<unknown> | undefined;
-    await Effect.runPromise(
+    let participationReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      participationReady = resolve;
+    });
+    await runWithTestClock(
       Effect.scoped(
         Effect.gen(function* () {
           yield* Effect.forkScoped(
@@ -366,10 +373,11 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
               },
               afterParticipationReady: () => {
                 sweepSay = Promise.resolve(createSayTool(CHAT).run({ input: { text: "boot sweep can speak" } }));
+                participationReady();
               },
             }),
           );
-          yield* Effect.sleep(Duration.millis(900));
+          yield* Effect.promise(() => ready);
         }),
       ),
     );
@@ -397,7 +405,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
     await account.authenticate({});
     const dispatches: SpeakerDispatchRequest[] = [];
 
-    await Effect.runPromise(
+    await runWithTestClock(
       Effect.scoped(
         Effect.gen(function* () {
           yield* Effect.forkScoped(
@@ -435,7 +443,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
             }
             for (const listener of fake.messageListeners) await listener(inbound());
           });
-          yield* Effect.sleep(Duration.millis(50));
+          yield* TestClock.adjust(Duration.millis(50));
 
           expect(dispatches).toEqual([
             {
@@ -533,7 +541,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
               });
             }
           });
-          yield* Effect.sleep(Duration.millis(30));
+          yield* TestClock.adjust(Duration.millis(30));
           expect(archive.events(CHAT).filter(({ kind }) => kind === "reaction")).toHaveLength(1);
           expect(dispatches).toHaveLength(1);
 
@@ -573,7 +581,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
     await account.authenticate({});
     const dispatches: SpeakerDispatchRequest[] = [];
 
-    await Effect.runPromise(
+    await runWithTestClock(
       Effect.scoped(
         Effect.gen(function* () {
           yield* Effect.forkScoped(
@@ -596,7 +604,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
               await listener(inbound({ id: "pre-reload-other", chatId: OTHER_CHAT, text: "still gated out" }));
             }
           });
-          yield* Effect.sleep(Duration.millis(40));
+          yield* TestClock.adjust(Duration.millis(40));
           expect(dispatches).toEqual([]);
 
           // Live reload of the gate — no restart, the same session and stream stay up.
@@ -609,7 +617,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
               await listener(inbound({ id: "post-reload-other", chatId: OTHER_CHAT, text: "now admitted" }));
             }
           });
-          yield* Effect.sleep(Duration.millis(60));
+          yield* TestClock.adjust(Duration.millis(60));
 
           const chats = dispatches.map((request) => request.id).sort();
           expect(chats).toEqual([CHAT, OTHER_CHAT]);
@@ -752,7 +760,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
     await account.authenticate({});
     const dispatches: SpeakerDispatchRequest[] = [];
 
-    await Effect.runPromise(
+    await runWithTestClock(
       Effect.scoped(
         Effect.gen(function* () {
           yield* Effect.forkScoped(
@@ -799,7 +807,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
               });
             }
           });
-          yield* Effect.sleep(Duration.millis(30));
+          yield* TestClock.adjust(Duration.millis(30));
         }),
       ),
     );
@@ -867,7 +875,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
     expect(reopenedInbox.unwindowed().map(({ id }) => id)).toEqual(["before-coalescer-31"]);
 
     const dispatches: SpeakerDispatchRequest[] = [];
-    await Effect.runPromise(
+    await runWithTestClock(
       Effect.scoped(
         Effect.gen(function* () {
           yield* Effect.forkScoped(
@@ -882,7 +890,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
               },
             }),
           );
-          yield* Effect.sleep(Duration.millis(40));
+          yield* TestClock.adjust(Duration.millis(40));
 
           expect(dispatches).toEqual([
             {
@@ -932,7 +940,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
     const reopened = createManagedChatInbox(reopenedArchive, { allowed: gate.allowed });
     const fake = fakeSession();
     const dispatches: SpeakerDispatchRequest[] = [];
-    await Effect.runPromise(
+    await runWithTestClock(
       Effect.scoped(
         Effect.gen(function* () {
           yield* Effect.forkScoped(
@@ -946,7 +954,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
               },
             }),
           );
-          yield* Effect.sleep(Duration.millis(10));
+          yield* TestClock.adjust(Duration.zero);
         }),
       ),
     );
@@ -986,7 +994,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
     await account.authenticate({});
     const firstDispatches: SpeakerDispatchRequest[] = [];
 
-    await Effect.runPromise(
+    await runWithTestClock(
       Effect.scoped(
         Effect.gen(function* () {
           yield* Effect.forkScoped(
@@ -1005,7 +1013,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
           yield* Effect.promise(async () => {
             for (const listener of fake.messageListeners) await listener(location());
           });
-          yield* Effect.sleep(Duration.millis(30));
+          yield* TestClock.adjust(Duration.millis(30));
         }),
       ),
     );
@@ -1027,7 +1035,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
     });
     await restartedAccount.authenticate({});
     const replayDispatches: SpeakerDispatchRequest[] = [];
-    await Effect.runPromise(
+    await runWithTestClock(
       Effect.scoped(
         Effect.gen(function* () {
           yield* Effect.forkScoped(
@@ -1041,7 +1049,7 @@ describe("paired whatsappd -> Coalescer -> Speaker seam", () => {
               },
             }),
           );
-          yield* Effect.sleep(Duration.millis(10));
+          yield* TestClock.adjust(Duration.zero);
         }),
       ),
     );
@@ -1379,6 +1387,8 @@ describe("runtime pairing and bridge control", () => {
     // whatsappd emits a transition per retry attempt. A derivation that re-stamped `since` on every
     // one of those would report "degraded for 0 seconds" forever — on exactly the outage the field
     // exists to measure. The trap is a second, transport-blind derivation on the publish path.
+    let now = 1_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
     const { runtime, transition } = await bootedRuntime();
     try {
       await transition({ phase: "backing_off", reason: "connection_lost", retryAttempt: 1, nextRetryAt: Date.now() + 10 });
@@ -1386,10 +1396,10 @@ describe("runtime pairing and bridge control", () => {
       expect(entered).toBeGreaterThan(0);
 
       // A whole backoff cycle: retry, fail, retry again. The reported phase never leaves `degraded`.
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      now += 25;
       await transition({ phase: "connecting", retryAttempt: 2 });
       await transition({ phase: "backing_off", reason: "connection_lost", retryAttempt: 2, nextRetryAt: Date.now() + 10 });
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      now += 25;
 
       expect(whatsappObservation().snapshot().value.liveness.phase).toBe("degraded");
       expect(whatsappObservation().snapshot().value.liveness.since).toBe(entered);
@@ -1397,6 +1407,7 @@ describe("runtime pairing and bridge control", () => {
       expect(getWhatsAppRuntimeStatus().phase).toBe("degraded");
       expect(whatsappObservation().snapshot().value.liveness.since).toBe(entered);
     } finally {
+      nowSpy.mockRestore();
       await runtime.stop();
     }
   });
@@ -1516,14 +1527,14 @@ describe("runtime pairing and bridge control", () => {
       sessionFactory: () => fakeSession().session,
       dispatch: async (request) => {
         directives.push(request);
-        setTimeout(() => {
+        queueMicrotask(() => {
           if (request.input.type !== "brain.directive") return;
           void Promise.resolve(
             createSayDirectiveTool(request.id).run({
               input: { directiveId: request.input.directive.id, text: "What do you need help with?" },
             }),
           ).then(resolveOutcome, rejectOutcome);
-        }, 0);
+        });
         return { dispatchId: "dispatch:speaker:recovered", acceptedAt: "2026-07-22T12:01:00.000Z" };
       },
     });
@@ -1589,12 +1600,20 @@ describe("runtime pairing and bridge control", () => {
     const fake = fakeSession();
     const dispatched: SpeakerDispatchRequest[] = [];
     let dispatchSeq = 0;
+    const clock = await Effect.runPromise(Effect.scoped(TestClock.make()));
+    let participationReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      participationReady = resolve;
+    });
     const runtime = startWhatsAppRuntime({
       storeDirectory,
       applicationDatabase,
       managedChats: [CHAT], // note: PERSON_DM is NOT here — the static gate alone would reject it.
       sessionFactory: () => fake.session,
       coalescer: { debounceWindow: Duration.millis(10), maxWait: Duration.millis(20) },
+      clock,
+      proactiveClockIntervalMs: 0,
+      afterParticipationReady: participationReady,
       dispatch: async (request) => {
         dispatched.push(request);
         return { dispatchId: `dispatch:${request.id}:${dispatchSeq++}`, acceptedAt: "2026-07-24T00:00:00.000Z" };
@@ -1605,25 +1624,18 @@ describe("runtime pairing and bridge control", () => {
     };
     let n = 0; // Unique ids: an archived arrival dedupes, so each admit needs a fresh message to re-evaluate.
     try {
-      // Poll-inject a fresh known-person reply until one dispatches — proving the DM was admitted through
-      // intake once the runtime is fully up (auth done, event source subscribed, so `admit` sees the binding).
-      await vi.waitFor(
-        async () => {
-          await inject({ id: `dm-reply-${n++}`, chatId: PERSON_DM, isGroup: false, text: "thanks, got it" });
-          expect(dispatched.some((request) => request.id === PERSON_DM)).toBe(true);
-        },
-        { timeout: 4_000, interval: 50 },
-      );
-      // The path is live. A stranger's unsolicited DM (never opened via activateDirect) is injected, then
-      // more known-person replies until a second one dispatches — by then the stranger has had its chance.
+      await ready;
+      await Effect.runPromise(clock.adjust(Duration.zero));
+      await inject({ id: `dm-reply-${n++}`, chatId: PERSON_DM, isGroup: false, text: "thanks, got it" });
+      await Effect.runPromise(clock.adjust(Duration.millis(10)));
+      expect(dispatched.some((request) => request.id === PERSON_DM)).toBe(true);
+
+      // A stranger's unsolicited DM (never opened via activateDirect) stays closed while another known-person
+      // reply crosses the same virtual debounce boundary.
       await inject({ id: "stranger-31", chatId: OTHER_CHAT, isGroup: false, text: "who are you" });
-      await vi.waitFor(
-        async () => {
-          await inject({ id: `dm-reply-${n++}`, chatId: PERSON_DM, isGroup: false, text: "one more" });
-          expect(dispatched.filter((request) => request.id === PERSON_DM).length).toBeGreaterThanOrEqual(2);
-        },
-        { timeout: 4_000, interval: 50 },
-      );
+      await inject({ id: `dm-reply-${n++}`, chatId: PERSON_DM, isGroup: false, text: "one more" });
+      await Effect.runPromise(clock.adjust(Duration.millis(10)));
+      expect(dispatched.filter((request) => request.id === PERSON_DM)).toHaveLength(2);
       expect(dispatched.map((request) => request.id)).not.toContain(OTHER_CHAT); // fail-closed preserved.
     } finally {
       await runtime.stop();
@@ -1708,7 +1720,6 @@ describe("foreground runtime terminal logged_out", () => {
     await vi.waitFor(() => expect(getWhatsAppRuntimeStatus().phase).toBe("online"));
 
     await expect(runtime.smokeCanary("abc123", 10)).rejects.toThrow("provider send rejected");
-    await new Promise((resolve) => setTimeout(resolve, 20));
     await runtime.stop();
   });
 
@@ -1822,6 +1833,7 @@ describe("real WhatsApp Host outcome boundary", () => {
     const host = createWhatsAppHost(fake.session, () => undefined);
 
     const result = host.say(CHAT, "show typing before this message");
+    // External-time boundary: the provider-facing typing beat is deliberately wall-clock perceptible.
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     expect(fake.typing).toEqual([{ chatId: CHAT, on: true }]);
