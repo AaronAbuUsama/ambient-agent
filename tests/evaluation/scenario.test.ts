@@ -141,9 +141,9 @@ describe("Evaluation Scenario repository artifacts", () => {
       ),
     ).toThrow("fixture must be sanitized JSON");
     const syntheticMembership = {
-      datasetId: "synthetic-membership-shape",
-      accessPolicyId: "synthetic-access-policy",
-      admittedBy: ["evaluation-owner"],
+      datasetId: "dataset:synthetic-membership-shape",
+      accessPolicyId: "policy:synthetic-access-policy",
+      admittedBy: ["actor:evaluation-owner"],
       admittedAt: "2026-07-26T00:00:00Z",
     };
     const memberEvidence = validateEvaluationScenario({
@@ -151,22 +151,33 @@ describe("Evaluation Scenario repository artifacts", () => {
       holdoutMemberships: [syntheticMembership],
     });
     expect(memberEvidence.normalizedScenario.maturity).toBe("capability");
-    expect(memberEvidence.normalizedScenario.holdoutMemberships[0]?.accessPolicyId).toBe("synthetic-access-policy");
+    expect(memberEvidence.normalizedScenario.holdoutMemberships[0]?.accessPolicyId).toBe(
+      "policy:synthetic-access-policy",
+    );
     expect(() =>
       validateEvaluationScenario({
         ...evidence.normalizedScenario,
         holdoutMemberships: [{ ...syntheticMembership, accessPolicyId: "" }],
       }),
     ).toThrow("accessPolicyId");
+    expect(() =>
+      validateEvaluationScenario({
+        ...evidence.normalizedScenario,
+        holdoutMemberships: [{ ...syntheticMembership, admittedAt: "2026-02-30T00:00:00Z" }],
+      }),
+    ).toThrow("real calendar instant");
     expect(evidence.evidenceId).toContain(evidence.scenarioId);
-    expect(serializeEvaluationScenarioEvidence(evidence)).toBe(serializeEvaluationScenarioEvidence(evidence));
+    expect(evidence.evidenceId).toBe(
+      "evaluation-scenario-validation:v1:scenario-synthetic-positive:sha256:7190d030bffdc64fbd67d678628cfb6ac380a63222e897db206cdd778aef1c42",
+    );
+    expect(serializeEvaluationScenarioEvidence(evidence)).toContain(evidence.evidenceId);
   });
 
   it("accepts explicit draft gaps and rejects them once adjudicated", async () => {
     const draft = (await fixture("pressure")) as Record<string, unknown>;
     draft.expectations = {
       ...(draft.expectations as Record<string, unknown>),
-      prohibitedOutcomes: { unresolved: "pending adjudication" },
+      prohibitedOutcomes: { unresolved: "gap:pending-adjudication" },
     };
 
     expect(validateEvaluationScenario(draft).normalizedScenario.lifecycle).toBe("draft");
@@ -190,7 +201,7 @@ describe("Evaluation Scenario repository artifacts", () => {
     expect(() =>
       validateEvaluationScenario({
         ...valid,
-        retirement: { reason: "not retired", replacementScenarioIds: [] },
+        retirement: { reason: "reason:not-retired", replacementScenarioIds: [] },
       }),
     ).toThrow("other maturities prohibit them");
     expect(() => validateEvaluationScenario({ ...valid, lifecycle: "draft" })).toThrow(
@@ -199,6 +210,15 @@ describe("Evaluation Scenario repository artifacts", () => {
     expect(() => validateEvaluationScenario({ ...valid, transcript: ["raw production content"] })).toThrow(
       "Unsafe inline production content",
     );
+    expect(() =>
+      validateEvaluationScenario({
+        ...valid,
+        expectations: {
+          ...(valid.expectations as Record<string, unknown>),
+          allowedOutcomes: ["copied private customer conversation"],
+        },
+      }),
+    ).toThrow("namespaced lowercase machine reference");
   });
 
   it.each([

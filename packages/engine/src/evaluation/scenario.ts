@@ -4,7 +4,14 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import * as v from "valibot";
 
 const NonBlankString = v.pipe(v.string(), v.trim(), v.nonEmpty());
-const NonEmptyStrings = v.pipe(v.array(NonBlankString), v.nonEmpty());
+const MachineReference = v.pipe(
+  NonBlankString,
+  v.regex(
+    /^[a-z][a-z0-9-]*:[a-z0-9][a-z0-9._/-]*$/u,
+    "Expected a namespaced lowercase machine reference, not inline descriptive content",
+  ),
+);
+const NonEmptyReferences = v.pipe(v.array(MachineReference), v.nonEmpty());
 const RepositoryReference = v.pipe(
   NonBlankString,
   v.check(
@@ -18,33 +25,38 @@ const RepositoryReference = v.pipe(
 const Timestamp = v.pipe(
   NonBlankString,
   v.regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u, "Expected an ISO 8601 UTC timestamp"),
+  v.check((timestamp) => {
+    const milliseconds = Date.parse(timestamp);
+    const canonical = timestamp.includes(".") ? timestamp : timestamp.replace(/Z$/u, ".000Z");
+    return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === canonical;
+  }, "Expected a real calendar instant that round-trips as UTC"),
 );
-const Unresolved = v.strictObject({ unresolved: NonBlankString });
+const Unresolved = v.strictObject({ unresolved: MachineReference });
 const requiredOrUnresolved = <TSchema extends v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>>(schema: TSchema) =>
   v.union([schema, Unresolved]);
 
 const ArchitectureEpoch = v.strictObject({
   canonCommit: v.pipe(NonBlankString, v.regex(/^[0-9a-f]{7,40}$/u, "Expected a canon commit SHA")),
-  decisions: NonEmptyStrings,
+  decisions: NonEmptyReferences,
   schemaVersion: v.literal(1),
 });
 const HoldoutMembership = v.strictObject({
-  datasetId: NonBlankString,
-  accessPolicyId: NonBlankString,
-  admittedBy: NonEmptyStrings,
+  datasetId: MachineReference,
+  accessPolicyId: MachineReference,
+  admittedBy: NonEmptyReferences,
   admittedAt: Timestamp,
 });
 const Provenance = v.strictObject({
   kind: v.picklist(["operator_correction", "production_failure", "issue", "designed_boundary"]),
-  restrictedSourceRefs: NonEmptyStrings,
-  sanitizedBy: NonBlankString,
-  sanitizationVersion: NonBlankString,
-  adjudicatedBy: NonEmptyStrings,
+  restrictedSourceRefs: NonEmptyReferences,
+  sanitizedBy: MachineReference,
+  sanitizationVersion: MachineReference,
+  adjudicatedBy: NonEmptyReferences,
   adjudicatedAt: Timestamp,
 });
 const Fixture = v.strictObject({
   ref: RepositoryReference,
-  environmentVersion: NonBlankString,
+  environmentVersion: MachineReference,
   sha256: v.pipe(NonBlankString, v.regex(/^[0-9a-f]{64}$/u, "Expected the sanitized fixture SHA-256")),
 });
 const SanitizedSyntheticProviderFixture = v.strictObject({
@@ -64,20 +76,20 @@ const SanitizedSyntheticProviderFixture = v.strictObject({
   issueNumber: v.pipe(v.number(), v.integer(), v.minValue(1)),
 });
 const Expectations = v.strictObject({
-  requiredInvariants: requiredOrUnresolved(NonEmptyStrings),
-  allowedOutcomes: requiredOrUnresolved(NonEmptyStrings),
-  prohibitedOutcomes: requiredOrUnresolved(NonEmptyStrings),
-  semanticDimensions: v.array(NonBlankString),
+  requiredInvariants: requiredOrUnresolved(NonEmptyReferences),
+  allowedOutcomes: requiredOrUnresolved(NonEmptyReferences),
+  prohibitedOutcomes: requiredOrUnresolved(NonEmptyReferences),
+  semanticDimensions: v.array(MachineReference),
 });
 const Scorer = v.strictObject({
-  id: NonBlankString,
-  version: NonBlankString,
+  id: MachineReference,
+  version: MachineReference,
   kind: v.picklist(["deterministic", "model_judge", "human"]),
-  owner: NonBlankString,
+  owner: MachineReference,
 });
 const Retirement = v.strictObject({
-  reason: NonBlankString,
-  replacementScenarioIds: v.array(NonBlankString),
+  reason: MachineReference,
+  replacementScenarioIds: v.array(MachineReference),
 });
 
 const isUnresolved = (value: unknown): value is v.InferOutput<typeof Unresolved> =>
@@ -90,13 +102,13 @@ export const EvaluationScenarioSchema = v.pipe(
       NonBlankString,
       v.regex(/^[a-z0-9][a-z0-9._:-]*$/u, "Expected a stable lowercase scenario identifier"),
     ),
-    title: NonBlankString,
+    title: MachineReference,
     lifecycle: v.picklist(["draft", "adjudicated"]),
     architectureEpoch: requiredOrUnresolved(ArchitectureEpoch),
     maturity: v.picklist(["candidate", "capability", "regression", "retired"]),
     holdoutMemberships: v.array(HoldoutMembership),
-    owners: requiredOrUnresolved(NonEmptyStrings),
-    slices: NonEmptyStrings,
+    owners: requiredOrUnresolved(NonEmptyReferences),
+    slices: NonEmptyReferences,
     provenance: requiredOrUnresolved(Provenance),
     fixture: requiredOrUnresolved(Fixture),
     expectations: Expectations,

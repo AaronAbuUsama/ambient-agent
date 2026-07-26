@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "scenarioId": "scenario-synthetic-positive",
-  "title": "Synthetic issue admission preserves its named owner",
+  "title": "title:synthetic-issue-admission-owner-preserved",
   "lifecycle": "adjudicated",
   "architectureEpoch": {
     "canonCommit": "8c157c3",
@@ -10,33 +10,33 @@
   },
   "maturity": "capability",
   "holdoutMemberships": [],
-  "owners": ["happening-admission"],
+  "owners": ["component:happening-admission"],
   "slices": ["source:github", "outcome:admitted"],
   "provenance": {
     "kind": "designed_boundary",
     "restrictedSourceRefs": ["issue:426"],
-    "sanitizedBy": "evaluation-owner",
-    "sanitizationVersion": "v1",
-    "adjudicatedBy": ["evaluation-owner"],
+    "sanitizedBy": "actor:evaluation-owner",
+    "sanitizationVersion": "sanitization:v1",
+    "adjudicatedBy": ["actor:evaluation-owner"],
     "adjudicatedAt": "2026-07-26T00:00:00Z"
   },
   "fixture": {
     "ref": "tests/fixtures/evaluation-scenarios/synthetic-provider-state-v1.json",
-    "environmentVersion": "synthetic-provider-v1",
+    "environmentVersion": "environment:synthetic-provider-v1",
     "sha256": "5a3beca1a771070a4c05faca73fcef5c87584c7c400de10c13ba7256e9fa16b9"
   },
   "expectations": {
-    "requiredInvariants": ["one stable source identity is admitted"],
-    "allowedOutcomes": ["admitted"],
-    "prohibitedOutcomes": ["duplicate admission"],
+    "requiredInvariants": ["invariant:one-stable-source-identity-admitted"],
+    "allowedOutcomes": ["outcome:admitted"],
+    "prohibitedOutcomes": ["outcome:duplicate-admission"],
     "semanticDimensions": []
   },
   "scorers": [
     {
-      "id": "source-identity-cardinality",
-      "version": "v1",
+      "id": "scorer:source-identity-cardinality",
+      "version": "scorer-version:v1",
       "kind": "deterministic",
-      "owner": "happening-admission"
+      "owner": "component:happening-admission"
     }
   ]
 }

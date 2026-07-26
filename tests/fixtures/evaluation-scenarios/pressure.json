@@ -1,34 +1,34 @@
 {
   "schemaVersion": 1,
   "scenarioId": "scenario-production-pressure",
-  "title": "Unsafe production-derived artifact",
+  "title": "title:unsafe-production-derived-artifact",
   "lifecycle": "draft",
   "architectureEpoch": {
-    "unresolved": "pending owner adjudication"
+    "unresolved": "gap:pending-owner-adjudication"
   },
   "maturity": "candidate",
   "holdoutMemberships": [],
   "owners": {
-    "unresolved": "pending owner adjudication"
+    "unresolved": "gap:pending-owner-adjudication"
   },
   "slices": ["privacy:inline-production-content"],
   "provenance": {
-    "unresolved": "raw source remains restricted"
+    "unresolved": "gap:restricted-source-not-sanitized"
   },
   "fixture": {
-    "unresolved": "sanitized fixture not yet produced"
+    "unresolved": "gap:sanitized-fixture-not-produced"
   },
   "expectations": {
     "requiredInvariants": {
-      "unresolved": "pending sanitization"
+      "unresolved": "gap:pending-sanitization"
     },
     "allowedOutcomes": {
-      "unresolved": "pending adjudication"
+      "unresolved": "gap:pending-adjudication"
     },
     "prohibitedOutcomes": ["customer@example.com said call +1 202 555 0199"],
     "semanticDimensions": []
   },
   "scorers": {
-    "unresolved": "pending deterministic scorer selection"
+    "unresolved": "gap:pending-deterministic-scorer"
   }
 }
