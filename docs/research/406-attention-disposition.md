@@ -166,7 +166,7 @@ CREATE TABLE brain_attention_transitions (
   recorded_at TEXT NOT NULL,
   CHECK (
     transition_kind = 'disposition'
-    OR json_extract(transition_json, '$.kind') = transition_kind
+    OR COALESCE(json_extract(transition_json, '$.kind') = transition_kind, 0)
   ),
   CHECK (
     (
@@ -202,7 +202,7 @@ CREATE TABLE brain_attention_transitions (
       AND transition_kind = 'disposition'
       AND from_state = 'pending'
       AND to_state IN ('held', 'transferred', 'resolved')
-      AND json_extract(transition_json, '$.kind') = to_state
+      AND COALESCE(json_extract(transition_json, '$.kind') = to_state, 0)
     )
   )
 ) STRICT;
