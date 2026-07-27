@@ -10,13 +10,18 @@ import {
   configureLogging,
   createRootLogger,
   effectLoggerLayer,
+  flushManagedLogs,
   getLogger,
   upstreamWhatsAppLogger,
   type Logger,
 } from "../../packages/engine/src/logging/logging.ts";
 
 const LOGGING_ROOT = Symbol.for("ambient-agent.logging-root");
-const loggingGlobal = globalThis as typeof globalThis & { [LOGGING_ROOT]?: Logger };
+const LOGGING_FLUSH = Symbol.for("ambient-agent.logging-flush");
+const loggingGlobal = globalThis as typeof globalThis & {
+  [LOGGING_ROOT]?: Logger;
+  [LOGGING_FLUSH]?: () => Promise<void>;
+};
 
 interface CapturedSink {
   readonly stream: Writable;
@@ -37,6 +42,7 @@ const capture = (): CapturedSink => {
 const roots: string[] = [];
 afterEach(() => {
   delete loggingGlobal[LOGGING_ROOT];
+  delete loggingGlobal[LOGGING_FLUSH];
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -175,8 +181,7 @@ describe("configured root and managed logs directory", () => {
     const logsDirectory = join(dataRoot, "logs");
     const logger = await configureLogging({ logsDirectory, format: "json", consoleStream: sink.stream });
     logger.info({ subsystem: "runtime" }, "runtime started");
-    logger.flush();
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await flushManagedLogs();
     const files = readdirSync(logsDirectory).filter((name) => name.endsWith(".log"));
     expect(files.length).toBeGreaterThan(0);
     const contents = files.map((name) => readFileSync(join(logsDirectory, name), "utf8")).join("");

@@ -17,7 +17,7 @@ Named after the CLI's own verb vocabulary — every file here is "the installati
 | **Runtime handoff** | `runtime-dependencies.ts` | The cross-bundle `globalThis` handshake: the CLI installs dependencies *before* importing the flue-generated server bundle, which reads them at module-eval time. `Symbol.for` is load-bearing — CLI and server are separate bundles. |
 | **Credentials** | `chatgpt-authentication.ts` | Binds engine's ChatGPT OAuth machinery to managed paths. |
 | **GitHub adapter** | `github-issue-repository.ts`, `issue-operation-footer.ts` (internal) | The Octokit adapter for the agents package's `IssueRepository` port, and the `<!-- ambience-operation-footer:v1 -->` body markers that carry Operation Identity on real GitHub issues. |
-| **WhatsApp pairing** | `whatsapp-account.ts`, `qr.ts` | Pairing, echo-dedup, sync-wait behind a 5-method `ManagedWhatsAppAccount`; terminal QR rendering. |
+| **WhatsApp pairing** | `whatsapp-account.ts`, `whatsapp-terminal-receipt.ts`, `qr.ts` | Pairing, echo-dedup, sync-wait behind a 5-method `ManagedWhatsAppAccount`; durable terminal-recovery correlation; terminal QR rendering. |
 
 ## Glossary terms implemented here
 

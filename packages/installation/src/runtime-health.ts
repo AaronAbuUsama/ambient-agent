@@ -20,6 +20,15 @@ export type WhatsAppRuntimePhase =
   | "degraded"
   | "failed"
   | "stopped";
+export interface WhatsAppTerminalFailure {
+  readonly phase: "logged_out" | "suspended";
+  readonly reason: string;
+  readonly correlationId: string;
+}
+export interface WhatsAppTerminalReceipt extends WhatsAppTerminalFailure {
+  readonly invocationId: string;
+  readonly observedAt: string;
+}
 export interface WhatsAppRuntimeStatus {
   readonly phase: WhatsAppRuntimePhase;
   /** Runtime-authenticated account identity; never populated from user input or pairing material. */
@@ -28,6 +37,10 @@ export interface WhatsAppRuntimeStatus {
   readonly botIds?: readonly string[];
   readonly pairing?: PairingProgress;
   readonly error?: string;
+  /** Typed whatsappd terminal state retained after the live transport projection is finalized. */
+  readonly terminal?: WhatsAppTerminalFailure;
+  /** The durable terminal receipt acknowledged by this successful restart, when one was pending. */
+  readonly recovery?: WhatsAppTerminalReceipt;
 }
 
 export interface AmbientRuntimeHealth {
