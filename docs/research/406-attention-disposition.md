@@ -136,12 +136,27 @@ CREATE TABLE brain_attention_transitions (
   transition_id TEXT PRIMARY KEY,
   attention_id TEXT NOT NULL REFERENCES brain_attention_items(attention_id),
   claim_id TEXT REFERENCES brain_attention_claims(claim_id),
+  transition_kind TEXT NOT NULL
+    CHECK (transition_kind IN ('admitted', 'reopened', 'enriched', 'disposition')),
   from_state TEXT
     CHECK (from_state IS NULL OR from_state IN ('pending', 'held', 'transferred', 'resolved')),
   to_state TEXT NOT NULL
     CHECK (to_state IN ('pending', 'held', 'transferred', 'resolved')),
   transition_json TEXT NOT NULL,
-  recorded_at TEXT NOT NULL
+  recorded_at TEXT NOT NULL,
+  CHECK (
+    (
+      claim_id IS NULL
+      AND transition_kind IN ('admitted', 'reopened', 'enriched')
+    )
+    OR
+    (
+      claim_id IS NOT NULL
+      AND transition_kind = 'disposition'
+      AND from_state = 'pending'
+      AND to_state IN ('held', 'transferred', 'resolved')
+    )
+  )
 ) STRICT;
 
 CREATE UNIQUE INDEX one_disposition_per_attention_claim
@@ -181,7 +196,7 @@ Settlement becomes coverage, not counting:
 
 ```ts
 const uncovered = attentionClaimsForBatch(batchId)
-  .filter(({ claimId }) => transitionForClaim(claimId) === undefined);
+  .filter(({ claimId }) => dispositionTransitionForClaim(claimId) === undefined);
 if (uncovered.length > 0) throw new Error(...);
 
 validateTransferredSuccessors(batchId);

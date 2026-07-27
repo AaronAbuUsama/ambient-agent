@@ -272,24 +272,33 @@ type AttentionClaim = {
   claimedAt: string;
 };
 
-type AttentionTransition = {
-  transitionId: string;
-  attentionId: string;
-  claimId?: string;
-  from?: "pending" | "held" | "transferred" | "resolved";
-  to: "pending" | "held" | "transferred" | "resolved";
-  transition:
-    | { kind: "admitted" }
-    | { kind: "reopened"; reason: string }
-    | {
-        kind: "enriched";
-        attestationIds: string[];
-        projectionVersion: string;
-        material: boolean;
-      }
-    | AttentionDisposition;
-  recordedAt: string;
-};
+type AttentionTransition =
+  | {
+      transitionId: string;
+      attentionId: string;
+      claimId?: never;
+      from?: "pending" | "held" | "transferred" | "resolved";
+      to: "pending" | "held" | "transferred" | "resolved";
+      transition:
+        | { kind: "admitted" }
+        | { kind: "reopened"; reason: string }
+        | {
+            kind: "enriched";
+            attestationIds: string[];
+            projectionVersion: string;
+            material: boolean;
+          };
+      recordedAt: string;
+    }
+  | {
+      transitionId: string;
+      attentionId: string;
+      claimId: string;
+      from: "pending";
+      to: "held" | "transferred" | "resolved";
+      transition: AttentionDisposition;
+      recordedAt: string;
+    };
 ```
 
 This is a conceptual contract, not a frozen database schema. The invariants matter:

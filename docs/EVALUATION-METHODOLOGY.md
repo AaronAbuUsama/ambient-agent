@@ -111,10 +111,25 @@ interface EvaluationScenarioManifestBase {
     decisions: string[];
     schemaVersion: number;
   };
-  maturity: "candidate" | "capability" | "regression" | "retired";
 }
 
+type ScenarioLifecycle =
+  | {
+      maturity: "candidate" | "capability" | "regression";
+      retirement?: never;
+    }
+  | {
+      maturity: "retired";
+      retirement: {
+        retiredAt: string;
+        reason: string;
+        lastValidEpoch: string;
+        replacementScenarioIds: string[];
+      };
+    };
+
 type EvaluationScenarioManifest = EvaluationScenarioManifestBase &
+  ScenarioLifecycle &
   (
     | {
         visibility: "repository";
@@ -146,7 +161,6 @@ type EvaluationScenarioManifest = EvaluationScenarioManifestBase &
           kind: "deterministic" | "model_judge" | "human";
           owner: string;
         }>;
-        retirement?: { reason: string; replacementScenarioIds: string[] };
       }
     | {
         visibility: "protected_holdout";
@@ -156,7 +170,6 @@ type EvaluationScenarioManifest = EvaluationScenarioManifestBase &
         definitionHash: string;
         admittedBy: string[];
         admittedAt: string;
-        retiredAt?: string;
       }
   );
 ```
