@@ -136,8 +136,11 @@ _Avoid_: Decision, task, Graph fact, Brain Effect
 A durable, knowledge-ready Brain obligation to disposition one or more Happenings. It
 references their immutable evidence and the fact Attestations or Projection version that
 established the knowledge floor; it never copies the Graph. Pending Attention is claimable
-through the Brain Inbox, while held, transferred, and resolved Attention remains durable as
-the accountability history. `stay_silent` settles speech, never Attention.
+through the Brain Inbox. Its claims and state transitions are append-only; pending, held,
+transferred, and resolved are a derived current view over permanent accountability history.
+A source policy's bounded terminal projection failure is itself prepared evidence and admits
+the same Happening's Attention Item rather than leaving the occurrence outside accountability.
+`stay_silent` settles speech, never Attention.
 _Avoid_: Notification, inbox row, Scheduled Wake, model turn
 
 **Work Item**:
@@ -220,7 +223,9 @@ The coworker's single, silent, asynchronous semantic projector. Stateless Scribe
 may run concurrently to turn ambiguous cross-Surface evidence into low-Confidence
 Attestations; they hold no memory, work, or authority. Routine proposals update the Graph
 without requiring Brain judgment; a semantic result enters Brain Attention only when
-accountability or an authoritative ruling is actually owed.
+accountability or an authoritative ruling is actually owed. Each readiness policy has a
+finite retry/age budget; exhausting it records a projection-failure fact that becomes
+Attention, so Scribe failure cannot hide a Happening indefinitely.
 _Avoid_: Per-thread Scribe, second mind, deterministic ingester, logger, second Speaker
 
 **Scribe Batch**:
@@ -299,6 +304,9 @@ regardless of what the model asks.
 **Evaluation Scenario**:
 A repeatable Surface situation with controlled provider state and observable expected effects,
 used to measure the coworker's judgment and Capability use across changes.
+Repository-visible scenarios may commit sanitized fixtures and expectations; protected
+holdout scenarios commit only opaque manifests while their fixtures and expected outcomes
+remain behind the named access policy.
 _Avoid_: Prompt test, golden response, vibe check
 
 ### Work execution

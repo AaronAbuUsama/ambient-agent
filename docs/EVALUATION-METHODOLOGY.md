@@ -10,7 +10,7 @@ foundation and its dependencies are specified in [Growth path](#growth-path).
 ## 1. The unit of evaluation
 
 The evaluation unit is the ratified **Evaluation Scenario** from
-[`CONTEXT.md`](../CONTEXT.md#L299): a repeatable Surface situation with controlled provider
+[`CONTEXT.md` — Agent anatomy](../CONTEXT.md#agent-anatomy): a repeatable Surface situation with controlled provider
 state and observable expected effects. This methodology makes that existing domain unit
 executable by adding an architecture epoch, named owners, evidence, scorers, and adjudication;
 it does not introduce a second evaluation unit.
@@ -49,7 +49,7 @@ replaceable execution, observation, and analysis mechanisms.
 | **Candidate**                  | A sanitized, provenance-bearing scenario proposal that cannot gate a release yet.                                      |
 | **Capability scenario**        | A valid scenario used to measure a behavior the system does not yet reliably pass.                                     |
 | **Regression scenario**        | A scenario promoted after the behavior is established and suitable for a release gate.                                 |
-| **Holdout membership**         | Independently adjudicated membership in a restricted dataset partition excluded from prompt, policy, and model tuning. |
+| **Protected holdout**          | An independently adjudicated restricted dataset partition whose repository manifest is opaque and whose definition is excluded from prompt, policy, scorer, and model tuning. |
 | **Retired scenario**           | A preserved tombstone for a scenario that is obsolete, duplicated, saturated, or invalid in the current epoch.         |
 | **Benchmark**                  | Paired comparison of configurable profiles on the same pinned scenarios, environment, repetitions, and scoring policy. |
 | **System-under-test profile**  | The provider/model/effort assignments whose behavior the benchmark compares.                                           |
@@ -93,62 +93,79 @@ model transcript.
 
 ## 4. Evaluation Scenario and dataset contract
 
-An Evaluation Scenario is stored as a reviewable, sanitized repository artifact before it is
-uploaded anywhere. The executable expedition should ratify one machine-readable schema
-containing at least:
+The repository stores one reviewable manifest for every Evaluation Scenario. An unrestricted
+scenario may commit its sanitized fixture and expectations beside that manifest. A protected
+holdout commits only opaque metadata: its fixture, allowed/prohibited outcomes, semantic
+expectations, and scorer inputs stay behind the named access policy and are resolved only by
+an authorized runner. This keeps scenario identity, epoch, and access policy reviewable
+without exposing the scenario shape or answers to prompt, policy, scorer, or model tuners.
+
+The executable expedition should ratify one machine-readable manifest schema containing at
+least:
 
 ```ts
-interface EvaluationScenario {
+interface EvaluationScenarioManifestBase {
   scenarioId: string;
-  title: string;
   architectureEpoch: {
     canonCommit: string;
     decisions: string[];
     schemaVersion: number;
   };
   maturity: "candidate" | "capability" | "regression" | "retired";
-  holdoutMemberships: Array<{
-    datasetId: string;
-    accessPolicyId: string;
-    admittedBy: string[];
-    admittedAt: string;
-  }>;
-  owners: string[];
-  slices: string[];
-  provenance: {
-    kind:
-      | "operator_correction"
-      | "production_failure"
-      | "issue"
-      | "designed_boundary";
-    restrictedSourceRefs: string[];
-    sanitizedBy: string;
-    sanitizationVersion: string;
-    adjudicatedBy: string[];
-    adjudicatedAt: string;
-  };
-  fixture: {
-    ref: string;
-    environmentVersion: string;
-  };
-  expectations: {
-    requiredInvariants: string[];
-    allowedOutcomes: string[];
-    prohibitedOutcomes: string[];
-    semanticDimensions: string[];
-  };
-  scorers: Array<{
-    id: string;
-    version: string;
-    kind: "deterministic" | "model_judge" | "human";
-    owner: string;
-  }>;
-  retirement?: { reason: string; replacementScenarioIds: string[] };
 }
+
+type EvaluationScenarioManifest = EvaluationScenarioManifestBase &
+  (
+    | {
+        visibility: "repository";
+        title: string;
+        owners: string[];
+        slices: string[];
+        provenance: {
+          kind:
+            | "operator_correction"
+            | "production_failure"
+            | "issue"
+            | "designed_boundary";
+          restrictedSourceRefs: string[];
+          sanitizedBy: string;
+          sanitizationVersion: string;
+          adjudicatedBy: string[];
+          adjudicatedAt: string;
+        };
+        fixture: { ref: string; environmentVersion: string };
+        expectations: {
+          requiredInvariants: string[];
+          allowedOutcomes: string[];
+          prohibitedOutcomes: string[];
+          semanticDimensions: string[];
+        };
+        scorers: Array<{
+          id: string;
+          version: string;
+          kind: "deterministic" | "model_judge" | "human";
+          owner: string;
+        }>;
+        retirement?: { reason: string; replacementScenarioIds: string[] };
+      }
+    | {
+        visibility: "protected_holdout";
+        datasetId: string;
+        accessPolicyId: string;
+        opaqueScenarioRef: string;
+        definitionHash: string;
+        admittedBy: string[];
+        admittedAt: string;
+        retiredAt?: string;
+      }
+  );
 ```
 
-The schema stores references, not production content. The fixture is the minimized synthetic
-or consented artifact produced by sanitization.
+Neither variant stores production content. A repository-visible fixture is the minimized
+synthetic or consented artifact produced by sanitization. A protected holdout's opaque
+reference and hash prove dataset identity without revealing its fixture or expected outcomes;
+its restricted definition uses the same semantic contract and is validated inside the
+authorized boundary.
 
 ### Architecture epochs
 
@@ -158,19 +175,23 @@ or consented artifact produced by sanitization.
 - An epoch transition moves scenarios back to `candidate` until their owner, fixture,
   expectations, and scorers are re-adjudicated.
 - Never relabel an old scenario as current merely because its test still compiles.
-- Dataset identity includes the schema version and exact ordered scenario ids. Braintrust
-  dataset version or snapshot is recorded in every experiment.
-- Holdout membership is independent of maturity. A capability or regression scenario may
-  belong to zero or more restricted holdout datasets without losing its maturity.
-- Every holdout membership names its access policy and admission evidence. Removing or changing
-  membership requires adjudication and does not alter scenario maturity.
+- Dataset identity includes the schema version, exact ordered scenario ids, and definition
+  hashes. Braintrust dataset version or snapshot is recorded in every experiment.
+- Protected holdout placement is independent of maturity. A capability or regression scenario
+  may use a `protected_holdout` definition without losing its maturity.
+- Every protected holdout manifest names its access policy and admission evidence. Removing or
+  changing placement requires adjudication and does not alter scenario maturity.
+- A repository-visible definition cannot satisfy a protected release-holdout claim, even if a
+  dataset labels it “holdout,” because its expected outcomes are already available to tuners.
 
 ### Dataset composition
 
 - Include positive, negative, ambiguity, retry/recovery, and prohibited-effect scenarios.
 - Keep slices large enough to report separately; do not use one average to hide a weak slice.
-- Establish a restricted holdout before tuning. Anyone changing prompts, policies, scorers, or
-  model selection must not inspect holdout expected outcomes.
+- Establish a protected holdout before tuning. Its fixtures and expected outcomes remain in
+  the restricted store; repository and ordinary dataset access expose only opaque manifests.
+  Anyone changing prompts, policies, scorers, or model selection must not receive access to
+  the restricted definitions or holdout trial details that reveal them.
 - Capability and regression sets are distinct. A capability scenario may graduate to
   regression after repeated stable success and adjudicator approval.
 
@@ -211,7 +232,7 @@ Human adjudication is required for:
 - new or changed subjective rubrics;
 - model-judge disagreements or `unknown`;
 - high-impact privacy, authorization, irreversible-effect, and deception failures;
-- promotion to regression, holdout membership, and retirement.
+- promotion to regression, protected-holdout placement, and retirement.
 
 One qualified domain owner may adjudicate ordinary scenarios. Require a second independent
 adjudicator for disputed or high-impact scenarios. Record disagreement; do not force
@@ -226,7 +247,7 @@ flowchart LR
   S --> A["Human adjudication"]
   A --> V["Reference solution and scorer validation"]
   V --> B["Capability benchmark"]
-  B --> H["Adjudicate restricted holdout membership"]
+  B --> H["Adjudicate protected holdout placement"]
   B --> R["Promote stable behavior to regression"]
   H --> G["Restricted release evaluation"]
   R --> G
@@ -249,7 +270,7 @@ flowchart LR
    the fixture is solvable and scorers recognize the intended outcome. All-zero results across
    many trials trigger a broken-scenario review before a model conclusion.
 5. **Benchmark as capability.** Run repeated trials. Inspect transcripts, owner readbacks, and
-   scorer disagreement; do not tune against the holdout.
+   scorer disagreement; do not tune against the protected holdout.
 6. **Promote.** Promote only after the behavior is established, deterministic gates are stable,
    semantic scorers are calibrated, and an adjudicator approves the regression threshold.
 7. **Retire.** Retire on epoch invalidation, duplicate coverage, invalid fixture, or intentional
@@ -265,22 +286,27 @@ An engineer adding an Evaluation Scenario follows this order:
 2. Link the source failure or designed boundary using restricted identifiers only.
 3. Create the minimized sanitized fixture; run credential and personal-data review.
 4. Declare required invariants, allowed outcomes, prohibited outcomes, and slices before
-   running a model.
+   running a model. For a protected holdout, write them only inside the authorized store and
+   commit the opaque manifest and definition hash.
 5. Reuse an existing owner readback and deterministic scorer. Add no new abstraction for a
    single scenario.
 6. Add one semantic dimension only if deterministic evidence cannot decide it.
 7. Adjudicate the scenario and, if model-graded, calibrate the judge.
 8. Run the lowest sufficient tier and inspect the complete evidence bundle.
 9. Enter as `candidate` or `capability`; never enter directly as a release-gating regression.
-10. Add holdout membership only through independent adjudication and a named access policy;
-    do not change scenario maturity to represent that membership.
+10. Move a definition into a protected holdout only through independent adjudication and a
+    named access policy; do not change scenario maturity to represent that placement.
 
 The review must reject a scenario that:
 
 - embeds raw production conversation content, credentials, or unneeded identifiers;
 - asserts on exact prose when outcomes permit variation;
 - infers database/provider truth from the transcript;
-- lacks an architecture epoch, owner, provenance, or retirement rule;
+- omits architecture epoch or retirement identity from either manifest variant;
+- omits owner, provenance, fixture, expectations, or scorers from a repository-visible
+  definition or from the protected definition validated inside its authorized boundary;
+- exposes a protected holdout fixture or expected outcome in repository-visible content,
+  logs, reports, or ordinary dataset metadata;
 - changes a scorer and threshold in the same comparison without a new scorer version;
 - depends on the obsolete inherited eval scenarios or their thresholds as authority.
 
@@ -384,7 +410,8 @@ No weighted composite may replace the underlying dimensions.
 - Require no statistically or operationally material regression on any protected slice.
 - Require the predeclared target improvement or cost/latency reduction, with uncertainty small
   enough to support the decision.
-- Require a restricted holdout pass and manual review of failures and judge disagreement.
+- Require a protected holdout pass and manual review of failures and judge disagreement
+  without exposing restricted definitions to tuners.
 - A model/profile release is separate from a code release. Record both decisions and make
   rollback to the baseline configuration possible.
 
@@ -425,7 +452,9 @@ silently label behavior.
 - Treat Flue events, vitest-evals JSON reports, model-judge prompts, traces, tool arguments,
   tool results, and error messages as content-bearing.
 - Set access, retention, and deletion policies for Braintrust projects and local artifacts.
-  Holdout access is narrower than ordinary regression access.
+  Protected holdout definitions and outcome-bearing trial details live in a separate
+  restricted project/store or equivalent access boundary; access is narrower than ordinary
+  regression access.
 - Reports use aggregates, synthetic examples, and stable ids. Reproduction from raw evidence
   happens only inside the authorized environment.
 
@@ -436,7 +465,9 @@ fixtures, rubrics, thresholds, and experiment contract.
 
 The smallest executable foundation is:
 
-1. one repository Evaluation Scenario schema and deterministic validator;
+1. one repository Evaluation Scenario manifest schema and deterministic validator, including
+   an opaque protected-holdout variant whose restricted definition is resolved outside the
+   repository;
 2. three sanitized scenarios for one implemented accountable slice: positive, negative, and
    retry/recovery;
 3. one custom vitest-evals harness over the application's public controlled-scenario seam;

@@ -106,12 +106,13 @@ type AttentionState =
 No separate `open_loop` row is required. An Open Loop remains the projection of
 `pending | held`, unresolved transferred successors, unfinished Work Items, and
 unfulfilled Commitments, matching the accepted vocabulary in
-[`CONTEXT.md:119`](../../CONTEXT.md#L119).
+[`CONTEXT.md` — Information and accountability](../../CONTEXT.md#information-and-accountability).
 
 ## Minimal schema seam
 
 Keep the existing source tables and Batch claim machinery. Add one per-input
-Attention overlay rather than replacing the inbox:
+Attention identity plus append-only claim and transition history rather than
+replacing the inbox:
 
 ```sql
 CREATE TABLE brain_attention_items (
@@ -119,22 +120,49 @@ CREATE TABLE brain_attention_items (
   source_kind TEXT NOT NULL,
   source_id TEXT NOT NULL UNIQUE,
   evidence_ids_json TEXT NOT NULL,
-  batch_id TEXT REFERENCES brain_batches(batch_id),
-  state TEXT NOT NULL
-    CHECK (state IN ('pending', 'held', 'transferred', 'resolved')),
-  disposition_json TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  readiness_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
 ) STRICT;
+
+CREATE TABLE brain_attention_claims (
+  claim_id TEXT PRIMARY KEY,
+  attention_id TEXT NOT NULL REFERENCES brain_attention_items(attention_id),
+  batch_id TEXT NOT NULL REFERENCES brain_batches(batch_id),
+  claimed_at TEXT NOT NULL,
+  UNIQUE (attention_id, batch_id)
+) STRICT;
+
+CREATE TABLE brain_attention_transitions (
+  transition_id TEXT PRIMARY KEY,
+  attention_id TEXT NOT NULL REFERENCES brain_attention_items(attention_id),
+  claim_id TEXT REFERENCES brain_attention_claims(claim_id),
+  from_state TEXT
+    CHECK (from_state IS NULL OR from_state IN ('pending', 'held', 'transferred', 'resolved')),
+  to_state TEXT NOT NULL
+    CHECK (to_state IN ('pending', 'held', 'transferred', 'resolved')),
+  transition_json TEXT NOT NULL,
+  recorded_at TEXT NOT NULL
+) STRICT;
+
+CREATE UNIQUE INDEX one_disposition_per_attention_claim
+  ON brain_attention_transitions(claim_id)
+  WHERE claim_id IS NOT NULL;
 ```
 
-Create the row transactionally when an accountability-bearing input is admitted
-or normalized. Claim it with the same Batch as its source input. Trusted code
-validates disposition references:
+Create the identity row and initial `pending` transition transactionally when an
+accountability-bearing input is admitted or normalized. Each Brain Batch appends
+a claim; its disposition appends one claim-linked transition. Reopening after a
+due wake or failed successor appends `held/transferred -> pending`, and a later
+Batch appends another claim. No earlier `batch_id` or disposition is cleared or
+overwritten. The current state is a deterministic projection over the transition
+log.
+
+Trusted code validates disposition references:
 
 ```ts
 dispositionAttention({
   batchId,
+  claimId,
   attentionId,
   disposition:
     | { kind: "held"; reason; wakeId? }
@@ -152,8 +180,8 @@ Wake may be attached to `held`, but cannot discharge attention by itself.
 Settlement becomes coverage, not counting:
 
 ```ts
-const uncovered = attentionItemsForBatch(batchId)
-  .filter(({ state }) => state === "pending");
+const uncovered = attentionClaimsForBatch(batchId)
+  .filter(({ claimId }) => transitionForClaim(claimId) === undefined);
 if (uncovered.length > 0) throw new Error(...);
 
 validateTransferredSuccessors(batchId);
@@ -200,6 +228,7 @@ Effect, Work Item, and recovery machinery.
 The implementation expedition must include three focused proofs:
 
 1. one silence cannot settle a Batch with any `pending` Attention Item;
-2. `held` survives restart and appears in the proactive open-loop projection;
+2. `held` survives restart, reopens into a later immutable claim without losing
+   its earlier disposition, and appears in the proactive open-loop projection;
 3. a transferred successor has no invisible gap: it is either still durably
    owned, terminally resolved, or re-admitted for Brain attention.

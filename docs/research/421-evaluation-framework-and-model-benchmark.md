@@ -4,7 +4,7 @@
 
 Ambient Agent should not repair or port its inherited eval suite. The durable foundation is
 an **application-owned, architecture-epoch Evaluation Scenario contract**, extending the
-ratified term in [`CONTEXT.md`](../../CONTEXT.md#L299), executed with the already installed
+ratified term in [`CONTEXT.md` — Agent anatomy](../../CONTEXT.md#agent-anatomy), executed with the already installed
 Vitest/vitest-evals and public Flue seams, with Braintrust used for versioned datasets,
 experiments, comparison, tracing, and review.
 
@@ -18,8 +18,8 @@ The shared root — the evaluation **nest** — is:
 This follows the accepted architecture: receipt alone does not prove knowledge or
 responsibility, a mechanically settled Brain Batch does not prove per-Happening
 accountability, and the Coworker is the composition rather than one agent
-([canon §2](../SYSTEM-ARCHITECTURE.md#L110),
-[canon §13](../SYSTEM-ARCHITECTURE.md#L734)).
+([canon §2](../SYSTEM-ARCHITECTURE.md#2-the-system-at-a-glance),
+[canon §13](../SYSTEM-ARCHITECTURE.md#13-where-we-are-today-and-the-distance-to-close)).
 Map [#409](https://github.com/AaronAbuUsama/ambient-agent/issues/409) owns the retained
 runtime's mechanical, integrated, live, readback, and observed proof ladder. Map
 [#410](https://github.com/AaronAbuUsama/ambient-agent/issues/410) owns implementation of the
@@ -31,11 +31,11 @@ Durable methodology:
 Primary-source and licensing notes:
 [`docs/reference/evaluation/INDEX.md`](../reference/evaluation/INDEX.md).
 
-Committed artifact links:
+Committed artifacts:
 
-- [Research finding](https://github.com/AaronAbuUsama/ambient-agent/blob/codex/issue-421-evaluation-methodology/docs/research/421-evaluation-framework-and-model-benchmark.md)
-- [Evaluation methodology](https://github.com/AaronAbuUsama/ambient-agent/blob/codex/issue-421-evaluation-methodology/docs/EVALUATION-METHODOLOGY.md)
-- [Annotated primary-source notes](https://github.com/AaronAbuUsama/ambient-agent/blob/codex/issue-421-evaluation-methodology/docs/reference/evaluation/INDEX.md)
+- [Research finding](./421-evaluation-framework-and-model-benchmark.md)
+- [Evaluation methodology](../EVALUATION-METHODOLOGY.md)
+- [Annotated primary-source notes](../reference/evaluation/INDEX.md)
 
 ## Read from sources versus inferred
 
@@ -54,7 +54,7 @@ Committed artifact links:
 **Inferred for Ambient Agent:**
 
 - The Evaluation Scenario contract, five-tier evaluation ladder, owner/evidence map,
-  architecture-epoch rule, privacy admission, maturity/holdout rules, release gates, and
+  architecture-epoch rule, privacy admission, maturity/protected-placement rules, release gates, and
   evaluation expedition below.
 - The recommendation to use Braintrust as an analysis/registry surface rather than the
   authority for release or application outcome truth.
@@ -65,16 +65,16 @@ Committed artifact links:
 
 | Layer                        | Current evidence                                                                                                                                                                       | Evaluation consequence                                                                                                                                                      |
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Source Archives / Happenings | Conversation Archive and durable GitHub receipt foundations exist; a common Happening/readiness seam is designed, not built ([canon §13](../SYSTEM-ARCHITECTURE.md#L740))              | Existing provider archives remain payload truth. Evaluate receipt and identity at their owner; wait for the common seam before claiming cross-source Happening coverage.    |
-| Graph / Scribe               | Append-only Attestations, Evidence Sets, deterministic projection, and Scribe attempts exist; routine Scribe deltas still wake the Brain ([canon §13](../SYSTEM-ARCHITECTURE.md#L743)) | Grade provenance and projection structurally; grade semantic support separately. Do not make a Scribe score stand in for Attention.                                         |
-| Attention                    | Not built; current Batch settlement can be satisfied without per-input disposition ([canon §13](../SYSTEM-ARCHITECTURE.md#L746))                                                       | No current Evaluation Scenario can prove the target accountable path end to end. Schema/method work can proceed; Attention outcome scenarios depend on #410 implementation. |
-| Brain                        | Durable global actor and crash-stable Batch exist; it still claims mixed raw/delta inputs ([canon §13](../SYSTEM-ARCHITECTURE.md#L749))                                                | Evaluate current recovery primitives honestly, but do not benchmark the designed knowledge-ready judgement path until implemented.                                          |
-| Work / Effects               | Typed Effects and Specialist execution ledgers exist; generic Work responsibility is missing ([canon §13](../SYSTEM-ARCHITECTURE.md#L752))                                             | Evaluate effect/execution integrity at current owners. Whole Work lifecycle scenarios wait for the thin Work ledger.                                                        |
-| Surface / Speaker            | Directive-only Saying and durable delivered/failed/Uncertain outcomes exist; Speaker is the local mouth ([canon §13](../SYSTEM-ARCHITECTURE.md#L748))                                  | Deterministically grade authorization and delivery. Use semantic grading only for conversational expression and escalation judgement.                                       |
+| Source Archives / Happenings | Conversation Archive and durable GitHub receipt foundations exist; a common Happening/readiness seam is designed, not built ([canon §13](../SYSTEM-ARCHITECTURE.md#13-where-we-are-today-and-the-distance-to-close))              | Existing provider archives remain payload truth. Evaluate receipt and identity at their owner; wait for the common seam before claiming cross-source Happening coverage.    |
+| Graph / Scribe               | Append-only Attestations, Evidence Sets, deterministic projection, and Scribe attempts exist; routine Scribe deltas still wake the Brain ([canon §13](../SYSTEM-ARCHITECTURE.md#13-where-we-are-today-and-the-distance-to-close)) | Grade provenance and projection structurally; grade semantic support separately. Do not make a Scribe score stand in for Attention.                                         |
+| Attention                    | Not built; current Batch settlement can be satisfied without per-input disposition ([canon §13](../SYSTEM-ARCHITECTURE.md#13-where-we-are-today-and-the-distance-to-close))                                                       | No current Evaluation Scenario can prove the target accountable path end to end. Schema/method work can proceed; Attention outcome scenarios depend on #410 implementation. |
+| Brain                        | Durable global actor and crash-stable Batch exist; it still claims mixed raw/delta inputs ([canon §13](../SYSTEM-ARCHITECTURE.md#13-where-we-are-today-and-the-distance-to-close))                                                | Evaluate current recovery primitives honestly, but do not benchmark the designed knowledge-ready judgement path until implemented.                                          |
+| Work / Effects               | Typed Effects and Specialist execution ledgers exist; generic Work responsibility is missing ([canon §13](../SYSTEM-ARCHITECTURE.md#13-where-we-are-today-and-the-distance-to-close))                                             | Evaluate effect/execution integrity at current owners. Whole Work lifecycle scenarios wait for the thin Work ledger.                                                        |
+| Surface / Speaker            | Directive-only Saying and durable delivered/failed/Uncertain outcomes exist; Speaker is the local mouth ([canon §13](../SYSTEM-ARCHITECTURE.md#13-where-we-are-today-and-the-distance-to-close))                                  | Deterministically grade authorization and delivery. Use semantic grading only for conversational expression and escalation judgement.                                       |
 
 The durable vocabulary already distinguishes Surface Delivery, Intent, Brain Batch/Effect,
 Directive Outcome, Source Archive, Happening, Attention, and Work
-([`CONTEXT.md`](../../CONTEXT.md#L52)). Evaluation must preserve those authorities.
+([`CONTEXT.md` — The coworker](../../CONTEXT.md#the-coworker)). Evaluation must preserve those authorities.
 
 ### Existing evaluation code is archaeology
 
@@ -147,7 +147,8 @@ boundaries are:
 | No candidate/sanitization/adjudication pipeline         | Production traces risk becoming raw or mislabeled datasets       | Keep raw evidence local; sanitize, adjudicate, and version before dataset admission                                               |
 | No judge calibration policy                             | Subjective thresholds can drift with judge model/prompt          | Version one-dimension judges and measure agreement against human adjudication                                                     |
 | System-under-test and evaluation controls are not split | Model/provider comparisons can change their measuring instrument | Pin system-under-test role assignments separately from judge/scorer identity, dataset, environment, trials, and baseline          |
-| Maturity and holdout membership are not split           | Access restriction or scenario maturity can be lost              | Keep candidate/capability/regression/retired maturity independent from holdout dataset membership and its named access policy     |
+| Protected holdout definitions have no separate placement | Repository-visible fixtures and expectations contaminate release holdouts | Commit only opaque manifests and definition hashes; keep fixtures, expected outcomes, scorer inputs, and revealing trial details behind the named access policy |
+| Maturity and protected placement are not split          | Access restriction or scenario maturity can be lost              | Keep candidate/capability/regression/retired maturity independent from protected holdout placement and its named access policy    |
 | Tracing lacks explicit masking                          | Content-bearing events may leave the application boundary        | Design and test fail-closed masking before evaluation or wider production export                                                  |
 | Target Attention/Work path not implemented              | Current E2/E3 suite cannot prove target accountability           | Build schema/policy independently; bind executable path Evaluation Scenarios to #410 nodes when their owner readbacks are present |
 
@@ -178,9 +179,10 @@ would be secondary.
 
 ```diff
 + repository Evaluation Scenario schema + architecture epoch + owner readbacks
++ opaque repository manifests for protected holdouts; restricted definitions behind named access policy
 + Vitest/vitest-evals custom harness over public Flue/application seams
 + Braintrust versioned dataset/experiment mirror and comparison
-+ human adjudication, sanitization, independent maturity and holdout policy
++ human adjudication, sanitization, independent maturity and protected-holdout policy
 + separate system-under-test and evaluation control profiles
 ```
 
@@ -230,7 +232,7 @@ flowchart TB
   A["A2 Attention disposition readbacks (#410)"]
   W["A3 Work/outcome readbacks (#410)"]
   R["A4 Current-epoch controlled scenario harness"]
-  S["A5 Seed scenario maturity sets + restricted holdout memberships"]
+  S["A5 Seed scenario maturity sets + protected holdout manifests"]
   C["A6 Baseline/challenger benchmark and release gate"]
   O["A7 Production candidate-mining loop"]
 
@@ -246,7 +248,7 @@ flowchart TB
 ### Independent of #409 and #410
 
 - **E1:** this methodology and research finding.
-- **E2:** privacy, sanitization, provenance, adjudication, holdout, and retirement policy.
+- **E2:** privacy, sanitization, provenance, adjudication, protected holdout placement, and retirement policy.
 - **E3:** separate configurable system-under-test and evaluation control profile schemas,
   paired-trial statistics, report, baseline/challenger rules, and release gates.
 - **E4:** a machine-readable Evaluation Scenario schema validator and local evidence format
@@ -261,7 +263,7 @@ flowchart TB
 - Owner readbacks for common Happenings, Attention dispositions, generic Work, and outcome
   re-admission.
 - The first controlled accountable-path harness and current-epoch Evaluation Scenarios.
-- Baseline numbers, regression gates, holdout results, and production candidate automation
+- Baseline numbers, regression gates, protected-holdout results, and production candidate automation
   that claim the target architecture.
 
 The expedition should begin with E2/E3/E4 in parallel, not an eval migration. The first
@@ -274,7 +276,7 @@ implemented accountable slice. Growth proceeds owner by owner.
    scenarios.
 2. Choose the architecture decision or canon commit that names epoch 1 after #410's target
    contracts land.
-3. Assign the privacy/adjudication owner and restricted holdout access policy.
+3. Assign the privacy/adjudication owner and protected-holdout access policy.
 4. Decide which implemented accountable slice is the first three-scenario executable
    foundation.
 5. Schedule obsolete-suite retirement as deletion, not migration.

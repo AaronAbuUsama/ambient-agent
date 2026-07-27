@@ -112,6 +112,10 @@ Attention Item. Brain Batch settlement must then prove a disposition for every c
 Attention Item. A thin Brain Work Item will sit above existing Effect and Specialist execution
 ledgers; those mechanisms are reused, not replaced.
 
+A source-specific readiness policy must also bound semantic projection failure. Exhausting that
+finite retry/age budget produces prepared failure evidence and admits the same Happening's
+Attention Item; it never leaves the occurrence indefinitely outside the accountability ledger.
+
 ## Where things live — quick answers
 
 - **"Any agent needs this"** → `packages/engine`. Precedent: operation-store and input

@@ -18,9 +18,15 @@ ordinary Graph surface does not extract Entity or Relation proposals.
 
 An Attention Item references its Happening evidence and the fact Attestations or Projection
 version that made it knowledge-ready. Pending Attention is queue-like, but the record remains
-durable after it is held, transferred, or resolved. `stay_silent` records only that no external
-communication is warranted and cannot settle Attention; Graph beliefs cannot substitute for
-operational work state.
+durable after it is held, transferred, or resolved. Claims and state transitions are append-only;
+the current state is a rebuildable projection, so reopening never overwrites an earlier Batch
+claim or disposition. `stay_silent` records only that no external communication is warranted
+and cannot settle Attention; Graph beliefs cannot substitute for operational work state.
+
+Every source readiness policy also sets a finite projection-attempt or elapsed-time budget.
+Exhaustion records a terminal projection-failure fact and admits the same Happening's Attention
+Item for explicit Brain disposition. A later successful projection enriches that obligation
+rather than creating a duplicate.
 
 ## Settled implementation boundaries
 

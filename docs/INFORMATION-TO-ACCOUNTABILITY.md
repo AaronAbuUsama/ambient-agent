@@ -183,9 +183,17 @@ The policy must be explicit for each Happening kind:
 Happening kind
   → required deterministic facts
   → required semantic projection, if any
+  → finite projection attempt or elapsed-time budget
   → explicit source-scope admission rule
   → one Attention Item
 ```
+
+Projection failure is bounded accountability, not an infinite readiness wait. When the
+declared budget is exhausted, trusted code records the durable failed attempt ids and a
+sanitized terminal reason. That failure record plus the Happening's deterministic identity
+is prepared evidence: it admits the same Attention Item so the Brain can hold, transfer, or
+resolve the failure explicitly. A later successful projection enriches the same obligation;
+it never creates a second Attention Item for the Happening.
 
 Routine Graph changes do not automatically wake the Brain. The admission policy creates
 Attention for every accepted, in-scope external Happening. Semantic enrichment that is not
@@ -205,7 +213,7 @@ The Scribe and Brain both reason, but they do not do the same job.
 | Conversation lifetime | Fresh, stateless attempt | Continuing global mind |
 | Authority | Proposal author | Ruling and disposition authority |
 | Output | Attestations | Attention dispositions, Work Items, Effects, rulings |
-| Failure domain | Retryable projection | Recoverable accountable decision |
+| Failure domain | Retryable projection with bounded escalation | Recoverable accountable decision |
 | Volume | Raw ambiguous evidence stream | Decision-worthy knowledge-ready obligations |
 
 Keeping them separate protects three boundaries:
@@ -233,19 +241,54 @@ The Graph and Attention answer different questions:
 | Attention Item | What occurrence still requires accountable judgement? | Permanent accountability history |
 
 An **Attention Item** is admitted only after its Happening reaches the minimum knowledge
-floor. Conceptually it records:
+floor. A bounded terminal projection failure counts as a prepared knowledge-floor fact, not
+as successful semantic extraction. Conceptually the durable contract separates immutable
+identity, append-only claims, and append-only transitions:
 
 ```ts
 type AttentionItem = {
   attentionId: string;
   happeningIds: string[];
   evidenceIds: string[];
-  readiness: {
-    attestationIds: string[];
-    projectionVersion: string;
-  };
-  state: "pending" | "held" | "transferred" | "resolved";
-  disposition?: AttentionDisposition;
+  readiness:
+    | {
+        kind: "ready";
+        attestationIds: string[];
+        projectionVersion: string;
+      }
+    | {
+        kind: "projection_failed";
+        deterministicAttestationIds: string[];
+        attemptIds: string[];
+        terminalReason: string;
+      };
+  createdAt: string;
+};
+
+type AttentionClaim = {
+  claimId: string;
+  attentionId: string;
+  batchId: string;
+  claimedAt: string;
+};
+
+type AttentionTransition = {
+  transitionId: string;
+  attentionId: string;
+  claimId?: string;
+  from?: "pending" | "held" | "transferred" | "resolved";
+  to: "pending" | "held" | "transferred" | "resolved";
+  transition:
+    | { kind: "admitted" }
+    | { kind: "reopened"; reason: string }
+    | {
+        kind: "enriched";
+        attestationIds: string[];
+        projectionVersion: string;
+        material: boolean;
+      }
+    | AttentionDisposition;
+  recordedAt: string;
 };
 ```
 
@@ -255,11 +298,21 @@ This is a conceptual contract, not a frozen database schema. The invariants matt
 - it references immutable evidence and the knowledge floor that made it ready;
 - it never copies the Graph;
 - pending is queue state, not the record's whole lifetime; and
-- reading or claiming it does not erase it.
+- reading or claiming it does not erase it;
+- every Batch claim is a new immutable record; and
+- every disposition or reopening appends a transition rather than clearing or replacing
+  an earlier `batchId` or disposition.
+
+The current Attention state is a deterministic projection over its transition history.
+Claimability is derived from that current state plus uncovered open claims. A due wake or
+failed successor appends `held/transferred → pending`, after which a later Brain Batch
+appends a new claim. A later successful projection appends enrichment evidence; material
+meaning may append `resolved → pending` for the same Attention Item. Earlier claims,
+dispositions, and the original readiness failure remain permanently inspectable.
 
 The Brain reads the live Belief Projection when deciding. If current belief differs from
-the recorded readiness version, that is useful context, not corruption. When exact detail
-matters, the Brain follows the evidence references to the Source Archive.
+the recorded readiness evidence or version, that is useful context, not corruption. When
+exact detail matters, the Brain follows the evidence references to the Source Archive.
 
 ### Internal input ownership
 
@@ -293,6 +346,7 @@ stateDiagram-v2
   held --> resolved: explicit discharge
   transferred --> resolved: successor closes
   transferred --> pending: successor fails or needs judgement
+  resolved --> pending: material later evidence
 ```
 
 - **pending** — claimable and not yet dispositioned;
@@ -312,7 +366,7 @@ table that needs a parallel lifecycle.
 
 Trusted application code claims a bounded immutable set of pending Attention Items and
 owner-correlated internal signals as one Brain Batch. The Brain may consider them together,
-but settlement is checked per input.
+but settlement is checked per immutable claim.
 
 Every claimed item must end the Batch in one of these states:
 
@@ -333,8 +387,8 @@ type AttentionDisposition =
 Settlement is therefore a coverage check over every claimed input:
 
 ```text
-for every claimed Attention Item:
-  state must no longer be pending
+for every Attention claim in the Batch:
+  exactly one claim-linked transition must leave pending
   any transferred successor must exist durably
 
 for every claimed internal signal:
@@ -480,6 +534,7 @@ Silence records communication policy. The dismissal records accountability.
 | Process dies after source receipt | Source Archive / Happening | Re-run knowledge readiness idempotently |
 | Deterministic projection retries | Attestation identity + evidence | Deduplicate exact claims |
 | Scribe attempt dies | Scribe attempt ledger | Retry fresh attempt against same evidence |
+| Scribe projection exhausts its source-policy budget | Happening + terminal attempt evidence | Admit the same Attention Item with prepared projection-failure evidence; later enrichment does not duplicate it |
 | Projection completes before Attention admission | Readiness policy frontier | Admit the same Attention Item idempotently |
 | Brain dies while deciding | Brain Batch + exact Attention membership | Recover the same open Batch |
 | Brain tries to settle uncovered input | Attention coverage check | Reject settlement |
@@ -500,13 +555,15 @@ Any implementation must preserve these invariants:
 1. Every accepted external occurrence has one immutable Happening identity.
 2. The Brain never needs to parse an unprepared provider callback to decide.
 3. Every accepted, in-scope Happening admits exactly one knowledge-ready Attention Item.
-4. Every Attention Item claimed by a Brain Batch receives an explicit durable disposition.
-5. `stay_silent` never settles Attention.
-6. A transferred disposition names a durable successor that owns recovery.
-7. Graph beliefs never substitute for occurrence, Attention, or operational work state.
-8. Routine semantic projection does not automatically interrupt the Brain.
-9. Work closes from an observable outcome, not admission or attempted execution.
-10. Exact source evidence remains reachable from every derived fact and decision.
+4. Every Brain Batch claim and every Attention state transition is append-only.
+5. Every Attention claim in a Brain Batch receives an explicit durable disposition.
+6. `stay_silent` never settles Attention.
+7. A transferred disposition names a durable successor that owns recovery.
+8. Graph beliefs never substitute for occurrence, Attention, or operational work state.
+9. Routine semantic projection does not automatically interrupt the Brain.
+10. Projection retries have a finite policy budget whose exhaustion becomes Attention.
+11. Work closes from an observable outcome, not admission or attempted execution.
+12. Exact source evidence remains reachable from every derived fact and decision.
 
 The following shortcuts violate the architecture:
 
@@ -539,7 +596,8 @@ The important gaps are architectural, not merely naming:
   inputs;
 - routine Scribe success currently wakes the Brain;
 - there is no source-neutral knowledge-readiness/admission frontier;
-- there is no durable per-input Attention disposition layer;
+- Scribe retries have no cumulative terminal readiness-failure escalation;
+- there is no durable per-input Attention identity, claim, and transition history;
 - Brain Batch settlement counts consequences instead of proving input coverage;
 - `stay_silent` can satisfy the current Batch consequence floor; and
 - the existing Specialist launch ledger does not represent generic Work responsibility.
