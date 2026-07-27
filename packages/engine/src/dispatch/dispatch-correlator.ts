@@ -31,6 +31,8 @@ export interface DispatchCorrelatorOptions<C> {
   /** Derives a lookup key (e.g. chatId) so activeDispatchFor() can answer "what is this key processing?". */
   readonly keyOf?: (context: C) => string;
   readonly resolver?: DispatchContextResolver<C>;
+  /** Keep terminal observations until a listener explicitly confirms durable handling. */
+  readonly requireTerminalAcknowledgement?: boolean;
 }
 
 export interface DispatchCorrelator<C> {
@@ -43,8 +45,8 @@ export interface DispatchCorrelator<C> {
   ingest(observation: FlueObservation): void;
   /** Install (or replace) the recovery lookup used when an observation precedes its context. */
   recoverWith(resolver: DispatchContextResolver<C>): void;
-  /** Subscribe to correlated lifecycle events. Listener errors never affect the lifecycle. */
-  subscribe(listener: (event: DispatchLifecycleEvent, context: C, dispatchId: string) => void): () => void;
+  /** Subscribe to correlated lifecycle events. Return true only after a required terminal is durable. */
+  subscribe(listener: (event: DispatchLifecycleEvent, context: C, dispatchId: string) => boolean | void): () => void;
   /** The dispatch currently processing for a key (requires options.keyOf), if still active. */
   activeDispatchFor(key: string): string | undefined;
 }
@@ -82,21 +84,24 @@ const dropOldest = <T>(entries: Map<string, T>, evict: (key: string) => void): v
 export const createDispatchCorrelator = <C>(options: DispatchCorrelatorOptions<C> = {}): DispatchCorrelator<C> => {
   const active = new Map<string, ExpiringContext<C>>();
   const early = new Map<string, BufferedObservations>();
+  const pendingTerminals = new Map<string, FlueObservation>();
   const settled = new Map<string, number>();
   const ignored = new Map<string, number>();
   const announced = new Set<string>();
   const byKey = new Map<string, string>();
-  const listeners = new Set<(event: DispatchLifecycleEvent, context: C, dispatchId: string) => void>();
+  const listeners = new Set<(event: DispatchLifecycleEvent, context: C, dispatchId: string) => boolean | void>();
   let resolver = options.resolver;
 
-  const emit = (event: DispatchLifecycleEvent, context: C, dispatchId: string): void => {
+  const emit = (event: DispatchLifecycleEvent, context: C, dispatchId: string): boolean => {
+    let acknowledged = !options.requireTerminalAcknowledgement;
     for (const listener of listeners) {
       try {
-        listener(event, context, dispatchId);
+        if (listener(event, context, dispatchId) === true) acknowledged = true;
       } catch {
         // Observer diagnostics must never change the agent lifecycle they observe.
       }
     }
+    return acknowledged;
   };
 
   const announce = (dispatchId: string, context: C): void => {
@@ -117,6 +122,7 @@ export const createDispatchCorrelator = <C>(options: DispatchCorrelatorOptions<C
 
   const markSettled = (dispatchId: string): void => {
     forget(dispatchId);
+    pendingTerminals.delete(dispatchId);
     dropOldest(settled, (key) => settled.delete(key));
     settled.set(dispatchId, Date.now() + TRACKING_TTL_MS);
   };
@@ -131,7 +137,10 @@ export const createDispatchCorrelator = <C>(options: DispatchCorrelatorOptions<C
 
   const remember = (dispatchId: string, context: C): void => {
     dropOldest(active, forget);
-    active.set(dispatchId, { context, expiresAt: Date.now() + TRACKING_TTL_MS });
+    active.set(dispatchId, {
+      context,
+      expiresAt: options.requireTerminalAcknowledgement ? Number.POSITIVE_INFINITY : Date.now() + TRACKING_TTL_MS,
+    });
   };
 
   const resolve = (dispatchId: string): C | undefined => {
@@ -159,14 +168,17 @@ export const createDispatchCorrelator = <C>(options: DispatchCorrelatorOptions<C
 
     if (event.type === "submission_settled") {
       announce(dispatchId, context);
-      if (event.outcome === "completed") {
-        emit({ kind: "settled" }, context, dispatchId);
-      } else {
-        emit(
-          { kind: "failed", error: event.error?.message ?? `Agent processing ${event.outcome}` },
-          context,
-          dispatchId,
-        );
+      const acknowledged =
+        event.outcome === "completed"
+          ? emit({ kind: "settled" }, context, dispatchId)
+          : emit(
+              { kind: "failed", error: event.error?.message ?? `Agent processing ${event.outcome}` },
+              context,
+              dispatchId,
+            );
+      if (!acknowledged) {
+        pendingTerminals.set(dispatchId, event);
+        return;
       }
       markSettled(dispatchId);
       return;
@@ -175,22 +187,30 @@ export const createDispatchCorrelator = <C>(options: DispatchCorrelatorOptions<C
     if (event.type !== "operation") return;
 
     if (event.isError) {
-      emit({ kind: "failed", error: failureMessage(event.error), operationId: event.operationId }, context, dispatchId);
+      if (!emit({ kind: "failed", error: failureMessage(event.error), operationId: event.operationId }, context, dispatchId)) {
+        pendingTerminals.set(dispatchId, event);
+        return;
+      }
       markSettled(dispatchId);
       return;
     }
     const finalText =
       event.agentOutput?.type === "text" && event.agentOutput.text.trim() !== "" ? event.agentOutput.text : undefined;
-    emit(
-      {
-        kind: "completed",
-        operationId: event.operationId,
-        durationMs: event.durationMs,
-        ...(finalText === undefined ? {} : { finalText }),
-      },
-      context,
-      dispatchId,
-    );
+    if (
+      !emit(
+        {
+          kind: "completed",
+          operationId: event.operationId,
+          durationMs: event.durationMs,
+          ...(finalText === undefined ? {} : { finalText }),
+        },
+        context,
+        dispatchId,
+      )
+    ) {
+      pendingTerminals.set(dispatchId, event);
+      return;
+    }
     markSettled(dispatchId);
   };
 
@@ -209,6 +229,7 @@ export const createDispatchCorrelator = <C>(options: DispatchCorrelatorOptions<C
       prune();
       if (context === null) {
         early.delete(dispatchId);
+        pendingTerminals.delete(dispatchId);
         dropOldest(ignored, (key) => ignored.delete(key));
         ignored.set(dispatchId, Date.now() + TRACKING_TTL_MS);
         return;
@@ -216,6 +237,8 @@ export const createDispatchCorrelator = <C>(options: DispatchCorrelatorOptions<C
       if (settled.has(dispatchId)) return;
       remember(dispatchId, context);
       announce(dispatchId, context);
+      const pendingTerminal = pendingTerminals.get(dispatchId);
+      if (pendingTerminal !== undefined) report(pendingTerminal, context);
       replay(dispatchId, context);
     },
     ingest(event): void {
@@ -242,6 +265,10 @@ export const createDispatchCorrelator = <C>(options: DispatchCorrelatorOptions<C
     recoverWith(nextResolver): void {
       resolver = nextResolver;
       prune();
+      for (const [dispatchId, event] of pendingTerminals) {
+        const context = resolve(dispatchId);
+        if (context !== undefined) report(event, context);
+      }
       for (const dispatchId of early.keys()) {
         const context = resolve(dispatchId);
         if (context !== undefined) replay(dispatchId, context);

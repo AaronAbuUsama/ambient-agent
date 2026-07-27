@@ -20,7 +20,11 @@ export type DispatchBrain = (request: BrainDispatchRequest) => Promise<DispatchR
 export const dispatchBrain: DispatchBrain = (request) => dispatch(brain, request);
 
 const wakes = Semaphore.makeUnsafe(1);
-const brainDispatches = createDispatchCorrelator<{ readonly batchId: string }>();
+const dispatchGates = new WeakMap<BrainInbox, { active: boolean }>();
+const inFlightWakes = new WeakMap<BrainInbox, Set<Promise<BrainBatch | undefined>>>();
+const brainDispatches = createDispatchCorrelator<{ readonly batchId: string }>({
+  requireTerminalAcknowledgement: true,
+});
 export const observeBrainDispatch = brainDispatches.ingest;
 observe(observeBrainDispatch);
 
@@ -28,11 +32,12 @@ export const wakeBrain = async (
   inbox: BrainInbox,
   deliver: DispatchBrain = dispatchBrain,
   now: () => number = Date.now,
-): Promise<BrainBatch | undefined> =>
-  Effect.runPromise(
+): Promise<BrainBatch | undefined> => {
+  const wake = Effect.runPromise(
     wakes.withPermits(1)(
       Effect.tryPromise({
         try: async () => {
+          if (dispatchGates.get(inbox)?.active === false) return undefined;
           const batch = inbox.claimBatch();
           if (batch === undefined || batch.dispatch !== undefined) return batch;
           if (batch.nextRetryAt !== undefined && Date.parse(batch.nextRetryAt) > now()) return batch;
@@ -59,6 +64,15 @@ export const wakeBrain = async (
       }),
     ),
   );
+  const pending = inFlightWakes.get(inbox) ?? new Set<Promise<BrainBatch | undefined>>();
+  inFlightWakes.set(inbox, pending);
+  pending.add(wake);
+  const remove = (): void => {
+    pending.delete(wake);
+  };
+  void wake.then(remove, remove);
+  return wake;
+};
 
 type RecoveryLogger = Pick<Logger, "info" | "warn" | "error">;
 
@@ -73,7 +87,8 @@ export interface BrainDispatchRecoveryOptions {
 export interface BrainDispatchRecovery {
   /** Enable retry timers after every Brain port is ready. Terminal observations persist before this. */
   activate(): void;
-  stop(): void;
+  /** Stop new dispatches and wait for any accepted dispatch receipt to be fenced durably. */
+  stop(): Promise<void>;
 }
 
 /** Persist public Flue terminals immediately; dispatch retries only after activate(). */
@@ -86,6 +101,8 @@ export const configureBrainDispatchRecovery = (
   const setTimer = options.setTimer ?? setTimeout;
   const clearTimer = options.clearTimer ?? clearTimeout;
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const gate = { active: false };
+  dispatchGates.set(inbox, gate);
   let active = false;
 
   const schedule = (state: BrainBatchRecovery): void => {
@@ -130,7 +147,7 @@ export const configureBrainDispatchRecovery = (
           },
           "Ignored stale Brain Batch terminal event",
         );
-        return;
+        return true;
       }
       logger.info(
         {
@@ -144,6 +161,7 @@ export const configureBrainDispatchRecovery = (
         state.nextRetryAt === undefined ? "Brain Batch dispatch settled" : "Brain Batch dispatch released for retry",
       );
       if (active) schedule(state);
+      return true;
     } catch (cause) {
       logger.error(
         {
@@ -155,6 +173,7 @@ export const configureBrainDispatchRecovery = (
         },
         "Failed to reconcile Brain Batch terminal event",
       );
+      return false;
     }
   });
 
@@ -170,13 +189,16 @@ export const configureBrainDispatchRecovery = (
     activate(): void {
       if (active) return;
       active = true;
+      gate.active = true;
       for (const state of inbox.dispatchRecovery()) schedule(state);
     },
-    stop(): void {
+    async stop(): Promise<void> {
       active = false;
-      unsubscribe();
+      gate.active = false;
       for (const timer of timers.values()) clearTimer(timer);
       timers.clear();
+      await Promise.allSettled(inFlightWakes.get(inbox) ?? []);
+      unsubscribe();
     },
   };
 };

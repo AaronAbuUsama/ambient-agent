@@ -147,7 +147,7 @@ describe("Brain Batch dispatch recovery", () => {
     ]);
     expect(inbox.dispatchAttempts(retried.id)[1]).not.toHaveProperty("nextRetryAt");
     expect(inbox.dispatchRecovery()).toEqual([]);
-    recovery.stop();
+    await recovery.stop();
     inbox.close();
   });
 
@@ -179,7 +179,7 @@ describe("Brain Batch dispatch recovery", () => {
     expect(reopened.dispatchAttempts(batch!.id)).toMatchObject([
       { dispatchId: "dispatch:restart", terminalOutcome: "settled" },
     ]);
-    recovery.stop();
+    await recovery.stop();
     reopened.close();
   });
 
@@ -236,10 +236,15 @@ describe("Brain Batch dispatch recovery", () => {
     clock += 24 * 60 * 60 * 1_000;
     const restarted = openInbox(databasePath, now);
     const timers: Array<() => void> = [];
+    let calls = 0;
+    const deliver: DispatchBrain = async () => {
+      calls++;
+      return { dispatchId: "dispatch:after-long-boot", acceptedAt: now() };
+    };
     const recovery = configureBrainDispatchRecovery(restarted, {
       logger,
       now: () => clock,
-      deliver: async () => ({ dispatchId: "dispatch:after-long-boot", acceptedAt: now() }),
+      deliver,
       setTimer: (callback) => {
         timers.push(callback);
         return { unref: () => undefined } as unknown as ReturnType<typeof setTimeout>;
@@ -247,6 +252,8 @@ describe("Brain Batch dispatch recovery", () => {
       clearTimer: () => undefined,
     });
     expect(timers).toEqual([]);
+    expect(await wakeBrain(restarted, deliver, () => clock)).toBeUndefined();
+    expect(calls).toBe(0);
     recovery.activate();
     timers.shift()?.();
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -257,7 +264,7 @@ describe("Brain Batch dispatch recovery", () => {
       dispatch: { dispatchId: "dispatch:after-long-boot" },
       retryCount: 1,
     });
-    recovery.stop();
+    await recovery.stop();
     restarted.close();
   });
 
@@ -302,7 +309,120 @@ describe("Brain Batch dispatch recovery", () => {
       { dispatchId: "dispatch:stale:2" },
     ]);
     expect(inbox.dispatchAttempts(first!.id)[1]).not.toHaveProperty("terminalOutcome");
-    recovery.stop();
+    await recovery.stop();
+    inbox.close();
+  });
+
+  it("retains a terminal observed after stop and replays it into the next runtime", async () => {
+    const databasePath = fixture();
+    const now = () => "2026-07-26T03:00:00.000Z";
+    const first = openInbox(databasePath, now);
+    admit(first);
+    const recovery = configureBrainDispatchRecovery(first, { logger });
+    recovery.activate();
+    const batch = await wakeBrain(first, async () => ({ dispatchId: "dispatch:between", acceptedAt: now() }));
+    await recovery.stop();
+
+    observeBrainDispatch(operation("dispatch:between", true));
+    for (let index = 0; index < 101; index++) {
+      observeBrainDispatch(recoverySettlement(`dispatch:between:unrelated:${index}`));
+    }
+    expect(first.dispatchAttempts(batch!.id)[0]).not.toHaveProperty("terminalOutcome");
+    first.close();
+
+    const reopened = openInbox(databasePath, now);
+    const restarted = configureBrainDispatchRecovery(reopened, { logger });
+    expect(reopened.dispatchAttempts(batch!.id)[0]).toMatchObject({
+      dispatchId: "dispatch:between",
+      terminalOutcome: "failed",
+    });
+    await restarted.stop();
+    reopened.close();
+  });
+
+  it("replays a terminal after a transient durable reconciliation failure", async () => {
+    const now = () => "2026-07-26T03:30:00.000Z";
+    const inbox = openInbox(fixture(), now);
+    admit(inbox);
+    let failOnce = true;
+    const flaky = {
+      ...inbox,
+      reconcileDispatchTerminal: (...args: Parameters<BrainInbox["reconcileDispatchTerminal"]>) => {
+        if (failOnce) {
+          failOnce = false;
+          throw new Error("transient sqlite failure");
+        }
+        return inbox.reconcileDispatchTerminal(...args);
+      },
+    } satisfies BrainInbox;
+    const recovery = configureBrainDispatchRecovery(flaky, { logger });
+    recovery.activate();
+    const batch = await wakeBrain(flaky, async () => ({ dispatchId: "dispatch:flaky", acceptedAt: now() }));
+
+    observeBrainDispatch(recoverySettlement("dispatch:flaky"));
+    expect(inbox.dispatchAttempts(batch!.id)[0]).not.toHaveProperty("terminalOutcome");
+    await recovery.stop();
+
+    const restarted = configureBrainDispatchRecovery(inbox, { logger });
+    expect(inbox.dispatchAttempts(batch!.id)[0]).toMatchObject({
+      dispatchId: "dispatch:flaky",
+      terminalOutcome: "settled",
+    });
+    await restarted.stop();
+    inbox.close();
+  });
+
+  it("drains an in-flight retry receipt before stop returns", async () => {
+    const now = () => "2026-07-26T04:00:00.000Z";
+    const inbox = openInbox(fixture(), now, () => 0);
+    admit(inbox);
+    const batch = inbox.claimBatch()!;
+    inbox.markBatchDispatched(batch.id, { dispatchId: "dispatch:old", acceptedAt: now() });
+    inbox.reconcileDispatchTerminal({
+      batchId: batch.id,
+      dispatchId: "dispatch:old",
+      outcome: "failed",
+      error: "provider failed",
+    });
+
+    const timers: Array<() => void> = [];
+    let startDelivery!: () => void;
+    const deliveryStarted = new Promise<void>((resolve) => {
+      startDelivery = resolve;
+    });
+    let finishDelivery!: (receipt: { dispatchId: string; acceptedAt: string }) => void;
+    const delivery = new Promise<{ dispatchId: string; acceptedAt: string }>((resolve) => {
+      finishDelivery = resolve;
+    });
+    const recovery = configureBrainDispatchRecovery(inbox, {
+      logger,
+      deliver: async () => {
+        startDelivery();
+        return await delivery;
+      },
+      setTimer: (callback) => {
+        timers.push(callback);
+        return { unref: () => undefined } as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: () => undefined,
+    });
+    recovery.activate();
+    timers.shift()?.();
+    await deliveryStarted;
+
+    let stopped = false;
+    const stopping = recovery.stop().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    finishDelivery({ dispatchId: "dispatch:replacement", acceptedAt: now() });
+    await stopping;
+
+    expect(inbox.claimBatch()).toMatchObject({
+      id: batch.id,
+      dispatch: { dispatchId: "dispatch:replacement" },
+    });
     inbox.close();
   });
 });

@@ -637,7 +637,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
         brainInbox.close();
       }),
     );
-    yield* Effect.addFinalizer(() => Effect.sync(() => brainDispatchRecovery.stop()));
+    yield* Effect.addFinalizer(() => Effect.promise(() => brainDispatchRecovery.stop()));
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         if (proactiveClockTimer !== undefined) clearInterval(proactiveClockTimer);
