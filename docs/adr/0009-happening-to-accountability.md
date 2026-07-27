@@ -28,6 +28,12 @@ Exhaustion records a terminal projection-failure fact and admits the same Happen
 Item for explicit Brain disposition. A later successful projection enriches that obligation
 rather than creating a duplicate.
 
+Already meaningful internal inputs first correlate to an existing Attention Item, Work Item,
+Effect, or Directive. When judgement is owed but no durable owner exists, trusted code admits
+internal-source Attention that references the durable input plus its schema and validation
+policy. It does not fabricate a provider Happening or Graph projection to satisfy the external
+readiness contract.
+
 ## Settled implementation boundaries
 
 - A thin source-neutral Happening registry owns stable identity and provenance pointers. It

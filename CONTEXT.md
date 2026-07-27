@@ -133,14 +133,15 @@ source identity.
 _Avoid_: Decision, task, Graph fact, Brain Effect
 
 **Attention Item**:
-A durable, knowledge-ready Brain obligation to disposition one or more Happenings. It
-references their immutable evidence and the fact Attestations or Projection version that
-established the knowledge floor; it never copies the Graph. Pending Attention is claimable
-through the Brain Inbox. Its claims and state transitions are append-only; pending, held,
-transferred, and resolved are a derived current view over permanent accountability history.
-A source policy's bounded terminal projection failure is itself prepared evidence and admits
-the same Happening's Attention Item rather than leaving the occurrence outside accountability.
-`stay_silent` settles speech, never Attention.
+A durable, source-prepared Brain obligation. For an external occurrence, it dispositions one
+or more Happenings and references their immutable evidence plus the fact Attestations,
+Projection version, or bounded terminal projection-failure evidence that established the
+knowledge floor. For an already meaningful ownerless internal signal, it references the
+durable internal-input record plus the schema and validation policy that established internal
+readiness; it is not recast as a Happening. It never copies the Graph. Pending Attention is
+claimable through the Brain Inbox. Its claims and state transitions are append-only; pending,
+held, transferred, and resolved are a derived current view over permanent accountability
+history. `stay_silent` settles speech, never Attention.
 _Avoid_: Notification, inbox row, Scheduled Wake, model turn
 
 **Work Item**:

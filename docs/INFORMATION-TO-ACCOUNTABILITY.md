@@ -238,45 +238,55 @@ The Graph and Attention answer different questions:
 | --- | --- | --- |
 | Source Archive / Happening | What occurred? | Permanent source evidence |
 | Graph | What does the coworker currently believe? | Persistent, rebuildable memory |
-| Attention Item | What occurrence still requires accountable judgement? | Permanent accountability history |
+| Attention Item | What prepared source still requires accountable judgement? | Permanent accountability history |
 
 An external-source **Attention Item** is admitted only after its Happening reaches the
 minimum knowledge floor. A bounded terminal projection failure counts as a prepared
 knowledge-floor fact, not as successful semantic extraction. An ownerless internal signal
-instead names its durable internal-input record directly; it is not recast as a provider
-Happening. Conceptually the durable contract separates immutable identity, append-only
-claims, and append-only transitions:
+instead names its durable internal-input record plus the schema and validation policy that
+made it ready; it is not recast as a provider Happening or forced through Graph projection.
+Conceptually the durable contract separates immutable identity, append-only claims, and
+append-only transitions:
 
 ```ts
-type AttentionSource =
-  | {
-      kind: "happenings";
-      happeningIds: [string, ...string[]];
-    }
-  | {
-      kind: "internal_input";
-      internalInputId: string;
-      internalInputKind: string;
-    };
-
-type AttentionItem = {
+type AttentionItemBase = {
   attentionId: string;
-  source: AttentionSource;
   evidenceIds: string[];
-  readiness:
-    | {
-        kind: "ready";
-        attestationIds: string[];
-        projectionVersion: string;
-      }
-    | {
-        kind: "projection_failed";
-        deterministicAttestationIds: string[];
-        attemptIds: string[];
-        terminalReason: string;
-      };
   createdAt: string;
 };
+
+type AttentionItem =
+  | (AttentionItemBase & {
+      source: {
+        kind: "happenings";
+        happeningIds: [string, ...string[]];
+      };
+      readiness:
+        | {
+            kind: "ready";
+            attestationIds: string[];
+            projectionVersion: string;
+          }
+        | {
+            kind: "projection_failed";
+            deterministicAttestationIds: string[];
+            attemptIds: string[];
+            terminalReason: string;
+          };
+    })
+  | (AttentionItemBase & {
+      source: {
+        kind: "internal_input";
+        internalInputId: string;
+        internalInputKind: string;
+      };
+      readiness: {
+        kind: "internal_ready";
+        inputSchemaVersion: string;
+        validationPolicyVersion: string;
+        validatedAt: string;
+      };
+    });
 
 type AttentionClaim = {
   claimId: string;
@@ -304,6 +314,30 @@ type EnrichmentTransition = {
   };
 }[AttentionState];
 
+type AttentionDisposition =
+  | { kind: "held"; reason: string; wakeId?: string }
+  | {
+      kind: "transferred";
+      target: { kind: "brain_effect" | "work_item"; id: string };
+    }
+  | {
+      kind: "resolved";
+      outcome: "dismissed" | "completed" | "superseded";
+      reason: string;
+    };
+
+type DispositionTransition = {
+  [Kind in AttentionDisposition["kind"]]: {
+    transitionId: string;
+    attentionId: string;
+    claimId: string;
+    from: "pending";
+    to: Kind;
+    transition: Extract<AttentionDisposition, { kind: Kind }>;
+    recordedAt: string;
+  };
+}[AttentionDisposition["kind"]];
+
 type AttentionTransition =
   | {
       transitionId: string;
@@ -327,12 +361,17 @@ type AttentionTransition =
   | {
       transitionId: string;
       attentionId: string;
-      claimId: string;
-      from: "pending";
-      to: "held" | "transferred" | "resolved";
-      transition: AttentionDisposition;
+      claimId?: never;
+      from: "transferred";
+      to: "resolved";
+      transition: {
+        kind: "successor_closed";
+        successor: { kind: "brain_effect" | "work_item"; id: string };
+        outcomeEvidenceId: string;
+      };
       recordedAt: string;
-    };
+    }
+  | DispositionTransition;
 ```
 
 This is a conceptual contract, not a frozen database schema. The invariants matter:
@@ -340,13 +379,13 @@ This is a conceptual contract, not a frozen database schema. The invariants matt
 - exactly one Attention Item is admitted for every accepted, in-scope Happening;
 - each item names either one or more real Happenings or one durable internal-input record,
   never a fabricated or empty Happening list;
-- it references immutable evidence and the knowledge floor that made it ready;
+- it references immutable evidence and the source-appropriate readiness proof;
 - it never copies the Graph;
 - pending is queue state, not the record's whole lifetime; and
 - reading or claiming it does not erase it;
 - every Batch claim is a new immutable record; and
-- every disposition or reopening appends a transition rather than clearing or replacing
-  an earlier `batchId` or disposition.
+- every disposition, reopening, or trusted successor closure appends a transition rather
+  than clearing or replacing an earlier `batchId` or disposition.
 
 The current Attention state is a deterministic projection over its transition history.
 Claimability is derived from that current state plus uncovered open claims. A due wake or
@@ -356,9 +395,16 @@ transition; material meaning may then append a separate `held/transferred/resolv
 reopening for the same Attention Item. Earlier claims, dispositions, and the original
 readiness failure remain permanently inspectable.
 
+A transferred successor may close Attention without an artificial Brain re-claim only when
+trusted code observes the exact outcome bound by the transfer. It verifies the same successor
+identity and appends `transferred → resolved` in the transaction that closes Work or records
+the accepted Effect outcome. Any ambiguous, failed, or mismatched result reopens Attention
+for Brain judgement instead.
+
 The Brain reads the live Belief Projection when deciding. If current belief differs from
 the recorded readiness evidence or version, that is useful context, not corruption. When
-exact detail matters, the Brain follows the evidence references to the Source Archive.
+exact detail matters, the Brain follows the evidence references to the Source Archive or
+durable internal-input record named by the item.
 
 ### Internal input ownership
 
@@ -388,9 +434,7 @@ stateDiagram-v2
   pending --> transferred: successor owns responsibility
   pending --> resolved: dismiss or complete
   held --> pending: due wake or relevant evidence
-  held --> transferred: work begins
-  held --> resolved: explicit discharge
-  transferred --> resolved: successor closes
+  transferred --> resolved: trusted successor closure
   transferred --> pending: successor fails or needs judgement
   resolved --> pending: material later evidence
 ```
@@ -401,6 +445,10 @@ stateDiagram-v2
 - **transferred** — a named durable Work Item or accountable effect now owns the next
   outcome;
 - **resolved** — no responsibility remains; the reason and outcome are explicit.
+
+Held Attention reopens to pending before a new Brain disposition; it does not jump directly
+to transferred or resolved and thereby bypass a claim. Only a pre-bound deterministic
+successor outcome may close transferred Attention without another Brain claim.
 
 An **Open Loop** is the derived view of pending or held Attention, unresolved transferred
 successors, unfinished Work Items, and unfulfilled Commitments. It is not another queue or

@@ -43,12 +43,7 @@ const ArchitectureEpoch = v.strictObject({
   decisions: NonEmptyReferences,
   schemaVersion: v.literal(1),
 });
-const HoldoutMembership = v.strictObject({
-  datasetId: MachineReference,
-  accessPolicyId: MachineReference,
-  admittedBy: NonEmptyReferences,
-  admittedAt: Timestamp,
-});
+const Sha256 = v.pipe(NonBlankString, v.regex(/^[0-9a-f]{64}$/u, "Expected a SHA-256 digest"));
 const Provenance = v.strictObject({
   kind: v.picklist(["operator_correction", "production_failure", "issue", "designed_boundary"]),
   restrictedSourceRefs: NonEmptyReferences,
@@ -93,36 +88,63 @@ const Scorer = v.strictObject({
   owner: MachineReference,
 });
 const Retirement = v.strictObject({
+  retiredAt: Timestamp,
   reason: MachineReference,
+  lastValidEpoch: v.pipe(NonBlankString, v.regex(/^[0-9a-f]{40}$/u, "Expected a full 40-hex canon commit SHA")),
   replacementScenarioIds: v.array(MachineReference),
+  adjudicatedBy: NonEmptyReferences,
+  adjudicationEvidenceRefs: NonEmptyReferences,
 });
 
 const isUnresolved = (value: unknown): value is v.InferOutput<typeof Unresolved> =>
   typeof value === "object" && value !== null && "unresolved" in value;
 
+const ScenarioIdentity = {
+  schemaVersion: v.literal(1),
+  scenarioId: v.pipe(
+    NonBlankString,
+    v.regex(/^[a-z0-9][a-z0-9._:-]*$/u, "Expected a stable lowercase scenario identifier"),
+    v.check((identifier) => !/\d{10,}/u.test(identifier), "Expected no compact phone-like digit sequence"),
+  ),
+};
+
+const RepositoryScenario = v.strictObject({
+  ...ScenarioIdentity,
+  visibility: v.literal("repository"),
+  title: MachineReference,
+  lifecycle: v.picklist(["draft", "adjudicated"]),
+  architectureEpoch: requiredOrUnresolved(ArchitectureEpoch),
+  maturity: v.picklist(["draft", "candidate", "capability", "regression", "retired"]),
+  owners: requiredOrUnresolved(NonEmptyReferences),
+  slices: NonEmptyReferences,
+  provenance: requiredOrUnresolved(Provenance),
+  fixture: requiredOrUnresolved(Fixture),
+  expectations: Expectations,
+  scorers: requiredOrUnresolved(v.pipe(v.array(Scorer), v.nonEmpty())),
+  retirement: v.optional(Retirement),
+});
+
+const ProtectedHoldoutScenario = v.strictObject({
+  ...ScenarioIdentity,
+  visibility: v.literal("protected_holdout"),
+  lifecycle: v.literal("adjudicated"),
+  architectureEpoch: ArchitectureEpoch,
+  maturity: v.picklist(["candidate", "capability", "regression", "retired"]),
+  datasetId: MachineReference,
+  accessPolicyId: MachineReference,
+  opaqueScenarioRef: MachineReference,
+  definitionHash: Sha256,
+  admittedBy: NonEmptyReferences,
+  admittedAt: Timestamp,
+  admissionEvidenceRefs: NonEmptyReferences,
+  retirement: v.optional(Retirement),
+});
+
 export const EvaluationScenarioSchema = v.pipe(
-  v.strictObject({
-    schemaVersion: v.literal(1),
-    scenarioId: v.pipe(
-      NonBlankString,
-      v.regex(/^[a-z0-9][a-z0-9._:-]*$/u, "Expected a stable lowercase scenario identifier"),
-      v.check((identifier) => !/\d{10,}/u.test(identifier), "Expected no compact phone-like digit sequence"),
-    ),
-    title: MachineReference,
-    lifecycle: v.picklist(["draft", "adjudicated"]),
-    architectureEpoch: requiredOrUnresolved(ArchitectureEpoch),
-    maturity: v.picklist(["draft", "candidate", "capability", "regression", "retired"]),
-    holdoutMemberships: v.array(HoldoutMembership),
-    owners: requiredOrUnresolved(NonEmptyReferences),
-    slices: NonEmptyReferences,
-    provenance: requiredOrUnresolved(Provenance),
-    fixture: requiredOrUnresolved(Fixture),
-    expectations: Expectations,
-    scorers: requiredOrUnresolved(v.pipe(v.array(Scorer), v.nonEmpty())),
-    retirement: v.optional(Retirement),
-  }),
+  v.variant("visibility", [RepositoryScenario, ProtectedHoldoutScenario]),
   v.check(
     (scenario) =>
+      scenario.visibility === "protected_holdout" ||
       scenario.lifecycle === "draft" ||
       ![
         scenario.architectureEpoch,
@@ -137,11 +159,14 @@ export const EvaluationScenarioSchema = v.pipe(
     "Only a draft Evaluation Scenario may contain explicitly unresolved fields",
   ),
   v.check(
-    (scenario) => (scenario.lifecycle === "draft") === (scenario.maturity === "draft"),
+    (scenario) =>
+      scenario.visibility === "protected_holdout" ||
+      (scenario.lifecycle === "draft") === (scenario.maturity === "draft"),
     "Draft lifecycle and draft maturity must be declared together; Candidate requires complete adjudication",
   ),
   v.check(
     (scenario) => {
+      if (scenario.visibility === "protected_holdout") return true;
       const { allowedOutcomes, prohibitedOutcomes } = scenario.expectations;
       return (
         isUnresolved(allowedOutcomes) ||
@@ -235,6 +260,7 @@ export const serializeEvaluationScenarioEvidence = (evidence: EvaluationScenario
   `${JSON.stringify(canonicalValue(evidence), null, 2)}\n`;
 
 const validateFixture = (scenario: EvaluationScenario, repositoryRoot: string): string | undefined => {
+  if (scenario.visibility === "protected_holdout") return undefined;
   if (isUnresolved(scenario.fixture)) return undefined;
   let root: string;
   let fixturePath: string;
@@ -300,6 +326,23 @@ const validateCanonCommit = (scenario: EvaluationScenario, repositoryRoot: strin
     });
   } catch {
     throw new Error(`Evaluation Scenario canon commit is not reachable from designated canon ref ${canonRef}: ${commit}`);
+  }
+  if (scenario.retirement === undefined) return;
+  const lastValidEpoch = scenario.retirement.lastValidEpoch;
+  const resolvedLastValidEpoch = resolveGitCommit(repositoryRoot, lastValidEpoch, "retirement last valid epoch");
+  if (resolvedLastValidEpoch !== lastValidEpoch) {
+    throw new Error(`Evaluation Scenario retirement last valid epoch did not resolve uniquely: ${lastValidEpoch}`);
+  }
+  try {
+    execFileSync(
+      "git",
+      ["-C", realpathSync(repositoryRoot), "merge-base", "--is-ancestor", lastValidEpoch, resolvedCanonRef],
+      { stdio: "ignore" },
+    );
+  } catch {
+    throw new Error(
+      `Evaluation Scenario retirement last valid epoch is not reachable from designated canon ref ${canonRef}: ${lastValidEpoch}`,
+    );
   }
 };
 

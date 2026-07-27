@@ -3,7 +3,8 @@
 > This is the **code taxonomy** — which package owns what. For the definitive
 > description of how the agentic system _works_ (the Brain, Speakers, the Graph, the
 > Digest, the control loop), see [`SYSTEM-ARCHITECTURE.md`](./SYSTEM-ARCHITECTURE.md).
-> For the detailed path from Source Archives through knowledge-ready Attention and Work,
+> For the detailed path from Source Archives or validated internal inputs through
+> source-prepared Attention and Work,
 > see [`INFORMATION-TO-ACCOUNTABILITY.md`](./INFORMATION-TO-ACCOUNTABILITY.md).
 
 The ratified taxonomy (#117 → #131, extended by #372): three packages, three apps, one arrow

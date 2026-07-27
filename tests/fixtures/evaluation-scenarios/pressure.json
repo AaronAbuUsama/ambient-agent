@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
   "scenarioId": "scenario-production-pressure",
+  "visibility": "repository",
   "title": "title:unsafe-production-derived-artifact",
   "lifecycle": "draft",
   "architectureEpoch": {
     "unresolved": "gap:pending-owner-adjudication"
   },
   "maturity": "draft",
-  "holdoutMemberships": [],
   "owners": {
     "unresolved": "gap:pending-owner-adjudication"
   },

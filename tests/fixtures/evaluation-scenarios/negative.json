@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "scenarioId": "scenario-synthetic-negative",
+  "visibility": "repository",
   "title": "title:malformed-scenario-missing-epoch-owner",
   "lifecycle": "adjudicated",
   "maturity": "candidate",
-  "holdoutMemberships": [],
   "slices": ["validation:missing-required"],
   "provenance": {
     "kind": "designed_boundary",

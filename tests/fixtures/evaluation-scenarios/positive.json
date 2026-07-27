@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "scenarioId": "scenario-synthetic-positive",
+  "visibility": "repository",
   "title": "title:synthetic-issue-admission-owner-preserved",
   "lifecycle": "adjudicated",
   "architectureEpoch": {
@@ -9,7 +10,6 @@
     "schemaVersion": 1
   },
   "maturity": "capability",
-  "holdoutMemberships": [],
   "owners": ["component:happening-admission"],
   "slices": ["source:github", "outcome:admitted"],
   "provenance": {

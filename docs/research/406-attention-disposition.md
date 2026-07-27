@@ -119,11 +119,21 @@ CREATE TABLE brain_attention_items (
   attention_id TEXT PRIMARY KEY,
   source_kind TEXT NOT NULL
     CHECK (source_kind IN ('happenings', 'internal_input')),
-  source_key TEXT NOT NULL UNIQUE,
-  source_refs_json TEXT NOT NULL,
+  internal_input_id TEXT UNIQUE,
   evidence_ids_json TEXT NOT NULL,
   readiness_json TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  CHECK (
+    (source_kind = 'happenings' AND internal_input_id IS NULL)
+    OR
+    (source_kind = 'internal_input' AND internal_input_id IS NOT NULL)
+  )
+) STRICT;
+
+CREATE TABLE brain_attention_happenings (
+  attention_id TEXT NOT NULL REFERENCES brain_attention_items(attention_id),
+  happening_id TEXT NOT NULL UNIQUE,
+  PRIMARY KEY (attention_id, happening_id)
 ) STRICT;
 
 CREATE TABLE brain_attention_claims (
@@ -139,13 +149,25 @@ CREATE TABLE brain_attention_transitions (
   attention_id TEXT NOT NULL REFERENCES brain_attention_items(attention_id),
   claim_id TEXT REFERENCES brain_attention_claims(claim_id),
   transition_kind TEXT NOT NULL
-    CHECK (transition_kind IN ('admitted', 'reopened', 'enriched', 'disposition')),
+    CHECK (
+      transition_kind IN (
+        'admitted',
+        'reopened',
+        'enriched',
+        'successor_closed',
+        'disposition'
+      )
+    ),
   from_state TEXT
     CHECK (from_state IS NULL OR from_state IN ('pending', 'held', 'transferred', 'resolved')),
   to_state TEXT NOT NULL
     CHECK (to_state IN ('pending', 'held', 'transferred', 'resolved')),
   transition_json TEXT NOT NULL,
   recorded_at TEXT NOT NULL,
+  CHECK (
+    transition_kind = 'disposition'
+    OR json_extract(transition_json, '$.kind') = transition_kind
+  ),
   CHECK (
     (
       claim_id IS NULL
@@ -169,10 +191,18 @@ CREATE TABLE brain_attention_transitions (
     )
     OR
     (
+      claim_id IS NULL
+      AND transition_kind = 'successor_closed'
+      AND from_state = 'transferred'
+      AND to_state = 'resolved'
+    )
+    OR
+    (
       claim_id IS NOT NULL
       AND transition_kind = 'disposition'
       AND from_state = 'pending'
       AND to_state IN ('held', 'transferred', 'resolved')
+      AND json_extract(transition_json, '$.kind') = to_state
     )
   )
 ) STRICT;
@@ -182,18 +212,20 @@ CREATE UNIQUE INDEX one_disposition_per_attention_claim
   WHERE claim_id IS NOT NULL;
 ```
 
-Trusted admission validates that `source_refs_json` contains either a non-empty list
-of real Happening ids or exactly one durable internal-input id, according to
-`source_kind`; `source_key` is the deterministic idempotency key for that source
-obligation. Create the identity row and initial `pending` transition transactionally
-when an accountability-bearing input is admitted or normalized. Each Brain Batch
-appends a claim; its disposition appends one claim-linked transition. Reopening after
-a due wake or failed successor appends `held/transferred -> pending`, and a later
-Batch appends another claim. No earlier `batch_id` or disposition is cleared or
-overwritten. Admission is only `undefined -> pending`; enrichment is state-preserving,
+Trusted external admission inserts the Attention identity, one or more
+`brain_attention_happenings` rows, and the initial `pending` transition in one
+transaction. The unique `happening_id` constraint prevents any Happening from belonging
+to a second Attention Item, including overlapping aggregates. Internal admission instead
+requires one unique durable `internal_input_id`; its readiness payload records the input
+schema and validation-policy versions, never fabricated Graph projection metadata.
+
+Each Brain Batch appends a claim; its disposition appends one claim-linked transition.
+Reopening after a due wake or failed successor appends `held/transferred -> pending`,
+and a later Batch appends another claim. No earlier `batch_id` or disposition is cleared
+or overwritten. Admission is only `undefined -> pending`; enrichment is state-preserving,
 and material enrichment that reopens responsibility appends a separate
-`held/transferred/resolved -> pending` transition. The current state is a
-deterministic projection over the transition log.
+`held/transferred/resolved -> pending` transition. The current state is a deterministic
+projection over the transition log.
 
 Trusted code validates disposition references:
 
@@ -214,6 +246,11 @@ already used by settlement: a local/completed Effect, an accepted asynchronous
 Effect, or an accepted Work Item. `stay_silent` is explicitly rejected as a
 transfer target because it has no downstream accountability owner. A Scheduled
 Wake may be attached to `held`, but cannot discharge attention by itself.
+
+Trusted successor closure verifies that the Effect or Work Item matches the target recorded
+by the transfer and that its observed result matches the exact completion outcome bound in
+advance. It appends `successor_closed` and closes Work or records the accepted Effect outcome
+in one transaction. Ambiguous or mismatched results append `reopened` for Brain judgement.
 
 Settlement becomes coverage, not counting:
 

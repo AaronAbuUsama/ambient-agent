@@ -160,7 +160,7 @@ responsibilities, each detailed later:
 - **Owns the Graph** (§5): it is the single authority over the ontology. It appends
   confirm/overrule/merge rulings and reads the resulting Belief Projection; it never
   rewrites another author's Attestation.
-- **Runs the control loop** (§4): its inbox receives knowledge-ready Attention, Intents,
+- **Runs the control loop** (§4): its inbox receives source-prepared Attention, Intents,
   outcomes, and wakes; the Brain dispositions each accountable input and pushes down.
 - **Runs on two clocks** (§6): reactive (events/intents) and proactive (its own cron
   floor + event wakes + self-scheduling). It can wake itself.
@@ -237,19 +237,21 @@ sources cannot answer: **who is who across platforms, what connects to what, the
 facts no external system records, and the permanent evidence trail behind every belief.**
 Detailed in §5.
 
-### 3.7 Knowledge-ready Attention (the accountability ledger)
+### 3.7 Source-prepared Attention (the accountability ledger)
 
-An **Attention Item** is a durable Brain obligation to disposition one or more Happenings
-after their minimum knowledge floor exists. It references immutable source evidence plus
-the Attestations or Projection version that established readiness; it does not copy the
+An **Attention Item** is a durable, source-prepared Brain obligation. An external-source item
+dispositions one or more Happenings after their minimum knowledge floor exists and references
+immutable evidence plus the Attestations, Projection version, or bounded terminal
+projection-failure fact that established readiness. An already meaningful ownerless internal
+signal instead admits an internal-source item referencing its durable input record, schema,
+and validation policy; it is not fabricated into a Happening. Attention never copies the
 Graph. Pending Attention is claimable through the Brain inbox. Held, transferred, and
 resolved Attention remains durable as accountability history. Claims and state transitions
 are appended, never cleared or overwritten; the current state is a projection over that
-history. A source policy that exhausts its projection budget establishes a prepared
-readiness-failure fact and admits the same Happening's Attention Item for explicit handling.
+history.
 
-The Graph answers “what do we currently believe?” Attention answers “what occurrence are
-we still responsible for judging?” A Brain Batch cannot settle until every claimed
+The Graph answers “what do we currently believe?” Attention answers “what prepared source
+are we still responsible for judging?” A Brain Batch cannot settle until every claimed
 Attention Item is held, transferred to a named durable successor, or explicitly resolved.
 `stay_silent` settles speech only. Detailed in
 [`INFORMATION-TO-ACCOUNTABILITY.md`](./INFORMATION-TO-ACCOUNTABILITY.md).
@@ -285,7 +287,7 @@ non-blocking and cheap.
 
 ---
 
-## 4. The control loop — knowledge-ready Attention up, decisions down
+## 4. The control loop — source-prepared Attention up, decisions down
 
 The heart of the system is a single accountability loop. External Happenings take an
 ordered knowledge-first path before they enter it.
@@ -295,7 +297,7 @@ flowchart TB
   subgraph external["External information"]
     SRC["Source Archive<br/>immutable Happening"]
     FLOOR["Minimum knowledge floor<br/>deterministic facts + semantic projection<br/>or bounded projection-failure evidence"]
-  ATTENTION["Knowledge-ready Attention Item"]
+  ATTENTION["External-source Attention Item"]
     SRC --> FLOOR --> ATTENTION
   end
 
@@ -306,10 +308,12 @@ flowchart TB
     I4["Proactive Sweep"]
     CORRELATE["Correlate to existing<br/>Attention · Work · Effect · Directive"]
     OWNED["Owner-correlated internal input"]
+    INTERNAL_ATTENTION["Internal-source Attention Item<br/>durable input + validation evidence"]
     I1 & I2 & I3 --> CORRELATE --> OWNED
+    CORRELATE -->|"no durable owner"| INTERNAL_ATTENTION
   end
 
-  ATTENTION & OWNED --> INBOX{{"Brain inbox<br/>coalesced · non-blocking"}}
+  ATTENTION & INTERNAL_ATTENTION & OWNED --> INBOX{{"Brain inbox<br/>coalesced · non-blocking"}}
   I4 -->|"claim trigger only"| INBOX
   INBOX --> DECIDE["Brain judges<br/>reads live Graph + exact evidence"]
 
@@ -331,9 +335,11 @@ archives retain what happened, deterministic ingesters and the Scribe establish 
   does not mint a second obligation. Intents, outcomes, and wakes already
   carry defined meaning, but must correlate to their existing Attention, Work, Effect, or
   Directive owner before they are claimed. A source-derived Speaker Intent is context for
-  the originating Attention Item, not a second obligation. A signal with no durable owner
-  first admits Attention. A Proactive Sweep only triggers a claim and is never a Batch
-  obligation of its own.
+  the originating Attention Item, not a second obligation. If no durable owner exists and
+  judgement is still owed, trusted admission validates the durable internal-input record
+  against its schema and policy and admits internal-source Attention without inventing a
+  Happening or Graph projection. A Proactive Sweep only triggers a claim and is never a
+  Batch obligation of its own.
 
 **Why non-blocking.** The up-inbox is coalesced (§9) and the Brain reasons off every hot
 path. A person waiting for a reply waits on their Speaker, not the Brain. A Speaker
@@ -769,11 +775,11 @@ meant to be. "Distance" is descriptive, not a plan.
 | **Graph** | Append-only Attestation log + derived Belief Projection | Built in `packages/engine/src/graph/store.ts`: immutable author-attributed Attestations, non-empty Evidence Sets, deterministic projection, deduplication, confidence handling, and evidence-bounded Brain rulings. Speaker and Specialist Graph tools are read-only | **None for the accepted persistence and ruling floor** |
 | **Deterministic ingestion** | Explicit structured source facts become anchored Attestations before Attention admission | Deterministic configuration seeding exists, and provider adapters already normalize some records, but GitHub and future structured Happenings do not pass through one declared fact/readiness contract | **Add source-specific deterministic projectors and readiness policies** |
 | **Scribe** | One global asynchronous semantic projector; routine proposals update Graph without mandatory Brain judgement; bounded terminal failure becomes prepared Attention evidence | The durable global inbox, chronological cross-Surface batching, bounded stateless attempts, retry/replay, and evidence-backed Attestations exist in `packages/engine/src/scribe/*`. Each drain makes three attempts, but a failed incomplete Batch can be claimed by a later drain without a cumulative terminal readiness state. Today every successful proposal delta is also admitted to the Brain, and Historical Replay waits for the owning Brain Batch to settle | **Add cumulative bounded-failure escalation, decouple routine projection from Brain wake, and gate only decision-worthy semantic results or terminal readiness failures into Attention** |
-| **Attention** | Durable knowledge-ready obligation with append-only claims and pending, held, transferred, and resolved transition history | Not built. Current source input rows provide pending queue membership and immutable Brain Batch claim membership, but there is no per-input disposition record or permanent claim/transition history. Batch settlement proves that some Effect or Specialist launch completed, not that every claimed input was covered; `stay_silent` qualifies | **Add the thin per-input Attention identity, claim/transition history, current-state projection, and settlement coverage invariant** |
+| **Attention** | Durable source-prepared obligation over external Happenings or a validated ownerless internal-input record, with append-only claims and pending, held, transferred, and resolved transition history | Not built. Current source input rows provide pending queue membership and immutable Brain Batch claim membership, but there is no per-input disposition record or permanent claim/transition history. Batch settlement proves that some Effect or Specialist launch completed, not that every claimed input was covered; `stay_silent` qualifies | **Add the thin per-input Attention identity, source/readiness union, claim/transition history, current-state projection, and settlement coverage invariant** |
 | **Digest** | Versioned live Graph projection; local pull + bounded Brain-selected seeds over one channel | `graph/digest.ts` computes the bounded no-cache projection used by Speakers, Specialists, and fresh Scribe attempts. Directive seed composition is implemented on the reset line described by `STATUS.md` | **No information-to-accountability change required** |
 | **Speaker** | Dumb Surface mouth: converse, escalate Intent, execute Directive speech | Built: local conversation/participation, Intent escalation, Directive-only Saying, and read-only Graph access. Direct work launch and ontology authority are absent | **None for this boundary** |
-| **Brain** | Judge knowledge-ready inputs, rule on belief, disposition Attention, own Work, choose speech | The global actor and crash-stable Brain Batch exist. It currently claims mixed Intents, Knowledge Deltas, Specialist Results, raw GitHub events, and wakes; its tools include broad proposal operations alongside rulings. A separate runtime wedge tracked by #400 may also prevent progress even when durable input is pending | **Narrow ordinary Graph mutation to rulings; replace raw/delta peer inputs with Attention; repair #400 independently** |
-| **Control loop** | Source truth → knowledge floor → Attention → Brain disposition → Work/Effects → outcome | Intent, Effect, Directive, Scheduled Wake, GitHub ingress, and workflow-result paths are durable. External information currently bypasses the accepted knowledge-first ordering: raw GitHub events and later Scribe deltas are peer Brain inputs | **Rewire admission around one knowledge-ready accountability path** |
+| **Brain** | Judge source-prepared inputs, rule on belief, disposition Attention, own Work, choose speech | The global actor and crash-stable Brain Batch exist. It currently claims mixed Intents, Knowledge Deltas, Specialist Results, raw GitHub events, and wakes; its tools include broad proposal operations alongside rulings. A separate runtime wedge tracked by #400 may also prevent progress even when durable input is pending | **Narrow ordinary Graph mutation to rulings; replace raw/delta peer inputs with Attention; repair #400 independently** |
+| **Control loop** | External source truth → knowledge floor → Attention, or ownerless internal input → validation → Attention; then Brain disposition → Work/Effects → outcome | Intent, Effect, Directive, Scheduled Wake, GitHub ingress, and workflow-result paths are durable. External information currently bypasses the accepted knowledge-first ordering: raw GitHub events and later Scribe deltas are peer Brain inputs | **Rewire admission around one source-prepared accountability path** |
 | **Two clocks** | Reactive Attention/outcome clock + proactive scan of Graph, Attention, and Work Open Loops | Scheduled Wakes and coalesced Proactive Sweeps enter the existing Brain inbox durably. The proactive prompt currently inspects Graph Commitments; application-owned Attention and generic Work are not yet available to it | **Extend the Open Loop read once Attention and Work exist** |
 | **Work / delegation** | Stable Brain Work Item owns an operational objective across effects and zero, one, or many execution attempts | `brain_specialist_launches` and result rows durably own one Specialist execution attempt, recovery, and return. Brain Effects durably own typed consequences. There is no generic Work responsibility identity above those mechanisms | **Add a thin Work Item ledger and link existing execution owners; do not rebuild them** |
 | **Surfaces / delivery** | Stable Surface registry, active binding, Directive, and durable delivery outcome | Configured Surfaces, known-Person DM resolution, delivery attempt, provider/archive evidence, and delivered/failed/Uncertain outcomes exist | **Admit relevant Directive Outcomes back into accountability when follow-up judgement is owed** |

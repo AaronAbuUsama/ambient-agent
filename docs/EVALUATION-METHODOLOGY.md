@@ -84,7 +84,7 @@ model transcript.
 | **Deterministic ingester**              | explicit provider facts become anchored Attestations before Attention                                         | Attestation log and Evidence Sets                                                | Deterministic only                                                                       |
 | **Scribe**                              | ambiguous evidence becomes bounded, attributable proposals without invented evidence or operational authority | Sanitized evidence, appended Attestations, attempt record                        | Deterministic provenance checks; model/human scoring for semantic support                |
 | **Graph**                               | append-only authorship, evidence deduplication, deterministic Belief Projection and rulings                   | Attestation log plus rebuilt projection                                          | Deterministic; semantic adjudication only for disputed claim meaning                     |
-| **Attention**                           | exactly one knowledge-ready obligation and explicit held/transferred/resolved disposition                     | Attention ledger and Brain Batch membership                                      | Deterministic hard gate                                                                  |
+| **Attention**                           | exactly one source-prepared obligation and explicit held/transferred/resolved disposition                     | Attention ledger and Brain Batch membership                                      | Deterministic hard gate                                                                  |
 | **Brain**                               | evidence-bounded judgement, correct disposition, chosen consequence and responsibility                        | Attention, Batch, rulings, Effects, Work; transcript only as supporting evidence | Deterministic validity gates plus calibrated model/human dimensions                      |
 | **Work and Effects**                    | stable responsibility, accepted execution, recovery, typed outcome, closure or re-admission                   | Work/Effect ledgers, workflow/provider receipts, outcome admission               | Deterministic lifecycle gates; semantic outcome scoring where ambiguity remains          |
 | **Surface Delivery**                    | authorized target, attempt, delivered/failed/Uncertain, provider and archive evidence                         | Surface Delivery plus provider/archive readback                                  | Deterministic hard gate                                                                  |
@@ -125,8 +125,8 @@ type ScenarioLifecycle =
         reason: string;
         lastValidEpoch: string;
         replacementScenarioIds: string[];
-        adjudicatedBy: string[];
-        adjudicationEvidenceRefs: string[];
+        adjudicatedBy: [string, ...string[]];
+        adjudicationEvidenceRefs: [string, ...string[]];
       };
     };
 
@@ -170,8 +170,9 @@ type EvaluationScenarioManifest = EvaluationScenarioManifestBase &
         accessPolicyId: string;
         opaqueScenarioRef: string;
         definitionHash: string;
-        admittedBy: string[];
+        admittedBy: [string, ...string[]];
         admittedAt: string;
+        admissionEvidenceRefs: [string, ...string[]];
       }
   );
 ```

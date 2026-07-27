@@ -37,13 +37,13 @@ const cliOutput = (): { output: CliOutput; stdout: () => string; stderr: () => s
 };
 
 describe("Evaluation Scenario repository artifacts", () => {
-  it("normalizes a valid public scenario without claiming restricted holdout membership", async () => {
+  it("keeps repository definitions separate from opaque protected holdout manifests", async () => {
     const positive = (await fixture("positive")) as Record<string, unknown>;
     const positiveFixture = positive.fixture as Record<string, unknown>;
     const evidence = validateEvaluationScenario(positive);
 
     expect(evidence.normalizedScenario.maturity).toBe("capability");
-    expect(evidence.normalizedScenario.holdoutMemberships).toHaveLength(0);
+    expect(evidence.normalizedScenario.visibility).toBe("repository");
     expect(evidence.fixtureDigest).toBe(
       "sha256:5a3beca1a771070a4c05faca73fcef5c87584c7c400de10c13ba7256e9fa16b9",
     );
@@ -173,32 +173,47 @@ describe("Evaluation Scenario repository artifacts", () => {
         { repositoryRoot },
       ),
     ).toThrow("fixture must be sanitized JSON");
-    const syntheticMembership = {
+    const protectedManifest = {
+      schemaVersion: 1,
+      scenarioId: "scenario-synthetic-protected",
+      visibility: "protected_holdout",
+      lifecycle: "adjudicated",
+      architectureEpoch: evidence.normalizedScenario.architectureEpoch,
+      maturity: "capability",
       datasetId: "dataset:synthetic-membership-shape",
       accessPolicyId: "policy:synthetic-access-policy",
+      opaqueScenarioRef: "scenario-ref:synthetic-protected",
+      definitionHash: "a".repeat(64),
       admittedBy: ["actor:evaluation-owner"],
       admittedAt: "2026-07-26T00:00:00Z",
+      admissionEvidenceRefs: ["review:synthetic-holdout-admission"],
     };
-    const memberEvidence = validateEvaluationScenario({
-      ...evidence.normalizedScenario,
-      holdoutMemberships: [syntheticMembership],
-    });
+    const memberEvidence = validateEvaluationScenario(protectedManifest);
     expect(memberEvidence.normalizedScenario.maturity).toBe("capability");
-    expect(memberEvidence.normalizedScenario.holdoutMemberships[0]?.accessPolicyId).toBe(
-      "policy:synthetic-access-policy",
-    );
+    expect(memberEvidence.normalizedScenario.visibility).toBe("protected_holdout");
+    expect(memberEvidence.fixtureDigest).toBeUndefined();
+    expect("fixture" in memberEvidence.normalizedScenario).toBe(false);
     expect(() =>
       validateEvaluationScenario({
         ...evidence.normalizedScenario,
-        holdoutMemberships: [{ ...syntheticMembership, accessPolicyId: "" }],
+        holdoutMemberships: [protectedManifest],
+      }),
+    ).toThrow("Invalid Evaluation Scenario");
+    expect(() =>
+      validateEvaluationScenario({
+        ...protectedManifest,
+        accessPolicyId: "",
       }),
     ).toThrow("accessPolicyId");
     expect(() =>
       validateEvaluationScenario({
-        ...evidence.normalizedScenario,
-        holdoutMemberships: [{ ...syntheticMembership, admittedAt: "2026-02-30T00:00:00Z" }],
+        ...protectedManifest,
+        admittedAt: "2026-02-30T00:00:00Z",
       }),
     ).toThrow("real calendar instant");
+    const missingAdmissionEvidence = { ...protectedManifest } as Record<string, unknown>;
+    delete missingAdmissionEvidence.admissionEvidenceRefs;
+    expect(() => validateEvaluationScenario(missingAdmissionEvidence)).toThrow("admissionEvidenceRefs");
     expect(() =>
       validateEvaluationScenario({
         ...evidence.normalizedScenario,
@@ -225,7 +240,7 @@ describe("Evaluation Scenario repository artifacts", () => {
     ).toThrow("canon commit does not resolve");
     expect(evidence.evidenceId).toContain(evidence.scenarioId);
     expect(evidence.evidenceId).toBe(
-      "evaluation-scenario-validation:v1:scenario-synthetic-positive:sha256:4d33626bafbcf9795a91bd9983ab72c763fe93ceda61332ec9dc1d6c7b2698a9",
+      "evaluation-scenario-validation:v1:scenario-synthetic-positive:sha256:e2ba6c7950430af979fc585b839ecf1178dfd2b9e99233641ae1616fa5269af9",
     );
     expect(serializeEvaluationScenarioEvidence(evidence)).toContain(evidence.evidenceId);
   });
@@ -303,10 +318,33 @@ describe("Evaluation Scenario repository artifacts", () => {
     expect(() => validateEvaluationScenario({ ...valid, maturity: "retired" })).toThrow(
       "Retired maturity requires retirement details",
     );
+    const retirement = {
+      retiredAt: "2026-07-27T00:00:00Z",
+      reason: "reason:architecture-epoch-replaced",
+      lastValidEpoch: "8c157c3d469faaff2c49cfd6acd2de845a474cb1",
+      replacementScenarioIds: ["scenario:synthetic-replacement"],
+      adjudicatedBy: ["actor:evaluation-owner"],
+      adjudicationEvidenceRefs: ["review:synthetic-retirement"],
+    };
+    expect(validateEvaluationScenario({ ...valid, maturity: "retired", retirement }).normalizedScenario.maturity).toBe(
+      "retired",
+    );
+    const incompleteRetirement = { ...retirement } as Record<string, unknown>;
+    delete incompleteRetirement.adjudicationEvidenceRefs;
+    expect(() =>
+      validateEvaluationScenario({ ...valid, maturity: "retired", retirement: incompleteRetirement }),
+    ).toThrow("adjudicationEvidenceRefs");
     expect(() =>
       validateEvaluationScenario({
         ...valid,
-        retirement: { reason: "reason:not-retired", replacementScenarioIds: [] },
+        maturity: "retired",
+        retirement: { ...retirement, lastValidEpoch: "f".repeat(40) },
+      }),
+    ).toThrow("retirement last valid epoch does not resolve");
+    expect(() =>
+      validateEvaluationScenario({
+        ...valid,
+        retirement,
       }),
     ).toThrow("other maturities prohibit them");
     expect(() => validateEvaluationScenario({ ...valid, lifecycle: "draft" })).toThrow(
