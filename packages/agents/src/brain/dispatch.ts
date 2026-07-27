@@ -1,4 +1,4 @@
-import { dispatch, observe, type DispatchReceipt } from "@flue/runtime";
+import { dispatch, observe, type DispatchReceipt, type FlueObservation } from "@flue/runtime";
 import { Effect, Semaphore } from "effect";
 import type { Logger } from "pino";
 
@@ -36,7 +36,9 @@ const dispatchScopeFor = (inbox: BrainInbox): DispatchScope => {
 const brainDispatches = createDispatchCorrelator<{ readonly batchId: string }>({
   requireTerminalAcknowledgement: true,
 });
-export const observeBrainDispatch = brainDispatches.ingest;
+export const observeBrainDispatch = (observation: FlueObservation): void => {
+  if (observation.instanceId === "global") brainDispatches.ingest(observation);
+};
 observe(observeBrainDispatch);
 
 export const wakeBrain = async (

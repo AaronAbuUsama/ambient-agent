@@ -72,6 +72,12 @@ const operation = (dispatchId: string, isError = false): FlueObservation =>
     ...(isError ? { error: new Error("provider terminal failure") } : {}),
   }) as FlueObservation;
 
+const speakerOperation = (dispatchId: string): FlueObservation =>
+  ({
+    ...operation(dispatchId),
+    instanceId: `speaker:${dispatchId}`,
+  }) as FlueObservation;
+
 const recoverySettlement = (dispatchId: string): FlueObservation =>
   ({
     v: 3,
@@ -147,6 +153,62 @@ describe("Brain Batch dispatch recovery", () => {
     ]);
     expect(inbox.dispatchAttempts(retried.id)[1]).not.toHaveProperty("nextRetryAt");
     expect(inbox.dispatchRecovery()).toEqual([]);
+    await recovery.stop();
+    inbox.close();
+  });
+
+  it("retains an early Brain terminal through unrelated Speaker pressure", async () => {
+    const now = () => "2026-07-26T00:30:00.000Z";
+    const inbox = openInbox(fixture(), now, () => 0);
+    const intent = admit(inbox);
+    let deliveryStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      deliveryStarted = resolve;
+    });
+    let releaseReceipt!: () => void;
+    const receiptReleased = new Promise<void>((resolve) => {
+      releaseReceipt = resolve;
+    });
+    const recovery = configureBrainDispatchRecovery(inbox, {
+      logger,
+      setTimer: () => ({ unref: () => undefined }) as unknown as ReturnType<typeof setTimeout>,
+      clearTimer: () => undefined,
+    });
+    recovery.activate();
+    const waking = wakeBrain(inbox, async () => {
+      deliveryStarted();
+      await receiptReleased;
+      return { dispatchId: "dispatch:brain:early", acceptedAt: now() };
+    });
+    await started;
+
+    observeBrainDispatch(operation("dispatch:brain:early"));
+    for (let index = 0; index < 101; index++) {
+      observeBrainDispatch(speakerOperation(`dispatch:speaker:${index}`));
+    }
+    releaseReceipt();
+    const first = await waking;
+
+    expect(inbox.dispatchAttempts(first!.id)).toMatchObject([
+      { dispatchId: "dispatch:brain:early", terminalOutcome: "completed", retryCount: 0 },
+    ]);
+    expect(inbox.claimBatch()).toMatchObject({
+      id: first!.id,
+      intents: [intent],
+      retryCount: 1,
+    });
+    expect(inbox.claimBatch()).not.toHaveProperty("dispatch");
+
+    const retry = await wakeBrain(
+      inbox,
+      async () => ({ dispatchId: "dispatch:brain:retry", acceptedAt: now() }),
+      () => Date.parse(now()),
+    );
+    expect(retry).toMatchObject({
+      id: first!.id,
+      intents: [intent],
+      dispatch: { dispatchId: "dispatch:brain:retry" },
+    });
     await recovery.stop();
     inbox.close();
   });
@@ -317,6 +379,33 @@ describe("Brain Batch dispatch recovery", () => {
     await recovery.stop();
     historicalReplay.close();
     primary.close();
+  });
+
+  it("keeps readiness gates independent across application databases", async () => {
+    const now = () => "2026-07-26T01:55:00.000Z";
+    const inactiveInbox = openInbox(fixture(), now);
+    const activeInbox = openInbox(fixture(), now);
+    admit(inactiveInbox);
+    admit(activeInbox);
+    const inactiveRecovery = configureBrainDispatchRecovery(inactiveInbox, { logger });
+    const activeRecovery = configureBrainDispatchRecovery(activeInbox, { logger });
+    activeRecovery.activate();
+
+    await expect(
+      wakeBrain(activeInbox, async () => ({ dispatchId: "dispatch:independent", acceptedAt: now() })),
+    ).resolves.toMatchObject({
+      dispatch: { dispatchId: "dispatch:independent" },
+    });
+    await expect(
+      wakeBrain(inactiveInbox, async () => {
+        throw new Error("The inactive database must retain its own closed readiness gate.");
+      }),
+    ).resolves.toBeUndefined();
+
+    await activeRecovery.stop();
+    await inactiveRecovery.stop();
+    activeInbox.close();
+    inactiveInbox.close();
   });
 
   it("ignores a stale terminal writer after a replacement dispatch is active", async () => {
