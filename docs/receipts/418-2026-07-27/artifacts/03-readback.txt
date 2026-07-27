@@ -1,0 +1,43 @@
+Nonce absence before supervised transition:
+SELECT count(*) FROM whatsapp_terminal_receipts;
+0
+
+Post-recovery durable row:
+correlation_id = e47d616d-6b26-4d75-bccf-712bba39adc3
+invocation_id  = b7b8b939-6d04-474a-9424-84500296b136
+phase          = logged_out
+reason         = logged_out_remote
+observed_at    = 2026-07-27T14:48:07.948Z
+acknowledged_at= 2026-07-27T14:52:19.659Z
+announced_at   = 2026-07-27T14:53:43.499Z
+
+Application database:
+PRAGMA quick_check;
+ok
+
+Retained application counts:
+table                         backup    live
+conversation_events            1473    1473
+brain_batches                    556     696
+graph_attestations               536     536
+surface_deliveries                18      18
+whatsapp_terminal_receipts    absent       1
+
+Configuration preservation:
+live config SHA-256:
+1e10f7f6f04a4d4bd899d638e65f4557efe08d676f3f8972ab4192bbad870385
+
+pre-proof backup config SHA-256:
+1e10f7f6f04a4d4bd899d638e65f4557efe08d676f3f8972ab4192bbad870385
+
+Managed store:
+PRAGMA quick_check = ok
+managed_configuration = 1
+managed_prompt = 15
+managed_secret = 6
+
+Replacement provider store:
+927 files
+
+Backup:
+/home/abuusama/backups/issue-418-predeploy-20260727T050115Z-7b40fa4

@@ -1,0 +1,28 @@
+Structured log observation:
+- correlation occurrences in the proof window: 4
+- correlated structured agent.offline events: 1
+- correlated structured recovered agent.online events: 1
+- original PID exited status 1 after the guided repair line
+- every systemd replacement process failed closed on whatsapp.store-missing
+- repaired PID remained active and recovered a later transient connection loss
+
+Braintrust reachability:
+
+Command:
+/home/abuusama/.local/npm-global/lib/node_modules/ambient-agent/node_modules/.bin/bt status --json
+
+Result:
+{"org":null,"project":null,"profile":null,"source":null}
+
+Additional readback:
+- running process environment contains no BRAINTRUST variable names
+- managed config contains no Braintrust configuration path
+- proof-window journal contains no Braintrust event
+
+Tier 5 verdict:
+NOT PROVEN
+
+Reason:
+The signed issue contract requires structured logs and Braintrust
+corroboration. Structured logs passed; Braintrust was not configured and
+therefore emitted no observation for the run.
