@@ -3,6 +3,12 @@
 Full local mirror of <https://flueframework.com/docs> — 99 pages, fetched 2026-07-19 from each page's `index.md` variant.
 Each file's first line is an HTML comment with its source URL.
 
+The upstream [`withastro/flue`](https://github.com/withastro/flue) repository is
+Apache-2.0. Evaluation research performed 2026-07-26 also inspected source commit
+[`b814b82b2ce45dc941c77bb010140070e1bd48d5`](https://github.com/withastro/flue/commit/b814b82b2ce45dc941c77bb010140070e1bd48d5);
+see the repository's [evaluation primary-source notes](../evaluation/INDEX.md) for the
+current-source delta and non-Flue sources rather than duplicating this mirror.
+
 ## Introduction
 
 | Title | File | Source | Covers |

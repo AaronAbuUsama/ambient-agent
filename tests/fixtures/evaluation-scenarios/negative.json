@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "scenario-synthetic-negative",
+  "visibility": "repository",
+  "title": "title:malformed-scenario-missing-epoch-owner",
+  "lifecycle": "adjudicated",
+  "maturity": "candidate",
+  "slices": ["validation:missing-required"],
+  "provenance": {
+    "kind": "designed_boundary",
+    "restrictedSourceRefs": ["issue:426"],
+    "sanitizedBy": "actor:evaluation-owner",
+    "sanitizationVersion": "sanitization:v1",
+    "adjudicatedBy": ["actor:evaluation-owner"],
+    "adjudicatedAt": "2026-07-26T00:00:00Z"
+  },
+  "fixture": {
+    "ref": "tests/fixtures/evaluation-scenarios/synthetic-provider-state-v1.json",
+    "environmentVersion": "environment:synthetic-provider-v1",
+    "sha256": "5a3beca1a771070a4c05faca73fcef5c87584c7c400de10c13ba7256e9fa16b9"
+  },
+  "expectations": {
+    "requiredInvariants": ["invariant:validation-rejects-artifact"],
+    "allowedOutcomes": ["outcome:rejected"],
+    "prohibitedOutcomes": ["outcome:accepted"],
+    "semanticDimensions": []
+  },
+  "scorers": [
+    {
+      "id": "scorer:schema-validation",
+      "version": "scorer-version:v1",
+      "kind": "deterministic",
+      "owner": "component:evaluation"
+    }
+  ]
+}

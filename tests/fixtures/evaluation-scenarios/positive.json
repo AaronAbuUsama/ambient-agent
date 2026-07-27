@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "scenario-synthetic-positive",
+  "visibility": "repository",
+  "title": "title:synthetic-issue-admission-owner-preserved",
+  "lifecycle": "adjudicated",
+  "architectureEpoch": {
+    "canonCommit": "8c157c3d469faaff2c49cfd6acd2de845a474cb1",
+    "decisions": ["issue:406"],
+    "schemaVersion": 1
+  },
+  "maturity": "capability",
+  "owners": ["component:happening-admission"],
+  "slices": ["source:github", "outcome:admitted"],
+  "provenance": {
+    "kind": "designed_boundary",
+    "restrictedSourceRefs": ["issue:426"],
+    "sanitizedBy": "actor:evaluation-owner",
+    "sanitizationVersion": "sanitization:v1",
+    "adjudicatedBy": ["actor:evaluation-owner"],
+    "adjudicatedAt": "2026-07-26T00:00:00Z"
+  },
+  "fixture": {
+    "ref": "tests/fixtures/evaluation-scenarios/synthetic-provider-state-v1.json",
+    "environmentVersion": "environment:synthetic-provider-v1",
+    "sha256": "5a3beca1a771070a4c05faca73fcef5c87584c7c400de10c13ba7256e9fa16b9"
+  },
+  "expectations": {
+    "requiredInvariants": ["invariant:one-stable-source-identity-admitted"],
+    "allowedOutcomes": ["outcome:admitted"],
+    "prohibitedOutcomes": ["outcome:duplicate-admission"],
+    "semanticDimensions": []
+  },
+  "scorers": [
+    {
+      "id": "scorer:source-identity-cardinality",
+      "version": "scorer-version:v1",
+      "kind": "deterministic",
+      "owner": "component:happening-admission"
+    }
+  ]
+}

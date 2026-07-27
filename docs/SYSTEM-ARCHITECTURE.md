@@ -8,8 +8,10 @@ Read it as the single source of truth for the **conceptual** system: what the ag
 are, what the graph and the digest are, how state is owned, how work flows, and where
 the system extends. For **code layout** (which package owns what) see
 [`ARCHITECTURE.md`](./ARCHITECTURE.md); for **ratified vocabulary** see
-[`CONTEXT.md`](../CONTEXT.md). Where this document evolves a glossary term, §12 says so
-explicitly so the language stays cohesive.
+[`CONTEXT.md`](../CONTEXT.md). The detailed proof path from external information through
+knowledge, Attention, Work, and closure is in
+[`INFORMATION-TO-ACCOUNTABILITY.md`](./INFORMATION-TO-ACCOUNTABILITY.md). Where this document
+evolves a glossary term, §12 says so explicitly so the language stays cohesive.
 
 > One reading rule: most of this architecture is already realized in code, some of it is
 > designed and not yet built. The body describes the definitive system in the present
@@ -44,18 +46,23 @@ the sections that follow, answer it by returning to these.
    authority, the Brain. Knowledge is never a pile of per-chat context that has to be
    reconciled later. There is one ontology and one authority over its interpretation.
 
-5. **Everything flows up; decisions flow down.** The Brain has a single conceptual inbox.
-   External events and internal intents both flow _up_ into it. It decides, then pushes
-   context, directives, and speech _down_ into surfaces. This one loop is the routing
-   story, the delegation story, and the control story at once.
+5. **Knowledge-ready Attention flows up; decisions flow down.** External occurrences are
+   retained as Happenings, projected into the Graph, and admitted as knowledge-ready
+   Attention before the Brain judges them. Internal Intents and outcomes enter the same
+   accountability loop through their own readiness contracts. The Brain decides, then
+   pushes context, directives, and work _down_. This one loop is the routing story, the
+   delegation story, and the control story at once. A source policy's bounded terminal
+   projection failure is itself prepared evidence, so failure enters Attention instead of
+   bypassing or indefinitely delaying this path.
 
 6. **Non-blocking everywhere.** No part of the system waits on another part to make
    progress. A busy chat is fully _processed_ but not replied-to per message. Starting
    work never freezes a conversation. Slow reasoning never stalls fast reaction.
 
-7. **Nothing real is ever dropped.** Every event, intent, result, and open loop has a
-   guaranteed home. If something cannot be routed, it lands with the Brain, which is the
-   home of last resort. Silence is a decision the Brain makes, never an accident.
+7. **Nothing real is ever dropped.** Every Happening has source evidence; every accepted,
+   in-scope Happening has durable Attention; every claimed Attention Item receives
+   an explicit disposition; and every transferred responsibility has a durable successor.
+   Silence is a communication decision, never proof that responsibility disappeared.
 
 8. **Knowledge is tentative by default.** Derived meaning is recorded honestly, not
    certainly. An unresolved fact is a low-confidence memory, not a blocked write — and a
@@ -81,11 +88,18 @@ graph TD
       SPn[Speaker · …surface n]
     end
 
-    BRAIN{{The Brain<br/>the mind · the owner · the decider<br/>single up-inbox · two clocks}}
+    subgraph information[Knowledge and accountability]
+      ARCHIVE[(Source Archives<br/>immutable Happenings)]
+      INGEST[Deterministic ingesters]
+      SCRIBE[Scribe<br/>semantic projection]
+      GRAPH[(The Graph<br/>Attestations + Belief Projection)]
+      ATTN[(Attention Items<br/>pending · held · transferred · resolved)]
+    end
+
+    BRAIN{{The Brain<br/>the mind · the owner · the decider<br/>knowledge-ready inbox · two clocks}}
 
     subgraph mind[Global · slow · deliberate]
-      GRAPH[(The Graph<br/>Attestations + Belief Projection)]
-      SCRIBE[Scribe<br/>global ingestion clock]
+      WORK[(Work Items<br/>operational responsibility)]
     end
 
     subgraph backstage[Backstage team · distinct GitHub identities]
@@ -96,15 +110,24 @@ graph TD
   end
 
   PPL <-->|talk| SP1 & SP2 & SPn
-  SP1 & SP2 & SPn -->|conversation stream| SCRIBE
+  SP1 & SP2 & SPn -->|conversation stream| ARCHIVE
   SP1 & SP2 & SPn -->|intents ↑| BRAIN
-  GH -->|webhooks ↑| BRAIN
-  EXT -->|events ↑| BRAIN
+  GH -->|deliveries| ARCHIVE
+  EXT -->|events| ARCHIVE
 
+  ARCHIVE -->|explicit facts| INGEST
+  ARCHIVE -->|ambiguous meaning| SCRIBE
+  INGEST -->|anchored Attestations| GRAPH
   SCRIBE -->|appends low-confidence Attestations| GRAPH
+  ARCHIVE -->|Happening evidence| ATTN
+  GRAPH -->|minimum knowledge floor| ATTN
+  ATTN -->|pending obligations ↑| BRAIN
   BRAIN <-->|appends rulings · reads Projection| GRAPH
+  BRAIN -->|hold · transfer · resolve| ATTN
+  BRAIN -->|owns lifecycle| WORK
   BRAIN -->|context · directives · which surface ↓| SP1 & SP2 & SPn
   BRAIN -->|dispatch bounded work| CODER & REVIEWER & PLANNER
+  WORK -->|executed by| CODER & REVIEWER & PLANNER
   CODER & REVIEWER & PLANNER -->|PRs, reviews, issues| GH
   CODER & REVIEWER & PLANNER -->|results ↑| BRAIN
 ```
@@ -137,8 +160,8 @@ responsibilities, each detailed later:
 - **Owns the Graph** (§5): it is the single authority over the ontology. It appends
   confirm/overrule/merge rulings and reads the resulting Belief Projection; it never
   rewrites another author's Attestation.
-- **Runs the control loop** (§4): a single up-inbox receives every event and every
-  intent; the Brain decides and pushes down.
+- **Runs the control loop** (§4): its inbox receives source-prepared Attention, Intents,
+  outcomes, and wakes; the Brain dispositions each accountable input and pushes down.
 - **Runs on two clocks** (§6): reactive (events/intents) and proactive (its own cron
   floor + event wakes + self-scheduling). It can wake itself.
 - **Owns all work** (§7): every issue, PR, job, and task is dispatched by the Brain, which
@@ -186,17 +209,23 @@ silently moving them.
 
 ### 3.5 The Scribe (global ingestion clock)
 
-The Scribe is the coworker's **ingestion arm**: one application-owned global clock that
-turns raw conversation into proposed Attestations. It reads the fact-stream from _all_
-surfaces, forms bounded cross-surface Scribe Batches, and runs bounded concurrent stateless
-extraction attempts. Each attempt receives all required context and appends low-confidence
-claims with trusted Evidence Sets. It never speaks, holds no external identity or private
-memory, and writes _proposals_, not verdicts — the Brain owns integration and rulings.
+The Scribe is the coworker's **asynchronous semantic projector**: one application-owned
+global clock that turns ambiguous cross-surface evidence into proposed Attestations. It
+forms bounded Scribe Batches and runs bounded concurrent stateless extraction attempts.
+Each attempt receives all required context and appends low-confidence claims with trusted
+Evidence Sets. It never speaks, holds no external identity or private memory, and writes
+_proposals_, not verdicts. Deterministic ingesters append facts explicit in structured
+source records; the Brain owns authoritative rulings. Source readiness policies bound
+projection retries by a finite attempt or elapsed-time budget. Exhaustion records a
+projection-failure fact for accountable Brain disposition; it does not silently strand the
+Happening.
 
-The Scribe is the busiest, most expensive worker in the system (it runs on the raw
-message firehose and must derive meaning), which is exactly why its clock is **global**:
-live ingestion and Historical Replay form globally ordered cross-surface batches, while
-bounded concurrency prevents one slow extraction from becoming a throughput bottleneck.
+The Scribe is the busiest, most expensive knowledge worker in the system, which is exactly
+why its clock is **global** and separate from the Brain. Live ingestion and Historical
+Replay form globally ordered cross-surface batches, while bounded concurrency prevents one
+slow extraction from becoming a throughput bottleneck. A routine Scribe projection updates
+the Graph without automatically waking the Brain; Attention admission decides whether
+judgement is owed.
 
 ### 3.6 The Graph (the owned ontology)
 
@@ -208,7 +237,26 @@ sources cannot answer: **who is who across platforms, what connects to what, the
 facts no external system records, and the permanent evidence trail behind every belief.**
 Detailed in §5.
 
-### 3.7 The Digest (context projection)
+### 3.7 Source-prepared Attention (the accountability ledger)
+
+An **Attention Item** is a durable, source-prepared Brain obligation. An external-source item
+dispositions one or more Happenings after their minimum knowledge floor exists and references
+immutable evidence plus the Attestations, Projection version, or bounded terminal
+projection-failure fact that established readiness. An already meaningful ownerless internal
+signal instead admits an internal-source item referencing its durable input record, schema,
+and validation policy; it is not fabricated into a Happening. Attention never copies the
+Graph. Pending Attention is claimable through the Brain inbox. Held, transferred, and
+resolved Attention remains durable as accountability history. Claims and state transitions
+are appended, never cleared or overwritten; the current state is a projection over that
+history.
+
+The Graph answers “what do we currently believe?” Attention answers “what prepared source
+are we still responsible for judging?” A Brain Batch cannot settle until every claimed
+Attention Item is held, transferred to a named durable successor, or explicitly resolved.
+`stay_silent` settles speech only. Detailed in
+[`INFORMATION-TO-ACCOUNTABILITY.md`](./INFORMATION-TO-ACCOUNTABILITY.md).
+
+### 3.8 The Digest (context projection)
 
 The Digest is **not a stored thing and no one deliberately pushes it by default** — it is a
 live read-projection of the Graph, computed fresh for a Speaker turn from the identities in
@@ -218,7 +266,7 @@ trusted code recomputes and merges them through the same projector and `graphCon
 Detailed in §5.4 — the default pull and the Brain's push are one mechanism at two intensities,
 not a cached second payload.
 
-### 3.8 Specialists and Bounded Workflows (the backstage team)
+### 3.9 Specialists and Bounded Workflows (the backstage team)
 
 Durable work runs in **Bounded Workflows** — finite, autonomous units of work with
 validated input, their own run record, and a terminal result. A **Specialist** is the
@@ -228,7 +276,7 @@ purpose_ — the coworker gets work done through a visible team — while the co
 whole remains one felt identity to the people it talks to. A workflow does not pause for
 conversation; its result, failures, and rare Milestones return _up to the Brain_.
 
-### 3.9 The Coalescer (the timing layer, no model)
+### 3.10 The Coalescer (the timing layer, no model)
 
 The Coalescer is pure timing with no intelligence. It answers one question — _when has
 enough happened to act?_ — and it answers it in two places: for each Speaker (batch a
@@ -239,55 +287,83 @@ non-blocking and cheap.
 
 ---
 
-## 4. The control loop — one up-inbox, push down
+## 4. The control loop — source-prepared Attention up, decisions down
 
-The heart of the system is a single loop. Read it and principles 5–7 fall out.
+The heart of the system is a single accountability loop. External Happenings take an
+ordered knowledge-first path before they enter it.
 
 ```mermaid
 flowchart TB
-  subgraph up[Everything flows UP into one inbox]
-    E1[GitHub webhook]
-    E2[Other-source event]
-    E3[Speaker intent<br/>“the user wants X”]
-    E4[Workflow result / Milestone]
-    E5[Self-wake / cron tick]
+  subgraph external["External information"]
+    SRC["Source Archive<br/>immutable Happening"]
+    FLOOR["Minimum knowledge floor<br/>deterministic facts + semantic projection<br/>or bounded projection-failure evidence"]
+  ATTENTION["External-source Attention Item"]
+    SRC --> FLOOR --> ATTENTION
   end
 
-  E1 & E2 & E3 & E4 & E5 --> INBOX{{Brain up-inbox<br/>coalesced · non-blocking}}
+  subgraph internal["Already meaningful internal inputs"]
+    I1["Speaker Intent"]
+    I2["Workflow or Directive Outcome"]
+    I3["Scheduled Wake"]
+    I4["Proactive Sweep"]
+    CORRELATE["Correlate to existing<br/>Attention · Work · Effect · Directive"]
+    OWNED["Owner-correlated internal input"]
+    INTERNAL_ATTENTION["Internal-source Attention Item<br/>durable input + validation evidence"]
+    I1 & I2 & I3 --> CORRELATE --> OWNED
+    CORRELATE -->|"no durable owner"| INTERNAL_ATTENTION
+  end
 
-  INBOX --> DECIDE[Brain decides<br/>reasons over the Graph]
+  ATTENTION & INTERNAL_ATTENTION & OWNED --> INBOX{{"Brain inbox<br/>coalesced · non-blocking"}}
+  I4 -->|"claim trigger only"| INBOX
+  INBOX --> DECIDE["Brain judges<br/>reads live Graph + exact evidence"]
 
-  DECIDE --> D1[Prompt a chosen Surface or known Person<br/>context + directive]
-  DECIDE --> D2[Dispatch bounded work<br/>Coder / Reviewer / Planner]
-  DECIDE --> D3[Append an Attestation or ruling<br/>confirm · overrule · merge]
-  DECIDE --> D4[Schedule a future wake]
-  DECIDE --> D5[Decide to stay silent<br/>a decision, not an accident]
+  DECIDE --> A1["Disposition each Attention Item<br/>hold · transfer · resolve"]
+  DECIDE --> D1["Prompt a chosen Surface or known Person<br/>context + Directive"]
+  DECIDE --> D2["Create Work and dispatch execution<br/>Coder / Reviewer / Planner"]
+  DECIDE --> D3["Append an Attestation or ruling<br/>confirm · overrule · merge"]
+  DECIDE --> D4["Schedule a future wake"]
+  DECIDE --> D5["Stay silent<br/>communication only"]
 ```
 
-**Why one inbox.** External events (a webhook, a monitor alert) and internal intents (a
-Speaker saying "the user wants a bug filed") are the _same kind of thing_ from the Brain's
-point of view: something happened that may require a decision. Collapsing them into one
-inbox is what makes routing, delegation, and control one mechanism instead of three.
+**Why one accountability path.** A raw callback and the knowledge later derived from it
+are not peer decisions. They are stages of one occurrence becoming judgeable. Source
+archives retain what happened, deterministic ingesters and the Scribe establish the
+  minimum knowledge floor, and Attention admission creates exactly one accountable
+  obligation for every accepted, in-scope Happening. When required semantic projection
+  exhausts its finite source-policy budget, the durable attempt/failure evidence is the
+  prepared fact admitted for judgement; later successful enrichment updates knowledge but
+  does not mint a second obligation. Intents, outcomes, and wakes already
+  carry defined meaning, but must correlate to their existing Attention, Work, Effect, or
+  Directive owner before they are claimed. A source-derived Speaker Intent is context for
+  the originating Attention Item, not a second obligation. If no durable owner exists and
+  judgement is still owed, trusted admission validates the durable internal-input record
+  against its schema and policy and admits internal-source Attention without inventing a
+  Happening or Graph projection. A Proactive Sweep only triggers a claim and is never a
+  Batch obligation of its own.
 
 **Why non-blocking.** The up-inbox is coalesced (§9) and the Brain reasons off every hot
 path. A person waiting for a reply waits on their Speaker, not the Brain. A Speaker
 escalating an intent does not block on the Brain's decision — dispatching work is
 off the conversational hot path, so the extra hop costs nothing a person can feel.
 
-**Why nothing drops.** Because the Brain is the home of last resort. An event that
-correlates to no surface still lands in the inbox; the Brain decides where it belongs
-(route it, DM someone, open a loop, or deliberately hold it). "Uncorrelated" is a decision
-the Brain makes, never a silent discard.
+**Why nothing drops.** Every accepted external occurrence has a Happening in its Source
+Archive. Every accepted, in-scope Happening has an Attention Item. An occurrence that
+correlates to no Surface still reaches accountable judgement after readiness; the Brain
+may route it, create Work, hold it, or explicitly dismiss it. “Uncorrelated” is a decision,
+never a silent discard.
 
 **How one decision settles.** Trusted application code claims a bounded immutable set of
-ready inbox items as one Brain Batch. New arrivals wait for another Batch; crash recovery
+ready inbox inputs as one Brain Batch. New arrivals wait for another Batch; crash recovery
 reuses the open Batch and exact membership. The Brain chooses consequences through separate
-typed tools. Asynchronous Brain Effects are first recorded in an application-owned durable
-outbox, then delivered at least once to the existing Speaker or workflow seam with stable
-application identity. Local effects such as appending an Attestation or creating a Scheduled
-Wake may complete in the same database transaction that records them. Final settlement reads
-those application records and atomically settles the Batch plus exactly its claimed inputs;
-the model never serves as the receipt ledger.
+typed tools. Before settlement, every claimed Attention Item must be held, transferred to
+a named durable successor, or explicitly resolved. Every claimed internal signal must name
+the durable owner and state transition that consumed it; any fresh judgement it creates
+must exist as Attention. `stay_silent` cannot provide either kind of coverage.
+Asynchronous Brain Effects are first recorded in an application-owned durable outbox, then
+delivered at least once to the existing Speaker, provider, or workflow seam with stable
+application identity. Final settlement validates per-input coverage and successor
+existence, then atomically settles the Batch and exactly its claimed inputs; the model never
+serves as the receipt ledger.
 
 **How speech flows down.** The Brain sends an authoritative Directive to one selected
 Surface's Speaker. It carries a bounded Brief whose important items link to immutable source
@@ -304,34 +380,42 @@ delivery, while an ambiguous result remains Uncertain and is never blindly retri
 
 ---
 
-## 5. State and knowledge — the Graph, the Scribe, the Digest
+## 5. State and knowledge — Source Archives, the Graph, the Scribe, the Digest
 
 This is the part of the system most worth getting exactly right, because "global context"
-lives here and it is easy to muddle. There are three distinct roles around one hub.
+lives here and it is easy to muddle. Source truth, derived belief, and accountable Attention
+are distinct durable layers.
 
 ```mermaid
 flowchart LR
-  subgraph surfaces[Surfaces]
-    S1[Speaker A]
-    S2[Speaker B]
+  subgraph sources["Source truth"]
+    CA["Conversation Archive"]
+    GA["GitHub Event Archive"]
+    OA["Other Source Archives"]
   end
 
-  S1 & S2 -->|raw fact-stream| SCRIBE[Scribe · global ingestion clock]
+  CA & GA & OA -->|explicit structured facts| DET["Deterministic ingesters"]
+  CA & GA & OA -->|ambiguous meaning| SCRIBE["Scribe · semantic projection"]
+  DET -->|APPEND: anchored claims + Evidence Sets| LOG[(Attestation log<br/>append-only)]
   SCRIBE -->|APPEND: low-confidence claims + Evidence Sets| LOG[(Attestation log<br/>append-only)]
   BRAIN{{The Brain}} -->|APPEND: confirm · overrule · merge| LOG
   LOG -->|deterministic fold| BELIEF[(Belief Projection<br/>entities · relations · identities)]
 
+  CA & GA & OA -->|Happening evidence| READY["Attention admission<br/>minimum knowledge floor"]
+  BELIEF -->|readiness facts| READY
+  READY --> ATTENTION[(Attention Items)]
+  ATTENTION -->|pending obligations| BRAIN
   BELIEF -->|READ: mechanical one-hop projection| DIG[Digest]
-  DIG -->|rides on the input as graphContext| S1 & S2
+  DIG -->|rides on the input as graphContext| SPEAKERS["Speakers"]
 
   BRAIN -->|READ + JUDGE| BELIEF
-  BRAIN -->|deliberate PUSH: bounded extra entity seeds| S1 & S2
+  BRAIN -->|deliberate PUSH: bounded extra entity seeds| SPEAKERS
 ```
 
 ### 5.1 What the Graph holds
 
-The Graph has two parts in one application-owned durable store beside the raw conversation
-record:
+The Graph has two parts in one application-owned durable store beside the provider-specific
+Source Archives:
 
 - **Attestation log** — immutable claims of the form
   `{author, claim, confidence, evidenceSet, timestamp}`. The author is the Scribe, a
@@ -412,16 +496,20 @@ The Scribe, deterministic ingesters, and Brain are all Attestation authors, but 
 authors rulings:
 
 - A **Scribe attempt appends proposals** off the Brain's clock: low-confidence claims backed
-  by trusted Evidence Sets. Concurrent attempts do not coordinate or learn from one another;
-  their durable deltas enter the Brain's up-inbox.
+  by trusted Evidence Sets. Concurrent attempts do not coordinate or learn from one another.
+  A routine durable delta updates the Graph without automatically waking the Brain.
 - A **deterministic ingester appends anchored claims** from provider records when no model
-  judgment is required.
+  judgment is required. These claims commonly establish a structured Happening's minimum
+  knowledge floor.
 - The **Brain appends rulings** — confirm, overrule, merge — while integrating deltas on its
-  own clock. A ruling changes the Belief Projection, never another author's history.
+  own clock when authoritative judgement is actually owed. A ruling changes the Belief
+  Projection, never another author's history.
 
 The distinction that matters is authority, not sole write access. Making the Brain extract
 every proposal would put it in the ingestion hot path. Allowing proposals to overwrite current
 state would destroy provenance. Append-only authorship plus one ruling authority avoids both.
+Attention admission—not every Graph write—connects knowledge formation to accountable
+judgement.
 
 ---
 
@@ -440,7 +528,7 @@ flowchart TB
     P0[Cron or boot<br/>runs the durable due scan] --> PI[Brain up-inbox]
     P1[Ordinary durable event/result] --> PI
     P2[Due Scheduled Wake] --> PI
-    PI --> P3[Read the Belief Projection<br/>find open loops] --> P4[Decide to act unprompted]
+    PI --> P3[Read the Belief Projection + accountability ledgers<br/>find open loops] --> P4[Decide to act unprompted]
   end
 ```
 
@@ -448,43 +536,51 @@ flowchart TB
   one coalesced Proactive Sweep when none is outstanding and admits every due Scheduled Wake;
   it never calls the Brain directly. The floor guarantees liveness if event wiring misses
   something.
-- **Event wakes.** Ordinary durable events and workflow outcomes already wake the Brain by
-  entering its up-inbox. No Graph watcher is required. `overdue` remains a derived read signal
-  the Brain observes during a normal decision or Proactive Sweep.
+- **Event wakes.** Knowledge-ready Attention and workflow outcomes wake the Brain by
+  entering its inbox. Routine Graph writes do not. `overdue` and Open Loops are derived read
+  signals the Brain observes across the Belief Projection, Attention, and Work ledgers during
+  a normal decision or Proactive Sweep.
 - **Self-scheduling.** The Brain may create an independently durable Scheduled Wake ("check
   this loop in two hours"). A process timer is only a liveness hint; the application database
   is the source of truth, and boot reconciliation preserves the wake across a crash.
 
 The proactive clock is where the coworker's _initiative_ lives: chasing an overdue
-commitment, following up on an open loop, noticing that two surfaces need to be connected.
-It runs at a deliberately slower cadence than any Speaker — reasoning is not conversation.
+Commitment, reconsidering held Attention, following unfinished Work, or noticing that two
+Surfaces need to be connected. A Scheduled Wake prompts reconsideration; it does not own or
+close the Open Loop. The clock runs at a deliberately slower cadence than any Speaker —
+reasoning is not conversation.
 
 ---
 
 ## 7. Work — everything routes through the Brain
 
 The coworker's _doing_ (as opposed to its _talking_) is centralized in the Brain. A Speaker
-never launches work; it escalates intent. The Brain owns every work item end to end.
+never launches work; it escalates Intent. The Brain owns every Work Item end to end.
 
 ```mermaid
 sequenceDiagram
   participant P as Person (in a surface)
   participant SP as Speaker (mouth)
+  participant GA as GitHub archive + readiness
+  participant AT as Attention ledger
   participant BR as Brain (mind + owner)
   participant WF as Bounded Workflow (Specialist)
   participant GH as GitHub
 
   P->>SP: "we should fix the login bug"
   SP-->>BR: escalate INTENT (not an action)
-  Note over BR: decides: file issue? launch coder?<br/>assembles the right context from the Graph
-  BR->>WF: dispatch bounded work (with curated context)
+  Note over BR: creates Work Item W7<br/>objective + evidence + observable outcome
+  BR->>WF: dispatch one execution attempt for W7
   WF->>GH: open PR (as the Coder identity)
   WF-->>BR: result ↑ (Durably Terminal) or Milestone
-  Note over BR: owns the whole lifecycle & the return address
+  Note over BR: updates W7; owns the whole lifecycle & return address
   BR->>SP: push result down into the right surface
-  GH-->>BR: review "changes requested" (webhook ↑)
-  Note over BR: same inbox — Brain re-kicks the refinement loop
-  BR->>WF: dispatch follow-up work
+  GH-->>GA: review "changes requested" (webhook)
+  GA->>GA: retain Happening + establish knowledge floor
+  GA->>AT: admit exactly one knowledge-ready Attention Item
+  AT-->>BR: pending review Attention ↑
+  Note over BR: correlates Attention to W7 and keeps it open
+  BR->>WF: dispatch a follow-up attempt for W7
 ```
 
 **Why centralize.** Three things fall out of routing all work through the Brain, and the
@@ -505,6 +601,12 @@ without acting_ — inverting a direct tool call into an upward signal. The late
 extra hop is irrelevant: launching work is off the conversational hot path and the work
 itself takes minutes. Everything else (the Brain being the owner, tracking return
 addresses) is already inherent to the Brain's role.
+
+**Responsibility is not execution.** A Work Item is the stable operational objective and
+evidence trail. A Brain Effect, Bounded Workflow run, or provider artifact is one mechanism
+or attempt beneath it. A Work Item may exist before dispatch, require no Specialist, or span
+several refinement attempts. It closes only from an observable outcome. Graph Commitments
+remain social beliefs; they never substitute for operational state.
 
 **No-drop under failure.** A launched job that dies without delivering is reconciled: on
 boot, any unsettled launch becomes an explicit "interrupted" result the Brain surfaces —
@@ -568,9 +670,13 @@ as testable guarantees.
 | **One identity**           | The coworker feels like one colleague across all surfaces             | Single Brain + single Graph behind all Speakers (§8)                            |
 | **Single authority**       | Exactly one owner of durable meaning                                  | Brain alone authors rulings; other authors append evidence-backed claims (§5.5) |
 | **Non-blocking**           | No part waits on another to progress                                  | Coalescing + off-hot-path Brain + async work (§9)                               |
-| **No silent drop**         | Every event, intent, result, loop has a home                          | Brain is the home of last resort; jobs reconcile on boot (§4, §7)               |
+| **Occurrence-complete**    | Every accepted external occurrence retains stable evidence            | Source Archive + immutable Happening identity (§4, §5)                          |
+| **Knowledge-ready**        | The Brain judges prepared evidence, not raw provider callbacks         | Deterministic/Scribe projection or bounded projection-failure evidence before Attention admission (§4, §5) |
+| **Accountability-complete** | Every claimed obligation has one durable disposition                  | Per-Attention coverage; named successor on transfer (§3.7, §4)                  |
+| **No silent drop**         | Every Happening, Intent, result, and Open Loop has a durable home      | Source evidence + Attention + Work recovery (§4, §7)                            |
 | **Provenance-complete**    | Every derived fact knows its origin                                   | Every Attestation has a permanent non-empty Evidence Set (§5.3)                 |
 | **Self-healing knowledge** | Ambiguity never blocks; the graph corrects itself                     | Append-only claims + derived confidence + Brain rulings (§5.2, §5.5)            |
+| **Speech is orthogonal**   | Speaking or staying silent cannot discharge unrelated responsibility | Attention disposition is checked separately from Effects (§4)                  |
 | **Dumb mouths**            | Speakers converse only; they never act or own state                   | Work + ontology authority live in the Brain (§3.3, §7)                          |
 | **Fail-closed surfaces**   | Observation never silently grants participation                       | Active account-scoped binding is revalidated at intake and Say (§3.4, §8)       |
 | **Honest delivery**        | Provider acknowledgment, known failure, and ambiguity remain distinct | Surface Delivery + Conversation Archive evidence + Uncertain (§4)               |
@@ -586,10 +692,12 @@ existing seam; it does not reshape the core. The canonical growth axes:
   Speaker." A new channel is a new Speaker type bound to a new surface kind, registered in
   the surface registry. The Brain, Graph, and control loop are untouched — the Brain gains
   a new place it _can_ choose to speak.
-- **New event sources** (monitors, calendars, CI, external webhooks). Everything already
-  flows _up_ into one inbox. A new source is a new arrow into that inbox (§4). Provenance
-  (§5.3) keeps the resulting facts coherent with the rest of the Graph. No new routing
-  concept is needed — routing is "the Brain decides," and it already does.
+- **New event sources** (monitors, calendars, CI, external webhooks). A new source adds a
+  provider-specific Source Archive adapter, Happening identity, deterministic facts,
+  optional semantic projection, and a minimum knowledge-readiness policy. It then reuses
+  the same Attention, Brain disposition, and Work lifecycle (§4 and
+  [`INFORMATION-TO-ACCOUNTABILITY.md`](./INFORMATION-TO-ACCOUNTABILITY.md)). It does not add
+  a direct arrow from raw callbacks to the Brain.
 - **New backstage agents / capabilities** (a Designer, a Researcher, a Deployer). A new
   kind of durable work is a new Bounded Workflow with its own Specialist and GitHub
   identity, dispatched by the Brain like any other. The team grows; the front stays one
@@ -628,17 +736,28 @@ few terms, which should be ratified back into `CONTEXT.md`:
 - **Surface / Surface Binding / Surface Delivery** — stable application identity for one
   authorized place with a Speaker; its account-scoped provider address; and durable evidence
   for one logical Say. Discovery is observation, never authorization.
-- **Scribe** — sharpened from "silent _per-thread_ agent" to one global ingestion clock
-  driving bounded concurrent stateless attempts. Its role is to append evidence-backed
-  proposals, never own memory or authority.
+- **Source Archive / Happening** — the provider-specific durable source record and the
+  source-neutral identity of one occurrence backed by it. Receipt proves occurrence, not
+  knowledge, responsibility, or completion.
+- **Deterministic ingester / Scribe** — explicit structured facts are projected by trusted
+  code; ambiguous meaning is projected by one global semantic clock driving bounded
+  concurrent stateless attempts. Both append evidence-backed claims. Neither owns
+  operational responsibility.
 - **Attestation / Evidence Set / Belief Projection** — the Graph's persistence and read
   vocabulary. Claims are append-only; current understanding is a rebuildable projection.
+- **Attention Item / Open Loop** — a durable knowledge-ready Brain obligation and the
+  derived view of unresolved Attention, Work, and Commitments. Pending is claimable queue
+  state; held, transferred, and resolved Attention remains accountability history.
+- **Work Item** — the Brain's durable operational responsibility across zero, one, or many
+  Effects and Bounded Workflow attempts. It is not a Graph belief or execution run.
 - **Digest** — one versioned read-projection over one `graphContext` channel. Mechanical pull
   supplies local seeds; deliberate push supplies bounded extra seeds and is recomputed live.
 - **Intent escalation** — a Speaker signalling the Brain that conversation implies work or
   a cross-surface consequence, without acting on it.
 - **Brain Batch / Brain Effect** — the durable decision boundary and one typed consequence
   leaving it through application-owned admission, distinct from a model turn or Flue id.
+  Batch settlement proves per-Attention disposition coverage, not merely that one Effect
+  exists.
 - **Scheduled Wake / Proactive Sweep** — durable exact reconsideration and the coalesced
   liveness floor; neither is a process timer or a second queue.
 
@@ -650,25 +769,27 @@ The architecture above is definitive. This section is the honest map of the curr
 implementation against it — kept in one place so the body can describe the system as it is
 meant to be. "Distance" is descriptive, not a plan.
 
-| Abstraction                         | Definitive architecture                                                                | Where the code is today                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Distance                                                                                                                       |
-| ----------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| **Graph**                           | Append-only Attestation log + derived Belief Projection                                | Built in `packages/engine/src/graph/store.ts`: the only public write appends immutable, author-attributed Attestations with non-empty Evidence Sets; SQLite rejects update/delete; exact retries dedupe; overlapping evidence cannot amplify Confidence; contradictory properties resolve by author authority then Confidence; and the entity/relation/identity read surface is rebuilt deterministically as the Belief Projection. Provenance-bearing legacy rows migrate once with convergence aliases; rows without verifiable raw evidence are dropped for Historical Replay. Scribe tooling cannot rule/merge; Speaker/Specialist Graph tools are read-only; the Brain mounts lookup plus evidence-bounded ruling/merge authority derived from its claimed Batch | **None for the accepted Projection/ruling floor**                                                                              |
-| **Digest**                          | Versioned live projection; local pull + bounded Brain-selected seeds, one channel      | `graph/digest.ts` computes one live no-cache Projection carrying schema/Projection versions, up to 64 Entities, 128 Relations, 32 Commitments, eight supporting Attestations per item, and 64 KiB total. Speaker/Specialist pull and every fresh Scribe retry use the same projector. The funnel still replaces rather than composes Brain-selected extra seeds                                                                                                                                                                                                                                                                                                                                                                                | **Compose and persist only bounded Brain-selected Directive seeds over the existing `graphContext` channel**                   |
-| **Scribe**                          | One global clock; bounded concurrent stateless attempts; per-Attestation Evidence Sets | Built: live and Historical Replay observations admit idempotently by immutable evidence to `scribe/inbox.ts`; one chronological claimant forms stable cross-Surface Batches; unfinished attempts reopen as interrupted and retry with fresh identities; one process-wide drain and four-attempt gate serve both paths. Every retry recomputes the current bounded Projection. Successful evidence-bearing proposal deltas admit to the Brain up-inbox before a Scribe Batch completes, and Replay does not advance its cursor until the owning Brain Batch settles                                                                                                                                                                                     | **None conceptually; cumulative live two-chat and replay-equivalence proof remains**                                           |
-| **Speaker**                         | Dumb mouth: converses only, escalates intent                                           | Built: the Speaker mounts local conversation/participation, Intent escalation, Directive-only Saying, and read-only Graph tools. Direct issue-management, delegation launch/status, and Specialist-return inputs are absent from `speaker/agent.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | **None for the accepted dumb-mouth floor**                                                                                     |
-| **Brain**                           | Single global mind: up-inbox, two clocks, owns state + work                            | The reactive global actor claims immutable mixed Intents, Knowledge Deltas, Specialist Results, GitHub events, and Scheduled Wakes in one Batch frontier; owns Graph rulings; records prompt/silence; and owns Coder launch through a stable `brain-work:*` identity. Pending admission reconciles against Flue's snapshotted work id before retry; terminal and interrupted outcomes return durably to the Brain, whose later `prompt_speaker` independently chooses a Surface. GitHub webhook routing and the proactive clock are now owned here too (`packages/engine/src/github/ingress.ts`, `packages/engine/src/brain/inbox.ts`)                                                                                                                                                                                                                           | **None conceptually — concentration of authority is complete**                                                                        |
-| **Control loop**                    | One up-inbox; events + intents up; push down                                           | The conversation path is built: Speaker Intent → durable Brain inbox/Batch → Directive or deliberate silence → selected Speaker, with durable delivery Outcome. GitHub events now admit to the same single Brain up-inbox — the ingress no longer broadcasts to every surface or drops uncorrelated events; the Brain decides which Surface, if any, hears each event (`ingress.ts`)                                                                                                                                                                                                                                                                                                                                                      | **None conceptually**                                                                                                          |
-| **Two clocks**                      | Reactive + proactive (cron floor + event wakes + self-schedule)                        | Both clocks exist: the reactive Batch frontier above, plus a durable Scheduled Wake (self-scheduled reconsideration, ADR 0006) and a coalesced Proactive Sweep (the boot/cron due-scan floor) admitted through the same up-inbox                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | **None conceptually**                            |
-| **Surfaces**                        | Stable registry + account-scoped bindings + one Speaker + durable delivery evidence    | Configured group/DM JIDs seed stable account-scoped Surfaces; Brain prompts select a Surface UUID and trusted code resolves its active binding, including a known Person's Graph entity id resolving to their DM Surface (`surfaces/registry.ts`). Each Directive Say records before transport and settles as delivered/failed/Uncertain from provider + Archive evidence (`surfaces/registry.ts`, `surfaces/delivery.ts`). Work retains the originating Surface as provenance only; there is no first-chat Specialist return                                                                                                                                                     | **None conceptually**                    |
-| **Work / delegation**               | All work dispatched by the Brain; Brain owns each lifecycle incl. refinement           | Built for the Coder floor: `brain_specialist_launches` records deterministic Brain work before Flue; retry/restart reconciles the generated run by the snapshotted work id; terminal/interrupted results enter `brain_specialist_results` and the next Brain Batch; reporting is a separate Brain-selected Directive. Direct Speaker launch, chat-bound return, first-chat resolver, and old run-ledger code are deleted                                                                                                                                                                                                                                                        | **Live-prove one controlled GitHub artifact and WhatsApp report; later Specialists reuse this same concrete seam**             |
-| **Specialists / Bounded Workflows** | Backstage team, distinct GitHub identities, results up                                 | Built and matches (Coder/Reviewer/Planner as Specialists; distinct app identities)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | **None** conceptually — rewire the launcher/return only                                                                        |
-| **Coalescer**                       | Modelless timing for Speakers and Scribe                                               | Per-chat Speaker Windows remain in `engine/src/coalescer/*`. The Scribe's quiet-period/cap timing only wakes one durable global inbox; live and Replay share its chronological Batch claimant, retry ledger, drain, and bounded model gate                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | **None conceptually**                                                                                                          |
+| Abstraction | Definitive architecture | Where the code is today | Distance |
+| --- | --- | --- | --- |
+| **Source truth / Happenings** | Every accepted external occurrence has immutable provider evidence and one stable Happening identity | The Conversation Archive is an append-only WhatsApp source record. GitHub ingress durably records delivery/event identity before Brain admission. These are provider-specific foundations; there is no source-neutral Happening contract or shared readiness frontier yet | **Define the common Happening/evidence seam without replacing provider archives** |
+| **Graph** | Append-only Attestation log + derived Belief Projection | Built in `packages/engine/src/graph/store.ts`: immutable author-attributed Attestations, non-empty Evidence Sets, deterministic projection, deduplication, confidence handling, and evidence-bounded Brain rulings. Speaker and Specialist Graph tools are read-only | **None for the accepted persistence and ruling floor** |
+| **Deterministic ingestion** | Explicit structured source facts become anchored Attestations before Attention admission | Deterministic configuration seeding exists, and provider adapters already normalize some records, but GitHub and future structured Happenings do not pass through one declared fact/readiness contract | **Add source-specific deterministic projectors and readiness policies** |
+| **Scribe** | One global asynchronous semantic projector; routine proposals update Graph without mandatory Brain judgement; bounded terminal failure becomes prepared Attention evidence | The durable global inbox, chronological cross-Surface batching, bounded stateless attempts, retry/replay, and evidence-backed Attestations exist in `packages/engine/src/scribe/*`. Each drain makes three attempts, but a failed incomplete Batch can be claimed by a later drain without a cumulative terminal readiness state. Today every successful proposal delta is also admitted to the Brain, and Historical Replay waits for the owning Brain Batch to settle | **Add cumulative bounded-failure escalation, decouple routine projection from Brain wake, and gate only decision-worthy semantic results or terminal readiness failures into Attention** |
+| **Attention** | Durable source-prepared obligation over external Happenings or a validated ownerless internal-input record, with append-only claims and pending, held, transferred, and resolved transition history | Not built. Current source input rows provide pending queue membership and immutable Brain Batch claim membership, but there is no per-input disposition record or permanent claim/transition history. Batch settlement proves that some Effect or Specialist launch completed, not that every claimed input was covered; `stay_silent` qualifies | **Add the thin per-input Attention identity, source/readiness union, claim/transition history, current-state projection, and settlement coverage invariant** |
+| **Digest** | Versioned live Graph projection; local pull + bounded Brain-selected seeds over one channel | `graph/digest.ts` computes the bounded no-cache projection used by Speakers, Specialists, and fresh Scribe attempts. Directive seed composition is implemented on the reset line described by `STATUS.md` | **No information-to-accountability change required** |
+| **Speaker** | Dumb Surface mouth: converse, escalate Intent, execute Directive speech | Built: local conversation/participation, Intent escalation, Directive-only Saying, and read-only Graph access. Direct work launch and ontology authority are absent | **None for this boundary** |
+| **Brain** | Judge source-prepared inputs, rule on belief, disposition Attention, own Work, choose speech | The global actor and crash-stable Brain Batch exist. It currently claims mixed Intents, Knowledge Deltas, Specialist Results, raw GitHub events, and wakes; its tools include broad proposal operations alongside rulings. A separate runtime wedge tracked by #400 may also prevent progress even when durable input is pending | **Narrow ordinary Graph mutation to rulings; replace raw/delta peer inputs with Attention; repair #400 independently** |
+| **Control loop** | External source truth → knowledge floor → Attention, or ownerless internal input → validation → Attention; then Brain disposition → Work/Effects → outcome | Intent, Effect, Directive, Scheduled Wake, GitHub ingress, and workflow-result paths are durable. External information currently bypasses the accepted knowledge-first ordering: raw GitHub events and later Scribe deltas are peer Brain inputs | **Rewire admission around one source-prepared accountability path** |
+| **Two clocks** | Reactive Attention/outcome clock + proactive scan of Graph, Attention, and Work Open Loops | Scheduled Wakes and coalesced Proactive Sweeps enter the existing Brain inbox durably. The proactive prompt currently inspects Graph Commitments; application-owned Attention and generic Work are not yet available to it | **Extend the Open Loop read once Attention and Work exist** |
+| **Work / delegation** | Stable Brain Work Item owns an operational objective across effects and zero, one, or many execution attempts | `brain_specialist_launches` and result rows durably own one Specialist execution attempt, recovery, and return. Brain Effects durably own typed consequences. There is no generic Work responsibility identity above those mechanisms | **Add a thin Work Item ledger and link existing execution owners; do not rebuild them** |
+| **Surfaces / delivery** | Stable Surface registry, active binding, Directive, and durable delivery outcome | Configured Surfaces, known-Person DM resolution, delivery attempt, provider/archive evidence, and delivered/failed/Uncertain outcomes exist | **Admit relevant Directive Outcomes back into accountability when follow-up judgement is owed** |
+| **Specialists / Bounded Workflows** | Distinct backstage identities; finite runs; outcomes return to Brain-owned Work | Coder, Reviewer, and Planner workflows and durable terminal/interrupted return exist | **Link runs to Work Items; no new workflow abstraction** |
+| **Coalescer** | Modelless timing for Speakers and semantic projection | Speaker Windows and the Scribe's global quiet-period/cap timing exist | **None for this boundary** |
 
-**Reading the distance.** The load-bearing implementation primitives all exist and authority is
-concentrated in the Brain: the append-only Graph and typed Belief Projection, bounded live Digest,
-definitive global Scribe clock, reactive Brain conversation/knowledge/work loop, GitHub ingress
-and the proactive clock routed through the same single up-inbox, known-Person Surface resolution,
-asynchronous Brain-owned delegation with durable return, and modelless coalescing. The remaining
-distance is live-proof and refinement work already named row-by-row above (the cumulative live
-two-chat/replay-equivalence proof, composing bounded Brain-selected Digest seeds, and reusing the
-Coder seam for later Specialists) — not a further architectural correction.
+**Reading the distance.** The durability primitives are real, but the accepted
+information-to-accountability architecture is not yet implemented end to end. The reset line
+has strong Source Archive, Graph, Scribe, Brain Batch, Effect, wake, delivery, and Specialist
+execution foundations. The remaining correction is to order them around knowledge-ready
+Attention, prove per-input disposition coverage, and add a thin Work responsibility ledger.
+Until that happens, mechanically settled Brain Batches are not proof that every Happening was
+processed accountably.
