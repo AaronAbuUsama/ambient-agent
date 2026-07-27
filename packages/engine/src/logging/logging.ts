@@ -14,6 +14,8 @@
  * as managed runtime dependencies — because the CLI and the generated Flue
  * server are separate bundles sharing one process.
  */
+import { once } from "node:events";
+import { fsyncSync } from "node:fs";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 
@@ -36,6 +38,12 @@ export interface LoggingOptions {
   /** Console sink. Defaults to stderr so CLI `--json` stdout stays valid JSON. */
   readonly consoleStream?: NodeJS.WritableStream;
 }
+
+type ManagedLogStream = DestinationStream &
+  NodeJS.WritableStream & {
+    readonly fd: number;
+    flush(callback: (error?: Error | null) => void): void;
+  };
 
 /** Credential-shaped keys are censored at the root, before any sink. */
 const REDACT_KEYS = [
@@ -110,7 +118,11 @@ export const createRootLogger = (options: LoggingOptions, fileStream?: Destinati
 };
 
 const LOGGING_ROOT = Symbol.for("ambient-agent.logging-root");
-const loggingGlobal = globalThis as typeof globalThis & { [LOGGING_ROOT]?: Logger };
+const LOGGING_FLUSH = Symbol.for("ambient-agent.logging-flush");
+const loggingGlobal = globalThis as typeof globalThis & {
+  [LOGGING_ROOT]?: Logger;
+  [LOGGING_FLUSH]?: () => Promise<void>;
+};
 
 /**
  * Create the configured root: console sink plus rotating JSON files under
@@ -118,16 +130,33 @@ const loggingGlobal = globalThis as typeof globalThis & { [LOGGING_ROOT]?: Logge
  * Call once at runtime startup, before the subsystems start logging.
  */
 export const configureLogging = async (options: LoggingOptions & { readonly logsDirectory: string }): Promise<Logger> => {
-  const fileStream = await roll({
-    file: join(options.logsDirectory, "ambient-agent"),
-    extension: ".log",
-    size: "10m",
-    limit: { count: 5 },
-    mkdir: true,
-  });
+  const fileStream = (await roll(
+    {
+      file: join(options.logsDirectory, "ambient-agent"),
+      extension: ".log",
+      size: "10m",
+      limit: { count: 5 },
+      mkdir: true,
+      minLength: 1,
+    } as Parameters<typeof roll>[0] & { readonly minLength: number },
+  )) as ManagedLogStream;
+  if (fileStream.fd < 0) await once(fileStream, "ready");
   const root = createRootLogger(options, fileStream);
   loggingGlobal[LOGGING_ROOT] = root;
+  loggingGlobal[LOGGING_FLUSH] = async () => {
+    await new Promise<void>((resolve, reject) =>
+      fileStream.flush((error) => (error === undefined || error === null ? resolve() : reject(error))),
+    );
+    fsyncSync(fileStream.fd);
+  };
   return root;
+};
+
+/** Flush the configured rotating file sink through fsync before completing a durable outbox record. */
+export const flushManagedLogs = async (): Promise<void> => {
+  const flush = loggingGlobal[LOGGING_FLUSH];
+  if (flush === undefined) throw new Error("Managed logging is not configured.");
+  await flush();
 };
 
 /**

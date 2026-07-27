@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { Cause, Clock, Effect, Exit, Fiber, Layer, type Scope } from "effect";
 import type { MessageRef, WhatsAppSession } from "whatsappd";
 
@@ -56,8 +58,17 @@ import {
   type ManagedChatInbox,
 } from "@ambient-agent/engine/intake/managed-chat-inbox.ts";
 import { speakerActivity } from "@ambient-agent/agents/speaker/activity-reporter.ts";
-import { effectLoggerLayer, getLogger, upstreamWhatsAppLogger } from "@ambient-agent/engine/logging/logging.ts";
-import type { WhatsAppRuntimePhase, WhatsAppRuntimeStatus } from "@ambient-agent/installation/runtime-health.ts";
+import {
+  effectLoggerLayer,
+  flushManagedLogs,
+  getLogger,
+  upstreamWhatsAppLogger,
+} from "@ambient-agent/engine/logging/logging.ts";
+import type {
+  WhatsAppRuntimePhase,
+  WhatsAppRuntimeStatus,
+  WhatsAppTerminalReceipt,
+} from "@ambient-agent/installation/runtime-health.ts";
 import type { OperatorEvent } from "@ambient-agent/engine/logging/operator-reporter.ts";
 import { errorMessage } from "@ambient-agent/engine/shared/errors.ts";
 import {
@@ -80,8 +91,39 @@ import {
   WhatsAppAccountError,
   type ChatCandidate,
 } from "@ambient-agent/installation/whatsapp-account.ts";
+import {
+  acknowledgeWhatsAppTerminalReceipt,
+  markWhatsAppTerminalReceiptAnnounced,
+  pendingWhatsAppTerminalReceipt,
+  persistWhatsAppTerminalReceipt,
+} from "@ambient-agent/installation/whatsapp-terminal-receipt.ts";
 
 const isKnownTransportRejection = (message: string): boolean => /^not online \(phase: [^)]+\)$/.test(message);
+const writeStderr = (message: string): Promise<void> =>
+  new Promise((resolve, reject) => {
+    process.stderr.write(message, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+const TERMINAL_SHUTDOWN_TIMEOUT_MS = 1_000;
+const settleWithin = async (operation: Promise<void>, timeoutMs: number): Promise<void> => {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`terminal shutdown operation timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+};
+
 const deliveryFailure = (
   cause: unknown,
 ): { readonly delivery: "failed" | "unknown"; readonly deliveryError: string } => {
@@ -372,6 +414,10 @@ export interface WhatsAppRuntimeOptions {
   /** Test seams only: a fake session and a captured exit instead of process.exit. */
   readonly sessionFactory?: () => WhatsAppSession;
   readonly exit?: (code: number) => void;
+  /** Test seam: production fsyncs the managed log before completing a recovery outbox record. */
+  readonly flushLogs?: () => void | Promise<void>;
+  /** Test seam: production bounds terminal output waits to one second each before forced exit. */
+  readonly terminalShutdownTimeoutMs?: number;
   readonly dispatch?: DispatchSpeaker;
   readonly coalescer?: Partial<CoalescerConfigValues>;
   readonly observeActivity?: (observer: SpeakerObserver) => () => void;
@@ -388,6 +434,13 @@ export interface WhatsAppRuntimeOptions {
 const DEFAULT_PROACTIVE_CLOCK_INTERVAL_MS = 5 * 60 * 1_000;
 
 export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppRuntimeControl => {
+  const invocationId = randomUUID();
+  const flushLogs = options.flushLogs ?? flushManagedLogs;
+  const terminalShutdownTimeoutMs = options.terminalShutdownTimeoutMs ?? TERMINAL_SHUTDOWN_TIMEOUT_MS;
+  const invocationCorrelationId = randomUUID();
+  const recovery = pendingWhatsAppTerminalReceipt(options.applicationDatabase);
+  let recoveryAcknowledged = false;
+  let recoveryAnnouncementSuperseded = false;
   const storeDir = options.storeDirectory;
   const gate = makeManagedChatGate(options.managedChats);
   const archive = createConversationArchive(options.applicationDatabase);
@@ -534,6 +587,9 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
       // next tick look like a change and puts one `agent.degraded` line on the feed per retry —
       // the spam this guard exists to prevent, burying the transition that matters.
       if (event === undefined) return;
+      // Terminal failure is narrated after its receipt is durably written by the fiber handler.
+      // That keeps the sole agent.offline line correlated without racing the SQLite write.
+      if (event === "agent.offline" && current.terminal) return;
       reportedPhase = current.phase;
       log[current.phase === "online" ? "info" : "warn"](
         {
@@ -698,11 +754,31 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
     }
     const session = account.session();
     const botIds = botIdsOf(session, options.botLid);
+    let acknowledgedRecovery: WhatsAppTerminalReceipt | undefined;
+    if (recovery !== undefined) {
+      yield* Effect.sync(() => {
+        try {
+          acknowledgeWhatsAppTerminalReceipt(options.applicationDatabase, recovery.correlationId);
+          recoveryAcknowledged = true;
+          acknowledgedRecovery = recovery;
+        } catch (cause) {
+          log.error(
+            {
+              event: "whatsapp.terminal-receipt.ack-failed",
+              correlationId: recovery.correlationId,
+              error: errorMessage(cause),
+            },
+            "Failed to acknowledge the recovered WhatsApp terminal receipt",
+          );
+        }
+      });
+    }
     setRuntimeStatus({
       phase: "online",
       accountJid: authenticatedAccount.jid,
       chatTarget: gate.describe(),
       botIds,
+      ...(acknowledgedRecovery === undefined ? {} : { recovery: acknowledgedRecovery }),
     });
     yield* Effect.sync(() =>
       log.info(
@@ -711,10 +787,36 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
           detail: "managed chat connected",
           botIds,
           chatTarget: gate.describe(),
+          ...(acknowledgedRecovery === undefined
+            ? {}
+            : { correlationId: acknowledgedRecovery.correlationId, recovery: acknowledgedRecovery }),
         },
         "Speaker WhatsApp online",
       ),
     );
+    if (acknowledgedRecovery !== undefined) {
+      yield* Effect.forkScoped(
+        Effect.promise(async () => {
+          try {
+            await flushLogs();
+            if (recoveryAnnouncementSuperseded) return;
+            markWhatsAppTerminalReceiptAnnounced(
+              options.applicationDatabase,
+              acknowledgedRecovery!.correlationId,
+            );
+          } catch (cause) {
+            log.error(
+              {
+                event: "whatsapp.terminal-receipt.announcement-failed",
+                correlationId: acknowledgedRecovery!.correlationId,
+                error: errorMessage(cause),
+              },
+              "Failed to complete the WhatsApp terminal recovery announcement",
+            );
+          }
+        }),
+      );
+    }
     yield* runWhatsAppSession(session, {
       // The event source admits via the same composite predicate, so a known-Person DM is two-way.
       gate: { ...gate, allowed: admit },
@@ -755,7 +857,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   const fiber = Effect.runFork(
     options.clock === undefined ? runtimeProgram : runtimeProgram.pipe(Effect.provideService(Clock.Clock, options.clock)),
   );
-  void Effect.runPromise(Fiber.await(fiber)).then((exit) => {
+  void Effect.runPromise(Fiber.await(fiber)).then(async (exit) => {
     if (Exit.isFailure(exit) && !stopping) {
       const defects = exit.cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect);
       const terminalTransport = defects.find(
@@ -769,11 +871,49 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
       // Real authentication terminal errors carry whatsappd's exact FaultReason. Keep the code
       // fallback only for older/injected account errors that predate that typed status payload.
       const terminalReason = terminalStatus?.reason ?? terminalAccount?.code;
+      const terminalPhase = terminalStatus?.phase ?? terminalAccount?.code;
+      const terminal =
+        (terminalPhase === "logged_out" || terminalPhase === "suspended") && terminalReason !== undefined
+          ? { phase: terminalPhase, reason: terminalReason }
+          : undefined;
+      let terminalReceipt: WhatsAppTerminalReceipt | undefined;
+      let terminalCorrelationId =
+        recovery !== undefined && !recoveryAcknowledged ? recovery.correlationId : invocationCorrelationId;
+      if (terminal !== undefined) {
+        recoveryAnnouncementSuperseded = recoveryAcknowledged;
+        try {
+          terminalReceipt = persistWhatsAppTerminalReceipt(options.applicationDatabase, {
+            correlationId: terminalCorrelationId,
+            invocationId,
+            ...terminal,
+            observedAt: new Date().toISOString(),
+          });
+          terminalCorrelationId = terminalReceipt.correlationId;
+        } catch (cause) {
+          log.error(
+            {
+              event: "whatsapp.terminal-receipt.persist-failed",
+              correlationId: terminalCorrelationId,
+              error: errorMessage(cause),
+            },
+            "Failed to persist the WhatsApp terminal receipt",
+          );
+          setRuntimeStatus({
+            phase: "failed",
+            chatTarget: gate.describe(),
+            error: `Terminal WhatsApp receipt persistence failed: ${errorMessage(cause)}`,
+          });
+          publishPairingSettled({ reason: `Terminal WhatsApp receipt persistence failed: ${errorMessage(cause)}` });
+          return;
+        }
+      }
+      const correlatedTerminal =
+        terminal === undefined ? undefined : { ...terminal, correlationId: terminalCorrelationId };
       setRuntimeStatus({
         phase: "failed",
         chatTarget: gate.describe(),
         error: terminalReason ?? String(exit.cause),
-        ...(terminalStatus === undefined ? {} : { terminal: terminalStatus }),
+        ...(correlatedTerminal === undefined ? {} : { terminal: correlatedTerminal }),
       });
       // Settle the setup channel too, when the failure landed mid-pairing. Leaving it on
       // `awaiting_scan` would make a setup page infer failure from a QR going stale, one channel
@@ -782,9 +922,19 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
       // On the operator feed too, not only in the phase: the fiber dying is the other way the
       // coworker goes offline, and a Logs screen that narrates transport faults but stays silent
       // when the runtime itself fails would be telling half the story.
-      // A terminal transport was already narrated by the process-lifetime status subscription.
-      // Do not emit a second offline event when that same typed status ends the scoped fiber.
-      if (terminalReason === undefined) {
+      if (correlatedTerminal !== undefined) {
+        log.error(
+          {
+            operatorEvent: "agent.offline",
+            detail: `WhatsApp ${correlatedTerminal.phase}: ${terminalReason}`,
+            phase: correlatedTerminal.phase,
+            reason: terminalReason,
+            terminal: true,
+            correlationId: correlatedTerminal.correlationId,
+          },
+          "WhatsApp runtime stopped on a terminal transport state",
+        );
+      } else if (terminalReason === undefined) {
         log.error(
           { operatorEvent: "agent.offline", detail: "the WhatsApp runtime failed", cause: String(exit.cause) },
           "WhatsApp runtime failed",
@@ -794,11 +944,38 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
       if (loggedOut) {
         // whatsappd clears its store on terminal logged_out; the session is unrecoverable
         // in-process. Exit cleanly (finalizers already ran) and point at the guided repair.
-        process.stderr.write(
-          `WhatsApp authentication ended in logged_out (${terminalReason ?? "reason unavailable"}) and the session store is no longer usable.\n` +
-            "Run ambient-agent repair whatsapp to pair again; configuration, credentials, and history are preserved.\n",
-        );
-        (options.exit ?? process.exit)(1);
+        try {
+          try {
+            await settleWithin(
+              writeStderr(
+                `WhatsApp authentication ended in logged_out (${terminalReason ?? "reason unavailable"}) and the session store is no longer usable. Correlation: ${terminalCorrelationId}.\n` +
+                  "Run ambient-agent repair whatsapp to pair again; configuration, credentials, and history are preserved.\n",
+              ),
+              terminalShutdownTimeoutMs,
+            );
+          } catch (cause) {
+            log.error(
+              { event: "whatsapp.terminal-guidance.write-failed", error: errorMessage(cause) },
+              "Failed to write WhatsApp terminal guidance before exit",
+            );
+          }
+          try {
+            await settleWithin(Promise.resolve().then(flushLogs), terminalShutdownTimeoutMs);
+          } catch (cause) {
+            try {
+              await settleWithin(
+                writeStderr(
+                  `Failed to flush the correlated WhatsApp terminal log before exit: ${errorMessage(cause)}\n`,
+                ),
+                terminalShutdownTimeoutMs,
+              );
+            } catch {
+              // Exit is mandatory even when both operator output channels fail.
+            }
+          }
+        } finally {
+          (options.exit ?? process.exit)(1);
+        }
       }
     } else {
       setRuntimeStatus({ phase: "stopped", chatTarget: gate.describe() });

@@ -110,6 +110,10 @@ const LEGACY_APPLICATION_OPTIONAL_SCHEMA = [
   ["github_issue_operation_examinations", ["operation_id", "examined_at"]],
   // ADR 0015: the one-time managed-root migration records its completed move here.
   ["managed_root_migrations", ["source", "migrated_at"]],
+  [
+    "whatsapp_terminal_receipts",
+    ["correlation_id", "invocation_id", "phase", "reason", "observed_at", "acknowledged_at", "announced_at"],
+  ],
   // The shared graph (MEMORY-STATE-SPEC §3) lives beside the archive in application.sqlite.
   [
     "graph_entities",

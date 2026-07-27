@@ -26,7 +26,8 @@
     "./runtime-health.ts": "./src/runtime-health.ts",
     "./tenant-credentials.ts": "./src/tenant-credentials.ts",
     "./uncertain-work.ts": "./src/uncertain-work.ts",
-    "./whatsapp-account.ts": "./src/whatsapp-account.ts"
+    "./whatsapp-account.ts": "./src/whatsapp-account.ts",
+    "./whatsapp-terminal-receipt.ts": "./src/whatsapp-terminal-receipt.ts"
   },
   "dependencies": {
     "@flue/runtime": "1.0.0-beta.9",
