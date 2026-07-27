@@ -19,9 +19,18 @@ export type DispatchBrain = (request: BrainDispatchRequest) => Promise<DispatchR
 
 export const dispatchBrain: DispatchBrain = (request) => dispatch(brain, request);
 
-const wakes = Semaphore.makeUnsafe(1);
-const dispatchGates = new WeakMap<BrainInbox, { active: boolean }>();
+const dispatchScopes = new Map<
+  string,
+  { active: boolean; wakes: ReturnType<typeof Semaphore.makeUnsafe> }
+>();
 const inFlightWakes = new WeakMap<BrainInbox, Set<Promise<BrainBatch | undefined>>>();
+const dispatchScopeFor = (inbox: BrainInbox) => {
+  const existing = dispatchScopes.get(inbox.dispatchScope);
+  if (existing !== undefined) return existing;
+  const created = { active: true, wakes: Semaphore.makeUnsafe(1) };
+  dispatchScopes.set(inbox.dispatchScope, created);
+  return created;
+};
 const brainDispatches = createDispatchCorrelator<{ readonly batchId: string }>({
   requireTerminalAcknowledgement: true,
 });
@@ -33,45 +42,48 @@ export const wakeBrain = async (
   deliver: DispatchBrain = dispatchBrain,
   now: () => number = Date.now,
 ): Promise<BrainBatch | undefined> => {
-  const wake = Effect.runPromise(
-    wakes.withPermits(1)(
+  const scope = dispatchScopeFor(inbox);
+  return Effect.runPromise(
+    scope.wakes.withPermits(1)(
       Effect.tryPromise({
         try: async () => {
-          if (dispatchGates.get(inbox)?.active === false) return undefined;
-          const batch = inbox.claimBatch();
-          if (batch === undefined || batch.dispatch !== undefined) return batch;
-          if (batch.nextRetryAt !== undefined && Date.parse(batch.nextRetryAt) > now()) return batch;
-          const receipt = await deliver({
-            id: "global",
-            input: {
-              type: "brain.batch",
-              batch: {
-                id: batch.id,
-                createdAt: batch.createdAt,
-                intents: batch.intents,
-                knowledgeDeltas: batch.knowledgeDeltas,
-                specialistResults: batch.specialistResults,
-                githubEvents: batch.githubEvents,
-                scheduledWakes: batch.scheduledWakes,
+          if (!scope.active) return undefined;
+          const wake = (async () => {
+            const batch = inbox.claimBatch();
+            if (batch === undefined || batch.dispatch !== undefined) return batch;
+            if (batch.nextRetryAt !== undefined && Date.parse(batch.nextRetryAt) > now()) return batch;
+            const receipt = await deliver({
+              id: "global",
+              input: {
+                type: "brain.batch",
+                batch: {
+                  id: batch.id,
+                  createdAt: batch.createdAt,
+                  intents: batch.intents,
+                  knowledgeDeltas: batch.knowledgeDeltas,
+                  specialistResults: batch.specialistResults,
+                  githubEvents: batch.githubEvents,
+                  scheduledWakes: batch.scheduledWakes,
+                },
               },
-            },
-          });
-          const dispatched = inbox.markBatchDispatched(batch.id, receipt);
-          brainDispatches.accepted(receipt.dispatchId, { batchId: batch.id });
-          return dispatched;
+            });
+            const dispatched = inbox.markBatchDispatched(batch.id, receipt);
+            brainDispatches.accepted(receipt.dispatchId, { batchId: batch.id });
+            return dispatched;
+          })();
+          const pending = inFlightWakes.get(inbox) ?? new Set<Promise<BrainBatch | undefined>>();
+          inFlightWakes.set(inbox, pending);
+          pending.add(wake);
+          try {
+            return await wake;
+          } finally {
+            pending.delete(wake);
+          }
         },
         catch: (cause) => cause,
       }),
     ),
   );
-  const pending = inFlightWakes.get(inbox) ?? new Set<Promise<BrainBatch | undefined>>();
-  inFlightWakes.set(inbox, pending);
-  pending.add(wake);
-  const remove = (): void => {
-    pending.delete(wake);
-  };
-  void wake.then(remove, remove);
-  return wake;
 };
 
 type RecoveryLogger = Pick<Logger, "info" | "warn" | "error">;
@@ -101,8 +113,8 @@ export const configureBrainDispatchRecovery = (
   const setTimer = options.setTimer ?? setTimeout;
   const clearTimer = options.clearTimer ?? clearTimeout;
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
-  const gate = { active: false };
-  dispatchGates.set(inbox, gate);
+  const scope = dispatchScopeFor(inbox);
+  scope.active = false;
   let active = false;
 
   const schedule = (state: BrainBatchRecovery): void => {
@@ -189,12 +201,12 @@ export const configureBrainDispatchRecovery = (
     activate(): void {
       if (active) return;
       active = true;
-      gate.active = true;
+      scope.active = true;
       for (const state of inbox.dispatchRecovery()) schedule(state);
     },
     async stop(): Promise<void> {
       active = false;
-      gate.active = false;
+      scope.active = false;
       for (const timer of timers.values()) clearTimer(timer);
       timers.clear();
       await Promise.allSettled(inFlightWakes.get(inbox) ?? []);

@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type { DispatchReceipt } from "@flue/runtime";
@@ -406,6 +406,8 @@ interface EffectRow {
 }
 
 export interface BrainInbox {
+  /** Stable identity shared by every handle to the same application database. */
+  readonly dispatchScope: string;
   admitIntent(draft: IntentDraft): Intent;
   admitKnowledgeDelta(draft: KnowledgeDeltaDraft): KnowledgeDelta;
   admitGitHubEvent(draft: GitHubEventDraft): GitHubEvent;
@@ -645,6 +647,7 @@ const effectId = (batch: string, kind: BrainEffect["kind"], payload: unknown): s
  * transaction, so an exact retry or restart returns the original admission.
  */
 export const createBrainInbox = (databasePath: string, options: BrainInboxOptions): BrainInbox => {
+  const dispatchScope = databasePath === ":memory:" ? `memory:${randomUUID()}` : resolve(databasePath);
   if (databasePath !== ":memory:") mkdirSync(dirname(databasePath), { recursive: true });
   const database = new DatabaseSync(databasePath);
   database.exec(`
@@ -1070,9 +1073,13 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
     SELECT * FROM brain_dispatch_attempts WHERE batch_id = ? ORDER BY retry_count, accepted_at, dispatch_id
   `);
   const selectDispatchRecovery = database.prepare(`
-    SELECT batch_id, dispatch_id, retry_count, next_retry_at
-      FROM brain_batches WHERE settled_at IS NULL
-     ORDER BY created_at, batch_id
+    SELECT batch.batch_id, batch.dispatch_id, batch.retry_count, batch.next_retry_at
+      FROM brain_batches AS batch
+      LEFT JOIN brain_dispatch_attempts AS attempt
+        ON attempt.batch_id = batch.batch_id AND attempt.dispatch_id = batch.dispatch_id
+     WHERE batch.settled_at IS NULL
+        OR (batch.dispatch_id IS NOT NULL AND attempt.terminal_at IS NULL)
+     ORDER BY batch.created_at, batch.batch_id
   `);
   const markDispatchTerminal = database.prepare(`
     UPDATE brain_dispatch_attempts
@@ -1220,6 +1227,7 @@ export const createBrainInbox = (databasePath: string, options: BrainInboxOption
   });
 
   return {
+    dispatchScope,
     admitIntent: (draft) => {
       const sourceSurfaceId = required(draft.sourceSurfaceId, "Intent source Surface id");
       const interpretation = required(draft.interpretation, "Intent interpretation");

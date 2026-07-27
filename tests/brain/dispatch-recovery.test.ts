@@ -183,6 +183,31 @@ describe("Brain Batch dispatch recovery", () => {
     reopened.close();
   });
 
+  it("registers a nonterminal dispatch even after its Batch settled", async () => {
+    const databasePath = fixture();
+    const now = () => "2026-07-26T01:15:00.000Z";
+    const first = openInbox(databasePath, now);
+    admit(first);
+    const batch = await wakeBrain(
+      first,
+      async () => ({ dispatchId: "dispatch:settled-before-terminal", acceptedAt: now() }),
+    );
+    first.recordSilence(batch!.id, "Handled before Flue emitted its terminal.");
+    first.settleBatch(batch!.id);
+    first.close();
+
+    const reopened = openInbox(databasePath, now);
+    const recovery = configureBrainDispatchRecovery(reopened, { logger });
+    observeBrainDispatch(recoverySettlement("dispatch:settled-before-terminal"));
+
+    expect(reopened.dispatchAttempts(batch!.id)).toMatchObject([
+      { dispatchId: "dispatch:settled-before-terminal", terminalOutcome: "settled" },
+    ]);
+    expect(reopened.dispatchRecovery()).toEqual([]);
+    await recovery.stop();
+    reopened.close();
+  });
+
   it("backfills the active pre-ledger dispatch during upgrade", () => {
     const databasePath = fixture();
     const database = new DatabaseSync(databasePath);
@@ -266,6 +291,32 @@ describe("Brain Batch dispatch recovery", () => {
     });
     await recovery.stop();
     restarted.close();
+  });
+
+  it("shares the readiness gate across handles to the same application database", async () => {
+    const databasePath = fixture();
+    const now = () => "2026-07-26T01:50:00.000Z";
+    const primary = openInbox(databasePath, now);
+    const historicalReplay = openInbox(databasePath, now);
+    admit(historicalReplay);
+    let calls = 0;
+    const deliver: DispatchBrain = async () => {
+      calls++;
+      return { dispatchId: "dispatch:shared-gate", acceptedAt: now() };
+    };
+    const recovery = configureBrainDispatchRecovery(primary, { logger });
+
+    expect(await wakeBrain(historicalReplay, deliver)).toBeUndefined();
+    expect(calls).toBe(0);
+    recovery.activate();
+    expect(await wakeBrain(historicalReplay, deliver)).toMatchObject({
+      dispatch: { dispatchId: "dispatch:shared-gate" },
+    });
+    expect(calls).toBe(1);
+
+    await recovery.stop();
+    historicalReplay.close();
+    primary.close();
   });
 
   it("ignores a stale terminal writer after a replacement dispatch is active", async () => {
@@ -424,5 +475,42 @@ describe("Brain Batch dispatch recovery", () => {
       dispatch: { dispatchId: "dispatch:replacement" },
     });
     inbox.close();
+  });
+
+  it("does not make stop wait for a queued wake behind another inbox handle", async () => {
+    const databasePath = fixture();
+    const now = () => "2026-07-26T04:30:00.000Z";
+    const primary = openInbox(databasePath, now);
+    const historicalReplay = openInbox(databasePath, now);
+    admit(historicalReplay);
+    const recovery = configureBrainDispatchRecovery(primary, { logger });
+    recovery.activate();
+
+    let startDelivery!: () => void;
+    const deliveryStarted = new Promise<void>((resolve) => {
+      startDelivery = resolve;
+    });
+    let finishDelivery!: (receipt: { dispatchId: string; acceptedAt: string }) => void;
+    const delivery = new Promise<{ dispatchId: string; acceptedAt: string }>((resolve) => {
+      finishDelivery = resolve;
+    });
+    const siblingWake = wakeBrain(historicalReplay, async () => {
+      startDelivery();
+      return await delivery;
+    });
+    await deliveryStarted;
+    const queuedPrimaryWake = wakeBrain(primary, async () => {
+      throw new Error("The queued primary wake must observe the closed gate.");
+    });
+
+    await recovery.stop();
+    primary.close();
+    finishDelivery({ dispatchId: "dispatch:historical-replay", acceptedAt: now() });
+
+    await expect(siblingWake).resolves.toMatchObject({
+      dispatch: { dispatchId: "dispatch:historical-replay" },
+    });
+    await expect(queuedPrimaryWake).resolves.toBeUndefined();
+    historicalReplay.close();
   });
 });
