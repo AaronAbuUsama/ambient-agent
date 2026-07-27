@@ -23,6 +23,11 @@ export type WhatsAppRuntimePhase =
 export interface WhatsAppTerminalFailure {
   readonly phase: "logged_out" | "suspended";
   readonly reason: string;
+  readonly correlationId: string;
+}
+export interface WhatsAppTerminalReceipt extends WhatsAppTerminalFailure {
+  readonly invocationId: string;
+  readonly observedAt: string;
 }
 export interface WhatsAppRuntimeStatus {
   readonly phase: WhatsAppRuntimePhase;
@@ -34,6 +39,8 @@ export interface WhatsAppRuntimeStatus {
   readonly error?: string;
   /** Typed whatsappd terminal state retained after the live transport projection is finalized. */
   readonly terminal?: WhatsAppTerminalFailure;
+  /** The durable terminal receipt acknowledged by this successful restart, when one was pending. */
+  readonly recovery?: WhatsAppTerminalReceipt;
 }
 
 export interface AmbientRuntimeHealth {
