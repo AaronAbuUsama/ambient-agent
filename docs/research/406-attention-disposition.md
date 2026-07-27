@@ -117,8 +117,10 @@ replacing the inbox:
 ```sql
 CREATE TABLE brain_attention_items (
   attention_id TEXT PRIMARY KEY,
-  source_kind TEXT NOT NULL,
-  source_id TEXT NOT NULL UNIQUE,
+  source_kind TEXT NOT NULL
+    CHECK (source_kind IN ('happenings', 'internal_input')),
+  source_key TEXT NOT NULL UNIQUE,
+  source_refs_json TEXT NOT NULL,
   evidence_ids_json TEXT NOT NULL,
   readiness_json TEXT NOT NULL,
   created_at TEXT NOT NULL
@@ -147,7 +149,23 @@ CREATE TABLE brain_attention_transitions (
   CHECK (
     (
       claim_id IS NULL
-      AND transition_kind IN ('admitted', 'reopened', 'enriched')
+      AND transition_kind = 'admitted'
+      AND from_state IS NULL
+      AND to_state = 'pending'
+    )
+    OR
+    (
+      claim_id IS NULL
+      AND transition_kind = 'reopened'
+      AND from_state IN ('held', 'transferred', 'resolved')
+      AND to_state = 'pending'
+    )
+    OR
+    (
+      claim_id IS NULL
+      AND transition_kind = 'enriched'
+      AND from_state IS NOT NULL
+      AND from_state = to_state
     )
     OR
     (
@@ -164,13 +182,18 @@ CREATE UNIQUE INDEX one_disposition_per_attention_claim
   WHERE claim_id IS NOT NULL;
 ```
 
-Create the identity row and initial `pending` transition transactionally when an
-accountability-bearing input is admitted or normalized. Each Brain Batch appends
-a claim; its disposition appends one claim-linked transition. Reopening after a
-due wake or failed successor appends `held/transferred -> pending`, and a later
+Trusted admission validates that `source_refs_json` contains either a non-empty list
+of real Happening ids or exactly one durable internal-input id, according to
+`source_kind`; `source_key` is the deterministic idempotency key for that source
+obligation. Create the identity row and initial `pending` transition transactionally
+when an accountability-bearing input is admitted or normalized. Each Brain Batch
+appends a claim; its disposition appends one claim-linked transition. Reopening after
+a due wake or failed successor appends `held/transferred -> pending`, and a later
 Batch appends another claim. No earlier `batch_id` or disposition is cleared or
-overwritten. The current state is a deterministic projection over the transition
-log.
+overwritten. Admission is only `undefined -> pending`; enrichment is state-preserving,
+and material enrichment that reopens responsibility appends a separate
+`held/transferred/resolved -> pending` transition. The current state is a
+deterministic projection over the transition log.
 
 Trusted code validates disposition references:
 

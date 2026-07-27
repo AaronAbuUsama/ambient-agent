@@ -240,15 +240,28 @@ The Graph and Attention answer different questions:
 | Graph | What does the coworker currently believe? | Persistent, rebuildable memory |
 | Attention Item | What occurrence still requires accountable judgement? | Permanent accountability history |
 
-An **Attention Item** is admitted only after its Happening reaches the minimum knowledge
-floor. A bounded terminal projection failure counts as a prepared knowledge-floor fact, not
-as successful semantic extraction. Conceptually the durable contract separates immutable
-identity, append-only claims, and append-only transitions:
+An external-source **Attention Item** is admitted only after its Happening reaches the
+minimum knowledge floor. A bounded terminal projection failure counts as a prepared
+knowledge-floor fact, not as successful semantic extraction. An ownerless internal signal
+instead names its durable internal-input record directly; it is not recast as a provider
+Happening. Conceptually the durable contract separates immutable identity, append-only
+claims, and append-only transitions:
 
 ```ts
+type AttentionSource =
+  | {
+      kind: "happenings";
+      happeningIds: [string, ...string[]];
+    }
+  | {
+      kind: "internal_input";
+      internalInputId: string;
+      internalInputKind: string;
+    };
+
 type AttentionItem = {
   attentionId: string;
-  happeningIds: string[];
+  source: AttentionSource;
   evidenceIds: string[];
   readiness:
     | {
@@ -272,24 +285,45 @@ type AttentionClaim = {
   claimedAt: string;
 };
 
+type AttentionState = "pending" | "held" | "transferred" | "resolved";
+
+type EnrichmentTransition = {
+  [State in AttentionState]: {
+    transitionId: string;
+    attentionId: string;
+    claimId?: never;
+    from: State;
+    to: State;
+    transition: {
+      kind: "enriched";
+      attestationIds: string[];
+      projectionVersion: string;
+      material: boolean;
+    };
+    recordedAt: string;
+  };
+}[AttentionState];
+
 type AttentionTransition =
   | {
       transitionId: string;
       attentionId: string;
       claimId?: never;
-      from?: "pending" | "held" | "transferred" | "resolved";
-      to: "pending" | "held" | "transferred" | "resolved";
-      transition:
-        | { kind: "admitted" }
-        | { kind: "reopened"; reason: string }
-        | {
-            kind: "enriched";
-            attestationIds: string[];
-            projectionVersion: string;
-            material: boolean;
-          };
+      from?: never;
+      to: "pending";
+      transition: { kind: "admitted" };
       recordedAt: string;
     }
+  | {
+      transitionId: string;
+      attentionId: string;
+      claimId?: never;
+      from: "held" | "transferred" | "resolved";
+      to: "pending";
+      transition: { kind: "reopened"; reason: string };
+      recordedAt: string;
+    }
+  | EnrichmentTransition
   | {
       transitionId: string;
       attentionId: string;
@@ -304,6 +338,8 @@ type AttentionTransition =
 This is a conceptual contract, not a frozen database schema. The invariants matter:
 
 - exactly one Attention Item is admitted for every accepted, in-scope Happening;
+- each item names either one or more real Happenings or one durable internal-input record,
+  never a fabricated or empty Happening list;
 - it references immutable evidence and the knowledge floor that made it ready;
 - it never copies the Graph;
 - pending is queue state, not the record's whole lifetime; and
@@ -315,9 +351,10 @@ This is a conceptual contract, not a frozen database schema. The invariants matt
 The current Attention state is a deterministic projection over its transition history.
 Claimability is derived from that current state plus uncovered open claims. A due wake or
 failed successor appends `held/transferred → pending`, after which a later Brain Batch
-appends a new claim. A later successful projection appends enrichment evidence; material
-meaning may append `resolved → pending` for the same Attention Item. Earlier claims,
-dispositions, and the original readiness failure remain permanently inspectable.
+appends a new claim. A later successful projection appends a state-preserving enrichment
+transition; material meaning may then append a separate `held/transferred/resolved → pending`
+reopening for the same Attention Item. Earlier claims, dispositions, and the original
+readiness failure remain permanently inspectable.
 
 The Brain reads the live Belief Projection when deciding. If current belief differs from
 the recorded readiness evidence or version, that is useful context, not corruption. When

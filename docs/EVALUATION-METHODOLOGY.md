@@ -5,7 +5,7 @@ repeatable evidence, how it evaluates each architecture owner, and how it compar
 profiles without confusing a model score with coworker correctness.
 
 It is methodology, not proof that an evaluation platform exists. The smallest executable
-foundation and its dependencies are specified in [Growth path](#growth-path).
+foundation and its dependencies are specified in [Growth path](#11-growth-path).
 
 ## 1. The unit of evaluation
 
@@ -125,6 +125,8 @@ type ScenarioLifecycle =
         reason: string;
         lastValidEpoch: string;
         replacementScenarioIds: string[];
+        adjudicatedBy: string[];
+        adjudicationEvidenceRefs: string[];
       };
     };
 
@@ -287,7 +289,8 @@ flowchart LR
 6. **Promote.** Promote only after the behavior is established, deterministic gates are stable,
    semantic scorers are calibrated, and an adjudicator approves the regression threshold.
 7. **Retire.** Retire on epoch invalidation, duplicate coverage, invalid fixture, or intentional
-   product change. Preserve provenance, reason, last valid epoch, and replacement ids.
+   product change. Preserve provenance, reason, last valid epoch, replacement ids, the
+   adjudicator identities, and the restricted evidence references that approved retirement.
 
 Evaluation Scenarios are never silently deleted or rewritten to make a run green.
 
@@ -315,7 +318,8 @@ The review must reject a scenario that:
 - embeds raw production conversation content, credentials, or unneeded identifiers;
 - asserts on exact prose when outcomes permit variation;
 - infers database/provider truth from the transcript;
-- omits architecture epoch or retirement identity from either manifest variant;
+- omits architecture epoch or any required retirement tombstone or adjudication evidence
+  from either manifest variant;
 - omits owner, provenance, fixture, expectations, or scorers from a repository-visible
   definition or from the protected definition validated inside its authorized boundary;
 - exposes a protected holdout fixture or expected outcome in repository-visible content,
