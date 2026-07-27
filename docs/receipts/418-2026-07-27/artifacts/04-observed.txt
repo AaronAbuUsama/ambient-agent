@@ -6,7 +6,7 @@ Structured log observation:
 - every systemd replacement process failed closed on whatsapp.store-missing
 - repaired PID remained active and recovered a later transient connection loss
 
-Braintrust reachability:
+Braintrust reachability from the CLI:
 
 Command:
 /home/abuusama/.local/npm-global/lib/node_modules/ambient-agent/node_modules/.bin/bt status --json
@@ -14,21 +14,32 @@ Command:
 Result:
 {"org":null,"project":null,"profile":null,"source":null}
 
-Additional readback:
-- running process environment contains no BRAINTRUST variable names
+Runtime configuration readback:
+- runtime.tracing.enabled = true
+- runtime.tracing.project.id = ac7f8405-ae21-47ff-b962-7fe70a936fdb
+- runtime.tracing.project.name = co-worker
 - managed_secret contains a secret of kind "braintrust"
-- runtime config contains no Braintrust organization or project path
 - proof-window journal contains no Braintrust event
 - Braintrust org "capxul" contains four projects: "ambient agents",
   "hosted-agents", "co-worker", and "My Project"
 - each project returned zero spans when queried for the correlation from
   2026-07-27T14:47:30Z onward
 
+Code-path readback:
+- apps/runtime/src/app.ts configures Braintrust with the managed API key and
+  runtime.tracing project when tracing is enabled.
+- packages/engine/src/braintrust.ts attaches only to the Flue runtime observer.
+- compatibleEvent forwards run_start/run_end/run_resume, operation, turn,
+  tool, task, and compaction event families.
+- WhatsApp agent.offline/agent.online transport lifecycle events are not Flue
+  events and therefore cannot enter this observer.
+
 Tier 5 verdict:
 NOT PROVEN
 
 Reason:
 The signed issue contract requires structured logs and Braintrust
-corroboration. Structured logs passed. A credential exists, but the runtime
-does not bind it to an organization/project observation path and emitted no
-correlated Braintrust span for the run.
+corroboration. Structured logs passed. Braintrust is configured, but its
+current architecture observes Flue execution events rather than WhatsApp
+transport lifecycle events. The node asks for evidence the installed observer
+cannot produce. This is a proof-contract mismatch, not a credential failure.

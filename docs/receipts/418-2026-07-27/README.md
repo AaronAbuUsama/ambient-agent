@@ -8,12 +8,14 @@ Runtime-minted correlation: `e47d616d-6b26-4d75-bccf-712bba39adc3`
 
 This receipt records the supervised live proof for
 [issue #418](https://github.com/AaronAbuUsama/ambient-agent/issues/418).
-The product path passed tiers 1–4. Tier 5 remains **NOT PROVEN**. A managed
-secret of kind `braintrust` exists, but the runtime has no Braintrust
-organization/project context, emitted no correlated observation, and produced
-no span in any existing project during the proof window. Issue #418 must remain
-open until that signed requirement is satisfied or its proof contract is
-formally amended.
+The product path passed tiers 1–4. Tier 5 remains **NOT PROVEN**. Braintrust is
+enabled and bound to the `co-worker` project, but the installed observer only
+forwards Flue run/operation/turn/tool/task/compaction events. WhatsApp transport
+lifecycle events are structured runtime logs and durable terminal receipts, so
+the signed request for a correlated Braintrust terminal observation is not
+reachable from the current architecture. Issue #418 must remain open until its
+proof contract is formally corrected or a separately approved transport
+observability mechanism is built and the destructive proof is rerun.
 
 ## Tier table
 
@@ -23,7 +25,7 @@ formally amended.
 | 2 integrated | **PROVEN** | The focused terminal suite covers the parked-stream boundary, cleanup, exactly-once exit, recoverable backoff, durable receipt, restart recovery, supersession, and shutdown deadlines |
 | 3 live | **PROVEN** | A real phone-side linked-device revocation produced `device_removed`, one correlated `agent.offline`, guided exit, re-pair through `ambient-agent repair whatsapp`, and a correlated `agent.online` on the replacement session |
 | 4 readback | **PROVEN** | SQLite row `e47d616d-6b26-4d75-bccf-712bba39adc3` contains observed, acknowledged, and announced timestamps; application DB quick-check is `ok`; config SHA is unchanged; retained application counts did not decrease |
-| 5 observed | **NOT PROVEN** | Structured logs corroborate the chain; a Braintrust secret exists, but runtime org/project context is absent and all four existing projects return zero spans for the correlation and proof window |
+| 5 observed | **NOT PROVEN** | Structured logs corroborate the chain; Braintrust is enabled for `co-worker`, but `compatibleEvent` filters the observer to Flue events and cannot emit a WhatsApp terminal lifecycle span |
 
 ## Timeline
 
