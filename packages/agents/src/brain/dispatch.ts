@@ -22,14 +22,14 @@ export const dispatchBrain: DispatchBrain = (request) => dispatch(brain, request
 interface DispatchScope {
   active: boolean;
   generation?: { stopped: boolean };
+  inFlight: Set<Promise<BrainBatch | undefined>>;
   wakes: ReturnType<typeof Semaphore.makeUnsafe>;
 }
 const dispatchScopes = new Map<string, DispatchScope>();
-const inFlightWakes = new WeakMap<BrainInbox, Set<Promise<BrainBatch | undefined>>>();
 const dispatchScopeFor = (inbox: BrainInbox): DispatchScope => {
   const existing = dispatchScopes.get(inbox.dispatchScope);
   if (existing !== undefined) return existing;
-  const created = { active: true, wakes: Semaphore.makeUnsafe(1) };
+  const created = { active: true, inFlight: new Set<Promise<BrainBatch | undefined>>(), wakes: Semaphore.makeUnsafe(1) };
   dispatchScopes.set(inbox.dispatchScope, created);
   return created;
 };
@@ -74,13 +74,11 @@ export const wakeBrain = async (
             brainDispatches.accepted(receipt.dispatchId, { batchId: batch.id });
             return dispatched;
           })();
-          const pending = inFlightWakes.get(inbox) ?? new Set<Promise<BrainBatch | undefined>>();
-          inFlightWakes.set(inbox, pending);
-          pending.add(wake);
+          scope.inFlight.add(wake);
           try {
             return await wake;
           } finally {
-            pending.delete(wake);
+            scope.inFlight.delete(wake);
           }
         },
         catch: (cause) => cause,
@@ -215,7 +213,7 @@ export const configureBrainDispatchRecovery = (
       scope.active = false;
       for (const timer of timers.values()) clearTimer(timer);
       timers.clear();
-      await Promise.allSettled(inFlightWakes.get(inbox) ?? []);
+      await Promise.allSettled(scope.inFlight);
       unsubscribe();
     },
   };

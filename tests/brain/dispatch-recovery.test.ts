@@ -477,7 +477,7 @@ describe("Brain Batch dispatch recovery", () => {
     inbox.close();
   });
 
-  it("does not make stop wait for a queued wake behind another inbox handle", async () => {
+  it("drains the active scope wake without reviving queued handles", async () => {
     const databasePath = fixture();
     const now = () => "2026-07-26T04:30:00.000Z";
     const primary = openInbox(databasePath, now);
@@ -507,12 +507,18 @@ describe("Brain Batch dispatch recovery", () => {
       throw new Error("The queued sibling wake must retain the stopped runtime generation.");
     });
 
-    await recovery.stop();
-    primary.close();
+    let stopped = false;
+    const stopping = recovery.stop().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
     const replacement = openInbox(databasePath, now);
     const replacementRecovery = configureBrainDispatchRecovery(replacement, { logger });
     replacementRecovery.activate();
     finishDelivery({ dispatchId: "dispatch:historical-replay", acceptedAt: now() });
+    await stopping;
+    primary.close();
 
     await expect(siblingWake).resolves.toMatchObject({
       dispatch: { dispatchId: "dispatch:historical-replay" },
