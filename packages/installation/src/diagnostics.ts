@@ -200,6 +200,19 @@ const LEGACY_APPLICATION_OPTIONAL_SCHEMA = [
   ["surface_bindings", ["surface_id", "provider_account_id", "provider_chat_id", "bound_at", "retired_at"]],
   ["brain_intents", ["intent_id", "source_surface_id", "interpretation", "evidence_ids_json", "admitted_at"]],
   ["brain_batches", ["batch_id", "created_at", "dispatch_id", "accepted_at", "settled_at"]],
+  [
+    "brain_dispatch_attempts",
+    [
+      "batch_id",
+      "dispatch_id",
+      "accepted_at",
+      "retry_count",
+      "terminal_outcome",
+      "terminal_error",
+      "terminal_at",
+      "next_retry_at",
+    ],
+  ],
   ["brain_inbox_inputs", ["input_id", "kind", "intent_id", "admitted_at", "batch_id"]],
   [
     "brain_knowledge_deltas",

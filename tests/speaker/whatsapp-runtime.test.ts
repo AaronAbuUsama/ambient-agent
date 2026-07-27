@@ -1502,6 +1502,8 @@ describe("runtime pairing and bridge control", () => {
     const [surface] = seededSurfaces.activateConfigured("15550000000:7@s.whatsapp.net", [CHAT]);
     const seededInbox = createBrainInbox(applicationDatabase, {
       providerChatIdForSurface: (surfaceId) => seededSurfaces.activeBinding(surfaceId)?.providerChatId,
+      now: () => "2026-07-22T12:00:00.000Z",
+      retryBackoffMs: () => 0,
     });
     seededInbox.admitIntent({
       sourceSurfaceId: surface!.id,
@@ -1520,10 +1522,21 @@ describe("runtime pairing and bridge control", () => {
       objective: "Ask what help is needed.",
       brief: { summary: "The request omitted its subject.", evidenceIds: [evidence.id] },
     });
+    seededInbox.reconcileDispatchTerminal({
+      batchId: batch.id,
+      dispatchId: "dispatch:brain:seeded",
+      outcome: "failed",
+      error: "provider interrupted after the prompt was recorded",
+    });
     seededInbox.close();
     seededSurfaces.close();
 
     const directives: SpeakerDispatchRequest[] = [];
+    const brainDispatches: unknown[] = [];
+    let acceptPrompt!: (receipt: { dispatchId: string; acceptedAt: string }) => void;
+    const promptReceipt = new Promise<{ dispatchId: string; acceptedAt: string }>((resolve) => {
+      acceptPrompt = resolve;
+    });
     let resolveOutcome!: (value: unknown) => void;
     let rejectOutcome!: (cause: unknown) => void;
     const delivered = new Promise<unknown>((resolve, reject) => {
@@ -1535,6 +1548,10 @@ describe("runtime pairing and bridge control", () => {
       applicationDatabase,
       managedChats: [CHAT],
       sessionFactory: () => fakeSession().session,
+      brainDispatch: async (request) => {
+        brainDispatches.push(request);
+        return { dispatchId: "dispatch:brain:retried", acceptedAt: "2026-07-22T12:01:01.000Z" };
+      },
       dispatch: async (request) => {
         directives.push(request);
         queueMicrotask(() => {
@@ -1545,10 +1562,14 @@ describe("runtime pairing and bridge control", () => {
             }),
           ).then(resolveOutcome, rejectOutcome);
         });
-        return { dispatchId: "dispatch:speaker:recovered", acceptedAt: "2026-07-22T12:01:00.000Z" };
+        return await promptReceipt;
       },
     });
     await vi.waitFor(() => expect(directives).toHaveLength(1));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(brainDispatches).toEqual([]);
+    acceptPrompt({ dispatchId: "dispatch:speaker:recovered", acceptedAt: "2026-07-22T12:01:00.000Z" });
+    await vi.waitFor(() => expect(brainDispatches).toHaveLength(1));
     expect(directives).toEqual([
       {
         id: CHAT,
