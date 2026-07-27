@@ -20,6 +20,9 @@ jobs:
         node-version: [22, 24]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Evaluation Scenario epochs resolve exact canon commits, so tests need the repository history.
+          fetch-depth: 0
 
       # Uses the pnpm version pinned by package.json's "packageManager" field.
       - uses: pnpm/action-setup@v4

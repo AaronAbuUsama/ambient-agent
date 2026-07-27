@@ -9,6 +9,7 @@
     "./braintrust.ts": "./src/braintrust.ts",
     "./coalescer/chat-gate.ts": "./src/coalescer/chat-gate.ts",
     "./dispatch/dispatch-correlator.ts": "./src/dispatch/dispatch-correlator.ts",
+    "./evaluation/scenario.ts": "./src/evaluation/scenario.ts",
     "./coalescer/coalescer.ts": "./src/coalescer/coalescer.ts",
     "./coalescer/config.ts": "./src/coalescer/config.ts",
     "./coalescer/debounce-actor.ts": "./src/coalescer/debounce-actor.ts",
