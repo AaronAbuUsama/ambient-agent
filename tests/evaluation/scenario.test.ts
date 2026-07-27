@@ -132,27 +132,32 @@ describe("Evaluation Scenario repository artifacts", () => {
         ),
       ).toThrow("does not match the sanitized synthetic-provider-v1 schema");
     }
-    const realRepositoryFixture = JSON.stringify({
-      schemaVersion: 1,
-      provider: "synthetic-github",
-      deliveryId: "synthetic-delivery-2",
-      repository: "private-owner/private-repository",
-      issueNumber: 2,
-    });
-    await writeFile(join(repositoryRoot, "real-repository.json"), realRepositoryFixture);
-    expect(() =>
-      validateEvaluationScenario(
-        {
-          ...positive,
-          fixture: {
-            ...positiveFixture,
-            ref: "real-repository.json",
-            sha256: createHash("sha256").update(realRepositoryFixture).digest("hex"),
+    for (const [name, deliveryId, repository] of [
+      ["real-repository", "synthetic-delivery-2", "private-owner/private-repository"],
+      ["real-delivery", "550e8400-e29b-41d4-a716-446655440000", "synthetic/widgets"],
+    ] as const) {
+      const unsafeIdentityFixture = JSON.stringify({
+        schemaVersion: 1,
+        provider: "synthetic-github",
+        deliveryId,
+        repository,
+        issueNumber: 2,
+      });
+      await writeFile(join(repositoryRoot, `${name}.json`), unsafeIdentityFixture);
+      expect(() =>
+        validateEvaluationScenario(
+          {
+            ...positive,
+            fixture: {
+              ...positiveFixture,
+              ref: `${name}.json`,
+              sha256: createHash("sha256").update(unsafeIdentityFixture).digest("hex"),
+            },
           },
-        },
-        { repositoryRoot },
-      ),
-    ).toThrow("does not match the sanitized synthetic-provider-v1 schema");
+          { repositoryRoot },
+        ),
+      ).toThrow("does not match the sanitized synthetic-provider-v1 schema");
+    }
     const invalidFixture = "not json\n";
     await writeFile(join(repositoryRoot, "invalid.json"), invalidFixture);
     expect(() =>

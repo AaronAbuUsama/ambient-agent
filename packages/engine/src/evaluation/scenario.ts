@@ -67,7 +67,7 @@ const SanitizedSyntheticProviderFixture = v.strictObject({
   provider: v.literal("synthetic-github"),
   deliveryId: v.pipe(
     NonBlankString,
-    v.regex(/^[a-z0-9][a-z0-9._:-]*$/u, "Expected a synthetic delivery identifier"),
+    v.regex(/^synthetic-[a-z0-9][a-z0-9._:-]*$/u, "Expected an explicitly synthetic delivery identifier"),
     v.check((identifier) => !/\d{10,}/u.test(identifier), "Expected no compact phone-like digit sequence"),
   ),
   repository: v.pipe(
