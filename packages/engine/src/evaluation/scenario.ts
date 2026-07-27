@@ -141,6 +141,17 @@ export const EvaluationScenarioSchema = v.pipe(
     "Draft lifecycle and draft maturity must be declared together; Candidate requires complete adjudication",
   ),
   v.check(
+    (scenario) => {
+      const { allowedOutcomes, prohibitedOutcomes } = scenario.expectations;
+      return (
+        isUnresolved(allowedOutcomes) ||
+        isUnresolved(prohibitedOutcomes) ||
+        allowedOutcomes.every((outcome) => !prohibitedOutcomes.includes(outcome))
+      );
+    },
+    "Allowed and prohibited outcomes must be disjoint",
+  ),
+  v.check(
     (scenario) => (scenario.maturity === "retired") === (scenario.retirement !== undefined),
     "Retired maturity requires retirement details, and other maturities prohibit them",
   ),

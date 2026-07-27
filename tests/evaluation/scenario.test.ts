@@ -298,6 +298,15 @@ describe("Evaluation Scenario repository artifacts", () => {
         },
       }),
     ).toThrow("namespaced lowercase machine reference");
+    expect(() =>
+      validateEvaluationScenario({
+        ...valid,
+        expectations: {
+          ...(valid.expectations as Record<string, unknown>),
+          allowedOutcomes: ["outcome:duplicate-admission"],
+        },
+      }),
+    ).toThrow("Allowed and prohibited outcomes must be disjoint");
   });
 
   it.each([
