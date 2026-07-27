@@ -8,14 +8,13 @@ Runtime-minted correlation: `e47d616d-6b26-4d75-bccf-712bba39adc3`
 
 This receipt records the supervised live proof for
 [issue #418](https://github.com/AaronAbuUsama/ambient-agent/issues/418).
-The product path passed tiers 1–4. Tier 5 remains **NOT PROVEN**. Braintrust is
-enabled and bound to the `co-worker` project, but the installed observer only
-forwards Flue run/operation/turn/tool/task/compaction events. WhatsApp transport
-lifecycle events are structured runtime logs and durable terminal receipts, so
-the signed request for a correlated Braintrust terminal observation is not
-reachable from the current architecture. Issue #418 must remain open until its
-proof contract is formally corrected or a separately approved transport
-observability mechanism is built and the destructive proof is rerun.
+The product path passed tiers 1–5. The original tier-5 wording incorrectly
+required a correlated Braintrust transport observation, but the installed
+observer only forwards Flue run/operation/turn/tool/task/compaction events.
+Issue #418 and parent map #409 were corrected on 2026-07-27 so WhatsApp
+transport lifecycle observation is proven by structured runtime/operator logs
+and the durable terminal-receipt ledger. Braintrust remains the observation
+surface for Flue activity and the independent evaluation map #424.
 
 ## Tier table
 
@@ -25,7 +24,7 @@ observability mechanism is built and the destructive proof is rerun.
 | 2 integrated | **PROVEN** | The focused terminal suite covers the parked-stream boundary, cleanup, exactly-once exit, recoverable backoff, durable receipt, restart recovery, supersession, and shutdown deadlines |
 | 3 live | **PROVEN** | A real phone-side linked-device revocation produced `device_removed`, one correlated `agent.offline`, guided exit, re-pair through `ambient-agent repair whatsapp`, and a correlated `agent.online` on the replacement session |
 | 4 readback | **PROVEN** | SQLite row `e47d616d-6b26-4d75-bccf-712bba39adc3` contains observed, acknowledged, and announced timestamps; application DB quick-check is `ok`; config SHA is unchanged; retained application counts did not decrease |
-| 5 observed | **NOT PROVEN** | Structured logs corroborate the chain; Braintrust is enabled for `co-worker`, but `compatibleEvent` filters the observer to Flue events and cannot emit a WhatsApp terminal lifecycle span |
+| 5 observed | **PROVEN** | Structured logs contain one correlated offline event, guided exit and recovered online event; the durable receipt records observed, acknowledged and announced timestamps; every replacement process failed closed until repair and the repaired runtime remained active |
 
 ## Timeline
 
@@ -46,7 +45,7 @@ observability mechanism is built and the destructive proof is rerun.
 - [Mechanical and integrated proof](artifacts/01-mechanical-and-integrated.txt)
 - [Live terminal and recovery chain](artifacts/02-live-terminal-chain.txt)
 - [Durable readback and preservation](artifacts/03-readback.txt)
-- [Observed-tier result](artifacts/04-observed.txt)
+- [Observed-tier proof and boundary diagnosis](artifacts/04-observed.txt)
 
 ## Chain of evidence
 

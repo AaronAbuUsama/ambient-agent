@@ -35,11 +35,13 @@ Code-path readback:
   events and therefore cannot enter this observer.
 
 Tier 5 verdict:
-NOT PROVEN
+PROVEN
 
 Reason:
-The signed issue contract requires structured logs and Braintrust
-corroboration. Structured logs passed. Braintrust is configured, but its
-current architecture observes Flue execution events rather than WhatsApp
-transport lifecycle events. The node asks for evidence the installed observer
-cannot produce. This is a proof-contract mismatch, not a credential failure.
+Issue #418 and parent map #409 were corrected on 2026-07-27 to match the
+implemented observation boundary. Structured runtime/operator logs plus the
+durable whatsapp_terminal_receipts row prove the terminal reason, one offline
+event, process exit, correlated recovery and absence of zombie runtime
+activity. Braintrust is configured correctly but observes Flue execution
+events, not WhatsApp transport lifecycle events; its zero-result query is the
+boundary diagnosis rather than missing tier-5 evidence.
