@@ -19,13 +19,14 @@ export type DispatchBrain = (request: BrainDispatchRequest) => Promise<DispatchR
 
 export const dispatchBrain: DispatchBrain = (request) => dispatch(brain, request);
 
-const dispatchScopes = new Map<
-  string,
-  { active: boolean; wakes: ReturnType<typeof Semaphore.makeUnsafe> }
->();
-const inboxGenerations = new WeakMap<BrainInbox, { stopped: boolean }>();
+interface DispatchScope {
+  active: boolean;
+  generation?: { stopped: boolean };
+  wakes: ReturnType<typeof Semaphore.makeUnsafe>;
+}
+const dispatchScopes = new Map<string, DispatchScope>();
 const inFlightWakes = new WeakMap<BrainInbox, Set<Promise<BrainBatch | undefined>>>();
-const dispatchScopeFor = (inbox: BrainInbox) => {
+const dispatchScopeFor = (inbox: BrainInbox): DispatchScope => {
   const existing = dispatchScopes.get(inbox.dispatchScope);
   if (existing !== undefined) return existing;
   const created = { active: true, wakes: Semaphore.makeUnsafe(1) };
@@ -44,7 +45,7 @@ export const wakeBrain = async (
   now: () => number = Date.now,
 ): Promise<BrainBatch | undefined> => {
   const scope = dispatchScopeFor(inbox);
-  const generation = inboxGenerations.get(inbox);
+  const generation = scope.generation;
   return Effect.runPromise(
     scope.wakes.withPermits(1)(
       Effect.tryPromise({
@@ -118,7 +119,7 @@ export const configureBrainDispatchRecovery = (
   const scope = dispatchScopeFor(inbox);
   scope.active = false;
   const generation = { stopped: false };
-  inboxGenerations.set(inbox, generation);
+  scope.generation = generation;
   let active = false;
 
   const schedule = (state: BrainBatchRecovery): void => {

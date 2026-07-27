@@ -482,6 +482,7 @@ describe("Brain Batch dispatch recovery", () => {
     const now = () => "2026-07-26T04:30:00.000Z";
     const primary = openInbox(databasePath, now);
     const historicalReplay = openInbox(databasePath, now);
+    const queuedHistoricalReplay = openInbox(databasePath, now);
     admit(historicalReplay);
     const recovery = configureBrainDispatchRecovery(primary, { logger });
     recovery.activate();
@@ -502,6 +503,9 @@ describe("Brain Batch dispatch recovery", () => {
     const queuedPrimaryWake = wakeBrain(primary, async () => {
       throw new Error("The queued primary wake must observe the closed gate.");
     });
+    const queuedSiblingWake = wakeBrain(queuedHistoricalReplay, async () => {
+      throw new Error("The queued sibling wake must retain the stopped runtime generation.");
+    });
 
     await recovery.stop();
     primary.close();
@@ -514,8 +518,10 @@ describe("Brain Batch dispatch recovery", () => {
       dispatch: { dispatchId: "dispatch:historical-replay" },
     });
     await expect(queuedPrimaryWake).resolves.toBeUndefined();
+    await expect(queuedSiblingWake).resolves.toBeUndefined();
     await replacementRecovery.stop();
     replacement.close();
+    queuedHistoricalReplay.close();
     historicalReplay.close();
   });
 });
