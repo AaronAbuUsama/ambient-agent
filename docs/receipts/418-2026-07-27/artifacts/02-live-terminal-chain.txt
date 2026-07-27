@@ -1,0 +1,67 @@
+UTC proof window:
+2026-07-27T14:48:07Z through 2026-07-27T14:53:45Z
+
+Runtime-minted correlation:
+e47d616d-6b26-4d75-bccf-712bba39adc3
+
+Terminal invocation:
+b7b8b939-6d04-474a-9424-84500296b136
+
+Sanitized decisive log sequence:
+
+2026-07-27T14:48:07Z
+provider reason: conflict / device_removed
+stream error code: 401
+
+2026-07-27T14:48:07Z
+operatorEvent=agent.offline
+phase=logged_out
+reason=logged_out_remote
+terminal=true
+correlationId=e47d616d-6b26-4d75-bccf-712bba39adc3
+
+2026-07-27T14:48:07Z
+WhatsApp authentication ended in logged_out (logged_out_remote).
+Run ambient-agent repair whatsapp to pair again; configuration, credentials,
+and history are preserved.
+
+2026-07-27T14:48:08Z
+systemd: Main process exited, code=exited, status=1/FAILURE
+
+2026-07-27T14:48:11Z through 2026-07-27T14:48:46Z
+systemd attempted six restarts. Each replacement process exited with:
+WhatsApp requires re-pairing (whatsapp.store-missing).
+
+2026-07-27T14:48:46Z
+operator stop completed; service inactive, MainPID=0
+
+Repair CLI result, sanitized:
+Paired WhatsApp as [REDACTED]; the configured managed chat is visible.
+Replaced the managed WhatsApp store at
+/home/abuusama/.ambient-agent/whatsapp; configuration, credentials, and
+history are unchanged.
+
+2026-07-27T14:52:12Z
+systemd started repaired service
+
+2026-07-27T14:52:19Z
+operatorEvent=agent.online
+detail=managed chat connected
+botIds=[REDACTED]
+chatTarget=[REDACTED: two configured managed chats]
+correlationId=e47d616d-6b26-4d75-bccf-712bba39adc3
+recovery.phase=logged_out
+recovery.reason=logged_out_remote
+recovery.observedAt=2026-07-27T14:48:07.948Z
+
+2026-07-27T14:53:43Z
+recoverable connection_lost emitted agent.degraded
+
+2026-07-27T14:53:45Z
+same process emitted agent.online; runtime returned healthy without teardown
+
+Final repeated health result:
+ok=true
+runtime.state=healthy
+runtime.whatsapp.phase=online
+runtimeId=jQDCA0ofejoze5MWDSSe1x

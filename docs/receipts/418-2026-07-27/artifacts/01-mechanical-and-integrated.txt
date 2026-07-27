@@ -1,0 +1,31 @@
+Exact reviewed PR head:
+6a29672cff1ca20864b2787401f0c362ff6bb4f5
+
+Exact merge/deployed head:
+a7f9f9fc5b7c82de5f36122c1262cf2d686d8e03
+
+Independent exact-head review:
+CLEAN
+
+Local gates recorded on PR #444:
+- typecheck: passed
+- focused WhatsApp runtime suite: 41/41 passed
+- lint: passed with 9 pre-existing warnings
+- ordinary tests: 964 passed / 4 skipped
+- production build: passed
+- reviewed-head diff check: passed
+
+GitHub CI:
+- Node 22: SUCCESS
+  https://github.com/AaronAbuUsama/ambient-agent/actions/runs/30237940729/job/89889203561
+- Node 24: SUCCESS
+  https://github.com/AaronAbuUsama/ambient-agent/actions/runs/30237940729/job/89889203351
+
+Deployed artifact:
+- package: ambient-agent-0.4.0-a7f9f9f.tgz
+- package SHA-256:
+  67d3a7118052deee715a4106035b463ecc36d92b99eea28ecc807cf4d31105d0
+- installed CLI SHA-256:
+  54e6ec809cbd572bf6c8465fb8db499d1a416134cf65ccae738278052d121e82
+- installed server SHA-256:
+  6ac70bb81d84ce1dc283cd81a3f8fe0fc916a9907afd9534a72743d35a2072ec

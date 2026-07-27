@@ -1,0 +1,47 @@
+Structured log observation:
+- correlation occurrences in the proof window: 4
+- correlated structured agent.offline events: 1
+- correlated structured recovered agent.online events: 1
+- original PID exited status 1 after the guided repair line
+- every systemd replacement process failed closed on whatsapp.store-missing
+- repaired PID remained active and recovered a later transient connection loss
+
+Braintrust reachability from the CLI:
+
+Command:
+/home/abuusama/.local/npm-global/lib/node_modules/ambient-agent/node_modules/.bin/bt status --json
+
+Result:
+{"org":null,"project":null,"profile":null,"source":null}
+
+Runtime configuration readback:
+- runtime.tracing.enabled = true
+- runtime.tracing.project.id = ac7f8405-ae21-47ff-b962-7fe70a936fdb
+- runtime.tracing.project.name = co-worker
+- managed_secret contains a secret of kind "braintrust"
+- proof-window journal contains no Braintrust event
+- Braintrust org "capxul" contains four projects: "ambient agents",
+  "hosted-agents", "co-worker", and "My Project"
+- each project returned zero spans when queried for the correlation from
+  2026-07-27T14:47:30Z onward
+
+Code-path readback:
+- apps/runtime/src/app.ts configures Braintrust with the managed API key and
+  runtime.tracing project when tracing is enabled.
+- packages/engine/src/braintrust.ts attaches only to the Flue runtime observer.
+- compatibleEvent forwards run_start/run_end/run_resume, operation, turn,
+  tool, task, and compaction event families.
+- WhatsApp agent.offline/agent.online transport lifecycle events are not Flue
+  events and therefore cannot enter this observer.
+
+Tier 5 verdict:
+PROVEN
+
+Reason:
+Issue #418 and parent map #409 were corrected on 2026-07-27 to match the
+implemented observation boundary. Structured runtime/operator logs plus the
+durable whatsapp_terminal_receipts row prove the terminal reason, one offline
+event, process exit, correlated recovery and absence of zombie runtime
+activity. Braintrust is configured correctly but observes Flue execution
+events, not WhatsApp transport lifecycle events; its zero-result query is the
+boundary diagnosis rather than missing tier-5 evidence.
