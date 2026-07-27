@@ -132,6 +132,27 @@ describe("Evaluation Scenario repository artifacts", () => {
         ),
       ).toThrow("does not match the sanitized synthetic-provider-v1 schema");
     }
+    const realRepositoryFixture = JSON.stringify({
+      schemaVersion: 1,
+      provider: "synthetic-github",
+      deliveryId: "synthetic-delivery-2",
+      repository: "private-owner/private-repository",
+      issueNumber: 2,
+    });
+    await writeFile(join(repositoryRoot, "real-repository.json"), realRepositoryFixture);
+    expect(() =>
+      validateEvaluationScenario(
+        {
+          ...positive,
+          fixture: {
+            ...positiveFixture,
+            ref: "real-repository.json",
+            sha256: createHash("sha256").update(realRepositoryFixture).digest("hex"),
+          },
+        },
+        { repositoryRoot },
+      ),
+    ).toThrow("does not match the sanitized synthetic-provider-v1 schema");
     const invalidFixture = "not json\n";
     await writeFile(join(repositoryRoot, "invalid.json"), invalidFixture);
     expect(() =>
