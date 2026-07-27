@@ -505,12 +505,17 @@ describe("Brain Batch dispatch recovery", () => {
 
     await recovery.stop();
     primary.close();
+    const replacement = openInbox(databasePath, now);
+    const replacementRecovery = configureBrainDispatchRecovery(replacement, { logger });
+    replacementRecovery.activate();
     finishDelivery({ dispatchId: "dispatch:historical-replay", acceptedAt: now() });
 
     await expect(siblingWake).resolves.toMatchObject({
       dispatch: { dispatchId: "dispatch:historical-replay" },
     });
     await expect(queuedPrimaryWake).resolves.toBeUndefined();
+    await replacementRecovery.stop();
+    replacement.close();
     historicalReplay.close();
   });
 });

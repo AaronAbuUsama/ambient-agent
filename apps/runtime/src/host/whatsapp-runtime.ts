@@ -16,7 +16,11 @@ import { reconcileSpecialistWorkAtBoot } from "@ambient-agent/agents/capabilitie
 import { recoverPendingSpecialistLaunches } from "@ambient-agent/agents/capabilities/delegation/tools.ts";
 import { coderSpecialistSpec } from "@ambient-agent/agents/capabilities/coder/workflow.ts";
 import { reviewerSpecialistSpec } from "@ambient-agent/agents/capabilities/reviewer/workflow.ts";
-import { configureBrainDispatchRecovery, wakeBrain } from "@ambient-agent/agents/brain/dispatch.ts";
+import {
+  configureBrainDispatchRecovery,
+  wakeBrain,
+  type DispatchBrain,
+} from "@ambient-agent/agents/brain/dispatch.ts";
 import {
   configureBrainEffectsRuntime,
   recoverPendingIssueFilings,
@@ -419,6 +423,8 @@ export interface WhatsAppRuntimeOptions {
   /** Test seam: production bounds terminal output waits to one second each before forced exit. */
   readonly terminalShutdownTimeoutMs?: number;
   readonly dispatch?: DispatchSpeaker;
+  /** Test seam for Brain Batch admission. */
+  readonly brainDispatch?: DispatchBrain;
   readonly coalescer?: Partial<CoalescerConfigValues>;
   readonly observeActivity?: (observer: SpeakerObserver) => () => void;
   /** Test seam: drive the runtime's Effect debounce boundary without wall-clock polling. */
@@ -466,7 +472,14 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   });
   // Register persisted attempts before authentication/pairing can hold boot open. Terminal observations
   // reconcile durably now; retry timers stay off until every Brain port is usable.
-  const brainDispatchRecovery = configureBrainDispatchRecovery(brainInbox);
+  const brainDispatchRecovery = configureBrainDispatchRecovery(
+    brainInbox,
+    options.brainDispatch === undefined ? {} : { deliver: options.brainDispatch },
+  );
+  const wakeBrainRuntime = () =>
+    options.brainDispatch === undefined
+      ? wakeBrain(brainInbox)
+      : wakeBrain(brainInbox, options.brainDispatch);
   // GitHub events flow UP into the single Brain up-inbox (§4). Admission is the durable step and is
   // always safe. Waking the Brain is gated on `brainReady`: dispatching a Batch before the Brain's
   // Effects/participation runtime exists would mark the Batch dispatched, then fail its tools, and the
@@ -484,7 +497,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   const runProactiveClock = async (): Promise<void> => {
     try {
       brainInbox.runProactiveClock();
-      await wakeBrain(brainInbox);
+      await wakeBrainRuntime();
     } catch (cause) {
       getLogger("brain").warn(
         { event: "brain.proactive-clock.failed", error: errorMessage(cause) },
@@ -501,7 +514,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
     if (!brainAlive) return undefined;
     const admitted = brainInbox.admitGitHubEvent(event);
     if (brainReady) {
-      void wakeBrain(brainInbox).catch((cause) =>
+      void wakeBrainRuntime().catch((cause) =>
         getLogger("github").error({ event: "github.up-inbox.wake-failed", error: errorMessage(cause) }, "wake"),
       );
     }
@@ -516,7 +529,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
   const scribeInbox = createScribeInbox(options.applicationDatabase, { recoverInterruptedAttempts: true });
   const restoreScribeInbox = configureScribeInbox(scribeInbox, async (draft) => {
     brainInbox.admitKnowledgeDelta(draft);
-    await wakeBrain(brainInbox);
+    await wakeBrainRuntime();
   });
   const inbox = createManagedChatInbox(archive, { allowed: admit });
   speakerActivity.recoverWith((dispatchId) => {
@@ -691,13 +704,13 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
       configureIntentEscalationRuntime({
         inbox: brainInbox,
         surfaceIdForSpeaker: (speakerId) => surfaces.activeSurface(authenticatedAccount.jid, speakerId)?.id,
-        wake: () => wakeBrain(brainInbox),
+        wake: wakeBrainRuntime,
       }),
     );
     yield* Effect.sync(() =>
       configureBrainEffectsRuntime({
         inbox: brainInbox,
-        wake: () => wakeBrain(brainInbox),
+        wake: wakeBrainRuntime,
         // Resolved lazily at file time: composeSpeaker configures the issue-management runtime
         // process-global at app boot, well before any Batch files an issue.
         fileIssue: (request, effectId) => createIssueFiler(getIssueManagementRuntime())(request, effectId),
@@ -733,7 +746,7 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
     yield* Effect.sync(() =>
       configureDelegationRuntime({
         inbox: brainInbox,
-        wake: () => wakeBrain(brainInbox),
+        wake: wakeBrainRuntime,
         providerChatIdForSurface: (surfaceId) => surfaces.activeBinding(surfaceId)?.providerChatId,
       }),
     );
@@ -830,8 +843,6 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
       ...(options.dispatch === undefined ? {} : { dispatch: options.dispatch }),
       ...(options.coalescer === undefined ? {} : { coalescer: options.coalescer }),
       afterParticipationReady: async () => {
-        // The participation and Effects ports are now live: due recovered attempts may redispatch.
-        brainDispatchRecovery.activate();
         await recoverPendingPrompts();
         await recoverPendingIssueFilings();
         await recoverPendingIssueMutations();
@@ -840,12 +851,15 @@ export const startWhatsAppRuntime = (options: WhatsAppRuntimeOptions): WhatsAppR
         // pending (reserved but never Flue-admitted) at crash time — re-invoking them makes their
         // runs active in THIS process, and reconciling after would wrongly interrupt live work whose
         // real result the admit guard (bridge.ts) would then silently drop.
-        await reconcileSpecialistWorkAtBoot({ inbox: brainInbox, wake: () => wakeBrain(brainInbox), getRun });
+        await reconcileSpecialistWorkAtBoot({ inbox: brainInbox, wake: wakeBrainRuntime, getRun });
         await recoverPendingSpecialistLaunches([coderSpecialistSpec, reviewerSpecialistSpec]);
+        // Existing Effects and work are recovered first so a due Batch retry cannot duplicate their
+        // external admission. The participation and Effects ports are now safe for redispatch.
+        brainDispatchRecovery.activate();
         // Everything the Brain's tools need is now configured. Open the GitHub up-inbox wake gate, then
         // sweep — this dispatches any event admitted during boot, and future admissions wake directly.
         brainReady = true;
-        await wakeBrain(brainInbox);
+        await wakeBrainRuntime();
         // Proactive clock cron floor (§6): run the due scan once at boot, then on a slow interval. Boot
         // reconciliation admits any wake that came due while down; each fires exactly once (durable ledger).
         await runProactiveClock();
