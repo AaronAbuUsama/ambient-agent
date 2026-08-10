@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# WhatsApp account data: credentials, mirror database, media bytes
+data
+artifacts
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
