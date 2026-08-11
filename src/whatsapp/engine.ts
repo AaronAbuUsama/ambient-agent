@@ -1,0 +1,322 @@
+import {
+  createWhatsAppClient,
+  createWhatsAppRuntime,
+  type Awaitable,
+  type ChatRecord,
+  type ClientChatMessages,
+  type ContactRecord,
+  type CredentialStore,
+  type GroupRecord,
+  type MessageRef,
+  type RuntimeSession,
+  type Status,
+  type WaIdentity,
+  type WhatsAppBackend,
+  type WhatsAppClient,
+  type WhatsAppOperation,
+  type WhatsAppRuntime,
+} from "whatsappd";
+import { Backfill, idleBackfill, type BackfillProgress } from "./backfill";
+
+/**
+ * A backend whose deployment may own a connection to close.
+ *
+ * @remarks
+ * `libsqlBackend()` holds a database handle and answers `close()`; the in-memory
+ * grouping used by tests holds nothing and does not. Widening the type here
+ * rather than demanding a closable backend is what lets one engine serve both.
+ */
+export type ClosableBackend = WhatsAppBackend & { close?(): Promise<void> };
+
+/** How this process is attached to the account, independent of WhatsApp's own state. */
+export type Attachment = "detached" | "attaching" | "attached" | "detaching";
+
+/**
+ * Everything a view needs about the account in one identity-stable value.
+ *
+ * @remarks
+ * {@link Attachment} and {@link EngineSnapshot.status} answer different
+ * questions and neither implies the other: a runtime can be `attached` while
+ * WhatsApp is `backing_off`, and a `logged_out` status leaves the runtime
+ * attached until something stops it. Collapsing them into one enum is what
+ * makes a pairing view claim a connection it does not have.
+ */
+export interface EngineSnapshot {
+  readonly attachment: Attachment;
+  /** WhatsApp's live connection status, or `null` before a session exists. */
+  readonly status: Status | null;
+  readonly identity: WaIdentity | undefined;
+  readonly chats: readonly ChatRecord[];
+  readonly groups: readonly GroupRecord[];
+  /** The last failure, cleared by the next successful transition. */
+  readonly error: string | null;
+  /** How far the background history walk has got. */
+  readonly backfill: BackfillProgress;
+  /**
+   * Bumped by every committed client change.
+   *
+   * @remarks
+   * Message pages live per chat behind {@link WhatsAppEngine.chatMessages} rather
+   * than in this snapshot, so without a counter a view reading them would never
+   * learn that one changed. One counter over every namespace re-renders a
+   * single-pane workbench that is showing one chat anyway.
+   */
+  readonly revision: number;
+}
+
+export interface EngineOptions {
+  readonly accountId: string;
+  /** Build this deployment's storage. Called once, on the first attach. */
+  createBackend(): Awaitable<ClosableBackend>;
+  /** Open the live session the runtime will consume. Called on every attach. */
+  openSession(credentials: CredentialStore): Awaitable<RuntimeSession>;
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * One account's lifecycle, held for the life of the workbench.
+ *
+ * @remarks
+ * A `whatsappd` Runtime consumes an account exactly once — `stopped` latches on
+ * the way down — so reconnecting means building a new Runtime and Client over
+ * the *same* Backend rather than restarting anything. That asymmetry is the
+ * reason this class exists: it keeps the storage that should outlive a
+ * connection separate from the two objects that must not.
+ */
+export class WhatsAppEngine {
+  readonly #options: EngineOptions;
+  readonly #listeners = new Set<() => void>();
+
+  #backend: ClosableBackend | null = null;
+  #runtime: WhatsAppRuntime | null = null;
+  #client: WhatsAppClient | null = null;
+  #session: RuntimeSession | null = null;
+  #unsubscribe: Array<() => void> = [];
+
+  #attachment: Attachment = "detached";
+  #status: Status | null = null;
+  #error: string | null = null;
+  #revision = 0;
+  #snapshot: EngineSnapshot | null = null;
+  readonly #backfill = new Backfill(() => this.#invalidate());
+
+  /** Serializes attach and detach so two controls cannot interleave one lifecycle. */
+  #transition: Promise<unknown> = Promise.resolve();
+  #disposed = false;
+
+  constructor(options: EngineOptions) {
+    this.#options = options;
+  }
+
+  getSnapshot = (): EngineSnapshot => {
+    this.#snapshot ??= {
+      attachment: this.#attachment,
+      status: this.#status,
+      identity: this.#session?.identity?.(),
+      chats: this.#client?.chats.list() ?? [],
+      groups: this.#client?.groups.list() ?? [],
+      error: this.#error,
+      backfill: this.#client ? this.#backfill.progress : idleBackfill,
+      revision: this.#revision,
+    };
+    return this.#snapshot;
+  };
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  };
+
+  /** One chat's retained messages, or `null` while no Client is attached. */
+  chatMessages(chatId: string): ClientChatMessages | null {
+    return this.#client?.messages.get(chatId) ?? null;
+  }
+
+  /** The contact record owning a native address, for display names. */
+  resolveContact(nativeId: string): ContactRecord | undefined {
+    return this.#client?.contacts.resolve(nativeId);
+  }
+
+  /**
+   * Claim the account and follow it.
+   *
+   * @returns The attachment reached, so a caller can report what it did rather
+   * than re-reading state that may already have moved on.
+   */
+  async attach(): Promise<Attachment> {
+    return this.#serialize(async (): Promise<Attachment> => {
+      if (this.#disposed) throw new Error("engine disposed");
+      if (this.#attachment === "attached") return "attached";
+
+      this.#attachment = "attaching";
+      this.#error = null;
+      this.#invalidate();
+
+      try {
+        this.#backend ??= await this.#options.createBackend();
+        const backend = this.#backend;
+        const runtime = createWhatsAppRuntime({
+          accountId: this.#options.accountId,
+          backend,
+          openSession: async (credentials) => {
+            const session = await this.#options.openSession(credentials);
+            this.#session = session;
+            this.#unsubscribe.push(
+              session.subscribe({
+                connection: (status) => {
+                  this.#status = status;
+                  this.#invalidate();
+                },
+              }),
+            );
+            return session;
+          },
+        });
+        this.#runtime = runtime;
+        await runtime.start();
+
+        const client = await createWhatsAppClient(runtime);
+        this.#client = client;
+        this.#follow(client);
+        // Pull every chat's stored history into memory in the background, so a
+        // chat a human opens is already there rather than a screen that has to
+        // be paged into existence.
+        this.#backfill.start(client);
+
+        this.#attachment = "attached";
+        this.#invalidate();
+        return "attached";
+      } catch (error) {
+        this.#error = messageOf(error);
+        await this.#teardown();
+        this.#attachment = "detached";
+        this.#invalidate();
+        throw error;
+      }
+    });
+  }
+
+  /** Stop following and release the account, keeping credentials for the next attach. */
+  async detach(): Promise<Attachment> {
+    return this.#serialize(async (): Promise<Attachment> => {
+      if (this.#attachment === "detached") return "detached";
+      this.#attachment = "detaching";
+      this.#invalidate();
+      await this.#teardown();
+      this.#attachment = "detached";
+      this.#status = null;
+      this.#invalidate();
+      return "detached";
+    });
+  }
+
+  /**
+   * Detach and erase this account's credentials.
+   *
+   * @remarks
+   * The next attach therefore starts a fresh pairing rather than resuming, which
+   * is the whole point: a device that is still linked on the phone is unlinked
+   * only by WhatsApp, and forgetting credentials locally is the part this
+   * process actually controls.
+   */
+  async forget(): Promise<void> {
+    await this.detach();
+    await this.#serialize(async () => {
+      this.#backend ??= await this.#options.createBackend();
+      await this.#backend.credentials.clear();
+      this.#invalidate();
+    });
+  }
+
+  /** Send a text message through the account's durable operation queue. */
+  async sendText(chatId: string, text: string): Promise<WhatsAppOperation<MessageRef>> {
+    const client = this.#client;
+    if (!client) throw new Error("not connected");
+    return client.messages.send.text(chatId, text);
+  }
+
+  /** Ask the local mirror for one older page. Live changes arrive through the client. */
+  loadOlder(chatId: string): void {
+    const client = this.#client;
+    if (!client) throw new Error("not connected");
+    client.messages.older(chatId);
+  }
+
+  async markRead(refs: readonly MessageRef[]): Promise<void> {
+    const client = this.#client;
+    if (!client) throw new Error("not connected");
+    if (refs.length === 0) return;
+    await client.messages.markRead(refs);
+  }
+
+  async dispose(): Promise<void> {
+    this.#disposed = true;
+    await this.detach();
+    await this.#serialize(async () => {
+      await this.#backend?.close?.();
+      this.#backend = null;
+      this.#listeners.clear();
+    });
+  }
+
+  #serialize<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.#transition.then(work, work);
+    this.#transition = next.catch(() => {});
+    return next;
+  }
+
+  #follow(client: WhatsAppClient): void {
+    const bump = () => this.#invalidate();
+    this.#unsubscribe.push(
+      client.chats.subscribe(bump),
+      client.contacts.subscribe(bump),
+      client.groups.subscribe(bump),
+      client.messages.subscribe(bump),
+      client.account.subscribe(() => {
+        const account = client.account.get();
+        // A closed Client will never report again; the Runtime behind it is
+        // gone, so surface the failure rather than holding a dead attachment.
+        if (account.closed && this.#attachment === "attached") {
+          this.#error = account.error ? messageOf(account.error) : null;
+          this.#attachment = "detached";
+        }
+        this.#invalidate();
+      }),
+    );
+  }
+
+  async #teardown(): Promise<void> {
+    this.#backfill.stop();
+    for (const unsubscribe of this.#unsubscribe.splice(0)) {
+      try {
+        unsubscribe();
+      } catch {
+        // An unsubscribe that throws has already stopped delivering to us.
+      }
+    }
+    // Client → Runtime → Backend is the documented close order; the Backend
+    // outlives both here so a later attach reuses one database handle.
+    await this.#client?.close().catch(() => {});
+    await this.#runtime?.stop().catch(() => {});
+    this.#client = null;
+    this.#runtime = null;
+    this.#session = null;
+  }
+
+  #invalidate(): void {
+    this.#revision += 1;
+    this.#snapshot = null;
+    // Copied: a listener may unsubscribe or add another while being notified.
+    for (const listener of Array.from(this.#listeners)) {
+      try {
+        listener();
+      } catch {
+        // A view that throws while re-rendering must not fail the session
+        // pipeline: `whatsappd` treats a rejected handler as terminal.
+      }
+    }
+  }
+}

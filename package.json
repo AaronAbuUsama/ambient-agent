@@ -3,10 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "module": "src/index.tsx",
   "scripts": {
-    "dev": "vp dev",
-    "build": "tsc && vp build",
-    "preview": "vp preview",
+    "start": "bun run src/index.tsx",
+    "test": "bun test",
+    "check": "vp check",
+    "screens": "bun run scripts/screens.ts",
+    "prove:pairing": "bun run scripts/prove-pairing.ts",
     "prepare": "vp config"
   },
   "dependencies": {
@@ -14,14 +17,17 @@
     "@opentui/core": "^0.4.5",
     "@opentui/react": "^0.4.5",
     "agentic-tui-kit": "^0.1.0",
+    "pino": "^10.3.1",
+    "qrcode-terminal": "^0.12.0",
     "react": "^19.2.8",
     "whatsappd": "^0.3.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/bun": "^1.3.14",
     "@types/qrcode-terminal": "^0.12.2",
     "@types/react": "^19.2.18",
-    "qrcode-terminal": "^0.12.0",
+    "jsqr": "^1.4.0",
     "typescript": "~6.0.2",
     "vite": "npm:@voidzero-dev/vite-plus-core@0.2.8",
     "vite-plus": "0.2.8"
@@ -35,5 +41,9 @@
       "version": "1.3.14",
       "onFail": "download"
     }
-  }
+  },
+  "trustedDependencies": [
+    "baileys",
+    "protobufjs"
+  ]
 }
