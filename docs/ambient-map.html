@@ -254,11 +254,14 @@
         <p class="eyebrow">Ambient · system and delivery roadmap</p>
         <h1>From durable spine to a working conversational agent.</h1>
         <p class="lede">
-          The backend foundation is complete. The next cut connects real WhatsApp events to durable
-          Ambient records. The cut after that turns those retained records into bounded, inspectable
-          Conversation runs.
+          The durable foundation and receive-only ingestion path are implemented. One opt-in live
+          proof remains for ingestion. The next implementation cut turns retained records into
+          bounded, inspectable Conversation runs.
         </p>
-        <div class="status"><span class="status-dot"></span>Current position: Phase 1 complete</div>
+        <div class="status">
+          <span class="status-dot"></span>Current position: Phase 2A implemented · live proof
+          pending
+        </div>
       </header>
 
       <section>
@@ -269,8 +272,8 @@
           </div>
           <p class="section-copy">
             Phase 0 removed the abandoned terminal product. Phase 1 built the durable authority.
-            Phase 2 is intentionally split into two proof-sized cuts: first ingestion, then
-            Conversation.
+            Phase 2A now retains live inbound text exactly once. Its live receive-only proof is the
+            final gate before Conversation.
           </p>
         </div>
 
@@ -279,7 +282,8 @@
             <title id="roadmap-title">Ambient implementation roadmap</title>
             <desc id="roadmap-desc">
               Six delivery phases. Hard cut and durable spine are complete. WhatsApp ingestion is
-              next, followed by Conversation, Worker handoff, Memory, and comparative evaluation.
+              implemented with a live proof pending, followed by Conversation, Worker handoff,
+              Memory, and comparative evaluation.
             </desc>
             <defs>
               <marker
@@ -410,7 +414,7 @@
                 fill="#eb6c36"
                 letter-spacing="1.2"
               >
-                PHASE 2A · NEXT
+                PHASE 2A · BUILT
               </text>
               <text
                 x="488"
@@ -621,16 +625,17 @@
               <li>Node + pnpm runtime and Drizzle-managed libSQL schema</li>
               <li>Observations, inbox, runs, tools, tasks, evaluations, and memory records</li>
               <li>Restart, uniqueness, lease, transition, and lineage invariant tests</li>
+              <li>Concurrent and restart-safe live text ingestion tests</li>
             </ul>
           </article>
           <article class="card current">
-            <p class="eyebrow">Next cut</p>
-            <h3>Make one message durable</h3>
+            <p class="eyebrow">Current proof gate</p>
+            <h3>Prove one live message</h3>
             <ul>
-              <li>Translate a native WhatsApp message into an Observation</li>
-              <li>Atomically create its Conversation Inbox item</li>
-              <li>Replay safely without duplicates</li>
-              <li>Prove with controlled and opt-in live ingestion</li>
+              <li>Run the receive-only proof on the authenticated account</li>
+              <li>Send one new incoming text message</li>
+              <li>Verify one Observation and one Inbox item are retained</li>
+              <li>Confirm the proof sends no outbound message</li>
             </ul>
           </article>
           <article class="card">
@@ -1218,9 +1223,9 @@
             <h2>What we prove next</h2>
           </div>
           <p class="section-copy">
-            Do not introduce the model and live reply path in the same cut as ingestion. First prove
-            accepted channel input becomes durable exactly once. Then prove deterministic scheduling
-            and scoped Conversation behavior over that retained input.
+            Ingestion is implemented and deterministic proofs pass. Run its opt-in receive-only
+            account proof, then move to deterministic scheduling and scoped Conversation behavior
+            over the retained input.
           </p>
         </div>
 
@@ -1262,7 +1267,7 @@
               fill="#eb6c36"
               letter-spacing="1.2"
             >
-              CUT 2A · INGESTION · IMMEDIATE NEXT
+              CUT 2A · INGESTION · LIVE PROOF PENDING
             </text>
             <line
               x1="256"
@@ -1428,7 +1433,7 @@
               fill="#7a8399"
               letter-spacing="1.2"
             >
-              CUT 2B · CONVERSATION · FOLLOWING CUT
+              CUT 2B · CONVERSATION · NEXT IMPLEMENTATION
             </text>
             <line
               x1="256"
@@ -1667,7 +1672,7 @@
 
       <footer>
         <span>Ambient delivery map · 2026-08-11</span>
-        <span>Source of truth: plan.md · current commit c48cbe0</span>
+        <span>Source of truth: plan.md · updated 2026-08-11</span>
       </footer>
     </main>
   </body>

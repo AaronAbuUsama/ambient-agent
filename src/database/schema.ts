@@ -42,6 +42,20 @@ export const observations = sqliteTable(
   ],
 );
 
+export const whatsappIngestionCursors = sqliteTable(
+  "whatsapp_ingestion_cursors",
+  {
+    accountId: text("account_id").primaryKey(),
+    afterSeq: integer("after_seq").notNull(),
+    state: text({ enum: ["bootstrapping", "active"] }).notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check("whatsapp_ingestion_cursors_nonnegative", sql`${table.afterSeq} >= 0`),
+    check("whatsapp_ingestion_cursors_state", sql`${table.state} IN ('bootstrapping', 'active')`),
+  ],
+);
+
 export const agentRuns = sqliteTable(
   "agent_runs",
   {

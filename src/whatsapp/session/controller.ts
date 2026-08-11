@@ -13,6 +13,7 @@ import {
   type WaIdentity,
   type WhatsAppBackend,
   type WhatsAppClient,
+  type WhatsAppDataStore,
   type WhatsAppOperation,
   type WhatsAppRuntime,
 } from "whatsappd";
@@ -75,6 +76,12 @@ export interface WhatsAppSessionOptions {
   createBackend(): Awaitable<ClosableBackend>;
   /** Open the live session the runtime will consume. Called on every attach. */
   openSession(credentials: CredentialStore): Awaitable<RuntimeSession>;
+  /** Follow WhatsApp's committed accepted-source log with a durable Ambient cursor. */
+  acceptedSource?: {
+    start(source: WhatsAppDataStore): Promise<void>;
+    wake(): Promise<void>;
+    stop(): Promise<void>;
+  };
 }
 
 function messageOf(error: unknown): string {
@@ -179,6 +186,7 @@ export class WhatsAppSessionController {
       try {
         this.#backend ??= await this.#options.createBackend();
         const backend = this.#backend;
+        await this.#options.acceptedSource?.start(backend.data);
         const runtime = createWhatsAppRuntime({
           accountId: this.#options.accountId,
           backend,
@@ -197,6 +205,7 @@ export class WhatsAppSessionController {
           },
         });
         this.#runtime = runtime;
+        this.#unsubscribe.push(runtime.onFrame(() => this.#wakeAcceptedSource()));
         await runtime.start();
 
         const client = await createWhatsAppClient(runtime);
@@ -288,6 +297,7 @@ export class WhatsAppSessionController {
         // An unsubscribe that throws has already stopped delivering to us.
       }
     }
+    await this.#options.acceptedSource?.stop().catch(() => {});
     // Client → Runtime → Backend is the documented close order; the Backend
     // outlives both here so a later attach reuses one database handle.
     await this.#client?.close().catch(() => {});
@@ -309,5 +319,16 @@ export class WhatsAppSessionController {
         // `whatsappd` treats a rejected handler as terminal.
       }
     }
+  }
+
+  #wakeAcceptedSource(): void {
+    const acceptedSource = this.#options.acceptedSource;
+    if (!acceptedSource) return;
+    void acceptedSource.wake().catch((error: unknown) => {
+      if (this.#attachment === "detached" || this.#attachment === "detaching") return;
+      this.#error = messageOf(error);
+      this.#invalidate();
+      void this.detach();
+    });
   }
 }

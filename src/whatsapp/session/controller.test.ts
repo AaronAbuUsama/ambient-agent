@@ -1,6 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { memoryBackend } from "whatsappd";
-import { createTestWhatsAppSession } from "whatsappd/testing";
+import { createTestWhatsAppSession, textMessage } from "whatsappd/testing";
 import { WhatsAppSessionController } from "./controller";
 
 test("an attached account completes an uncapped full-mirror history pass", async () => {
@@ -48,4 +48,49 @@ test("a terminal WhatsApp session is torn down and surfaced as detached", async 
   } finally {
     await session.dispose();
   }
+});
+
+test("an attached account follows committed accepted-source changes", async () => {
+  const driver = createTestWhatsAppSession();
+  let starts = 0;
+  let wakes = 0;
+  let stops = 0;
+  const session = new WhatsAppSessionController({
+    accountId: "message-consumer",
+    createBackend: () => memoryBackend(),
+    openSession: () => driver.session,
+    acceptedSource: {
+      start: () => {
+        starts += 1;
+        return Promise.resolve();
+      },
+      wake: () => {
+        wakes += 1;
+        return Promise.resolve();
+      },
+      stop: () => {
+        stops += 1;
+        return Promise.resolve();
+      },
+    },
+  });
+
+  try {
+    await session.attach();
+    const wakesBeforeMessage = wakes;
+    await driver.emit({
+      type: "message",
+      message: textMessage({
+        id: "message-1",
+        chatId: "person@s.whatsapp.net",
+        text: "Retain me",
+      }),
+    });
+
+    expect(starts).toBe(1);
+    expect(wakes).toBeGreaterThan(wakesBeforeMessage);
+  } finally {
+    await session.dispose();
+  }
+  expect(stops).toBe(1);
 });

@@ -4,7 +4,8 @@ Ambient is a backend-only conversational agent under construction. The current
 backend foundation owns one durable WhatsApp account, resumes its authenticated
 session, loads all locally retained chat history, and maintains a separate
 Ambient database for observations, runs, tool calls, inbox work, tasks, memory
-records, and evaluations.
+records, and evaluations. Each new live inbound text message is now retained
+exactly once as one Observation plus one pending Conversation Inbox item.
 
 ```bash
 pnpm install
@@ -15,6 +16,34 @@ The process claims the configured account on launch and runs until `SIGINT` or
 `SIGTERM`. This hard-cut backend currently expects credentials already retained
 in its data directory. A new pairing flow will return as a channel capability,
 not as a terminal interface.
+
+Ambient does not yet invoke a Conversation model or send replies.
+
+## WhatsApp ingestion
+
+`whatsappd` first commits channel input to its accepted-source log. Ambient
+follows that bounded log with its own durable sequence cursor. One transaction
+deduplicates the native `(chat, message)` identity, retains the Observation,
+queues its Inbox item, and advances the cursor. A crash before commit therefore
+replays the batch; a crash after commit resumes after it.
+
+On a fresh Ambient database, the cursor first watermarks the already retained
+source log without waking Conversation. This separates future live work from the
+historical mirror that Memory will import under its own policy.
+
+This first cut intentionally wakes Ambient only for new incoming text messages.
+Historical messages, the linked account's own messages, and non-text payloads
+remain separate policies for later cuts.
+
+An opt-in live proof listens for one new incoming text message, retains it, and
+exits without sending anything:
+
+```bash
+pnpm proof:whatsapp-ingestion
+```
+
+The proof requires an already authenticated account and times out after two
+minutes.
 
 ## History backfill
 

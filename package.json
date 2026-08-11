@@ -9,6 +9,7 @@
     "test": "vp test",
     "check": "vp check",
     "db:generate": "drizzle-kit generate",
+    "proof:whatsapp-ingestion": "tsx src/proofs/whatsapp-ingestion.ts",
     "prepare": "vp config"
   },
   "dependencies": {

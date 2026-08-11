@@ -12,12 +12,17 @@ import {
 } from "./conversation-inbox";
 import { createEvaluationRepository, type EvaluationRepository } from "./evaluations";
 import { createMemoryRepository, type MemoryRepository } from "./memory";
+import {
+  createMessageIngestionRepository,
+  type MessageIngestionRepository,
+} from "./message-ingestion";
 import { createObservationRepository, type ObservationRepository } from "./observations";
 import { createRunRepository, type RunRepository } from "./runs";
 import { createTaskRepository, type TaskRepository } from "./tasks";
 
 export interface AmbientRepositories {
   readonly observations: ObservationRepository;
+  readonly messageIngestion: MessageIngestionRepository;
   readonly inbox: ConversationInboxRepository;
   readonly memory: MemoryRepository;
   readonly runs: RunRepository;
@@ -42,6 +47,7 @@ async function prepareLocalDirectory(url: string): Promise<void> {
 function repositories(database: AmbientDatabaseConnection): AmbientRepositories {
   return {
     observations: createObservationRepository(database),
+    messageIngestion: createMessageIngestionRepository(database),
     inbox: createConversationInboxRepository(database),
     runs: createRunRepository(database),
     tasks: createTaskRepository(database),

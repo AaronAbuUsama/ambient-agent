@@ -1,19 +1,9 @@
 import { createAmbient } from "./app/ambient";
 import { loadAppConfig } from "./app/config";
-import { openAmbientDatabase } from "./database/database";
-import { WhatsAppSessionController } from "./whatsapp/session/controller";
-import { localDeployment } from "./whatsapp/session/local-deployment";
+import { createAppResources } from "./app/resources";
 
 const config = loadAppConfig();
-const database = await openAmbientDatabase(config.database.url);
-const whatsapp = new WhatsAppSessionController(
-  localDeployment({
-    accountId: config.whatsapp.accountId,
-    directory: config.whatsapp.dataDirectory,
-    historyBackfillLimit: config.whatsapp.historyBackfillLimit,
-    logLevel: config.logging.level,
-  }),
-);
+const { database, whatsapp } = await createAppResources(config);
 const ambient = createAmbient({ database, whatsapp });
 let shuttingDown = false;
 
