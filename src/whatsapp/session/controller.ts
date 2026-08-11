@@ -17,10 +17,10 @@ import {
   type WhatsAppRuntime,
 } from "whatsappd";
 import {
-  HistoryPrefetch,
-  idleHistoryPrefetch,
-  type HistoryPrefetchProgress,
-} from "./history-prefetch";
+  HistoryBackfill,
+  idleHistoryBackfill,
+  type HistoryBackfillProgress,
+} from "./history-backfill";
 
 /**
  * A backend whose deployment may own a connection to close.
@@ -36,14 +36,14 @@ export type ClosableBackend = WhatsAppBackend & { close?(): Promise<void> };
 export type Attachment = "detached" | "attaching" | "attached" | "detaching";
 
 /**
- * Everything a view needs about the account in one identity-stable value.
+ * One identity-stable view of the retained account and live session.
  *
  * @remarks
  * {@link Attachment} and {@link WhatsAppSessionSnapshot.status} answer different
  * questions and neither implies the other: a runtime can be `attached` while
  * WhatsApp is `backing_off`, and a `logged_out` status leaves the runtime
  * attached until something stops it. Collapsing them into one enum is what
- * makes a pairing view claim a connection it does not have.
+ * makes a consumer claim a connection it does not have.
  */
 export interface WhatsAppSessionSnapshot {
   readonly attachment: Attachment;
@@ -54,23 +54,23 @@ export interface WhatsAppSessionSnapshot {
   readonly groups: readonly GroupRecord[];
   /** The last failure, cleared by the next successful transition. */
   readonly error: string | null;
-  /** How far the background history walk has got. */
-  readonly historyPrefetch: HistoryPrefetchProgress;
+  /** How far the full local-mirror history walk has got. */
+  readonly historyBackfill: HistoryBackfillProgress;
   /**
    * Bumped by every committed client change.
    *
    * @remarks
-   * Message pages live per chat behind {@link WhatsAppSessionController.chatMessages} rather
-   * than in this snapshot, so without a counter a view reading them would never
-   * learn that one changed. One counter over every namespace re-renders a
-   * single-pane workbench that is showing one chat anyway.
+   * Message pages live per chat behind {@link WhatsAppSessionController.chatMessages}
+   * rather than in this snapshot. The counter lets consumers detect committed
+   * changes without copying every retained message into each snapshot.
    */
   readonly revision: number;
 }
 
 export interface WhatsAppSessionOptions {
   readonly accountId: string;
-  readonly historyPrefetchLimit?: number;
+  /** Undefined means load every message retained in the local mirror. */
+  readonly historyBackfillLimit?: number;
   /** Build this deployment's storage. Called once, on the first attach. */
   createBackend(): Awaitable<ClosableBackend>;
   /** Open the live session the runtime will consume. Called on every attach. */
@@ -82,7 +82,7 @@ function messageOf(error: unknown): string {
 }
 
 /**
- * One account's lifecycle, held for the life of the workbench.
+ * One account's lifecycle, held for the life of Ambient.
  *
  * @remarks
  * A `whatsappd` Runtime consumes an account exactly once — `stopped` latches on
@@ -106,7 +106,7 @@ export class WhatsAppSessionController {
   #error: string | null = null;
   #revision = 0;
   #snapshot: WhatsAppSessionSnapshot | null = null;
-  readonly #historyPrefetch: HistoryPrefetch;
+  readonly #historyBackfill: HistoryBackfill;
 
   /** Serializes attach and detach so two controls cannot interleave one lifecycle. */
   #transition: Promise<unknown> = Promise.resolve();
@@ -114,9 +114,9 @@ export class WhatsAppSessionController {
 
   constructor(options: WhatsAppSessionOptions) {
     this.#options = options;
-    this.#historyPrefetch = new HistoryPrefetch(
+    this.#historyBackfill = new HistoryBackfill(
       () => this.#invalidate(),
-      options.historyPrefetchLimit,
+      options.historyBackfillLimit,
     );
   }
 
@@ -128,7 +128,7 @@ export class WhatsAppSessionController {
       chats: this.#client?.chats.list() ?? [],
       groups: this.#client?.groups.list() ?? [],
       error: this.#error,
-      historyPrefetch: this.#client ? this.#historyPrefetch.progress : idleHistoryPrefetch,
+      historyBackfill: this.#client ? this.#historyBackfill.progress : idleHistoryBackfill,
       revision: this.#revision,
     };
     return this.#snapshot;
@@ -142,6 +142,18 @@ export class WhatsAppSessionController {
   /** One chat's retained messages, or `null` while no Client is attached. */
   chatMessages(chatId: string): ClientChatMessages | null {
     return this.#client?.messages.get(chatId) ?? null;
+  }
+
+  /**
+   * Wait for the current full-mirror history pass to reach a terminal state.
+   *
+   * The Memory Analyst can use this boundary before its first account-wide
+   * analysis. A `capped` or `stalled` result is explicit and must not be
+   * mistaken for complete history.
+   */
+  async waitForHistoryBackfill(signal?: AbortSignal): Promise<HistoryBackfillProgress> {
+    if (!this.#client) throw new Error("not connected");
+    return this.#historyBackfill.wait(signal);
   }
 
   /** The contact record owning a native address, for display names. */
@@ -190,10 +202,9 @@ export class WhatsAppSessionController {
         const client = await createWhatsAppClient(runtime);
         this.#client = client;
         this.#follow(client);
-        // Pull every chat's stored history into memory in the background, so a
-        // chat a human opens is already there rather than a screen that has to
-        // be paged into existence.
-        this.#historyPrefetch.start(client);
+        // Load every chat's retained history so account-wide memory analysis
+        // can distinguish complete evidence from a partial local view.
+        this.#historyBackfill.start(client);
 
         this.#attachment = "attached";
         this.#invalidate();
@@ -222,43 +233,11 @@ export class WhatsAppSessionController {
     });
   }
 
-  /**
-   * Detach and erase this account's credentials.
-   *
-   * @remarks
-   * The next attach therefore starts a fresh pairing rather than resuming, which
-   * is the whole point: a device that is still linked on the phone is unlinked
-   * only by WhatsApp, and forgetting credentials locally is the part this
-   * process actually controls.
-   */
-  async forget(): Promise<void> {
-    await this.detach();
-    await this.#serialize(async () => {
-      this.#backend ??= await this.#options.createBackend();
-      await this.#backend.credentials.clear();
-      this.#invalidate();
-    });
-  }
-
   /** Send a text message through the account's durable operation queue. */
   async sendText(chatId: string, text: string): Promise<WhatsAppOperation<MessageRef>> {
     const client = this.#client;
     if (!client) throw new Error("not connected");
     return client.messages.send.text(chatId, text);
-  }
-
-  /** Ask the local mirror for one older page. Live changes arrive through the client. */
-  loadOlder(chatId: string): void {
-    const client = this.#client;
-    if (!client) throw new Error("not connected");
-    client.messages.older(chatId);
-  }
-
-  async markRead(refs: readonly MessageRef[]): Promise<void> {
-    const client = this.#client;
-    if (!client) throw new Error("not connected");
-    if (refs.length === 0) return;
-    await client.messages.markRead(refs);
   }
 
   async dispose(): Promise<void> {
@@ -290,7 +269,10 @@ export class WhatsAppSessionController {
         // gone, so surface the failure rather than holding a dead attachment.
         if (account.closed && this.#attachment === "attached") {
           this.#error = account.error ? messageOf(account.error) : null;
-          this.#attachment = "detached";
+          this.#attachment = "detaching";
+          this.#invalidate();
+          void this.detach();
+          return;
         }
         this.#invalidate();
       }),
@@ -298,7 +280,7 @@ export class WhatsAppSessionController {
   }
 
   async #teardown(): Promise<void> {
-    this.#historyPrefetch.stop();
+    this.#historyBackfill.stop();
     for (const unsubscribe of this.#unsubscribe.splice(0)) {
       try {
         unsubscribe();
@@ -323,8 +305,8 @@ export class WhatsAppSessionController {
       try {
         listener();
       } catch {
-        // A view that throws while re-rendering must not fail the session
-        // pipeline: `whatsappd` treats a rejected handler as terminal.
+        // A consumer that throws must not fail the session pipeline:
+        // `whatsappd` treats a rejected handler as terminal.
       }
     }
   }

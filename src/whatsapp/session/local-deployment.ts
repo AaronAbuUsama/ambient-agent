@@ -34,14 +34,14 @@ export function deploymentPaths(directory = "./data"): DeploymentPaths {
 export interface LocalDeploymentOptions {
   readonly accountId: string;
   readonly directory?: string;
-  readonly historyPrefetchLimit?: number;
+  readonly historyBackfillLimit?: number;
   readonly logLevel?: string;
 }
 
 export function localDeployment({
   accountId,
   directory,
-  historyPrefetchLimit,
+  historyBackfillLimit,
   logLevel,
 }: LocalDeploymentOptions): WhatsAppSessionOptions {
   const paths = deploymentPaths(directory);
@@ -51,7 +51,7 @@ export function localDeployment({
   const logger = createSessionLogger(paths.logFile, logLevel);
   return {
     accountId,
-    historyPrefetchLimit,
+    historyBackfillLimit,
     createBackend: async () => {
       await mkdir(paths.mediaDirectory, { recursive: true });
       return libsqlBackend({

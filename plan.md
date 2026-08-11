@@ -1,71 +1,695 @@
-# Ambient Agent core
+# Ambient core
 
-Status: proposed reset. This is the only architecture document for the first implementation. Existing documents and types are evidence, not architecture that must be preserved.
+Status: proposed hard cut.
 
-## What we are building
+This document defines the smallest complete architecture for Ambient. It replaces
+the initial implementation plan without modifying [`plan.md`](./plan.md), which
+remains as historical context.
 
-Ambient is a durable Agent built around real role-specific agents, not around a generic orchestration framework.
+Ambient is a durable conversational agent that can remember, start work, perform
+that work through Workers, and return results to the originating conversation.
+The system is intentionally backend-only. Product state lives in one application
+database, model sessions are disposable, and every important transition can be
+inspected and evaluated.
 
-The first two agents are fundamental:
+## Product statement
 
-1. **Conversation Agent** — receives WhatsApp conversation context, reasons socially, and acts through WhatsApp and delegation tools.
-2. **Memory Analyst** — interprets retained evidence, maintains the memory ontology through tools, and makes that memory retrievable by later Conversation runs.
+Ambient is not a chat interface with optional automation. It is a conversational
+front door to durable work.
 
-Executive and Worker remain part of the intended Agent, but they follow after Conversation and Memory establish the real run, skill, tool, persistence, and context patterns.
+The irreducible initial roles are:
 
-The two fundamental loops are independent:
+1. **Conversation Agent** — manages one conversation, communicates socially,
+   recalls memory, starts tasks, queries tasks, and reports completed work.
+2. **Worker Agent** — performs one durable task with an explicit objective and a
+   run-scoped set of tools.
+3. **Memory Analyst** — interprets retained evidence and maintains an
+   evidence-backed ontology.
+4. **Task Coordinator** — a deterministic service, not an agent, that owns task
+   state, leases, retries, and durable handoffs between Conversation and Worker.
+
+These roles communicate through retained records:
 
 ```text
-WhatsApp -> retained messages -> Conversation context -> Conversation Agent -> WhatsApp tools
-                         |
-                         +-> Episodes -> Memory Analyst -> memory patch tools -> ontology
-                                                                    |
-future Conversation context and recall <----------------------------+
+WhatsApp
+   |
+   v
+Observations -> Conversation Inbox -> Conversation Agent
+                                          |
+                                          | start_task
+                                          v
+                                      Task record
+                                          |
+                                          v
+                                      Worker Agent
+                                          |
+                                          v
+                                     Worker Result
+                                          |
+                                          v
+                              Conversation task update
+                                          |
+                                          v
+                                  Conversation Agent
+
+Observations + task evidence -> Episodes -> Memory Analyst -> Ontology
+                                                        |
+                                                        v
+                                    later recall and context construction
 ```
 
-Conversation does not call Memory Analyst. Memory Analyst does not message Conversation. They communicate through durable observations and memory in the application database.
+Agents do not call each other directly. Tasks, results, inbox items, observations,
+and memory are the communication protocol.
 
-## Core classification rule
+## Hard-cut principles
 
-A concept is **fundamental** when removing it either changes what the Agent is or forces us to redesign an agent's input, tools, result, memory, or delegation protocol later.
+### One deep core module
 
-A concept is **supporting implementation** when it is required to run the product but can be replaced without changing those protocols.
+The external lifecycle should remain small:
 
-A concept is **later** when it can be added through the established protocols after Conversation and Memory work end to end.
+```ts
+interface Ambient {
+  start(): Promise<void>;
+  stop(): Promise<void>;
+}
 
-## Shared execution facts
+declare function createAmbient(config: AmbientConfig): Promise<Ambient>;
+```
 
-All role agents use Pi, but Pi is an execution engine rather than the domain model. The installed prototype already ran Conversation, Memory, Executive, and Worker-shaped sessions through the same Pi construction mechanics (`d8a8442:docs/research/architecture-reformulation-evidence.md:69-118`).
+WhatsApp, scheduling, agents, tasks, memory, Pi, persistence, and evaluation remain
+internal modules behind this lifecycle.
 
-Each agent owns its own input, tools, prompt/skills, and result:
+### Role-specific agents
+
+There is no generic domain `Agent`, universal model-produced `RunResult`, or
+general orchestration framework.
 
 ```ts
 interface ConversationAgent {
   run(input: ConversationInput): Promise<ConversationResult>;
 }
 
-interface MemoryAnalyst {
-  run(input: MemoryJob): Promise<MemoryAnalysisResult>;
-}
-
-interface ExecutiveAgent {
-  run(input: ExecutiveTask): Promise<ExecutiveResult>;
-}
-
 interface WorkerAgent {
   run(input: WorkerTask): Promise<WorkerResult>;
 }
+
+interface MemoryAnalyst {
+  run(input: MemoryJob): Promise<MemoryAnalysisResult>;
+}
 ```
 
-There is no universal model-produced `RunResult`. The shared Pi adapter may normalize provider lifecycle and failures internally, but it must not erase role-specific results.
+Shared Pi mechanics may be reused internally, but each role owns its input,
+prompt, skills, tools, result, and evaluation criteria.
 
-All real effects happen through tools while the agent runs. A result summarizes or concludes that agent's reasoning; it does not reproduce its tool calls. In particular, a Memory Analyst result is not a memory patch.
+### Durable handoffs
 
-Pi JSONL is not used. The application database owns state, evidence, tool effects, results, and history.
+A handoff always creates or updates durable product state before another agent
+runs. In-memory callbacks and active Pi sessions are never the authority.
+
+### Effects happen through tools
+
+Model-produced terminal results summarize a run. They do not claim that an effect
+happened. WhatsApp sends, task creation, task completion, and memory patches are
+known from independently persisted tool and service outcomes.
+
+### Configuration, not hardcoded providers
+
+Agent implementations receive resolved model configuration. They do not contain
+provider IDs, model IDs, API keys, or environment access.
+
+### Evaluation begins with the first slice
+
+Every vertical slice includes runtime invariants, role-specific cases, and an
+inspectable end-to-end proof. Evaluation is not deferred until after prompts and
+agents become complicated.
+
+## Source layout
+
+The initial source layout is role-first and intentionally shallow:
+
+```text
+src/
+├── main.ts
+├── ambient.ts
+├── config.ts
+│
+├── database/
+│   ├── database.ts
+│   ├── migrations.ts
+│   ├── observations.ts
+│   ├── conversation-inbox.ts
+│   ├── conversations.ts
+│   ├── tasks.ts
+│   ├── runs.ts
+│   ├── episodes.ts
+│   ├── memory.ts
+│   └── evaluations.ts
+│
+├── whatsapp/
+│   ├── gateway.ts
+│   ├── whatsappd-gateway.ts
+│   └── observation-mapper.ts
+│
+├── conversation/
+│   ├── contract.ts
+│   ├── scheduler.ts
+│   ├── context-builder.ts
+│   ├── tools.ts
+│   ├── prompt.ts
+│   └── pi-conversation-agent.ts
+│
+├── tasks/
+│   ├── contract.ts
+│   ├── coordinator.ts
+│   └── updates.ts
+│
+├── worker/
+│   ├── contract.ts
+│   ├── tools.ts
+│   ├── prompt.ts
+│   └── pi-worker.ts
+│
+├── memory/
+│   ├── contract.ts
+│   ├── episode-builder.ts
+│   ├── ontology.ts
+│   ├── tools.ts
+│   ├── prompt.ts
+│   └── pi-memory-analyst.ts
+│
+├── pi/
+│   ├── run.ts
+│   ├── models.ts
+│   └── skills.ts
+│
+└── evals/
+    ├── contract.ts
+    ├── runner.ts
+    ├── conversation/
+    ├── worker/
+    ├── memory/
+    └── journeys/
+```
+
+Directories should be created as behavior is implemented. Empty architecture
+scaffolding is not a deliverable.
+
+## Dependency direction
+
+```text
+main / ambient composition
+          |
+          +--> WhatsApp gateway ------> whatsappd
+          |
+          +--> schedulers/coordinators
+          |         |
+          |         +--> repositories
+          |         +--> role agents
+          |
+          +--> role agents -----------> Pi runtime
+          |         |
+          |         +--> role tools --> services/repositories
+          |
+          +--> repositories ----------> Ambient database
+          |
+          +--> evaluation runner -----> run/evaluation repositories
+```
+
+Role agents never receive a SQL client, `whatsappd` client, or unrestricted host
+tool collection.
+
+## Runtime configuration
+
+Models are selected at the application boundary:
+
+```ts
+interface ModelConfig {
+  readonly provider: string;
+  readonly model: string;
+  readonly thinking: "off" | "low" | "medium" | "high";
+  readonly maxOutputTokens: number;
+}
+
+interface AgentModelConfig {
+  readonly conversation: ModelConfig;
+  readonly worker: ModelConfig;
+  readonly memory: ModelConfig;
+  readonly evaluator?: ModelConfig;
+}
+
+interface AmbientConfig {
+  readonly accountId: string;
+  readonly whatsappDirectory: string;
+  readonly databaseUrl: string;
+  readonly models: AgentModelConfig;
+  readonly conversation: ConversationSchedulingConfig;
+  readonly tasks: TaskSchedulingConfig;
+  readonly memory: MemorySchedulingConfig;
+}
+```
+
+Environment variables, configuration files, or later database-owned agent
+definitions may populate these values. Role agents only receive resolved
+configuration.
+
+The first inexpensive live model may be `qwen3.6-flash`, but that choice is
+configuration rather than architecture.
+
+Each persisted run stores a model snapshot:
+
+```ts
+interface ModelSnapshot {
+  readonly provider: string;
+  readonly model: string;
+  readonly thinking: string;
+  readonly maxOutputTokens: number;
+}
+```
+
+This allows later evaluation to compare model and prompt revisions.
+
+## Run-scoped tools
+
+Authority is established when one agent run is constructed:
+
+```ts
+interface AgentRunScope {
+  readonly runId: string;
+  readonly agentId: string;
+  readonly role: "conversation" | "worker" | "memory";
+  readonly conversationId?: string;
+  readonly taskId?: string;
+}
+```
+
+There is initially no generic permission language or runtime grant engine.
+Explicit role factories are easier to understand and audit:
+
+```text
+createConversationTools()
+createWorkerTools()
+createMemoryTools()
+```
+
+### Scoped Conversation tools
+
+The Conversation Agent sees:
+
+```text
+send_message
+recall
+start_task
+get_task
+list_tasks
+```
+
+`send_message` accepts only the message content:
+
+```ts
+interface SendMessageInput {
+  readonly text: string;
+}
+```
+
+The host binds `scope.conversationId`. The model cannot choose another chat.
+
+### Scoped Worker tools
+
+A Worker receives only the tools selected for that task definition. A Worker that
+needs cross-conversation authority may receive a tool whose schema includes a
+conversation identifier; a Worker that does not need that authority must not
+receive it.
+
+### Scoped Memory tools
+
+The Memory Analyst receives bounded search, inspection, and patch interfaces. It
+never receives arbitrary SQL access.
+
+## Database boundaries
+
+Ambient uses two separate physical databases, even when both use SQLite/libSQL:
+
+```text
+data/
+├── whatsapp.db
+└── ambient.db
+```
+
+### WhatsApp database
+
+The WhatsApp database is owned entirely by `whatsappd` and contains channel
+infrastructure:
+
+- credentials and session data;
+- native chats, contacts, and messages;
+- synchronization state;
+- the replaceable local WhatsApp mirror.
+
+Ambient accesses this state only through the WhatsApp gateway.
+
+### Ambient database
+
+The Ambient database is the durable product authority:
+
+- immutable Observations;
+- ingestion cursor and native identity deduplication;
+- Conversation Inbox items;
+- conversation pending and consumed ranges;
+- agent definitions and selected skills;
+- role-specific run inputs and results;
+- tool calls and outcomes;
+- Tasks, Worker attempts, results, and artifacts;
+- Episodes and Episode Observations;
+- Entities and Identity Links;
+- Predicate Definitions;
+- Claims and Evidence;
+- Memory Patches and validation outcomes;
+- evaluation runs, results, and annotations.
+
+The WhatsApp mirror may be rebuilt without deleting Ambient evidence, tasks,
+memory, runs, or evaluations.
+
+## Repository access
+
+The host and deterministic services use repositories directly:
+
+```ts
+interface AmbientRepositories {
+  readonly observations: ObservationRepository;
+  readonly inbox: ConversationInboxRepository;
+  readonly conversations: ConversationRepository;
+  readonly tasks: TaskRepository;
+  readonly runs: RunRepository;
+  readonly episodes: EpisodeRepository;
+  readonly memory: MemoryRepository;
+  readonly evaluations: EvaluationRepository;
+}
+```
+
+Agents use role tools whose implementations call these repositories. Models never
+receive repositories or database connections.
+
+All three agents share the same Ambient database through distinct role-specific
+interfaces.
+
+## WhatsApp gateway and observations
+
+WhatsApp is the first concrete channel and does not require a generic channel
+framework.
+
+```ts
+interface WhatsAppGateway {
+  start(onMessage: (message: NativeWhatsAppMessage) => Promise<void>): Promise<void>;
+  sendText(conversationId: string, text: string): Promise<SendReceipt>;
+  stop(): Promise<void>;
+}
+```
+
+The adapter:
+
+1. resumes the authenticated `whatsappd` account;
+2. receives ordered native messages;
+3. maps supported inbound messages to immutable Observations;
+4. deduplicates by account and native message identity;
+5. inserts one Conversation Inbox item for each accepted message;
+6. forwards outbound text through `whatsappd`;
+7. persists accepted outbound effects independently of agent terminal results.
+
+```ts
+interface Observation {
+  readonly id: string;
+  readonly source: "whatsapp" | "worker";
+  readonly nativeId: string;
+  readonly conversationId?: string;
+  readonly occurredAt: string;
+  readonly kind: "message" | "task_request" | "worker_result" | "conversation_report";
+  readonly payload: unknown;
+}
+```
+
+The exact payload types remain source-specific and schema-decoded.
+
+## Conversation Inbox
+
+Conversation is triggered by durable conversational stimuli, not only messages:
+
+```ts
+type ConversationInboxKind = "message" | "task_update";
+
+interface ConversationInboxItem {
+  readonly id: string;
+  readonly conversationId: string;
+  readonly kind: ConversationInboxKind;
+  readonly referenceId: string;
+  readonly createdAt: string;
+  readonly consumedByRunId?: string;
+}
+```
+
+Message items reference Observations. Task-update items reference durable task
+updates. The scheduler coalesces inbox items into one immutable Conversation run
+input.
+
+## Conversation scheduling and coalescing
+
+The scheduler, not the agent, owns timing and single-flight execution.
+
+```ts
+interface ConversationSchedulingConfig {
+  readonly debounceMs: number;
+  readonly maximumWaitMs: number;
+  readonly leaseMs: number;
+  readonly maximumItemsPerRun: number;
+}
+
+interface ConversationScheduleState {
+  readonly conversationId: string;
+  readonly firstPendingAt?: string;
+  readonly latestPendingAt?: string;
+  readonly dueAt?: string;
+  readonly leaseOwner?: string;
+  readonly leaseUntil?: string;
+}
+```
+
+### Sliding debounce
+
+When an inbox item arrives:
+
+```text
+dueAt = latestPendingAt + debounce
+```
+
+If another item arrives before `dueAt`, the due time slides forward.
+
+### Maximum wait
+
+A busy conversation must not postpone indefinitely:
+
+```text
+dueAt = min(
+  latestPendingAt + debounce,
+  firstPendingAt + maximumWait
+)
+```
+
+### Immutable claimed ranges
+
+When work becomes due, the scheduler atomically:
+
+1. obtains a single-flight lease for the conversation;
+2. selects the oldest bounded contiguous pending inbox range;
+3. creates the Conversation run and stores its exact input references;
+4. marks those items as claimed by that run;
+5. invokes the Conversation Agent.
+
+Items arriving during the run remain pending for the next run. They never mutate
+the active input.
+
+### Completion and recovery
+
+On success, the coordinator marks the claimed inbox range consumed. On failure,
+the durable run records the failure and the range becomes eligible for retry
+according to an explicit retry decision.
+
+Timers are not authoritative. Pending items, due times, leases, and run ranges
+live in the Ambient database and survive restart.
+
+## Conversation Agent
+
+```ts
+interface ConversationMessage {
+  readonly observationId: string;
+  readonly whatsappMessageId: string;
+  readonly senderId: string;
+  readonly sentAt: string;
+  readonly text: string;
+  readonly fromAgent: boolean;
+}
+
+interface ConversationTaskUpdate {
+  readonly updateId: string;
+  readonly taskId: string;
+  readonly status: TaskStatus;
+  readonly summary?: string;
+  readonly occurredAt: string;
+}
+
+interface TaskSummary {
+  readonly taskId: string;
+  readonly objective: string;
+  readonly status: TaskStatus;
+  readonly updatedAt: string;
+  readonly resultSummary?: string;
+}
+
+interface RecalledMemory {
+  readonly claimId: string;
+  readonly text: string;
+  readonly confidence: "low" | "medium" | "high" | "confirmed";
+  readonly evidenceObservationIds: readonly string[];
+}
+
+interface ConversationInput {
+  readonly conversationId: string;
+  readonly newMessages: readonly ConversationMessage[];
+  readonly taskUpdates: readonly ConversationTaskUpdate[];
+  readonly recentMessages: readonly ConversationMessage[];
+  readonly activeTasks: readonly TaskSummary[];
+  readonly participantMemory: readonly RecalledMemory[];
+  readonly conversationMemory: readonly RecalledMemory[];
+  readonly instructions: string;
+}
+
+interface ConversationResult {
+  readonly summary: string;
+}
+```
+
+The context builder dereferences the claimed inbox range, adds bounded recent
+history, active tasks, recalled memory, and configured instructions.
+
+Whether the agent spoke, recalled, or started work is known from persisted tool
+outcomes rather than duplicated in `ConversationResult`.
+
+## Task Coordinator
+
+The Task Coordinator is deterministic product orchestration:
+
+```ts
+type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+interface Task {
+  readonly id: string;
+  readonly conversationId: string;
+  readonly requestedByRunId: string;
+  readonly objective: string;
+  readonly instructions?: string;
+  readonly workerProfile: string;
+  readonly status: TaskStatus;
+  readonly createdAt: string;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+}
+```
+
+It owns:
+
+- task creation;
+- status transitions;
+- one active Worker lease per task;
+- retry bookkeeping;
+- Worker run lineage;
+- result and artifact persistence;
+- task-update creation;
+- delivery of terminal updates to the originating Conversation Inbox.
+
+The initial allowed transitions are:
+
+```text
+queued -> running
+queued -> cancelled
+running -> succeeded
+running -> failed
+running -> cancelled
+failed -> queued       # explicit retry
+```
+
+Invalid transitions are rejected by the host.
+
+### Conversation task tools
+
+`start_task` creates a durable queued task and returns immediately:
+
+```ts
+interface StartTaskInput {
+  readonly objective: string;
+  readonly instructions?: string;
+}
+
+interface StartTaskReceipt {
+  readonly taskId: string;
+  readonly status: "queued";
+}
+```
+
+`get_task` reads one task belonging to the current conversation.
+
+`list_tasks` returns a bounded set of tasks belonging to the current conversation.
+
+The model cannot create a task for another conversation.
+
+### Task updates
+
+The initial wake policy is:
+
+- `queued` is returned directly from `start_task`;
+- `running` is queryable but does not wake Conversation;
+- `succeeded`, `failed`, and `cancelled` create Conversation Inbox items.
+
+This keeps status available without creating noisy conversational runs.
+
+## Worker Agent
+
+```ts
+interface WorkerTask {
+  readonly taskId: string;
+  readonly conversationId: string;
+  readonly objective: string;
+  readonly instructions?: string;
+  readonly conversationContext: string;
+  readonly recalledMemory: readonly RecalledMemory[];
+}
+
+interface TaskArtifact {
+  readonly id: string;
+  readonly kind: "text" | "file" | "url" | "json";
+  readonly title: string;
+  readonly value: string;
+}
+
+interface WorkerResult {
+  readonly summary: string;
+  readonly detail: string;
+  readonly artifacts: readonly TaskArtifact[];
+}
+```
+
+One configured Worker profile is sufficient initially. The Task Coordinator
+selects its model, prompt, skills, and run-scoped tools. The Conversation Agent
+supplies the objective but does not grant arbitrary capabilities.
+
+The Worker result is validated and persisted before the task becomes
+`succeeded`. A failed or invalid result becomes a failed Worker run and does not
+produce a successful task outcome.
+
+Multiple Worker profiles, task decomposition, recursive work, and a model-driven
+Executive are later extensions. The durable Task and WorkerResult protocols must
+support them without being designed around them.
 
 ## Skills
 
-Skills are fundamental Pi resources. Conversation, Memory, Executive, and Workers may all have skills.
+Skills are run resources, not authority:
 
 ```ts
 interface Skill {
@@ -80,102 +704,29 @@ interface Skill {
 }
 ```
 
-The application stores skills because runs and generated Workers must be able to reference them, but we do not need a general Skill Registry product yet. There is initially no discovery marketplace, promotion workflow, evaluation lifecycle, deprecation state machine, or permission system.
+The Ambient database stores selected skills and run snapshots. Pi may receive
+run-owned materialized `SKILL.md` files, but the filesystem is only a delivery
+mechanism.
 
-The Pi adapter materializes the exact selected skills into a run-owned resource directory. Pi discovers `SKILL.md` by path and advertises skills only when `read` is active, so resource materialization and a scoped `read` tool are required implementation facts (`d8a8442:docs/research/dynamic-runtime-minimal.md:50-59,71-91`). The filesystem is a Pi delivery mechanism, not the source of truth.
+Skills may teach a Worker how to perform work. They cannot grant tools or expand
+run authority.
 
-Executive may use `create_skill` to write a task-local Skill and then reference it in a fresh Worker definition. Generated skills contain instructions and resources; they never create tools or authority.
+## Memory ontology
 
-Reusable skill catalog behavior can be added after a generated skill demonstrates real reuse.
+Memory is evidence-backed structured belief, not a cache of generated summaries.
 
-## Conversation Agent
+The irreducible concepts are:
 
-The Conversation Agent is the first concrete runtime interface. It is more than `input: string` because ordered messages, participants, memory, and provenance matter.
-
-```ts
-interface ConversationMessage {
-  readonly observationId: string;
-  readonly whatsappMessageId: string;
-  readonly senderId: string;
-  readonly sentAt: string;
-  readonly text: string;
-  readonly fromAgent: boolean;
-}
-
-interface ConversationInput {
-  readonly conversationId: string;
-  readonly newMessages: readonly ConversationMessage[];
-  readonly recentMessages: readonly ConversationMessage[];
-  readonly participantMemory: readonly RecalledMemory[];
-  readonly conversationMemory: readonly RecalledMemory[];
-  readonly instructions: string;
-}
-
-interface ConversationResult {
-  readonly summary: string;
-}
-```
-
-The exact Conversation result may grow only when the real Conversation loop needs another role-specific value. Whether the agent spoke, reacted, recalled, or delegated is known from the tool ledger rather than claimed by the result.
-
-### WhatsApp ingestion
-
-WhatsApp is fundamental to the first Conversation loop, not a hypothetical generic channel.
-
-The existing WhatsApp terminal client supplies inbound data. The Ambient adapter must:
-
-1. read or subscribe to ordered WhatsApp messages;
-2. deduplicate them by native identity;
-3. store each accepted message as an immutable Observation;
-4. form a bounded pending turn without losing ordering;
-5. invoke Conversation exactly once for that retained input range;
-6. record which range the Conversation run consumed.
-
-The exact adapter must be written against the terminal client's real interfaces. Ambient should not rebuild the client or invent a channel framework.
-
-### Conversation context
-
-Context construction is a core module with a role-specific interface:
-
-```ts
-interface ConversationContextBuilder {
-  build(conversationId: string, throughObservationId: string): Promise<ConversationInput>;
-}
-```
-
-It selects the unprocessed contiguous message range, bounded recent messages, participant/conversation memory, and Conversation instructions. It does not pass operational wake events, generic receipts, or a universal `ContextPack` to the model.
-
-Initial memory selection can use deterministic indexed retrieval. Conversation also receives `recall` for bounded follow-up retrieval when injected memory is insufficient.
-
-### Conversation tools
-
-The minimum set is:
-
-```text
-send_message
-react_to_message
-recall
-delegate_work          # added when Executive is implemented
-```
-
-`send_message` and `react_to_message` use the existing WhatsApp client and persist their invocation/result independently of `ConversationResult`. A later model failure cannot undo an already accepted WhatsApp operation.
-
-## Memory Analyst
-
-Memory is an evidence-backed ontology, not a text-summary cache. Its irreducible concepts are:
-
-- **Observation** — immutable source evidence such as a WhatsApp message.
-- **Identity Link** — a source-native identity mapped to an Entity.
-- **Entity** — a stable person, organisation, project, product, place, conversation, or resource.
+- **Observation** — immutable source evidence.
+- **Identity Link** — a native source identity mapped to an Entity.
+- **Entity** — a stable person, organisation, team, project, product, place,
+  conversation, or external resource.
 - **Episode** — an ordered bounded experience assembled from Observations.
-- **Predicate Definition** — typing, cardinality, and temporal rules for a class of Claims.
+- **Predicate Definition** — typing, cardinality, and temporal rules for Claims.
 - **Claim** — a typed belief about an Entity.
-- **Evidence** — links from Claims to the Observations that support, correct, or dispute them.
-- **Memory Patch** — one host-validated transaction containing semantic memory operations.
-
-Matters, deep research jobs, identity-merge review, and disclosure policy can be layered onto this ontology later; they do not replace it.
-
-### Core memory types
+- **Evidence** — links from Claims to supporting, correcting, or disputing
+  Observations.
+- **Memory Patch** — one host-validated transaction of semantic operations.
 
 ```ts
 type EntityKind =
@@ -236,7 +787,11 @@ interface Claim extends ClaimDraft {
   readonly status: "active" | "disputed" | "superseded" | "rejected";
   readonly version: number;
 }
+```
 
+### Memory operations
+
+```ts
 type MemoryOperation =
   | {
       readonly type: "create_claim";
@@ -258,7 +813,10 @@ type MemoryOperation =
     }
   | {
       readonly type: "dispute_claim";
-      readonly claims: readonly { readonly claimId: string; readonly expectedVersion: number }[];
+      readonly claims: readonly {
+        readonly claimId: string;
+        readonly expectedVersion: number;
+      }[];
       readonly evidence: readonly EvidenceRef[];
     }
   | {
@@ -275,9 +833,11 @@ interface PatchMemoryInput {
 }
 ```
 
-The host, not the model, adds patch ID, analyst Run ID, timestamps, and commit status.
+The host adds patch ID, Memory run ID, timestamps, and commit state. It validates
+evidence existence, entity and predicate compatibility, expected Claim versions,
+and transactional consistency.
 
-### Memory Agent protocol
+## Memory Analyst
 
 ```ts
 interface MemoryJob {
@@ -291,7 +851,7 @@ interface MemoryAnalysisResult {
 }
 ```
 
-Memory Analyst receives:
+Tools:
 
 ```text
 search_entities
@@ -301,99 +861,315 @@ inspect_observations
 patch_memory
 ```
 
-`patch_memory` is repeatable. The agent may call it zero or more times during one analysis. Each call is schema-decoded; evidence IDs and entity/claim versions are checked; accepted operations commit transactionally; rejection returns concrete errors so the agent can correct the call.
+`patch_memory` may be called zero or more times in one run. Each call is decoded,
+validated, and committed independently. Rejections return concrete errors so the
+agent may correct its proposal.
 
-Memory Analyst then returns `MemoryAnalysisResult`. It never has to reconstruct every patch and host identifier as one terminal object.
+### Episode cadence
 
-### Memory cadence and retrieval
+Every accepted WhatsApp message, task request, Worker result, and conversational
+report may participate in Episode construction.
 
-Every retained WhatsApp message enters Episode construction independently of Conversation cadence. Closed or sufficiently large Episodes create Memory Jobs. This avoids one Memory run per message while ensuring Conversation silence does not suppress learning.
+Episodes close after a configured inactivity window or size threshold. Closed
+Episodes create Memory Jobs. This cadence is independent of Conversation
+coalescing and of whether the Conversation Agent chose to speak.
 
-Conversation context retrieval reads committed Claims and supporting Evidence. Corrections supersede earlier Claims rather than erasing history. The old branch's typed ontology is useful evidence, but its terminal `MemoryPatchProposal` contract and prompt are superseded (`371d106:packages/memory/model.ts:20-138`; `371d106:packages/memory/runtime.ts:10-12`; `d8a8442:apps/ambient-daemon/prompts/memory-analyst.md:17`).
+## Agent runs and tool ledger
 
-## Executive and Worker
+Every role run is persisted before model execution:
 
-Executive and Worker are core to the intended product but are implemented after Conversation and Memory prove the real patterns.
-
-Executive receives a task-specific result schema and these initial tools:
-
-```text
-create_skill
-run_worker
+```ts
+interface AgentRunRecord {
+  readonly id: string;
+  readonly role: "conversation" | "worker" | "memory";
+  readonly agentId: string;
+  readonly parentRunId?: string;
+  readonly conversationId?: string;
+  readonly taskId?: string;
+  readonly model: ModelSnapshot;
+  readonly promptVersion: string;
+  readonly selectedSkillIds: readonly string[];
+  readonly input: unknown;
+  readonly result?: unknown;
+  readonly status: "pending" | "running" | "succeeded" | "failed";
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly failure?: RunFailure;
+}
 ```
 
-`run_worker` accepts an objective, instructions, selected Skills, and a subset of installed host tools. It creates a fresh Pi Worker with its own `WorkerTask` and `WorkerResult`. It does not create another durable social Agent.
+Each tool call stores:
 
-Exact Executive/Worker input and result schemas should be designed when their first real journey is built, rather than inheriting the old Task/Job/Attempt state machines.
-
-## Database authority
-
-The database is fundamental. At minimum it must preserve:
-
-```text
-agent definitions and selected skills
-WhatsApp observations and ingestion cursor
-conversation pending/consumed ranges
-role-specific run inputs and results
-tool calls and their outcomes
-Entities and Identity Links
-Episodes and Episode Observations
-Predicate Definitions
-Claims and Evidence
-Memory Patches and validation results
+```ts
+interface ToolCallRecord {
+  readonly id: string;
+  readonly runId: string;
+  readonly toolName: string;
+  readonly input: unknown;
+  readonly output?: unknown;
+  readonly status: "running" | "succeeded" | "failed";
+  readonly startedAt: string;
+  readonly completedAt?: string;
+  readonly failure?: RunFailure;
+}
 ```
 
-SQLite/libSQL is the smallest local implementation and is already installed. Exact table boundaries and repositories are implementation details. Pi sessions and filesystem resources are disposable.
+Accepted external effects remain accepted if a later model call or terminal result
+fails.
 
-## What is core and what is not
+Pi sessions and temporary skill resources are disposable and are not resumed as
+product state.
 
-| Classification                                            | Concepts                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Fundamental now**                                       | Conversation Agent; WhatsApp ingestion and tools; Conversation context construction; Memory Analyst; full minimum memory ontology; memory patch tool protocol; role-specific inputs/results; Pi execution; skills; host tools; database authority.                                                                                                                                                                                                                                       |
-| **Fundamental product, built after the first two agents** | Executive; runtime-created Worker definitions; Executive-created task-local skills; parent/child run lineage.                                                                                                                                                                                                                                                                                                                                                                            |
-| **Supporting implementation**                             | SQLite/libSQL schema; Pi session/resource adapter; model provider configuration; temporary skill materialization; indexing/ranking; logging and schema decoding.                                                                                                                                                                                                                                                                                                                         |
-| **Later**                                                 | Reusable Skill Registry product and lifecycle; MCP; schedules/proactive runs; recursive Workers; full Control Plane; multi-account; backfill/media; elaborate grants/policies; network grants/sandboxes; Matters and advanced identity review; dashboards, evals, backup, and repair.                                                                                                                                                                                                    |
-| **Discarded or superseded**                               | Universal model-produced `RunResult`; terminal Memory Patch; role-specific effects inside terminal results; generic runtime `start/events/cancel` as the primary domain interface; separate Run/Attempt hierarchy before retries exist; `ContextPack.wakeEvents`; receipt-as-continuation; package-per-role architecture; Pi `AgentHarness`; Pi JSONL; separate Pi/Effect-AI runtimes; filesystem profiles as authority; hot mutation of an active Pi run; the old five-area sequencing. |
+## Evaluation system
 
-## Build order
+Evaluation has three layers.
 
-### 1. Conversation loop
+### Runtime invariants
+
+These are executable correctness properties:
+
+- a Conversation-bound tool cannot message another chat;
+- one Conversation Inbox item is consumed by at most one successful run;
+- one conversation has at most one active Conversation lease;
+- one Task has at most one active Worker lease;
+- invalid Task transitions are rejected;
+- successful Worker results are immutable;
+- every active Claim has valid Evidence;
+- stale Claim versions cannot be patched;
+- model failures cannot undo accepted tool effects.
+
+Invariant failures are bugs, not low model scores.
+
+### Role-specific evaluations
+
+Conversation cases evaluate:
+
+- whether responding or remaining silent was appropriate;
+- social tone and instruction following;
+- relevant memory use;
+- appropriate task creation;
+- accurate task status and result reporting;
+- avoidance of invented task progress.
+
+Worker cases evaluate:
+
+- satisfaction of the objective;
+- usefulness and completeness of detail;
+- support from artifacts or evidence;
+- uncertainty handling;
+- adherence to the granted tool set.
+
+Memory cases evaluate:
+
+- evidence support;
+- identity resolution;
+- correct reinforcement, dispute, and supersession;
+- avoidance of unsupported speculation;
+- relevance of later recall.
+
+### End-to-end journeys
+
+Initial journeys include:
 
 ```text
-existing WhatsApp client
--> retained ordered Observations
--> pending input range
--> ConversationContextBuilder
--> real Pi Conversation Agent with skills
--> WhatsApp tools
--> ConversationResult and consumed cursor
+message -> Conversation reply or deliberate silence
 ```
-
-This cut is real when an actual WhatsApp conversation can enter, receive a response or deliberate silence, and be processed once with inspectable context and tool effects.
-
-### 2. Memory loop
 
 ```text
-retained Observations
--> Episodes
--> real Pi Memory Analyst with search/inspection tools
--> repeated patch_memory calls
--> validated ontology
--> recall/context injection into a later Conversation
+request -> start_task -> acknowledgement -> Worker completion -> report-back
 ```
-
-This cut is real when a correction in WhatsApp supersedes an earlier Claim and the next relevant Conversation receives the corrected memory with its Evidence.
-
-### 3. Executive and Worker loop
 
 ```text
-Conversation delegation
--> Executive
--> generated task-local Skill
--> runtime-created Worker with selected tools
--> WorkerResult
--> ExecutiveResult
--> later Conversation context/reporting
+status question -> get_task -> accurate status response
 ```
 
-The shared Pi implementation should be extracted only as Conversation and Memory reveal truly identical mechanics. The agents' domain interfaces remain separate.
+```text
+correction -> Memory supersession -> corrected later recall
+```
+
+Evaluation cases may initially live as typed code fixtures. Evaluation runs,
+results, annotations, model snapshots, prompt versions, and references to subject
+runs are persisted in the Ambient database.
+
+Quality evaluations run asynchronously and do not block live conversation.
+
+Live provider proofs are explicit commands, not part of the default deterministic
+test suite.
+
+## Minimal conceptual schema
+
+Exact migrations should follow repository needs, but the initial database must be
+capable of representing:
+
+```text
+observations
+conversation_inbox
+conversation_schedule
+conversation_run_items
+agent_runs
+tool_calls
+
+tasks
+task_updates
+task_worker_attempts
+task_artifacts
+
+episodes
+episode_observations
+
+entities
+identity_links
+predicate_definitions
+claims
+claim_evidence
+memory_patches
+memory_patch_operations
+
+skills
+run_skills
+
+evaluation_runs
+evaluation_results
+evaluation_annotations
+```
+
+The schema should enforce native Observation uniqueness, one-time inbox
+consumption, valid task transitions through repository transactions, Worker
+single-flight leases, Claim version checks, and referential integrity for
+Evidence.
+
+## Initial implementation sequence
+
+### Phase 0: Hard cut
+
+- Preserve authenticated WhatsApp account data and Git history.
+- Remove the terminal interface, React/OpenTUI dependencies, action framework,
+  UI journeys, rendering helpers, and generic adapter experiments.
+- Keep `whatsappd`, its authenticated local mirror, logging, and the project
+  toolchain.
+- Reintroduce Pi, schema validation, and the Ambient database only when their
+  owning backend phases begin.
+- Replace the process entry point with an initially small backend lifecycle.
+
+Proof:
+
+- the repository formats, type-checks, and tests;
+- the authenticated WhatsApp account data remains untouched;
+- no retained module imports removed UI or action frameworks.
+
+### Phase 1: Durable spine
+
+- Add libSQL and schema-validation dependencies for Ambient-owned state.
+- Add the Ambient database and migrations.
+- Add Observation, Conversation Inbox, Agent Run, Tool Call, Task, and Evaluation
+  repositories.
+- Add model configuration and run snapshots.
+- Add runtime invariant tests for uniqueness, claims, leases, and transitions.
+
+Proof:
+
+- migrations are repeatable;
+- restart preserves pending work and run records;
+- invariants fail deterministically when violated.
+
+### Phase 2: WhatsApp ingestion and Conversation
+
+- Add the Pi runtime required by the first role-specific agent.
+- Implement the `whatsappd` gateway.
+- Resume the authenticated account.
+- Retain one real or controlled WhatsApp message exactly once.
+- Implement durable Conversation coalescing, maximum wait, leases, and claimed
+  inbox ranges.
+- Implement the Conversation Agent with `send_message` and `recall`.
+- Add role-specific Conversation evaluations.
+
+Proof:
+
+- one retained message creates one Conversation run;
+- rapid consecutive messages coalesce into one bounded run;
+- messages arriving during a run remain for the next run;
+- a run replies or deliberately remains silent;
+- the scoped send tool cannot target another conversation;
+- restart resumes pending work without duplicate consumption.
+
+### Phase 3: Tasks and Worker handoff
+
+- Add `start_task`, `get_task`, and `list_tasks`.
+- Implement Task Coordinator transitions, Worker leases, and retry bookkeeping.
+- Implement one configured Worker profile and Worker Agent.
+- Persist Worker results and artifacts.
+- Deliver terminal task updates to the originating Conversation Inbox.
+- Add role-specific Worker and handoff evaluations.
+
+Proof:
+
+- Conversation starts a task and immediately receives a queued receipt;
+- Worker claims and completes it exactly once;
+- Conversation can query running state;
+- terminal completion creates one Conversation update;
+- Conversation reports the persisted result without inventing details;
+- restart between creation, execution, and report-back loses no state.
+
+### Phase 4: Episodes and Memory
+
+- Build Episodes from messages, task evidence, Worker results, and reports.
+- Add the ontology schema and patch validation.
+- Implement Memory Analyst search, inspection, and patch tools.
+- Add deterministic indexed recall to Conversation and Worker context.
+- Add Memory evaluations.
+
+Proof:
+
+- evidence creates or reinforces a Claim;
+- a correction supersedes the previous Claim with version checks;
+- later relevant Conversation context receives the corrected Claim and Evidence;
+- unsupported patches are rejected transactionally.
+
+### Phase 5: Evaluation loop
+
+The evaluation spine exists from Phase 1. This phase adds comparative operation:
+
+- run cases across model and prompt versions;
+- persist metrics and annotations;
+- compare regressions by role and journey;
+- gate configuration changes on selected invariant and quality thresholds.
+
+Proof:
+
+- the same retained case can be replayed against two configurations;
+- results identify the exact model, prompt, skills, tools, and source run;
+- a known regression is detected before configuration promotion.
+
+## Explicitly outside the initial core
+
+- generic orchestration frameworks;
+- a universal Agent domain class;
+- unrestricted database or shell tools for role agents;
+- generic channels before a second real channel exists;
+- recursive Workers;
+- model-driven multi-Worker decomposition;
+- a reusable skill marketplace or lifecycle product;
+- schedules unrelated to retained conversational or task work;
+- multi-account support;
+- elaborate grant languages, sandboxes, or network policy systems;
+- dashboards and operational control planes;
+- Pi JSONL as durable authority;
+- filesystem profiles as durable authority;
+- hot mutation of active runs.
+
+These may be added only through the durable protocols established here.
+
+## Definition of the first complete Ambient
+
+The first implementation is complete when:
+
+1. an authenticated WhatsApp account resumes;
+2. inbound messages are retained exactly once;
+3. Conversation coalesces and consumes durable inbox ranges;
+4. Conversation can respond, recall, start work, and query work;
+5. a Worker completes durable tasks and returns inspectable results;
+6. terminal task updates return to the correct conversation;
+7. Memory maintains evidence-backed Claims and corrections;
+8. corrected memory appears in a later relevant run;
+9. every agent run, tool effect, task transition, and evaluation is inspectable;
+10. restart at any boundary does not lose accepted work or duplicate effects.

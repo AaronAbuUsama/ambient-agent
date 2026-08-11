@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ChatRecord, ClientChatMessages, WhatsAppClient } from "whatsappd";
-import { HistoryPrefetch } from "./history-prefetch";
+import { HistoryBackfill } from "./history-backfill";
 
 const pageSize = 25;
 
@@ -16,6 +16,7 @@ function fakeClient(stored: Record<string, number>): {
   client: WhatsAppClient;
   reads: () => number;
   held: () => Record<string, number>;
+  notifyChats: () => void;
 } {
   const held: Record<string, number> = {};
   const older: Record<string, ClientChatMessages["older"]> = {};
@@ -58,7 +59,7 @@ function fakeClient(stored: Record<string, number>): {
         return () => listeners.messages.delete(listener);
       },
       older: (chatId: string) => {
-        if (older[chatId] !== "stored") return;
+        if ((older[chatId] ?? "stored") !== "stored") return;
         reads += 1;
         older[chatId] = "loading";
         notify();
@@ -72,7 +73,11 @@ function fakeClient(stored: Record<string, number>): {
     },
   } as unknown as WhatsAppClient;
 
-  return { client, reads: () => reads, held: () => ({ ...held }) };
+  const notifyChats = () => {
+    for (const listener of Array.from(listeners.chats)) listener();
+  };
+
+  return { client, reads: () => reads, held: () => ({ ...held }), notifyChats };
 }
 
 /** Drain the microtask queue — no wall clock, so no timing to tune. */
@@ -81,17 +86,24 @@ async function turns(count: number): Promise<void> {
 }
 
 /** Run until the walk says it has finished a pass, or fail loudly. */
-async function settled(walk: HistoryPrefetch): Promise<void> {
+async function settled(walk: HistoryBackfill, expectedChats?: number): Promise<void> {
   for (let turn = 0; turn < 10_000; turn += 1) {
-    if (walk.progress.state === "complete" || walk.progress.state === "capped") return;
+    if (
+      (walk.progress.state === "complete" ||
+        walk.progress.state === "capped" ||
+        walk.progress.state === "stalled") &&
+      (expectedChats === undefined || walk.progress.total === expectedChats)
+    ) {
+      return;
+    }
     await Promise.resolve();
   }
   throw new Error(`the walk never settled: ${JSON.stringify(walk.progress)}`);
 }
 
-test("every chat is pulled in until the mirror has no more", async () => {
+test("every chat is pulled in by default until the mirror has no more", async () => {
   const mirror = fakeClient({ alice: 60, bob: 10, carol: 0 });
-  const walk = new HistoryPrefetch(() => {}, 10_000);
+  const walk = new HistoryBackfill(() => {});
   walk.start(mirror.client);
   await settled(walk);
 
@@ -103,7 +115,7 @@ test("every chat is pulled in until the mirror has no more", async () => {
 test("the budget stops the walk inside one chat, not only between chats", async () => {
   // The account that needs a cap is the one whose first chat is enormous.
   const mirror = fakeClient({ huge: 400, bob: 10 });
-  const walk = new HistoryPrefetch(() => {}, 50);
+  const walk = new HistoryBackfill(() => {}, 50);
   walk.start(mirror.client);
   await settled(walk);
 
@@ -113,9 +125,15 @@ test("the budget stops the walk inside one chat, not only between chats", async 
   walk.stop();
 });
 
+test("a deployment limit must align with the local storage page size", () => {
+  expect(() => new HistoryBackfill(() => {}, 1)).toThrow(
+    "history backfill limit must be a positive multiple of 25",
+  );
+});
+
 test("stopping mid-walk parks it and reads nothing further", async () => {
   const mirror = fakeClient({ alice: 500 });
-  const walk = new HistoryPrefetch(() => {}, 10_000);
+  const walk = new HistoryBackfill(() => {});
   walk.start(mirror.client);
   await turns(4);
   walk.stop();
@@ -129,14 +147,33 @@ test("stopping mid-walk parks it and reads nothing further", async () => {
 test("a chat appearing later is picked up by the next pass", async () => {
   const stored: Record<string, number> = { alice: 10 };
   const mirror = fakeClient(stored);
-  const walk = new HistoryPrefetch(() => {}, 10_000);
+  const walk = new HistoryBackfill(() => {});
   walk.start(mirror.client);
   await settled(walk);
   expect(walk.progress.messages).toBe(10);
 
   // The mirror learns about a chat after the first pass has already parked.
   stored.bob = 30;
-  mirror.client.chats.subscribe(() => {})();
+  mirror.notifyChats();
+  expect(walk.progress.state).toBe("running");
+  const progress = await walk.wait();
+
+  expect(mirror.held()).toEqual({ alice: 10, bob: 30 });
+  expect(progress).toMatchObject({ state: "complete", done: 2, total: 2, messages: 40 });
   walk.stop();
   expect(walk.progress.state).toBe("idle");
+});
+
+test("an update to a known chat does not trigger another account-wide pass", async () => {
+  const mirror = fakeClient({ alice: 30 });
+  const walk = new HistoryBackfill(() => {});
+  walk.start(mirror.client);
+  await settled(walk);
+  const completedReads = mirror.reads();
+
+  mirror.notifyChats();
+  await turns(20);
+
+  expect(mirror.reads()).toBe(completedReads);
+  walk.stop();
 });
