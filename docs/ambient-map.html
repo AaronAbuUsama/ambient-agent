@@ -254,13 +254,11 @@
         <p class="eyebrow">Ambient · system and delivery roadmap</p>
         <h1>From durable spine to a working conversational agent.</h1>
         <p class="lede">
-          The durable foundation and receive-only ingestion path are implemented. One opt-in live
-          proof remains for ingestion. The next implementation cut turns retained records into
-          bounded, inspectable Conversation runs.
+          The durable foundation and receive-only ingestion path are proven. The next implementation
+          cut turns retained records into bounded, inspectable Conversation runs.
         </p>
         <div class="status">
-          <span class="status-dot"></span>Current position: Phase 2A implemented · live proof
-          pending
+          <span class="status-dot"></span>Current position: Phase 2A complete · Phase 2B next
         </div>
       </header>
 
@@ -272,8 +270,8 @@
           </div>
           <p class="section-copy">
             Phase 0 removed the abandoned terminal product. Phase 1 built the durable authority.
-            Phase 2A now retains live inbound text exactly once. Its live receive-only proof is the
-            final gate before Conversation.
+            Phase 2A now retains live inbound text exactly once and has passed its receive-only live
+            proof. Conversation scheduling is the next cut.
           </p>
         </div>
 
@@ -282,8 +280,8 @@
             <title id="roadmap-title">Ambient implementation roadmap</title>
             <desc id="roadmap-desc">
               Six delivery phases. Hard cut and durable spine are complete. WhatsApp ingestion is
-              implemented with a live proof pending, followed by Conversation, Worker handoff,
-              Memory, and comparative evaluation.
+              complete, followed by Conversation, Worker handoff, Memory, and comparative
+              evaluation.
             </desc>
             <defs>
               <marker
@@ -414,7 +412,7 @@
                 fill="#eb6c36"
                 letter-spacing="1.2"
               >
-                PHASE 2A · BUILT
+                PHASE 2A · COMPLETE
               </text>
               <text
                 x="488"
@@ -629,13 +627,13 @@
             </ul>
           </article>
           <article class="card current">
-            <p class="eyebrow">Current proof gate</p>
-            <h3>Prove one live message</h3>
+            <p class="eyebrow">Next cut</p>
+            <h3>Build Conversation scheduling</h3>
             <ul>
-              <li>Run the receive-only proof on the authenticated account</li>
-              <li>Send one new incoming text message</li>
-              <li>Verify one Observation and one Inbox item are retained</li>
-              <li>Confirm the proof sends no outbound message</li>
+              <li>Coalesce rapid messages behind a sliding debounce</li>
+              <li>Enforce maximum wait and one active lease</li>
+              <li>Claim one immutable bounded Inbox range</li>
+              <li>Create an inspectable Conversation run</li>
             </ul>
           </article>
           <article class="card">
@@ -1223,9 +1221,8 @@
             <h2>What we prove next</h2>
           </div>
           <p class="section-copy">
-            Ingestion is implemented and deterministic proofs pass. Run its opt-in receive-only
-            account proof, then move to deterministic scheduling and scoped Conversation behavior
-            over the retained input.
+            Ingestion passed deterministic and live receive-only proofs. The next gate is
+            deterministic scheduling and scoped Conversation behavior over retained input.
           </p>
         </div>
 
@@ -1267,7 +1264,7 @@
               fill="#eb6c36"
               letter-spacing="1.2"
             >
-              CUT 2A · INGESTION · LIVE PROOF PENDING
+              CUT 2A · INGESTION · COMPLETE
             </text>
             <line
               x1="256"
@@ -1433,7 +1430,7 @@
               fill="#7a8399"
               letter-spacing="1.2"
             >
-              CUT 2B · CONVERSATION · NEXT IMPLEMENTATION
+              CUT 2B · CONVERSATION · IMMEDIATE NEXT
             </text>
             <line
               x1="256"

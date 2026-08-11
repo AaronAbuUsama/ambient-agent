@@ -43,7 +43,8 @@ pnpm proof:whatsapp-ingestion
 ```
 
 The proof requires an already authenticated account and times out after two
-minutes.
+minutes. The receive-only live proof passed on 2026-08-11 without sending an
+outbound message.
 
 ## History backfill
 
