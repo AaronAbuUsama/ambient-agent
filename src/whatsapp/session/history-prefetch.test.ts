@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ChatRecord, ClientChatMessages, WhatsAppClient } from "whatsappd";
-import { Backfill } from "./backfill";
+import { HistoryPrefetch } from "./history-prefetch";
 
 const pageSize = 25;
 
@@ -81,7 +81,7 @@ async function turns(count: number): Promise<void> {
 }
 
 /** Run until the walk says it has finished a pass, or fail loudly. */
-async function settled(walk: Backfill): Promise<void> {
+async function settled(walk: HistoryPrefetch): Promise<void> {
   for (let turn = 0; turn < 10_000; turn += 1) {
     if (walk.progress.state === "complete" || walk.progress.state === "capped") return;
     await Promise.resolve();
@@ -91,7 +91,7 @@ async function settled(walk: Backfill): Promise<void> {
 
 test("every chat is pulled in until the mirror has no more", async () => {
   const mirror = fakeClient({ alice: 60, bob: 10, carol: 0 });
-  const walk = new Backfill(() => {}, 10_000);
+  const walk = new HistoryPrefetch(() => {}, 10_000);
   walk.start(mirror.client);
   await settled(walk);
 
@@ -103,7 +103,7 @@ test("every chat is pulled in until the mirror has no more", async () => {
 test("the budget stops the walk inside one chat, not only between chats", async () => {
   // The account that needs a cap is the one whose first chat is enormous.
   const mirror = fakeClient({ huge: 400, bob: 10 });
-  const walk = new Backfill(() => {}, 50);
+  const walk = new HistoryPrefetch(() => {}, 50);
   walk.start(mirror.client);
   await settled(walk);
 
@@ -115,7 +115,7 @@ test("the budget stops the walk inside one chat, not only between chats", async 
 
 test("stopping mid-walk parks it and reads nothing further", async () => {
   const mirror = fakeClient({ alice: 500 });
-  const walk = new Backfill(() => {}, 10_000);
+  const walk = new HistoryPrefetch(() => {}, 10_000);
   walk.start(mirror.client);
   await turns(4);
   walk.stop();
@@ -129,7 +129,7 @@ test("stopping mid-walk parks it and reads nothing further", async () => {
 test("a chat appearing later is picked up by the next pass", async () => {
   const stored: Record<string, number> = { alice: 10 };
   const mirror = fakeClient(stored);
-  const walk = new Backfill(() => {}, 10_000);
+  const walk = new HistoryPrefetch(() => {}, 10_000);
   walk.start(mirror.client);
   await settled(walk);
   expect(walk.progress.messages).toBe(10);

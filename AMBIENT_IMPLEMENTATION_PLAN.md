@@ -7,6 +7,12 @@ delivery plan. `plan.md` remains the authority for what Ambient is; this documen
 describes how to build it without pausing the working WhatsApp client or committing
 early to abstractions the first real agent loops have not yet justified.
 
+## Progress
+
+- [x] Milestone A / Phase 1: action-first application foundation
+- [ ] Milestone B / Phase 2: Pi-to-action bridge
+- [ ] Milestone C / Phases 3–4: one retained message, one Conversation run
+
 ## Delivery principles
 
 ### Actions are the capability boundary

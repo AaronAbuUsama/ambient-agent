@@ -60,10 +60,10 @@ const redactedPaths = [
  * Synchronous by choice: at `warn` the volume is a line an hour, and the line
  * worth having is the one written just before the process died.
  */
-export function createSessionLogger(file: string): Logger {
+export function createSessionLogger(file: string, level = "warn"): Logger {
   return pino(
     {
-      level: process.env.WA_LOG_LEVEL ?? "warn",
+      level,
       redact: { paths: redactedPaths },
     },
     pino.destination({ dest: file, mkdir: true, sync: true }),

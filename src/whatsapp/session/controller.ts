@@ -16,7 +16,11 @@ import {
   type WhatsAppOperation,
   type WhatsAppRuntime,
 } from "whatsappd";
-import { Backfill, idleBackfill, type BackfillProgress } from "./backfill";
+import {
+  HistoryPrefetch,
+  idleHistoryPrefetch,
+  type HistoryPrefetchProgress,
+} from "./history-prefetch";
 
 /**
  * A backend whose deployment may own a connection to close.
@@ -24,7 +28,7 @@ import { Backfill, idleBackfill, type BackfillProgress } from "./backfill";
  * @remarks
  * `libsqlBackend()` holds a database handle and answers `close()`; the in-memory
  * grouping used by tests holds nothing and does not. Widening the type here
- * rather than demanding a closable backend is what lets one engine serve both.
+ * rather than demanding a closable backend is what lets one controller serve both.
  */
 export type ClosableBackend = WhatsAppBackend & { close?(): Promise<void> };
 
@@ -35,13 +39,13 @@ export type Attachment = "detached" | "attaching" | "attached" | "detaching";
  * Everything a view needs about the account in one identity-stable value.
  *
  * @remarks
- * {@link Attachment} and {@link EngineSnapshot.status} answer different
+ * {@link Attachment} and {@link WhatsAppSessionSnapshot.status} answer different
  * questions and neither implies the other: a runtime can be `attached` while
  * WhatsApp is `backing_off`, and a `logged_out` status leaves the runtime
  * attached until something stops it. Collapsing them into one enum is what
  * makes a pairing view claim a connection it does not have.
  */
-export interface EngineSnapshot {
+export interface WhatsAppSessionSnapshot {
   readonly attachment: Attachment;
   /** WhatsApp's live connection status, or `null` before a session exists. */
   readonly status: Status | null;
@@ -51,12 +55,12 @@ export interface EngineSnapshot {
   /** The last failure, cleared by the next successful transition. */
   readonly error: string | null;
   /** How far the background history walk has got. */
-  readonly backfill: BackfillProgress;
+  readonly historyPrefetch: HistoryPrefetchProgress;
   /**
    * Bumped by every committed client change.
    *
    * @remarks
-   * Message pages live per chat behind {@link WhatsAppEngine.chatMessages} rather
+   * Message pages live per chat behind {@link WhatsAppSessionController.chatMessages} rather
    * than in this snapshot, so without a counter a view reading them would never
    * learn that one changed. One counter over every namespace re-renders a
    * single-pane workbench that is showing one chat anyway.
@@ -64,8 +68,9 @@ export interface EngineSnapshot {
   readonly revision: number;
 }
 
-export interface EngineOptions {
+export interface WhatsAppSessionOptions {
   readonly accountId: string;
+  readonly historyPrefetchLimit?: number;
   /** Build this deployment's storage. Called once, on the first attach. */
   createBackend(): Awaitable<ClosableBackend>;
   /** Open the live session the runtime will consume. Called on every attach. */
@@ -86,8 +91,8 @@ function messageOf(error: unknown): string {
  * reason this class exists: it keeps the storage that should outlive a
  * connection separate from the two objects that must not.
  */
-export class WhatsAppEngine {
-  readonly #options: EngineOptions;
+export class WhatsAppSessionController {
+  readonly #options: WhatsAppSessionOptions;
   readonly #listeners = new Set<() => void>();
 
   #backend: ClosableBackend | null = null;
@@ -100,18 +105,22 @@ export class WhatsAppEngine {
   #status: Status | null = null;
   #error: string | null = null;
   #revision = 0;
-  #snapshot: EngineSnapshot | null = null;
-  readonly #backfill = new Backfill(() => this.#invalidate());
+  #snapshot: WhatsAppSessionSnapshot | null = null;
+  readonly #historyPrefetch: HistoryPrefetch;
 
   /** Serializes attach and detach so two controls cannot interleave one lifecycle. */
   #transition: Promise<unknown> = Promise.resolve();
   #disposed = false;
 
-  constructor(options: EngineOptions) {
+  constructor(options: WhatsAppSessionOptions) {
     this.#options = options;
+    this.#historyPrefetch = new HistoryPrefetch(
+      () => this.#invalidate(),
+      options.historyPrefetchLimit,
+    );
   }
 
-  getSnapshot = (): EngineSnapshot => {
+  getSnapshot = (): WhatsAppSessionSnapshot => {
     this.#snapshot ??= {
       attachment: this.#attachment,
       status: this.#status,
@@ -119,7 +128,7 @@ export class WhatsAppEngine {
       chats: this.#client?.chats.list() ?? [],
       groups: this.#client?.groups.list() ?? [],
       error: this.#error,
-      backfill: this.#client ? this.#backfill.progress : idleBackfill,
+      historyPrefetch: this.#client ? this.#historyPrefetch.progress : idleHistoryPrefetch,
       revision: this.#revision,
     };
     return this.#snapshot;
@@ -148,7 +157,7 @@ export class WhatsAppEngine {
    */
   async attach(): Promise<Attachment> {
     return this.#serialize(async (): Promise<Attachment> => {
-      if (this.#disposed) throw new Error("engine disposed");
+      if (this.#disposed) throw new Error("session controller disposed");
       if (this.#attachment === "attached") return "attached";
 
       this.#attachment = "attaching";
@@ -184,7 +193,7 @@ export class WhatsAppEngine {
         // Pull every chat's stored history into memory in the background, so a
         // chat a human opens is already there rather than a screen that has to
         // be paged into existence.
-        this.#backfill.start(client);
+        this.#historyPrefetch.start(client);
 
         this.#attachment = "attached";
         this.#invalidate();
@@ -289,7 +298,7 @@ export class WhatsAppEngine {
   }
 
   async #teardown(): Promise<void> {
-    this.#backfill.stop();
+    this.#historyPrefetch.stop();
     for (const unsubscribe of this.#unsubscribe.splice(0)) {
       try {
         unsubscribe();

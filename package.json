@@ -3,9 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "module": "src/index.tsx",
+  "module": "src/main.tsx",
   "scripts": {
-    "start": "bun run src/index.tsx",
+    "start": "bun run src/main.tsx",
     "test": "bun test",
     "check": "vp check",
     "screens": "bun run scripts/screens.ts",

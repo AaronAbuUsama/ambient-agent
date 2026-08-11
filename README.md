@@ -83,12 +83,12 @@ again. The device stays listed on your phone until you remove it there.
 
 Buttons, keys, the palette, tests, and any agent driving this app go through one
 typed action each — there is no agent-only path and no test-only imitation of
-the UI. `Ctrl+P` lists them; the ids are in `src/whatsapp/ids.ts`.
+the UI. `Ctrl+P` lists them; the ids are in `src/whatsapp/actions/ids.ts`.
 
 ## Proof
 
 ```bash
-bun test                 # 21 tests: QR, labels, backfill, logging, full journey
+bun test                 # 22 tests: runtime, QR, labels, history, logging, full journey
 vp check                 # format, lint, typecheck
 bun run prove:pairing    # opens a real WhatsApp session and prints a live QR
 ```

@@ -16,15 +16,15 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { WhatsAppEngine } from "../src/whatsapp/engine";
-import { localDeployment } from "../src/whatsapp/deployment";
-import { pairingPayload, statusLabel } from "../src/whatsapp/display";
-import { renderQr } from "../src/whatsapp/qr";
+import { WhatsAppSessionController } from "../src/whatsapp/session/controller";
+import { localDeployment } from "../src/whatsapp/session/local-deployment";
+import { pairingPayload, statusLabel } from "../src/whatsapp/tui/presentation";
+import { renderQr } from "../src/whatsapp/tui/qr";
 
 const timeoutMs = Number(process.env.PAIRING_TIMEOUT_MS ?? 45_000);
 const ephemeral = !process.env.WHATSAPP_DATA_DIR;
 const directory = process.env.WHATSAPP_DATA_DIR ?? (await mkdtemp(join(tmpdir(), "wa-pairing-")));
-const engine = new WhatsAppEngine(localDeployment("proof", directory));
+const session = new WhatsAppSessionController(localDeployment({ accountId: "proof", directory }));
 
 const seen: string[] = [];
 let resolveOutcome: (value: "paired" | "online" | "terminal") => void;
@@ -32,8 +32,8 @@ const outcome = new Promise<"paired" | "online" | "terminal">((resolve) => {
   resolveOutcome = resolve;
 });
 
-const unsubscribe = engine.subscribe(() => {
-  const { status } = engine.getSnapshot();
+const unsubscribe = session.subscribe(() => {
+  const { status } = session.getSnapshot();
   const label = statusLabel(status);
   if (seen.at(-1) !== label) {
     seen.push(label);
@@ -59,11 +59,11 @@ console.log("connecting to WhatsApp…");
 
 let result: "paired" | "online" | "terminal" | "timeout" = "timeout";
 try {
-  await engine.attach();
+  await session.attach();
   result = await Promise.race([outcome, Bun.sleep(timeoutMs).then(() => "timeout" as const)]);
 } finally {
   unsubscribe();
-  await engine.dispose();
+  await session.dispose();
   if (ephemeral) await rm(directory, { recursive: true, force: true });
 }
 

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { captureStrayOutput, createSessionLogger } from "./log";
+import { captureStrayOutput, createSessionLogger } from "./logging";
 
 async function inScratch<T>(work: (file: string) => Promise<T>): Promise<T> {
   const directory = await mkdtemp(join(tmpdir(), "wa-log-"));

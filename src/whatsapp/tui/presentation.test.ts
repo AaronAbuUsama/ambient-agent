@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { addressLabel, chatRowLabel, lastActivityStamp } from "./display";
+import { addressLabel, chatRowLabel, lastActivityStamp } from "./presentation";
 
 const at = (iso: string) => new Date(iso).getTime();
 // A Wednesday, mid-afternoon, in local time — every case below is relative to it.

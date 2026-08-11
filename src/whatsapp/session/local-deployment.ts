@@ -1,8 +1,8 @@
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createSession, fileMediaStore, libsqlBackend, qrAuth } from "whatsappd";
-import { createSessionLogger } from "../log";
-import type { EngineOptions } from "./engine";
+import { createSessionLogger } from "../../platform/logging";
+import type { WhatsAppSessionOptions } from "./controller";
 
 /** Where one account's credentials, mirror database, media bytes, and log live. */
 export interface DeploymentPaths {
@@ -13,9 +13,7 @@ export interface DeploymentPaths {
   readonly logFile: string;
 }
 
-export function deploymentPaths(
-  directory = process.env.WHATSAPP_DATA_DIR ?? "./data",
-): DeploymentPaths {
+export function deploymentPaths(directory = "./data"): DeploymentPaths {
   const root = resolve(directory);
   return {
     directory: root,
@@ -33,14 +31,27 @@ export function deploymentPaths(
  * @param accountId - Scopes every durable record, and the single-writer lease
  * that stops two processes from opening the same account.
  */
-export function localDeployment(accountId: string, directory?: string): EngineOptions {
+export interface LocalDeploymentOptions {
+  readonly accountId: string;
+  readonly directory?: string;
+  readonly historyPrefetchLimit?: number;
+  readonly logLevel?: string;
+}
+
+export function localDeployment({
+  accountId,
+  directory,
+  historyPrefetchLimit,
+  logLevel,
+}: LocalDeploymentOptions): WhatsAppSessionOptions {
   const paths = deploymentPaths(directory);
   // One logger for the deployment, not one per attach: every reconnect builds a
   // fresh Session, and a destination per Session is a file descriptor per
   // reconnect.
-  const logger = createSessionLogger(paths.logFile);
+  const logger = createSessionLogger(paths.logFile, logLevel);
   return {
     accountId,
+    historyPrefetchLimit,
     createBackend: async () => {
       await mkdir(paths.mediaDirectory, { recursive: true });
       return libsqlBackend({

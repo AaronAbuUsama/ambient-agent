@@ -1,9 +1,9 @@
 import { useTheme } from "agentic-tui-kit";
 import type { ReactNode } from "react";
-import type { BackfillProgress } from "../backfill";
-import { statusLabel } from "../display";
-import type { EngineSnapshot } from "../engine";
-import { whatsAppActions } from "../ids";
+import type { HistoryPrefetchProgress } from "../../session/history-prefetch";
+import { statusLabel } from "../presentation";
+import type { WhatsAppSessionSnapshot } from "../../session/controller";
+import { whatsAppActions } from "../../actions/ids";
 
 /**
  * What the background history walk has done, in one line.
@@ -12,7 +12,7 @@ import { whatsAppActions } from "../ids";
  * A background process nobody can see is indistinguishable from one that is
  * not running, and this one is the reason a chat opens already full.
  */
-function backfillLabel(progress: BackfillProgress): string {
+function historyPrefetchLabel(progress: HistoryPrefetchProgress): string {
   const { done, total, messages, state } = progress;
   switch (state) {
     case "idle":
@@ -88,7 +88,7 @@ export function SettingsView({
   height,
   onRun,
 }: {
-  snapshot: EngineSnapshot;
+  snapshot: WhatsAppSessionSnapshot;
   width: number;
   height: number;
   onRun: (actionId: string) => void;
@@ -168,8 +168,8 @@ export function SettingsView({
         <Field label="Mirrored" value={`${snapshot.chats.length} chats`} />
         <Field
           label="Loaded"
-          value={backfillLabel(snapshot.backfill)}
-          tone={snapshot.backfill.state === "capped" ? theme.warning : theme.text}
+          value={historyPrefetchLabel(snapshot.historyPrefetch)}
+          tone={snapshot.historyPrefetch.state === "capped" ? theme.warning : theme.text}
         />
       </box>
     </box>

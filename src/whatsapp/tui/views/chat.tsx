@@ -12,7 +12,7 @@ import {
   furthestReceipt,
   messageBody,
   transcriptStatus,
-} from "../display";
+} from "../presentation";
 
 /**
  * How wide a message is allowed to get before it wraps.

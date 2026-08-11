@@ -1,7 +1,7 @@
 import type { WhatsAppClient } from "whatsappd";
 
 /** What the background walk has managed so far. */
-export interface BackfillProgress {
+export interface HistoryPrefetchProgress {
   /** Chats whose stored history is fully in memory. */
   readonly done: number;
   /** Chats the mirror knows about. */
@@ -11,7 +11,7 @@ export interface BackfillProgress {
   readonly state: "idle" | "running" | "complete" | "capped";
 }
 
-export const idleBackfill: BackfillProgress = {
+export const idleHistoryPrefetch: HistoryPrefetchProgress = {
   done: 0,
   total: 0,
   messages: 0,
@@ -46,23 +46,20 @@ const defaultLimit = 20_000;
  * know which chat is on screen, and never competes with it for more than one
  * read.
  */
-export class Backfill {
+export class HistoryPrefetch {
   readonly #limit: number;
   readonly #notify: () => void;
 
-  #progress: BackfillProgress = idleBackfill;
+  #progress: HistoryPrefetchProgress = idleHistoryPrefetch;
   #stopped = true;
   #wake: (() => void) | undefined;
 
-  constructor(
-    notify: () => void,
-    limit = Number(process.env.WHATSAPP_BACKFILL_LIMIT) || defaultLimit,
-  ) {
+  constructor(notify: () => void, limit = defaultLimit) {
     this.#notify = notify;
     this.#limit = limit;
   }
 
-  get progress(): BackfillProgress {
+  get progress(): HistoryPrefetchProgress {
     return this.#progress;
   }
 
@@ -76,7 +73,7 @@ export class Backfill {
     this.#stopped = true;
     this.#wake?.();
     this.#wake = undefined;
-    this.#report(idleBackfill);
+    this.#report(idleHistoryPrefetch);
   }
 
   async #walk(client: WhatsAppClient): Promise<void> {
@@ -153,7 +150,7 @@ export class Backfill {
    * @remarks
    * A Client that closes mid-read ends it and notifies, so the subscription
    * covers that on its own. `stop()` is the one wake-up no notification can
-   * deliver, which is why the resolver is parked on {@link Backfill.stop}'s
+   * deliver, which is why the resolver is parked on {@link HistoryPrefetch.stop}'s
    * reach as well.
    */
   async #landed(client: WhatsAppClient, chatId: string): Promise<void> {
@@ -197,7 +194,7 @@ export class Backfill {
     }
   }
 
-  #report(next: BackfillProgress): void {
+  #report(next: HistoryPrefetchProgress): void {
     const current = this.#progress;
     if (
       current.done === next.done &&

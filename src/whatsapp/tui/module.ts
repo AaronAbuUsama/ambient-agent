@@ -6,10 +6,10 @@ import {
   type TuiModuleDefinition,
   type WindowManager,
 } from "agentic-tui-kit";
-import { defineWhatsAppActions, type WhatsAppActions } from "./actions";
-import type { WhatsAppEngine } from "./engine";
+import { defineWhatsAppActions, type WhatsAppActions } from "../actions";
+import type { WhatsAppSessionController } from "../session/controller";
 import { defineWhatsAppPanel } from "./panel";
-import type { WhatsAppTarget } from "./target";
+import type { WhatsAppTarget } from "./route";
 
 export interface WhatsAppModule {
   readonly module: TuiModuleDefinition;
@@ -27,11 +27,11 @@ export interface WhatsAppModule {
   bind(scope: TuiAppScope): void;
 }
 
-export function createWhatsAppModule(engine: WhatsAppEngine): WhatsAppModule {
+export function createWhatsAppModule(session: WhatsAppSessionController): WhatsAppModule {
   let windows: WindowManager | null = null;
-  const panel = defineWhatsAppPanel(engine);
+  const panel = defineWhatsAppPanel(session);
   const actions = defineWhatsAppActions(
-    engine,
+    session,
     () => {
       if (!windows) rejectAction("unavailable", "the workbench is not mounted yet");
       return windows;
@@ -56,7 +56,6 @@ export function createWhatsAppModule(engine: WhatsAppEngine): WhatsAppModule {
     ],
     dispose: () => {
       windows = null;
-      void engine.dispose();
     },
   });
 

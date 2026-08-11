@@ -5,9 +5,9 @@ import { driveHeadlessTui, type HeadlessTuiJourney } from "agentic-tui-kit/testi
 import jsQR from "jsqr";
 import { memoryBackend } from "whatsappd";
 import { createTestWhatsAppSession, textMessage } from "whatsappd/testing";
-import { createWhatsAppWorkbench, type WhatsAppWorkbench } from "./app";
-import { rasterizeQrRows } from "./whatsapp/raster";
-import { qrRowsFromFrame } from "./whatsapp/screen-qr";
+import { createWhatsAppWorkbench, type WhatsAppWorkbench } from "./app/create-workbench";
+import { rasterizeQrRows } from "../test/support/qr-raster";
+import { qrRowsFromFrame } from "../test/support/screen-qr";
 
 const viewport = { width: 120, height: 44 };
 const agent = { actor: { kind: "agent", id: "journey" }, source: "test" } as const;
@@ -64,7 +64,7 @@ test("the workbench pairs, syncs, opens a chat and sends — one action path thr
     // An agent connects through the same action the [c] control reaches.
     const connected = await tui.invoke(workbench.whatsapp.actions.connect, {}, agent);
     expect(connected.ok).toBe(true);
-    expect(workbench.engine.getSnapshot().attachment).toBe("attached");
+    expect(workbench.session.getSnapshot().attachment).toBe("attached");
 
     // WhatsApp offers a pairing challenge: the QR must be on screen, drawn in
     // half blocks, with the instruction a human needs to act on it.
@@ -115,7 +115,8 @@ test("the workbench pairs, syncs, opens a chat and sends — one action path thr
     await tui.key("enter");
     await tui.expect.text("friday works");
 
-    const sent = await Bun.sleep(50).then(() => driver.commands.sent);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const sent = driver.commands.sent;
     expect(sent).toContainEqual(
       expect.objectContaining({ to: alice, content: { text: "friday works" } }),
     );
@@ -145,7 +146,7 @@ test("the workbench pairs, syncs, opens a chat and sends — one action path thr
     );
   } finally {
     await tui.finish();
-    await workbench.engine.dispose();
+    await workbench.session.dispose();
   }
 }, 30_000);
 
@@ -160,7 +161,7 @@ test("disconnecting releases the account and sending is refused while detached",
 
     const disconnected = await tui.invoke(workbench.whatsapp.actions.disconnect, {}, agent);
     expect(disconnected.ok).toBe(true);
-    expect(workbench.engine.getSnapshot().attachment).toBe("detached");
+    expect(workbench.session.getSnapshot().attachment).toBe("detached");
     await tui.expect.text("offline");
 
     const refused = await tui.invoke(
@@ -172,6 +173,6 @@ test("disconnecting releases the account and sending is refused while detached",
     expect(refused.ok === false && refused.error.code).toBe("unavailable");
   } finally {
     await tui.finish();
-    await workbench.engine.dispose();
+    await workbench.session.dispose();
   }
 }, 30_000);

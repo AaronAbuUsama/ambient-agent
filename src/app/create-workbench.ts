@@ -4,13 +4,16 @@ import {
   type CreateTuiAppRuntimeOptions,
   type TuiAppDefinition,
 } from "agentic-tui-kit";
-import { WhatsAppEngine, type EngineOptions } from "./whatsapp/engine";
-import { createWhatsAppModule, type WhatsAppModule } from "./whatsapp/module";
-import { settingsTarget } from "./whatsapp/target";
+import {
+  WhatsAppSessionController,
+  type WhatsAppSessionOptions,
+} from "../whatsapp/session/controller";
+import { createWhatsAppModule, type WhatsAppModule } from "../whatsapp/tui/module";
+import { settingsTarget } from "../whatsapp/tui/route";
 
 export interface WhatsAppWorkbench {
   readonly app: TuiAppDefinition;
-  readonly engine: WhatsAppEngine;
+  readonly session: WhatsAppSessionController;
   readonly whatsapp: WhatsAppModule;
   /**
    * Runtime options every host must pass.
@@ -33,9 +36,9 @@ export interface WhatsAppWorkbench {
  * in-memory stores and a deterministic session, and everything above this line
  * is identical.
  */
-export function createWhatsAppWorkbench(options: EngineOptions): WhatsAppWorkbench {
-  const engine = new WhatsAppEngine(options);
-  const whatsapp = createWhatsAppModule(engine);
+export function createWhatsAppWorkbench(options: WhatsAppSessionOptions): WhatsAppWorkbench {
+  const session = new WhatsAppSessionController(options);
+  const whatsapp = createWhatsAppModule(session);
 
   const app = defineTuiApp({
     id: "whatsapp",
@@ -56,7 +59,7 @@ export function createWhatsAppWorkbench(options: EngineOptions): WhatsAppWorkben
 
   return {
     app,
-    engine,
+    session,
     whatsapp,
     runtimeOptions: { configure: (scope) => whatsapp.bind(scope) },
   };

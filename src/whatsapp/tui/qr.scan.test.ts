@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import jsQR from "jsqr";
 import { renderQr } from "./qr";
-import { rasterizeQrRows } from "./raster";
+import { rasterizeQrRows } from "../../../test/support/qr-raster";
 
 /**
  * The only assertion that proves the rendered code is *scannable* rather than

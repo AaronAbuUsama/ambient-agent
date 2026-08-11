@@ -17,7 +17,7 @@ import { driveHeadlessTui } from "agentic-tui-kit/testing";
 import { fileMediaStore, libsqlBackend, memoryBackend } from "whatsappd";
 import { createTestWhatsAppSession, textMessage } from "whatsappd/testing";
 import { join } from "node:path";
-import { createWhatsAppWorkbench } from "../src/app";
+import { createWhatsAppWorkbench } from "../src/app/create-workbench";
 
 const view = process.argv[2] ?? "chat";
 const me = "15559990000@s.whatsapp.net";
@@ -133,7 +133,7 @@ for (const [chatId, text, fromMe, sender] of script) {
 // A real mirror has to be paged in before anything can be opened.
 await Bun.sleep(dataDir ? 1200 : 150);
 const opened = dataDir
-  ? (workbench.engine.getSnapshot().chats[0]?.chatId ?? "")
+  ? (workbench.session.getSnapshot().chats[0]?.chatId ?? "")
   : view === "group"
     ? group
     : alice;
@@ -149,12 +149,12 @@ for (const key of (process.env.SCREENS_KEYS ?? "").split(",").filter(Boolean)) {
 }
 
 console.log(await tui.screen());
-const { backfill } = workbench.engine.getSnapshot();
+const { historyPrefetch } = workbench.session.getSnapshot();
 const panelPages = tui.runtime.actions
   .invocations()
   .filter((record) => record.actionId === "whatsapp.load-older").length;
 console.log(
-  `backfill: ${backfill.state} · ${backfill.messages} messages · ${backfill.done}/${backfill.total} chats · ${panelPages} pages from the panel`,
+  `backfill: ${historyPrefetch.state} · ${historyPrefetch.messages} messages · ${historyPrefetch.done}/${historyPrefetch.total} chats · ${panelPages} pages from the panel`,
 );
 await tui.finish();
-await workbench.engine.dispose();
+await workbench.session.dispose();
