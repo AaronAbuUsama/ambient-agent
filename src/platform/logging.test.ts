@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vite-plus/test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

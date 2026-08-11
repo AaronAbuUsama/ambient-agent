@@ -1,0 +1,8 @@
+allowBuilds:
+  baileys: true
+  esbuild: true
+  protobufjs: true
+
+peerDependencyRules:
+  allowedVersions:
+    vite: "*"

@@ -1,10 +1,17 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vite-plus/test";
 import { createAmbient } from "./ambient";
 
 test("Ambient starts and stops its WhatsApp dependency once", async () => {
   let attaches = 0;
   let disposes = 0;
+  let closes = 0;
   const ambient = createAmbient({
+    database: {
+      close: () => {
+        closes += 1;
+        return Promise.resolve();
+      },
+    },
     whatsapp: {
       attach: () => {
         attaches += 1;
@@ -22,6 +29,7 @@ test("Ambient starts and stops its WhatsApp dependency once", async () => {
 
   expect(attaches).toBe(1);
   expect(disposes).toBe(1);
+  expect(closes).toBe(1);
 
   let restartError: unknown;
   try {

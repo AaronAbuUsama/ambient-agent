@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vite-plus/test";
 import type { ChatRecord, ClientChatMessages, WhatsAppClient } from "whatsappd";
 import { HistoryBackfill } from "./history-backfill";
 

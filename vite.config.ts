@@ -1,11 +1,6 @@
 import { defineConfig } from "vite-plus";
 
 export default defineConfig({
-  resolve: {
-    alias: {
-      "bun:test": "vitest",
-    },
-  },
   test: {
     include: ["src/**/*.test.ts"],
   },

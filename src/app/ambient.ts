@@ -8,14 +8,19 @@ export interface WhatsAppLifecycle {
   dispose(): Promise<void>;
 }
 
+export interface DurableResource {
+  close(): Promise<void>;
+}
+
 export interface AmbientDependencies {
+  readonly database: DurableResource;
   readonly whatsapp: WhatsAppLifecycle;
 }
 
 /**
  * Own the backend process lifecycle behind one small application boundary.
  */
-export function createAmbient({ whatsapp }: AmbientDependencies): Ambient {
+export function createAmbient({ database, whatsapp }: AmbientDependencies): Ambient {
   let starting: Promise<void> | undefined;
   let stopping: Promise<void> | undefined;
 
@@ -28,7 +33,11 @@ export function createAmbient({ whatsapp }: AmbientDependencies): Ambient {
     stop() {
       stopping ??= (async () => {
         await starting?.catch(() => {});
-        await whatsapp.dispose();
+        try {
+          await whatsapp.dispose();
+        } finally {
+          await database.close();
+        }
       })();
       return stopping;
     },

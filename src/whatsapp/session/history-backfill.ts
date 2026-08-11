@@ -244,7 +244,7 @@ export class HistoryBackfill {
       if (settled) return;
       settled = true;
       this.#wake = undefined;
-      resolve();
+      resolve(undefined);
     };
     // The condition may have changed before the subscription was installed.
     changed();

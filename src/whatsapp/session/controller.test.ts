@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vite-plus/test";
 import { memoryBackend } from "whatsappd";
 import { createTestWhatsAppSession } from "whatsappd/testing";
 import { WhatsAppSessionController } from "./controller";

@@ -1,13 +1,14 @@
 # Ambient
 
 Ambient is a backend-only conversational agent under construction. The current
-hard-cut foundation owns one durable WhatsApp account, resumes its authenticated
-session, maintains its local libSQL mirror, and loads all locally retained chat
-history for future memory analysis.
+backend foundation owns one durable WhatsApp account, resumes its authenticated
+session, loads all locally retained chat history, and maintains a separate
+Ambient database for observations, runs, tool calls, inbox work, tasks, memory
+records, and evaluations.
 
 ```bash
-vp install
-vp run start
+pnpm install
+pnpm start
 ```
 
 The process claims the configured account on launch and runs until `SIGINT` or
@@ -42,19 +43,36 @@ history already retained in the local WhatsApp mirror.
 - `whatsapp.db` — credentials and the current mirror, in libSQL. It opens in WAL,
   so `whatsapp.db-wal` and `whatsapp.db-shm` sit beside it. Move, copy, or delete
   the three together.
+- `ambient.db` — durable Ambient product state. Repeatable migrations run before
+  WhatsApp connects. Override its location with `AMBIENT_DATABASE_URL`.
 - `media/` — attachment bytes, as private immutable objects.
 - `whatsapp.log` — redacted WhatsApp session logs. `WA_LOG_LEVEL` defaults to
   `warn`.
 
 `WHATSAPP_ACCOUNT_ID` (default `main`) scopes every durable record and the
 single-writer lease. Two processes on one account is refused before a socket
-opens, so a second `bun run start` fails rather than fighting the first.
+opens, so a second `pnpm start` fails rather than fighting the first.
+
+Role model settings are resolved at startup and snapshotted into every Agent Run.
+`MODEL_PROVIDER` and `AMBIENT_MODEL` provide shared defaults; role-specific
+variables such as `CONVERSATION_MODEL`, `WORKER_MODEL`, and `MEMORY_MODEL`
+override them.
+
+## Toolchain and schema
+
+Ambient runs on Node.js and uses pnpm. Drizzle defines the application schema in
+`src/database/schema.ts`, generates versioned migrations under `drizzle/`, and
+backs the typed repositories in `src/database/`.
+
+```bash
+pnpm db:generate
+```
 
 ## Validation
 
 ```bash
-vp check
-vp test
+pnpm check
+pnpm test
 ```
 
 The target architecture and implementation sequence are in
