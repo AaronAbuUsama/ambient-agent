@@ -13,6 +13,7 @@
     "prepare": "vp config"
   },
   "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.1",
     "@libsql/client": "^0.17.4",
     "@opentui/core": "^0.4.5",
     "@opentui/react": "^0.4.5",
@@ -43,6 +44,7 @@
     }
   },
   "trustedDependencies": [
+    "@google/genai",
     "baileys",
     "protobufjs"
   ]
