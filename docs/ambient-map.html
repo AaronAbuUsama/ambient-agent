@@ -1,0 +1,1674 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ambient delivery map</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --paper: #f5f5f5;
+        --paper-2: #ececec;
+        --white: #ffffff;
+        --ink: #2d3142;
+        --muted: #4f5d75;
+        --soft: #7a8399;
+        --rule: rgba(45, 49, 66, 0.12);
+        --rule-solid: #bfc0c0;
+        --accent: #eb6c36;
+        --accent-tint: rgba(235, 108, 54, 0.08);
+        --link: #2e5aa8;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background: var(--paper);
+        font-family: "Geist", system-ui, sans-serif;
+      }
+
+      main {
+        width: min(1240px, calc(100% - 48px));
+        margin: 0 auto;
+        padding: 64px 0 48px;
+      }
+
+      header {
+        max-width: 880px;
+        margin-bottom: 56px;
+      }
+
+      .eyebrow {
+        margin: 0 0 12px;
+        color: var(--soft);
+        font:
+          500 8px/1.4 "Geist Mono",
+          monospace;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2 {
+        margin: 0;
+        font-family: "Instrument Serif", Georgia, serif;
+        font-weight: 400;
+      }
+
+      h1 {
+        font-size: clamp(44px, 6vw, 72px);
+        line-height: 0.96;
+        letter-spacing: -0.02em;
+      }
+
+      h2 {
+        font-size: 36px;
+        line-height: 1;
+      }
+
+      .lede {
+        max-width: 760px;
+        margin: 24px 0 0;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.6;
+      }
+
+      .status {
+        display: inline-flex;
+        gap: 10px;
+        align-items: center;
+        margin-top: 24px;
+        padding: 8px 12px;
+        border: 1px solid rgba(235, 108, 54, 0.36);
+        border-radius: 4px;
+        background: var(--accent-tint);
+        color: var(--accent);
+        font:
+          500 10px/1 "Geist Mono",
+          monospace;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+
+      section {
+        margin-top: 72px;
+        padding-top: 32px;
+        border-top: 1px solid var(--rule);
+      }
+
+      .section-head {
+        display: grid;
+        grid-template-columns: minmax(240px, 0.8fr) minmax(320px, 1.2fr);
+        gap: 48px;
+        align-items: end;
+        margin-bottom: 32px;
+      }
+
+      .section-copy {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.6;
+      }
+
+      .diagram {
+        width: 100%;
+        overflow-x: auto;
+      }
+
+      svg {
+        display: block;
+        width: 100%;
+        min-width: 900px;
+        height: auto;
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: 1.15fr 0.95fr 0.9fr;
+        gap: 16px;
+        margin-top: 24px;
+      }
+
+      .card {
+        padding: 20px;
+        border: 1px solid var(--rule);
+        border-radius: 6px;
+        background: var(--white);
+      }
+
+      .card.current {
+        border-color: rgba(235, 108, 54, 0.42);
+        background: var(--accent-tint);
+      }
+
+      .card h3 {
+        margin: 0 0 12px;
+        font-size: 14px;
+      }
+
+      .card ul {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.65;
+      }
+
+      .proof-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        margin-top: 24px;
+      }
+
+      .proof {
+        padding: 24px;
+        border: 1px solid var(--rule);
+        border-radius: 6px;
+        background: var(--white);
+      }
+
+      .proof.next {
+        border-color: rgba(235, 108, 54, 0.42);
+      }
+
+      .proof h3 {
+        margin: 0 0 8px;
+        font-size: 16px;
+      }
+
+      .proof p {
+        margin: 0 0 14px;
+        color: var(--soft);
+        font:
+          500 9px/1.5 "Geist Mono",
+          monospace;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .proof ol {
+        margin: 0;
+        padding-left: 20px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.65;
+      }
+
+      footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        margin-top: 72px;
+        padding-top: 20px;
+        border-top: 1px solid var(--rule);
+        color: var(--soft);
+        font:
+          500 9px/1.5 "Geist Mono",
+          monospace;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      @media (max-width: 760px) {
+        main {
+          width: min(100% - 28px, 1240px);
+          padding-top: 40px;
+        }
+
+        .section-head,
+        .cards,
+        .proof-grid {
+          grid-template-columns: 1fr;
+        }
+
+        section {
+          margin-top: 56px;
+        }
+
+        footer {
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Ambient · system and delivery roadmap</p>
+        <h1>From durable spine to a working conversational agent.</h1>
+        <p class="lede">
+          The backend foundation is complete. The next cut connects real WhatsApp events to durable
+          Ambient records. The cut after that turns those retained records into bounded, inspectable
+          Conversation runs.
+        </p>
+        <div class="status"><span class="status-dot"></span>Current position: Phase 1 complete</div>
+      </header>
+
+      <section>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">01 · Delivery sequence</p>
+            <h2>Where we are</h2>
+          </div>
+          <p class="section-copy">
+            Phase 0 removed the abandoned terminal product. Phase 1 built the durable authority.
+            Phase 2 is intentionally split into two proof-sized cuts: first ingestion, then
+            Conversation.
+          </p>
+        </div>
+
+        <div class="diagram">
+          <svg viewBox="0 0 1200 360" role="img" aria-labelledby="roadmap-title roadmap-desc">
+            <title id="roadmap-title">Ambient implementation roadmap</title>
+            <desc id="roadmap-desc">
+              Six delivery phases. Hard cut and durable spine are complete. WhatsApp ingestion is
+              next, followed by Conversation, Worker handoff, Memory, and comparative evaluation.
+            </desc>
+            <defs>
+              <marker
+                id="road-arrow"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill="#4f5d75" />
+              </marker>
+            </defs>
+
+            <line
+              x1="88"
+              y1="184"
+              x2="1112"
+              y2="184"
+              stroke="#bfc0c0"
+              stroke-width="1"
+              marker-end="url(#road-arrow)"
+            />
+
+            <g>
+              <line x1="104" y1="184" x2="104" y2="120" stroke="#4f5d75" stroke-width="1" />
+              <circle cx="104" cy="184" r="6" fill="#2d3142" />
+              <rect x="32" y="48" width="144" height="72" rx="6" fill="#ffffff" stroke="#2d3142" />
+              <text
+                x="104"
+                y="72"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#7a8399"
+                letter-spacing="1.2"
+              >
+                PHASE 0 · DONE
+              </text>
+              <text
+                x="104"
+                y="94"
+                text-anchor="middle"
+                font-family="Geist, sans-serif"
+                font-size="12"
+                font-weight="600"
+                fill="#2d3142"
+              >
+                Hard cut
+              </text>
+              <text
+                x="104"
+                y="108"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#4f5d75"
+              >
+                backend only
+              </text>
+            </g>
+
+            <g>
+              <line x1="296" y1="184" x2="296" y2="248" stroke="#4f5d75" stroke-width="1" />
+              <circle cx="296" cy="184" r="6" fill="#2d3142" />
+              <rect
+                x="216"
+                y="248"
+                width="160"
+                height="80"
+                rx="6"
+                fill="#ffffff"
+                stroke="#2d3142"
+              />
+              <text
+                x="296"
+                y="272"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#7a8399"
+                letter-spacing="1.2"
+              >
+                PHASE 1 · DONE
+              </text>
+              <text
+                x="296"
+                y="294"
+                text-anchor="middle"
+                font-family="Geist, sans-serif"
+                font-size="12"
+                font-weight="600"
+                fill="#2d3142"
+              >
+                Durable spine
+              </text>
+              <text
+                x="296"
+                y="312"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#4f5d75"
+              >
+                Drizzle · runs · tasks
+              </text>
+            </g>
+
+            <g>
+              <line x1="488" y1="184" x2="488" y2="120" stroke="#eb6c36" stroke-width="1.2" />
+              <circle cx="488" cy="184" r="7" fill="#eb6c36" />
+              <rect
+                x="400"
+                y="40"
+                width="176"
+                height="80"
+                rx="6"
+                fill="rgba(235,108,54,0.08)"
+                stroke="#eb6c36"
+                stroke-width="1.2"
+              />
+              <text
+                x="488"
+                y="64"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#eb6c36"
+                letter-spacing="1.2"
+              >
+                PHASE 2A · NEXT
+              </text>
+              <text
+                x="488"
+                y="86"
+                text-anchor="middle"
+                font-family="Geist, sans-serif"
+                font-size="12"
+                font-weight="600"
+                fill="#2d3142"
+              >
+                WhatsApp ingestion
+              </text>
+              <text
+                x="488"
+                y="104"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#4f5d75"
+              >
+                exactly-once retain
+              </text>
+            </g>
+
+            <g>
+              <line x1="680" y1="184" x2="680" y2="248" stroke="#4f5d75" stroke-width="1" />
+              <circle cx="680" cy="184" r="5" fill="#f5f5f5" stroke="#4f5d75" />
+              <rect
+                x="600"
+                y="248"
+                width="160"
+                height="80"
+                rx="6"
+                fill="rgba(45,49,66,0.03)"
+                stroke="rgba(45,49,66,0.30)"
+              />
+              <text
+                x="680"
+                y="272"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#7a8399"
+                letter-spacing="1.2"
+              >
+                PHASE 2B
+              </text>
+              <text
+                x="680"
+                y="294"
+                text-anchor="middle"
+                font-family="Geist, sans-serif"
+                font-size="12"
+                font-weight="600"
+                fill="#2d3142"
+              >
+                Conversation
+              </text>
+              <text
+                x="680"
+                y="312"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#4f5d75"
+              >
+                coalesce · reply/silent
+              </text>
+            </g>
+
+            <g>
+              <line
+                x1="872"
+                y1="184"
+                x2="872"
+                y2="120"
+                stroke="#7a8399"
+                stroke-width="1"
+                stroke-dasharray="4,3"
+              />
+              <circle cx="872" cy="184" r="5" fill="#f5f5f5" stroke="#7a8399" />
+              <rect
+                x="792"
+                y="48"
+                width="160"
+                height="72"
+                rx="6"
+                fill="rgba(45,49,66,0.02)"
+                stroke="rgba(45,49,66,0.20)"
+                stroke-dasharray="4,3"
+              />
+              <text
+                x="872"
+                y="72"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#7a8399"
+                letter-spacing="1.2"
+              >
+                PHASE 3
+              </text>
+              <text
+                x="872"
+                y="94"
+                text-anchor="middle"
+                font-family="Geist, sans-serif"
+                font-size="12"
+                font-weight="600"
+                fill="#2d3142"
+              >
+                Tasks + Worker
+              </text>
+              <text
+                x="872"
+                y="108"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#4f5d75"
+              >
+                durable handoff
+              </text>
+            </g>
+
+            <g>
+              <line
+                x1="1064"
+                y1="184"
+                x2="1064"
+                y2="248"
+                stroke="#7a8399"
+                stroke-width="1"
+                stroke-dasharray="4,3"
+              />
+              <circle cx="1064" cy="184" r="5" fill="#f5f5f5" stroke="#7a8399" />
+              <rect
+                x="984"
+                y="248"
+                width="160"
+                height="80"
+                rx="6"
+                fill="rgba(45,49,66,0.02)"
+                stroke="rgba(45,49,66,0.20)"
+                stroke-dasharray="4,3"
+              />
+              <text
+                x="1064"
+                y="272"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#7a8399"
+                letter-spacing="1.2"
+              >
+                PHASES 4–5
+              </text>
+              <text
+                x="1064"
+                y="294"
+                text-anchor="middle"
+                font-family="Geist, sans-serif"
+                font-size="12"
+                font-weight="600"
+                fill="#2d3142"
+              >
+                Memory + evals
+              </text>
+              <text
+                x="1064"
+                y="312"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#4f5d75"
+              >
+                learn · compare · gate
+              </text>
+            </g>
+
+            <line
+              x1="32"
+              y1="344"
+              x2="1168"
+              y2="344"
+              stroke="rgba(45,49,66,0.12)"
+              stroke-width="0.8"
+            />
+            <text
+              x="32"
+              y="356"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#7a8399"
+              letter-spacing="1.2"
+            >
+              DELIVERY SEQUENCE · NOT A TIME SCALE
+            </text>
+          </svg>
+        </div>
+
+        <div class="cards">
+          <article class="card">
+            <p class="eyebrow">Built and proven</p>
+            <h3>Durable authority exists</h3>
+            <ul>
+              <li>Authenticated WhatsApp state and full local-history backfill</li>
+              <li>Node + pnpm runtime and Drizzle-managed libSQL schema</li>
+              <li>Observations, inbox, runs, tools, tasks, evaluations, and memory records</li>
+              <li>Restart, uniqueness, lease, transition, and lineage invariant tests</li>
+            </ul>
+          </article>
+          <article class="card current">
+            <p class="eyebrow">Next cut</p>
+            <h3>Make one message durable</h3>
+            <ul>
+              <li>Translate a native WhatsApp message into an Observation</li>
+              <li>Atomically create its Conversation Inbox item</li>
+              <li>Replay safely without duplicates</li>
+              <li>Prove with controlled and opt-in live ingestion</li>
+            </ul>
+          </article>
+          <article class="card">
+            <p class="eyebrow">Not built yet</p>
+            <h3>No model behavior is live</h3>
+            <ul>
+              <li>No Conversation Agent or outbound reply</li>
+              <li>No Worker execution or task report-back</li>
+              <li>No episode construction or Memory Analyst</li>
+              <li>No live account end-to-end journey proof</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">02 · Product architecture</p>
+            <h2>The whole system</h2>
+          </div>
+          <p class="section-copy">
+            Agents never call each other directly. The Ambient database is the protocol: accepted
+            messages, run inputs, tool effects, tasks, results, memory patches, and evaluations are
+            all durable before the next role acts.
+          </p>
+        </div>
+
+        <div class="diagram">
+          <svg
+            viewBox="0 0 1200 620"
+            role="img"
+            aria-labelledby="architecture-title architecture-desc"
+          >
+            <title id="architecture-title">Ambient product architecture</title>
+            <desc id="architecture-desc">
+              WhatsApp connects through a scoped gateway to the durable Ambient database. The
+              database coordinates Conversation, tasks, Workers, Memory, and evaluations.
+            </desc>
+            <defs>
+              <marker
+                id="arch-arrow"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill="#4f5d75" />
+              </marker>
+              <marker
+                id="arch-accent"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill="#eb6c36" />
+              </marker>
+              <marker
+                id="arch-link"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill="#2e5aa8" />
+              </marker>
+            </defs>
+
+            <rect
+              x="32"
+              y="48"
+              width="448"
+              height="520"
+              rx="8"
+              fill="rgba(45,49,66,0.02)"
+              stroke="rgba(45,49,66,0.10)"
+            />
+            <rect x="48" y="52" width="96" height="12" rx="2" fill="#f5f5f5" />
+            <text
+              x="96"
+              y="61"
+              text-anchor="middle"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#7a8399"
+              letter-spacing="1.2"
+            >
+              CHANNEL + CORE
+            </text>
+
+            <rect
+              x="512"
+              y="48"
+              width="656"
+              height="520"
+              rx="8"
+              fill="rgba(45,49,66,0.02)"
+              stroke="rgba(45,49,66,0.10)"
+            />
+            <rect x="528" y="52" width="104" height="12" rx="2" fill="#f5f5f5" />
+            <text
+              x="580"
+              y="61"
+              text-anchor="middle"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#7a8399"
+              letter-spacing="1.2"
+            >
+              ROLE RUNTIMES
+            </text>
+
+            <!-- Connectors -->
+            <line
+              x1="208"
+              y1="264"
+              x2="288"
+              y2="264"
+              stroke="#2e5aa8"
+              stroke-width="1.2"
+              marker-end="url(#arch-link)"
+            />
+            <line
+              x1="448"
+              y1="264"
+              x2="568"
+              y2="264"
+              stroke="#eb6c36"
+              stroke-width="1.2"
+              marker-end="url(#arch-accent)"
+            />
+            <path
+              d="M 768 232 H 940 Q 948 232 948 224 V 180"
+              fill="none"
+              stroke="#4f5d75"
+              stroke-width="1.2"
+              marker-end="url(#arch-arrow)"
+            />
+            <path
+              d="M 980 100 V 80 Q 980 72 972 72 H 376 Q 368 72 368 80 V 224"
+              fill="none"
+              stroke="#2e5aa8"
+              stroke-width="1"
+              stroke-dasharray="4,3"
+              marker-end="url(#arch-link)"
+            />
+            <line
+              x1="980"
+              y1="180"
+              x2="980"
+              y2="256"
+              stroke="#4f5d75"
+              stroke-width="1.2"
+              marker-end="url(#arch-arrow)"
+            />
+            <line
+              x1="980"
+              y1="336"
+              x2="980"
+              y2="412"
+              stroke="#4f5d75"
+              stroke-width="1.2"
+              marker-end="url(#arch-arrow)"
+            />
+            <path
+              d="M 880 452 H 828 Q 820 452 820 444 V 304 Q 820 296 812 296 H 768"
+              fill="none"
+              stroke="#4f5d75"
+              stroke-width="1.2"
+              marker-end="url(#arch-arrow)"
+            />
+            <line
+              x1="668"
+              y1="320"
+              x2="668"
+              y2="432"
+              stroke="#4f5d75"
+              stroke-width="1"
+              marker-end="url(#arch-arrow)"
+            />
+            <path
+              d="M 488 472 H 528 Q 536 472 536 464 V 336 Q 536 328 544 328 H 568"
+              fill="none"
+              stroke="#4f5d75"
+              stroke-width="1"
+              marker-end="url(#arch-arrow)"
+            />
+
+            <!-- Arrow labels with masks and gap -->
+            <rect x="224" y="236" width="48" height="12" rx="2" fill="#f5f5f5" />
+            <text
+              x="248"
+              y="245"
+              text-anchor="middle"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#2e5aa8"
+            >
+              EVENTS
+            </text>
+            <rect x="480" y="236" width="56" height="12" rx="2" fill="#f5f5f5" />
+            <text
+              x="508"
+              y="245"
+              text-anchor="middle"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#eb6c36"
+            >
+              RETAIN
+            </text>
+            <rect x="840" y="204" width="56" height="12" rx="2" fill="#f5f5f5" />
+            <text
+              x="868"
+              y="213"
+              text-anchor="middle"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#4f5d75"
+            >
+              CLAIM
+            </text>
+            <rect x="640" y="360" width="56" height="12" rx="2" fill="#f5f5f5" />
+            <text
+              x="668"
+              y="369"
+              text-anchor="middle"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#4f5d75"
+            >
+              CASES
+            </text>
+
+            <!-- Nodes -->
+            <g>
+              <rect
+                x="48"
+                y="228"
+                width="160"
+                height="72"
+                rx="6"
+                fill="rgba(45,49,66,0.03)"
+                stroke="rgba(45,49,66,0.30)"
+              />
+              <text
+                x="128"
+                y="258"
+                text-anchor="middle"
+                font-family="Geist, sans-serif"
+                font-size="12"
+                font-weight="600"
+                fill="#2d3142"
+              >
+                WhatsApp
+              </text>
+              <text
+                x="128"
+                y="278"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#4f5d75"
+              >
+                whatsappd mirror
+              </text>
+            </g>
+
+            <g>
+              <rect
+                x="288"
+                y="224"
+                width="160"
+                height="80"
+                rx="6"
+                fill="rgba(235,108,54,0.08)"
+                stroke="#eb6c36"
+                stroke-width="1.2"
+              />
+              <text
+                x="368"
+                y="256"
+                text-anchor="middle"
+                font-family="Geist, sans-serif"
+                font-size="12"
+                font-weight="600"
+                fill="#2d3142"
+              >
+                WhatsApp gateway
+              </text>
+              <text
+                x="368"
+                y="276"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#4f5d75"
+              >
+                map · dedupe · send
+              </text>
+            </g>
+
+            <g>
+              <rect
+                x="568"
+                y="208"
+                width="200"
+                height="112"
+                rx="6"
+                fill="rgba(45,49,66,0.05)"
+                stroke="#4f5d75"
+                stroke-width="1.2"
+              />
+              <text
+                x="668"
+                y="248"
+                text-anchor="middle"
+                font-family="Geist, sans-serif"
+                font-size="12"
+                font-weight="600"
+                fill="#2d3142"
+              >
+                Ambient database
+              </text>
+              <text
+                x="668"
+                y="268"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#4f5d75"
+              >
+                observations · inbox · runs
+              </text>
+              <text
+                x="668"
+                y="284"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#4f5d75"
+              >
+                tasks · claims · evaluations
+              </text>
+              <text
+                x="668"
+                y="300"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#7a8399"
+              >
+                durable authority
+              </text>
+            </g>
+
+            <g>
+              <rect
+                x="880"
+                y="100"
+                width="200"
+                height="80"
+                rx="6"
+                fill="#ffffff"
+                stroke="#2d3142"
+              />
+              <text
+                x="980"
+                y="132"
+                text-anchor="middle"
+                font-family="Geist, sans-serif"
+                font-size="12"
+                font-weight="600"
+                fill="#2d3142"
+              >
+                Conversation Agent
+              </text>
+              <text
+                x="980"
+                y="152"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#4f5d75"
+              >
+                reply · recall · start work
+              </text>
+            </g>
+
+            <g>
+              <rect
+                x="880"
+                y="256"
+                width="200"
+                height="80"
+                rx="6"
+                fill="#ffffff"
+                stroke="#2d3142"
+              />
+              <text
+                x="980"
+                y="288"
+                text-anchor="middle"
+                font-family="Geist, sans-serif"
+                font-size="12"
+                font-weight="600"
+                fill="#2d3142"
+              >
+                Task Coordinator
+              </text>
+              <text
+                x="980"
+                y="308"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#4f5d75"
+              >
+                leases · retries · handoffs
+              </text>
+            </g>
+
+            <g>
+              <rect
+                x="880"
+                y="412"
+                width="200"
+                height="80"
+                rx="6"
+                fill="#ffffff"
+                stroke="#2d3142"
+              />
+              <text
+                x="980"
+                y="444"
+                text-anchor="middle"
+                font-family="Geist, sans-serif"
+                font-size="12"
+                font-weight="600"
+                fill="#2d3142"
+              >
+                Worker Agent
+              </text>
+              <text
+                x="980"
+                y="464"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#4f5d75"
+              >
+                execute · artifacts · result
+              </text>
+            </g>
+
+            <g>
+              <rect
+                x="288"
+                y="432"
+                width="200"
+                height="80"
+                rx="6"
+                fill="#ffffff"
+                stroke="#2d3142"
+              />
+              <text
+                x="388"
+                y="464"
+                text-anchor="middle"
+                font-family="Geist, sans-serif"
+                font-size="12"
+                font-weight="600"
+                fill="#2d3142"
+              >
+                Episodes + Memory
+              </text>
+              <text
+                x="388"
+                y="484"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#4f5d75"
+              >
+                evidence · claims · recall
+              </text>
+            </g>
+
+            <g>
+              <rect
+                x="568"
+                y="432"
+                width="200"
+                height="80"
+                rx="6"
+                fill="rgba(45,49,66,0.02)"
+                stroke="rgba(45,49,66,0.20)"
+                stroke-dasharray="4,3"
+              />
+              <text
+                x="668"
+                y="464"
+                text-anchor="middle"
+                font-family="Geist, sans-serif"
+                font-size="12"
+                font-weight="600"
+                fill="#2d3142"
+              >
+                Evaluation loop
+              </text>
+              <text
+                x="668"
+                y="484"
+                text-anchor="middle"
+                font-family="Geist Mono, monospace"
+                font-size="8"
+                fill="#4f5d75"
+              >
+                replay · compare · gate
+              </text>
+            </g>
+
+            <line
+              x1="32"
+              y1="584"
+              x2="1168"
+              y2="584"
+              stroke="rgba(45,49,66,0.12)"
+              stroke-width="0.8"
+            />
+            <text
+              x="32"
+              y="604"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#7a8399"
+              letter-spacing="1.2"
+            >
+              LEGEND
+            </text>
+            <rect
+              x="128"
+              y="594"
+              width="16"
+              height="10"
+              rx="2"
+              fill="rgba(235,108,54,0.08)"
+              stroke="#eb6c36"
+            />
+            <text x="152" y="603" font-family="Geist Mono, monospace" font-size="8" fill="#4f5d75">
+              NEXT CUT
+            </text>
+            <rect
+              x="248"
+              y="594"
+              width="16"
+              height="10"
+              rx="2"
+              fill="rgba(45,49,66,0.05)"
+              stroke="#4f5d75"
+            />
+            <text x="272" y="603" font-family="Geist Mono, monospace" font-size="8" fill="#4f5d75">
+              DURABLE STATE
+            </text>
+            <rect x="392" y="594" width="16" height="10" rx="2" fill="#ffffff" stroke="#2d3142" />
+            <text x="416" y="603" font-family="Geist Mono, monospace" font-size="8" fill="#4f5d75">
+              ROLE / SERVICE
+            </text>
+            <line x1="560" y1="599" x2="592" y2="599" stroke="#2e5aa8" stroke-width="1.2" />
+            <text x="600" y="603" font-family="Geist Mono, monospace" font-size="8" fill="#4f5d75">
+              CHANNEL EFFECT
+            </text>
+          </svg>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">03 · Next cutover</p>
+            <h2>What we prove next</h2>
+          </div>
+          <p class="section-copy">
+            Do not introduce the model and live reply path in the same cut as ingestion. First prove
+            accepted channel input becomes durable exactly once. Then prove deterministic scheduling
+            and scoped Conversation behavior over that retained input.
+          </p>
+        </div>
+
+        <div class="diagram">
+          <svg viewBox="0 0 1200 420" role="img" aria-labelledby="cut-title cut-desc">
+            <title id="cut-title">The next two Ambient proof cuts</title>
+            <desc id="cut-desc">
+              Cut 2A retains one WhatsApp message exactly once and survives replay. Cut 2B coalesces
+              pending items into a Conversation run that replies or deliberately remains silent.
+            </desc>
+            <defs>
+              <marker
+                id="cut-arrow"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill="#4f5d75" />
+              </marker>
+              <marker
+                id="cut-accent"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill="#eb6c36" />
+              </marker>
+            </defs>
+
+            <text
+              x="32"
+              y="56"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#eb6c36"
+              letter-spacing="1.2"
+            >
+              CUT 2A · INGESTION · IMMEDIATE NEXT
+            </text>
+            <line
+              x1="256"
+              y1="128"
+              x2="344"
+              y2="128"
+              stroke="#4f5d75"
+              stroke-width="1.2"
+              marker-end="url(#cut-arrow)"
+            />
+            <line
+              x1="544"
+              y1="128"
+              x2="632"
+              y2="128"
+              stroke="#eb6c36"
+              stroke-width="1.2"
+              marker-end="url(#cut-accent)"
+            />
+            <line
+              x1="832"
+              y1="128"
+              x2="920"
+              y2="128"
+              stroke="#4f5d75"
+              stroke-width="1.2"
+              marker-end="url(#cut-arrow)"
+            />
+
+            <rect
+              x="56"
+              y="88"
+              width="200"
+              height="80"
+              rx="6"
+              fill="rgba(45,49,66,0.03)"
+              stroke="rgba(45,49,66,0.30)"
+            />
+            <text
+              x="156"
+              y="120"
+              text-anchor="middle"
+              font-family="Geist, sans-serif"
+              font-size="12"
+              font-weight="600"
+              fill="#2d3142"
+            >
+              Native message
+            </text>
+            <text
+              x="156"
+              y="140"
+              text-anchor="middle"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#4f5d75"
+            >
+              whatsappd event
+            </text>
+
+            <rect x="344" y="88" width="200" height="80" rx="6" fill="#ffffff" stroke="#2d3142" />
+            <text
+              x="444"
+              y="120"
+              text-anchor="middle"
+              font-family="Geist, sans-serif"
+              font-size="12"
+              font-weight="600"
+              fill="#2d3142"
+            >
+              Map + validate
+            </text>
+            <text
+              x="444"
+              y="140"
+              text-anchor="middle"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#4f5d75"
+            >
+              stable native identity
+            </text>
+
+            <rect
+              x="632"
+              y="80"
+              width="200"
+              height="96"
+              rx="6"
+              fill="rgba(235,108,54,0.08)"
+              stroke="#eb6c36"
+              stroke-width="1.2"
+            />
+            <text
+              x="732"
+              y="116"
+              text-anchor="middle"
+              font-family="Geist, sans-serif"
+              font-size="12"
+              font-weight="600"
+              fill="#2d3142"
+            >
+              Atomic retain
+            </text>
+            <text
+              x="732"
+              y="136"
+              text-anchor="middle"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#4f5d75"
+            >
+              Observation + Inbox
+            </text>
+            <text
+              x="732"
+              y="152"
+              text-anchor="middle"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#7a8399"
+            >
+              one transaction
+            </text>
+
+            <rect x="920" y="88" width="200" height="80" rx="6" fill="#ffffff" stroke="#2d3142" />
+            <text
+              x="1020"
+              y="120"
+              text-anchor="middle"
+              font-family="Geist, sans-serif"
+              font-size="12"
+              font-weight="600"
+              fill="#2d3142"
+            >
+              Restart + replay
+            </text>
+            <text
+              x="1020"
+              y="140"
+              text-anchor="middle"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#4f5d75"
+            >
+              same message · no duplicate
+            </text>
+
+            <line
+              x1="32"
+              y1="216"
+              x2="1168"
+              y2="216"
+              stroke="rgba(45,49,66,0.12)"
+              stroke-width="0.8"
+            />
+
+            <text
+              x="32"
+              y="256"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#7a8399"
+              letter-spacing="1.2"
+            >
+              CUT 2B · CONVERSATION · FOLLOWING CUT
+            </text>
+            <line
+              x1="256"
+              y1="328"
+              x2="344"
+              y2="328"
+              stroke="#4f5d75"
+              stroke-width="1.2"
+              marker-end="url(#cut-arrow)"
+            />
+            <line
+              x1="544"
+              y1="328"
+              x2="632"
+              y2="328"
+              stroke="#4f5d75"
+              stroke-width="1.2"
+              marker-end="url(#cut-arrow)"
+            />
+            <line
+              x1="832"
+              y1="328"
+              x2="920"
+              y2="328"
+              stroke="#4f5d75"
+              stroke-width="1.2"
+              marker-end="url(#cut-arrow)"
+            />
+
+            <rect
+              x="56"
+              y="288"
+              width="200"
+              height="80"
+              rx="6"
+              fill="rgba(45,49,66,0.05)"
+              stroke="#4f5d75"
+            />
+            <text
+              x="156"
+              y="320"
+              text-anchor="middle"
+              font-family="Geist, sans-serif"
+              font-size="12"
+              font-weight="600"
+              fill="#2d3142"
+            >
+              Pending inbox
+            </text>
+            <text
+              x="156"
+              y="340"
+              text-anchor="middle"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#4f5d75"
+            >
+              durable stimuli
+            </text>
+
+            <rect x="344" y="288" width="200" height="80" rx="6" fill="#ffffff" stroke="#2d3142" />
+            <text
+              x="444"
+              y="320"
+              text-anchor="middle"
+              font-family="Geist, sans-serif"
+              font-size="12"
+              font-weight="600"
+              fill="#2d3142"
+            >
+              Coalesce + lease
+            </text>
+            <text
+              x="444"
+              y="340"
+              text-anchor="middle"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#4f5d75"
+            >
+              bounded immutable range
+            </text>
+
+            <rect
+              x="632"
+              y="280"
+              width="200"
+              height="96"
+              rx="6"
+              fill="rgba(235,108,54,0.08)"
+              stroke="#eb6c36"
+              stroke-width="1.2"
+            />
+            <text
+              x="732"
+              y="316"
+              text-anchor="middle"
+              font-family="Geist, sans-serif"
+              font-size="12"
+              font-weight="600"
+              fill="#2d3142"
+            >
+              Conversation run
+            </text>
+            <text
+              x="732"
+              y="336"
+              text-anchor="middle"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#4f5d75"
+            >
+              scoped tools · model snapshot
+            </text>
+            <text
+              x="732"
+              y="352"
+              text-anchor="middle"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#7a8399"
+            >
+              inspectable input
+            </text>
+
+            <rect x="920" y="288" width="200" height="80" rx="6" fill="#ffffff" stroke="#2d3142" />
+            <text
+              x="1020"
+              y="320"
+              text-anchor="middle"
+              font-family="Geist, sans-serif"
+              font-size="12"
+              font-weight="600"
+              fill="#2d3142"
+            >
+              Reply or silence
+            </text>
+            <text
+              x="1020"
+              y="340"
+              text-anchor="middle"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#4f5d75"
+            >
+              persisted tool outcome
+            </text>
+
+            <line
+              x1="32"
+              y1="400"
+              x2="1168"
+              y2="400"
+              stroke="rgba(45,49,66,0.12)"
+              stroke-width="0.8"
+            />
+            <text
+              x="32"
+              y="416"
+              font-family="Geist Mono, monospace"
+              font-size="8"
+              fill="#7a8399"
+              letter-spacing="1.2"
+            >
+              EACH CUT ENDS WITH A RESTART PROOF
+            </text>
+          </svg>
+        </div>
+
+        <div class="proof-grid">
+          <article class="proof next">
+            <p>Exit gate · Cut 2A</p>
+            <h3>Exactly-once channel ingestion</h3>
+            <ol>
+              <li>A controlled native message produces one Observation and one Inbox item.</li>
+              <li>Concurrent delivery and replay retain the same native identity once.</li>
+              <li>A process restart preserves the pending item.</li>
+              <li>An opt-in live account proof retains a real message without sending anything.</li>
+            </ol>
+          </article>
+          <article class="proof">
+            <p>Exit gate · Cut 2B</p>
+            <h3>Bounded Conversation behavior</h3>
+            <ol>
+              <li>One retained message creates one Conversation run.</li>
+              <li>Rapid messages coalesce; arrivals during the run remain pending.</li>
+              <li>The run either sends through its bound chat or records deliberate silence.</li>
+              <li>Restart never consumes an item twice or targets another conversation.</li>
+            </ol>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">04 · Completion definition</p>
+            <h2>What “Ambient works” means</h2>
+          </div>
+          <p class="section-copy">
+            The product is complete only when the whole loop survives process boundaries. A model
+            response alone is not completion; accepted work and effects must remain inspectable and
+            replay-safe.
+          </p>
+        </div>
+        <div class="cards">
+          <article class="card">
+            <p class="eyebrow">Conversation</p>
+            <h3>Durable front door</h3>
+            <ul>
+              <li>Inbound messages retained exactly once</li>
+              <li>Reply, recall, start work, and query work</li>
+              <li>Scoped effects cannot cross conversations</li>
+            </ul>
+          </article>
+          <article class="card">
+            <p class="eyebrow">Work + memory</p>
+            <h3>Durable continuation</h3>
+            <ul>
+              <li>Worker completes tasks exactly once</li>
+              <li>Results return to the originating conversation</li>
+              <li>Corrections supersede Claims with Evidence</li>
+            </ul>
+          </article>
+          <article class="card">
+            <p class="eyebrow">Operations</p>
+            <h3>Inspectable and restart-safe</h3>
+            <ul>
+              <li>Runs, tools, transitions, and evaluations are retained</li>
+              <li>Every accepted boundary survives restart</li>
+              <li>Configuration changes are regression-gated</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <footer>
+        <span>Ambient delivery map · 2026-08-11</span>
+        <span>Source of truth: plan.md · current commit c48cbe0</span>
+      </footer>
+    </main>
+  </body>
+</html>

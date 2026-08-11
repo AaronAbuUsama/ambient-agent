@@ -76,4 +76,5 @@ pnpm test
 ```
 
 The target architecture and implementation sequence are in
-[`plan.md`](./plan.md).
+[`plan.md`](./plan.md). The current position, complete system map, and proof gates
+for the next cuts are in [`docs/ambient-map.html`](./docs/ambient-map.html).
