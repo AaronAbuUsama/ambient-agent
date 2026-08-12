@@ -367,11 +367,11 @@
         <h1>One colleague, several specialized forms of agency.</h1>
         <p class="lede">
           Ambient lives in WhatsApp, maintains one Root-led identity, and acts through durable
-          Conversation, Worker, and Memory instances. The current build focus is not another product
-          phase. It is rescuing the architecture without losing the behaviour already proven.
+          Conversation, Worker, and Memory instances. The architecture rescue is complete; the next
+          step is a full replanning session that sequences the product frontier.
         </p>
         <div class="status">
-          <span class="status-dot"></span>Active slice · Conversation service + work store
+          <span class="status-dot"></span>Rescue complete · product replanning next
         </div>
       </header>
 
@@ -877,9 +877,9 @@
           </div>
           <p class="section-copy">
             The proven baseline has been restored, production now has one authoritative Ambient
-            composition root, and the architecture mapping cutover is complete. The active slice
-            rescues Conversation ownership without changing proven behaviour. Model runtime is
-            likely next; Root behaviour remains a later evidence-driven choice.
+            composition root, and every mapped boundary is rescued: Conversation service and work
+            store, model runtime, configuration document, proof harness, and the WhatsApp facade.
+            Root behaviour remains a later evidence-driven choice.
           </p>
         </div>
 
@@ -899,21 +899,18 @@
               </td>
               <td>`main` now sees only configuration and the Ambient lifecycle facade.</td>
             </tr>
-            <tr class="active">
-              <td>Active slice</td>
-              <td>One Conversation service and one authoritative durable work store.</td>
-              <td>
-                Scheduler and repository APIs currently divide ownership of one proven state
-                machine.
-              </td>
-            </tr>
             <tr>
-              <td>Likely next</td>
+              <td>Completed</td>
               <td>
-                Structured configuration and one deep Model Runtime with Qwen and local Vibe
-                support.
+                Conversation service and work store, model runtime, structured configuration, proof
+                harness, and the WhatsApp facade.
               </td>
-              <td>A rescued Conversation boundary can consume one provider-neutral runner.</td>
+              <td>The full rescue sprint landed 2026-08-12 with every gate green.</td>
+            </tr>
+            <tr class="active">
+              <td>Next</td>
+              <td>Product replanning session: presence, Memory, Workers, Root, evaluations.</td>
+              <td>Sequencing is decided with the master before any product slice starts.</td>
             </tr>
             <tr>
               <td>Discovery themes</td>
