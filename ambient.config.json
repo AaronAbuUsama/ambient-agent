@@ -52,6 +52,12 @@
         "model": "qwen3.6-flash",
         "thinking": "off",
         "maxOutputTokens": 4096
+      },
+      "evaluator": {
+        "provider": "vibe",
+        "model": "gemini-3.6-flash-high",
+        "thinking": "off",
+        "maxOutputTokens": 1024
       }
     }
   }

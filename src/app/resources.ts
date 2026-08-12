@@ -1,7 +1,10 @@
 import { openAmbientDatabase, type AmbientDatabase } from "../database/database";
 import { createPiConversationAgent } from "../conversation/pi-agent";
 import { createConversationService, type ConversationService } from "../conversation/service";
-import { createModelRuntime } from "../models/runtime";
+import type { EvaluationService } from "../evals/contract";
+import { createPiConversationJudge } from "../evals/judge";
+import { createEvaluationService } from "../evals/service";
+import { createModelRuntime, type ModelRuntime } from "../models/runtime";
 import { createWhatsAppAcceptedSourceConsumer } from "../whatsapp/message-ingestion";
 import { createWhatsAppService, type WhatsAppService } from "../whatsapp/service";
 import type { AppConfig } from "./config";
@@ -11,6 +14,9 @@ export interface AppResources extends AmbientLifecycleDependencies {
   readonly database: AmbientDatabase;
   readonly whatsapp: WhatsAppService;
   readonly conversation?: ConversationService;
+  readonly evaluations: EvaluationService;
+  /** The startup-resolved model runtime, for app-internal consumers like the proof harness. */
+  readonly models: ModelRuntime;
 }
 
 export interface AcceptedMessage {
@@ -54,8 +60,22 @@ export async function createAppResources(
       acceptedSource,
     });
     await database.repositories.speakers.seed(config.conversation.speakers);
+    const models = createModelRuntime(config.models);
+    const evaluations = createEvaluationService({
+      work: database.repositories.evaluationWork,
+      recorder: database.repositories.evaluations,
+      ...(config.models.roles.evaluator
+        ? {
+            judge: createPiConversationJudge(
+              models.forRole("evaluator"),
+              database.repositories.runs,
+            ),
+          }
+        : {}),
+      maximumItemsPerRun: config.conversation.scheduling.maximumItemsPerRun,
+    });
     if (config.conversation.enabled) {
-      const runner = createModelRuntime(config.models).forRole("conversation");
+      const runner = models.forRole("conversation");
       // In live mode the durable speaker record is the production outbound
       // belt: a destination is sendable only with an active responding
       // speaker. A proof override composes with it and can only tighten it.
@@ -74,13 +94,12 @@ export async function createAppResources(
         instructions: config.conversation.instructions,
         work: database.repositories.conversationWork,
         recall: database.repositories.memory,
-        evaluation: database.repositories.conversationEvaluation,
         agent: createPiConversationAgent(runner),
         sender: whatsapp.conversationSender(config.conversation.outboundMode, outboundGuard),
       });
     }
 
-    return { database, whatsapp, ...(conversation ? { conversation } : {}) };
+    return { database, whatsapp, evaluations, models, ...(conversation ? { conversation } : {}) };
   } catch (error) {
     await database.close();
     throw error;

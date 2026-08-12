@@ -234,8 +234,75 @@ the proof override still strengthening the final guard; all gates pass.
 
 ## Active slice
 
-None. Speaker presence completed 2026-08-12 with an autonomous live proof
-(below); the next slice is selected at a review stop with the master.
+None. Asynchronous evaluations v1 completed 2026-08-12 (below); the next
+planning stop selects Memory Agent v1 against the blessed Bug Reports bed.
+
+## Completed slice: asynchronous evaluations v1 (2026-08-12)
+
+Selected 2026-08-12 after the speaker-presence review (master confirmed the
+sequence). Review findings: the gate stayed one shared function with no new
+mutation paths; per-chat instructions leaked no provider types; the speaker
+vocabulary earned its place. No simplifications owed.
+
+**Product question.** Can reply quality be judged and iterated from durable
+run evidence — asynchronously, with the live Conversation path never waiting
+on evaluation, and with a model judge under the reserved `evaluator` role?
+
+**Concrete journey.** The rig runs the live loop; the subject's run
+completes and durably signals evaluation; the async runner claims the
+signal, records the deterministic contract metrics from retained evidence,
+and a judge under the `evaluator` role scores the reply decision and
+quality. Separately, the latest retained run input replays offline through
+the current prompt with a stubbed sender — a live model call, no WhatsApp
+send — retaining a replay evaluation.
+
+**Owner.** `evals/` owns the evaluation contracts, service, and judge;
+`database/evaluation-work.ts` implements the claim/consume store; terminal
+run transitions in `database/conversation-work.ts` write the durable signal
+inside their existing transactions; composition wires the runner into the
+Ambient lifecycle; the proof harness gains evaluation stepping and replay.
+
+**Durable protocol.** `evaluation_pending` (subject run id) is the handoff,
+written atomically with every terminal run transition (complete, fail,
+expired-lease recovery). The runner claims under a lease, retains
+`evaluation_runs` — the contract case plus a judged case whose
+`evaluatorRunId` links the evaluator-role agent run — and consumes the
+signal last. Dedup key: subject run + case id. A crash inside the window
+can duplicate an evaluation row: accepted, because evaluation is
+observational and never authoritative.
+
+**Smallest API.** `EvaluationService { start, stop, runOnce }`;
+`EvaluationWorkStore { claimNext, complete }`; `ConversationJudge`;
+`RunRepository.finish` for non-conversation runs. The Conversation service
+loses its evaluation dependency entirely.
+
+**Preserved invariants.** Evaluation failure never changes run or effect
+outcomes; the live path performs no evaluation work; destination and effect
+guards untouched.
+
+**Non-goals.** No judged comparison across promptVersions yet (replay
+retains its outcome; comparison lands with the first real prompt bump); no
+memory or worker evaluation; no alerting.
+
+**Proof.** Deterministic: `vp check` clean (58 files); `vp test` 78/78
+across 13 files (signal on complete, fail, and expiry recovery;
+claim/consume; judge-failure retention; lease contention; evidence
+assembly; the live path free of evaluation awaits); `drizzle-kit check`
+clean; frozen strict-peer install clean. Rig (autonomous, 2026-08-12): the
+live loop passed with evaluations — the contract case succeeded and the
+judge scored the real reply (`reply_decision` passed, `reply_quality`
+1.0) — and `proof:conversation-replay` re-ran the latest retained input
+offline (decision `reply`, 53 characters, no WhatsApp connection opened).
+Two defects were caught and fixed en route: the vibe sonnet pool
+intermittently demands thinking (judge and rig conversation roles moved to
+the gemini pool), and evaluator runs sharing their subject's conversation
+id exposed that `latestRunForConversation` must mean the conversation
+role's own latest run.
+
+**Open questions.** Judge-case coverage grows from accumulated real runs;
+replay comparison shape; the production evaluator provider (vibe is
+local-only; the role flips to a hosted provider when the deployment needs
+it).
 
 ## Completed slice: speaker presence (2026-08-12)
 
@@ -354,11 +421,11 @@ Requested by the master during replanning ("what primitives do we have?").
 
 ## Likely next slice
 
-Asynchronous evaluations v1 (locked 2026-08-12): replace the in-path
-Conversation evaluation sink with an async consumer of terminal run
-evidence, model-judged cases under the reserved `evaluator` role, and an
-offline replay harness across `promptVersion`s — fed by real `Tst` traffic
-from the presence slice.
+Memory Agent v1 against the blessed Bug Reports listening bed: the
+mirror-to-observations ingest for a designated mirror, identity links for
+its two participants, first evidence-backed claims through validated
+patches, and a speaker run that recalls a real fact. Brief at the next
+planning stop.
 
 ## Live test rig
 

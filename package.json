@@ -13,7 +13,8 @@
     "proof:whatsapp-conversation": "tsx src/proofs/whatsapp-conversation.ts",
     "proof:whatsapp-ingestion": "tsx src/proofs/whatsapp-ingestion.ts",
     "prepare": "vp config",
-    "proof:whatsapp-live-loop": "tsx src/proofs/whatsapp-live-loop.ts"
+    "proof:whatsapp-live-loop": "tsx src/proofs/whatsapp-live-loop.ts",
+    "proof:conversation-replay": "tsx src/proofs/conversation-replay.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.84.1",

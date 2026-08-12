@@ -56,6 +56,7 @@ test("the committed configuration document supplies the deployment defaults", ()
     credential: { env: ["QWEN_API_KEY", "DASHSCOPE_API_KEY"] },
   });
   expect(config.models.roles.worker).toBeUndefined();
+  expect(config.models.roles.evaluator).toMatchObject({ provider: "vibe" });
 });
 
 test("a configuration document owns every structured section", async () => {

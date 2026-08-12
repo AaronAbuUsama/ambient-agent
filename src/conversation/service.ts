@@ -2,7 +2,6 @@ import { messageOf } from "../platform/errors";
 import type {
   ConversationAgent,
   ConversationClaim,
-  ConversationEvaluationSink,
   ConversationRecall,
   ConversationSchedulingConfig,
   ConversationWorkStore,
@@ -28,7 +27,6 @@ export interface ConversationServiceOptions {
   readonly scheduling: ConversationSchedulingConfig;
   readonly work: ConversationWorkStore;
   readonly recall: ConversationRecall;
-  readonly evaluation: ConversationEvaluationSink;
   readonly agent: ConversationAgent;
   readonly sender: ScopedMessageSender;
   readonly now?: () => Date;
@@ -75,22 +73,6 @@ export function createConversationService(
       throw error;
     }
   };
-
-  const evaluate = (
-    claim: ConversationClaim,
-    outcome:
-      | { readonly status: "succeeded"; readonly operationId?: string }
-      | { readonly status: "failed"; readonly error: string },
-  ): Promise<void> =>
-    options.evaluation.recordRunContract({
-      runId: claim.runId,
-      conversationId: claim.conversationId,
-      promptVersion,
-      itemCount: claim.items.length,
-      maximumItemsPerRun: options.scheduling.maximumItemsPerRun,
-      at: now().toISOString(),
-      outcome,
-    });
 
   const executeClaim = async (claim: ConversationClaim): Promise<"succeeded" | "failed"> => {
     const abort = new AbortController();
@@ -185,10 +167,6 @@ export function createConversationService(
         completedAt: now().toISOString(),
         scheduling: options.scheduling,
       });
-      await evaluate(claim, {
-        status: "succeeded",
-        ...(submittedOperationId ? { operationId: submittedOperationId } : {}),
-      });
       return "succeeded";
     } catch (error) {
       if (!leaseLost) {
@@ -202,10 +180,6 @@ export function createConversationService(
             completedAt: now().toISOString(),
             scheduling: options.scheduling,
           });
-          await evaluate(claim, {
-            status: "succeeded",
-            operationId: submittedOperationId,
-          });
           return "succeeded";
         }
         try {
@@ -216,7 +190,6 @@ export function createConversationService(
             completedAt: now().toISOString(),
             scheduling: options.scheduling,
           });
-          await evaluate(claim, { status: "failed", error: messageOf(error) });
         } catch {
           // Expired leases are recovered by the next durable claim.
         }

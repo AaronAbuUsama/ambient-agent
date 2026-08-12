@@ -1,4 +1,5 @@
 import { loadAppConfig } from "../app/config";
+import { assistantText } from "../models/assistant-text";
 import { createModelRuntime } from "../models/runtime";
 import { messageOf } from "../platform/errors";
 
@@ -28,10 +29,7 @@ for (const role of runtime.roles) {
         ],
       })
       .result();
-    const text = message.content
-      .flatMap((content) => (content.type === "text" ? [content.text] : []))
-      .join("\n")
-      .trim();
+    const text = assistantText(message);
     if (message.stopReason === "error" || message.stopReason === "aborted") {
       failed = true;
       console.error(`${label}: ${message.stopReason}: ${message.errorMessage ?? "unknown"}`);

@@ -1,5 +1,6 @@
 import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
+import { assistantText } from "../models/assistant-text";
 import type { ModelRunner } from "../models/runtime";
 import type {
   ConversationAgent,
@@ -31,11 +32,7 @@ function prompt(input: ConversationInput): string {
 function lastAssistantText(agent: Agent): string {
   const message = [...agent.state.messages].reverse().find(({ role }) => role === "assistant");
   if (!message || message.role !== "assistant") return "Conversation run completed";
-  const text = message.content
-    .flatMap((content) => (content.type === "text" ? [content.text] : []))
-    .join("\n")
-    .trim();
-  return text || "Conversation run completed";
+  return assistantText(message) || "Conversation run completed";
 }
 
 const sendMessageParameters = Type.Object({

@@ -160,21 +160,6 @@ export interface ConversationRecall {
   }): Promise<readonly RecalledMemory[]>;
 }
 
-/** Records the synchronous run-contract evaluation; never throws into the live path. */
-export interface ConversationEvaluationSink {
-  recordRunContract(input: {
-    readonly runId: string;
-    readonly conversationId: string;
-    readonly promptVersion: string;
-    readonly itemCount: number;
-    readonly maximumItemsPerRun: number;
-    readonly at: string;
-    readonly outcome:
-      | { readonly status: "succeeded"; readonly operationId?: string }
-      | { readonly status: "failed"; readonly error: string };
-  }): Promise<void>;
-}
-
 export interface ConversationMessage {
   readonly observationId: string;
   readonly whatsappMessageId: string;

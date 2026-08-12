@@ -5,11 +5,8 @@ import { migrate } from "drizzle-orm/libsql/migrator";
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type {
-  ConversationEvaluationSink,
-  ConversationSpeakerStore,
-  ConversationWorkStore,
-} from "../conversation/contract";
+import type { ConversationSpeakerStore, ConversationWorkStore } from "../conversation/contract";
+import type { EvaluationWorkStore } from "../evals/contract";
 import * as schema from "./schema";
 import {
   createConversationInboxRepository,
@@ -17,11 +14,8 @@ import {
 } from "./conversation-inbox";
 import { createConversationSpeakerStore } from "./conversation-speakers";
 import { createConversationWorkStore } from "./conversation-work";
-import {
-  createConversationEvaluationSink,
-  createEvaluationRepository,
-  type EvaluationRepository,
-} from "./evaluations";
+import { createEvaluationRepository, type EvaluationRepository } from "./evaluations";
+import { createEvaluationWorkStore } from "./evaluation-work";
 import { createMemoryRepository, type MemoryRepository } from "./memory";
 import {
   createMessageIngestionRepository,
@@ -41,7 +35,7 @@ export interface AmbientRepositories {
   readonly runs: RunRepository;
   readonly tasks: TaskRepository;
   readonly evaluations: EvaluationRepository;
-  readonly conversationEvaluation: ConversationEvaluationSink;
+  readonly evaluationWork: EvaluationWorkStore;
 }
 
 export interface AmbientDatabase {
@@ -69,7 +63,7 @@ function repositories(database: AmbientDatabaseConnection): AmbientRepositories 
     runs: createRunRepository(database),
     tasks: createTaskRepository(database),
     evaluations,
-    conversationEvaluation: createConversationEvaluationSink(evaluations),
+    evaluationWork: createEvaluationWorkStore(database),
     memory: createMemoryRepository(database),
   };
 }

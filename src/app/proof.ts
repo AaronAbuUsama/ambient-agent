@@ -1,3 +1,6 @@
+import { z } from "zod";
+import { createConversationContextBuilder } from "../conversation/context-builder";
+import { createPiConversationAgent } from "../conversation/pi-agent";
 import type { WhatsAppDestination } from "../whatsapp/service";
 import type { AppConfig } from "./config";
 import { createAppResources, type AcceptedMessage, type AppResources } from "./resources";
@@ -18,6 +21,7 @@ export interface ProofToolEvidence {
 
 export interface ProofEvaluationEvidence {
   readonly id: string;
+  readonly caseId: string;
   readonly status: "running" | "succeeded" | "failed";
 }
 
@@ -41,6 +45,13 @@ export interface AmbientProofHarness {
     conversationId: string,
     timeoutMs: number,
   ): Promise<"succeeded" | "failed">;
+  /** Step the asynchronous evaluation runner over one pending subject. */
+  runEvaluationsOnce(): Promise<"idle" | "processed">;
+  /** Replay the latest retained run offline: a live model call with a stubbed sender, no WhatsApp. */
+  replayConversationRun(conversationId: string): Promise<{
+    readonly decision: "reply" | "silence";
+    readonly textLength: number;
+  }>;
   readonly evidence: {
     latestRun(conversationId: string): Promise<ProofRunEvidence | undefined>;
     toolCalls(runId: string): Promise<readonly ProofToolEvidence[]>;
@@ -77,6 +88,16 @@ export async function createAmbientProofHarness(
       instructions: safety.instructions ?? config.conversation.instructions,
     },
   };
+  const replayInputSchema = z.object({
+    inboxItems: z.array(
+      z.object({
+        inboxItemId: z.string().min(1),
+        kind: z.enum(["message", "task_update"]),
+        referenceId: z.string().min(1),
+      }),
+    ),
+    instructions: z.string().optional(),
+  });
   const harnessCreatedAt = new Date().toISOString();
   const accepted: AcceptedMessage[] = [];
   const listeners = new Set<(message: AcceptedMessage) => void>();
@@ -140,6 +161,66 @@ export async function createAmbientProofHarness(
       throw new Error(`no conversation run became due within ${timeoutMs}ms`);
     },
 
+    runEvaluationsOnce() {
+      return resources.evaluations.runOnce();
+    },
+
+    async replayConversationRun(conversationId) {
+      const run = await repositories.runs.latestRunForConversation(conversationId);
+      if (!run || run.role !== "conversation") {
+        throw new Error("no retained conversation run to replay");
+      }
+      const input = replayInputSchema.parse(run.input);
+      const builder = createConversationContextBuilder(
+        repositories.conversationWork,
+        proofConfig.conversation.instructions,
+      );
+      const context = await builder.build({
+        runId: run.id,
+        conversationId,
+        items: input.inboxItems.map(({ inboxItemId, kind, referenceId }) => ({
+          id: inboxItemId,
+          kind,
+          referenceId,
+        })),
+        ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
+      });
+      const agent = createPiConversationAgent(resources.models.forRole("conversation"));
+      let captured: string | undefined;
+      await agent.run(context, {
+        async sendMessage(text) {
+          captured = text;
+          return { operationId: `replay-${crypto.randomUUID()}` };
+        },
+        async recall(query) {
+          const claims = await repositories.memory.recall({
+            nativeIds: [
+              conversationId,
+              ...new Set(context.newMessages.map(({ senderId }) => senderId)),
+            ],
+            query,
+          });
+          return { claims };
+        },
+      });
+      const decision = captured === undefined ? ("silence" as const) : ("reply" as const);
+      const textLength = captured?.length ?? 0;
+      const evaluation = await repositories.evaluations.start({
+        role: "conversation",
+        subjectRunId: run.id,
+        caseId: "conversation-replay-v1",
+        configuration: { promptVersion: run.promptVersion },
+      });
+      await repositories.evaluations.recordResult({
+        evaluationRunId: evaluation.id,
+        metric: "replay_decision",
+        passed: true,
+        detail: { decision, textLength },
+      });
+      await repositories.evaluations.finish(evaluation.id, { status: "succeeded" });
+      return { decision, textLength };
+    },
+
     evidence: {
       // Mapped, not passed through: the retained run also carries the curated
       // input and private terminal result, which never belong in proof output.
@@ -158,7 +239,7 @@ export async function createAmbientProofHarness(
       },
       async evaluations(runId) {
         const evaluations = await repositories.evaluations.forSubject(runId);
-        return evaluations.map(({ id, status }) => ({ id, status }));
+        return evaluations.map(({ id, caseId, status }) => ({ id, caseId, status }));
       },
     },
 

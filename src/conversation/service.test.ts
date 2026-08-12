@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ModelConfig } from "../models/contract";
 import { openAmbientDatabase, type AmbientDatabase } from "../database/database";
-import { createConversationEvaluationSink } from "../database/evaluations";
 import type { ConversationAgent, ScopedMessageSender } from "./contract";
 import { createConversationService } from "./service";
 
@@ -87,21 +86,12 @@ function service(
   agent: ConversationAgent,
   sender: ScopedMessageSender,
   completedAt: () => string = () => "2026-08-11T10:00:00.020Z",
-  evaluationSubjects: string[] = [],
 ) {
-  const evaluations = database.repositories.evaluations;
   return createConversationService({
     leaseOwner: "service-1",
     scheduling,
     work: database.repositories.conversationWork,
     recall: database.repositories.memory,
-    evaluation: createConversationEvaluationSink({
-      ...evaluations,
-      start(input) {
-        if (input.subjectRunId) evaluationSubjects.push(input.subjectRunId);
-        return evaluations.start(input);
-      },
-    }),
     agent,
     sender,
     now: () => new Date(completedAt()),
@@ -118,7 +108,6 @@ test("Conversation builds retained context and scopes one send to its conversati
       readonly text: string;
       readonly idempotencyKey: string;
     }> = [];
-    const evaluationSubjects: string[] = [];
     const agent: ConversationAgent = {
       model,
       async run(input, tools) {
@@ -138,18 +127,12 @@ test("Conversation builds retained context and scopes one send to its conversati
         return { summary: "Replied to the greeting." };
       },
     };
-    const runner = service(
-      database,
-      agent,
-      {
-        async sendText(input) {
-          sends.push(input);
-          return { operationId: "operation-1" };
-        },
+    const runner = service(database, agent, {
+      async sendText(input) {
+        sends.push(input);
+        return { operationId: "operation-1" };
       },
-      undefined,
-      evaluationSubjects,
-    );
+    });
 
     expect(await runner.runOnce("2026-08-11T10:00:00.010Z")).toBe("succeeded");
     expect(sends).toEqual([
@@ -160,16 +143,6 @@ test("Conversation builds retained context and scopes one send to its conversati
       },
     ]);
     expect(await database.repositories.inbox.pending("chat-1")).toEqual([]);
-    expect(evaluationSubjects).toHaveLength(1);
-    expect(
-      await database.repositories.evaluations.forSubject(evaluationSubjects[0]!),
-    ).toMatchObject([
-      {
-        role: "conversation",
-        caseId: "conversation-contract-v1",
-        status: "succeeded",
-      },
-    ]);
   });
 });
 
@@ -284,7 +257,6 @@ test("Conversation coalesces wake bursts and reconciles only at startup", async 
         },
       },
       recall: database.repositories.memory,
-      evaluation: createConversationEvaluationSink(database.repositories.evaluations),
       agent: {
         model,
         async run() {
@@ -364,7 +336,6 @@ test("restart reconciliation recovers committed Inbox work after a lost wake cal
 
     const restarted = await openAmbientDatabase(url);
     try {
-      const evaluationSubjects: string[] = [];
       const runner = service(
         restarted,
         {
@@ -379,7 +350,6 @@ test("restart reconciliation recovers committed Inbox work after a lost wake cal
           },
         },
         () => "2026-08-11T10:00:01.000Z",
-        evaluationSubjects,
       );
 
       // start() reconciles from durable Inbox state and drains due work before
@@ -388,10 +358,8 @@ test("restart reconciliation recovers committed Inbox work after a lost wake cal
       await runner.stop();
 
       expect(await restarted.repositories.inbox.pending("chat-1")).toEqual([]);
-      expect(evaluationSubjects).toHaveLength(1);
-      expect((await restarted.repositories.runs.get(evaluationSubjects[0]!))?.status).toBe(
-        "succeeded",
-      );
+      const recovered = await restarted.repositories.runs.latestRunForConversation("chat-1");
+      expect(recovered?.status).toBe("succeeded");
     } finally {
       await restarted.close();
     }

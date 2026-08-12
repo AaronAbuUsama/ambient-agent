@@ -310,6 +310,26 @@ export const conversationRunItems = sqliteTable(
   ],
 );
 
+export const evaluationPending = sqliteTable(
+  "evaluation_pending",
+  {
+    runId: text("run_id")
+      .primaryKey()
+      .references(() => agentRuns.id),
+    createdAt: text("created_at").notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseUntil: text("lease_until"),
+  },
+  (table) => [
+    check(
+      "evaluation_pending_lease",
+      sql`(${table.leaseOwner} IS NULL AND ${table.leaseUntil} IS NULL)
+        OR (${table.leaseOwner} IS NOT NULL AND ${table.leaseUntil} IS NOT NULL)`,
+    ),
+    index("evaluation_pending_created").on(table.createdAt, table.runId),
+  ],
+);
+
 export const evaluationRuns = sqliteTable(
   "evaluation_runs",
   {

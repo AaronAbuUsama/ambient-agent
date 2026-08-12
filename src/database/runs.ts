@@ -1,4 +1,4 @@
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, ne } from "drizzle-orm";
 import { z } from "zod";
 import { modelConfigSchema, type ModelConfig } from "../models/contract";
 import type { AmbientDatabaseConnection } from "./database";
@@ -36,7 +36,7 @@ export interface NewAgentRun {
   readonly taskId?: string;
   readonly model: ModelConfig;
   readonly promptVersion: string;
-  readonly input: AgentRun["input"];
+  readonly input: unknown;
   readonly startedAt?: string;
 }
 
@@ -61,6 +61,14 @@ export interface ToolCall {
  */
 export interface RunRepository {
   start(input: NewAgentRun): Promise<AgentRun>;
+  /** Terminal transition for non-conversation runs; conversation completion stays with the work store. */
+  finish(
+    id: string,
+    result:
+      | { readonly status: "succeeded"; readonly result: unknown }
+      | { readonly status: "failed"; readonly error: string },
+    completedAt?: string,
+  ): Promise<void>;
   get(id: string): Promise<AgentRun | undefined>;
   getToolCall(id: string): Promise<ToolCall | undefined>;
   latestRunForConversation(conversationId: string): Promise<AgentRun | undefined>;
@@ -137,6 +145,27 @@ export function createRunRepository(database: AmbientDatabaseConnection): RunRep
       return decodeRun(row);
     },
 
+    async finish(id, result, completedAt = new Date().toISOString()) {
+      const [row] = await database
+        .update(agentRuns)
+        .set({
+          status: result.status,
+          result: result.status === "succeeded" ? result.result : null,
+          error: result.status === "failed" ? result.error : null,
+          completedAt,
+          updatedAt: completedAt,
+        })
+        .where(
+          and(
+            eq(agentRuns.id, id),
+            eq(agentRuns.status, "running"),
+            ne(agentRuns.role, "conversation"),
+          ),
+        )
+        .returning({ id: agentRuns.id });
+      if (!row) throw new Error(`agent run "${id}" cannot finish from its current state`);
+    },
+
     async get(id) {
       const [row] = await database.select().from(agentRuns).where(eq(agentRuns.id, id)).limit(1);
       return row ? decodeRun(row) : undefined;
@@ -148,10 +177,14 @@ export function createRunRepository(database: AmbientDatabaseConnection): RunRep
     },
 
     async latestRunForConversation(conversationId) {
+      // Evaluator runs carry their subject's conversationId; "the latest run
+      // for a conversation" means the conversation role's own latest run.
       const [row] = await database
         .select()
         .from(agentRuns)
-        .where(eq(agentRuns.conversationId, conversationId))
+        .where(
+          and(eq(agentRuns.conversationId, conversationId), eq(agentRuns.role, "conversation")),
+        )
         .orderBy(desc(agentRuns.createdAt), desc(agentRuns.id))
         .limit(1);
       return row ? decodeRun(row) : undefined;

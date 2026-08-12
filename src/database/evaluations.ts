@@ -1,7 +1,5 @@
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
-import type { ConversationEvaluationSink } from "../conversation/contract";
-import { messageOf } from "../platform/errors";
 import type { AmbientDatabaseConnection } from "./database";
 import { evaluationAnnotations, evaluationResults, evaluationRuns } from "./schema";
 
@@ -29,7 +27,7 @@ export interface EvaluationRepository {
     readonly subjectRunId?: string;
     readonly evaluatorRunId?: string;
     readonly caseId: string;
-    readonly configuration: EvaluationRun["configuration"];
+    readonly configuration: unknown;
     readonly startedAt?: string;
   }): Promise<EvaluationRun>;
   get(id: string): Promise<EvaluationRun | undefined>;
@@ -47,7 +45,7 @@ export interface EvaluationRepository {
     readonly metric: string;
     readonly score?: number;
     readonly passed?: boolean;
-    readonly detail: z.infer<typeof jsonValueSchema>;
+    readonly detail: unknown;
   }): Promise<void>;
   annotate(input: {
     readonly id?: string;
@@ -70,71 +68,6 @@ function decode(row: typeof evaluationRuns.$inferSelect): EvaluationRun {
     startedAt: row.startedAt,
     completedAt: row.completedAt ?? undefined,
     error: row.error ?? undefined,
-  };
-}
-
-/**
- * Records the Conversation run-contract evaluation from completed-run facts.
- * Evaluation failure never disturbs the live Conversation path.
- */
-export function createConversationEvaluationSink(
-  evaluations: EvaluationRepository,
-): ConversationEvaluationSink {
-  return {
-    async recordRunContract(input) {
-      let evaluationId: string | undefined;
-      try {
-        const evaluation = await evaluations.start({
-          role: "conversation",
-          subjectRunId: input.runId,
-          caseId: "conversation-contract-v1",
-          configuration: {
-            promptVersion: input.promptVersion,
-            maximumItemsPerRun: input.maximumItemsPerRun,
-          },
-          startedAt: input.at,
-        });
-        evaluationId = evaluation.id;
-        await evaluations.recordResult({
-          evaluationRunId: evaluation.id,
-          metric: "bounded_input",
-          score: input.itemCount <= input.maximumItemsPerRun ? 1 : 0,
-          passed: input.itemCount <= input.maximumItemsPerRun,
-          detail: {
-            itemCount: input.itemCount,
-            maximumItemsPerRun: input.maximumItemsPerRun,
-          },
-        });
-        await evaluations.recordResult({
-          evaluationRunId: evaluation.id,
-          metric: "reply_or_silence",
-          passed: input.outcome.status === "succeeded",
-          detail:
-            input.outcome.status === "succeeded"
-              ? {
-                  decision: input.outcome.operationId ? "reply" : "silence",
-                  ...(input.outcome.operationId ? { operationId: input.outcome.operationId } : {}),
-                }
-              : { decision: "failed", error: input.outcome.error },
-        });
-        await evaluations.recordResult({
-          evaluationRunId: evaluation.id,
-          metric: "scoped_tools",
-          passed: true,
-          detail: {
-            conversationId: input.conversationId,
-            destinationOwnedBy: "conversation-service",
-          },
-        });
-        await evaluations.finish(evaluation.id, { status: "succeeded" }, input.at);
-      } catch (error) {
-        if (evaluationId) {
-          await evaluations
-            .finish(evaluationId, { status: "failed", error: messageOf(error) }, input.at)
-            .catch(() => {});
-        }
-      }
-    },
   };
 }
 

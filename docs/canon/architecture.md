@@ -361,19 +361,17 @@ parts become:
 Safety invariants required for correct completion remain synchronous and owned
 by the service or store that performs the transition.
 
-Quality evaluation consumes retained run evidence asynchronously:
+Quality evaluation consumes retained run evidence asynchronously.
 
-```ts
-interface EvaluationSink {
-  notifyRunCompleted(runId: AgentRunId): Promise<void>;
-}
-```
-
-The Conversation service records its run-contract evaluation inline through a
-Conversation-owned `ConversationEvaluationSink`, implemented next to the
-evaluations store. That sink should later be replaced by an asynchronous
-evidence consumer. Evaluation failure must not change whether a WhatsApp effect
-or Agent Run succeeded.
+The durable handoff is `evaluation_pending`, written atomically with every
+terminal Conversation run transition. The `evals/` module owns the contracts:
+an `EvaluationWorkStore` claims a pending subject under a fenced lease,
+assembles retained evidence, and consumes the signal after recording; a
+`ConversationJudge` under the reserved `evaluator` role retains its own agent
+run and links it through `evaluatorRunId`. Deterministic contract metrics are
+computed from retained evidence, never from live state. The Conversation
+service performs no evaluation work, and evaluation failure must not change
+whether a WhatsApp effect or Agent Run succeeded.
 
 ### Proofs and operations
 
@@ -570,7 +568,7 @@ Disposition meanings:
 | `src/database/schema.ts`                   | Keep, internalize              | storage schema                                          |
 | `src/database/tasks.ts`                    | Defer                          | future assignments and Worker protocol                  |
 | `src/database/memory.ts`                   | Reshape in a Memory slice      | Memory store plus narrow recall read model              |
-| `src/database/evaluations.ts`              | Internalize, later reshape     | asynchronous evaluations store                          |
+| `src/database/evaluations.ts`              | Keep (rescued)                 | evaluation retention behind the evals recorder port     |
 | `src/whatsapp/service.ts`                  | Keep (rescued)                 | Ambient-owned WhatsApp service facade                   |
 | `src/whatsapp/session/controller.ts`       | Keep (internal)                | private WhatsApp service implementation                 |
 | `src/whatsapp/session/local-deployment.ts` | Keep, internalize              | WhatsApp deployment adapter                             |

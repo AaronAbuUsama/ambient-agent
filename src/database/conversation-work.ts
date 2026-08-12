@@ -15,6 +15,7 @@ import {
   conversationRunItems,
   conversationSchedule,
   conversationSpeakers,
+  evaluationPending,
   toolCalls,
 } from "./schema";
 
@@ -203,6 +204,12 @@ export function createConversationWorkStore(
         .returning({ id: agentRuns.id });
       if (!run) throw new Error(`conversation run "${input.runId}" is not running`);
 
+      // The durable evaluation signal rides the terminal transition.
+      await transaction
+        .insert(evaluationPending)
+        .values({ runId: input.runId, createdAt: completedAt })
+        .onConflictDoNothing();
+
       await transaction
         .update(conversationInbox)
         .set(
@@ -350,6 +357,10 @@ export function createConversationWorkStore(
                 updatedAt: now,
               })
               .where(and(eq(agentRuns.id, expired.activeRunId), eq(agentRuns.status, "running")));
+            await transaction
+              .insert(evaluationPending)
+              .values({ runId: expired.activeRunId, createdAt: now })
+              .onConflictDoNothing();
             await transaction
               .update(conversationInbox)
               .set({ claimedByRunId: null })
