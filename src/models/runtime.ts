@@ -46,7 +46,9 @@ function resolveCredential(
   definition: ProviderDefinition,
   environment: NodeJS.ProcessEnv,
 ): { readonly apiKey?: string; readonly source: string } {
-  if (definition.credential === "none") return { source: "none" };
+  // Pi's OpenAI-compatible adapter refuses an absent key even when the
+  // endpoint needs none; "unused" is pi-ai's own placeholder convention.
+  if (definition.credential === "none") return { apiKey: "unused", source: "none" };
   for (const name of definition.credential.env) {
     const value = environment[name];
     if (value) return { apiKey: value, source: name };

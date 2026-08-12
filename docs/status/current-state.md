@@ -234,8 +234,10 @@ the proof override still strengthening the final guard; all gates pass.
 
 ## Active slice
 
-Selected in the 2026-08-12 replanning session with the master. The
-architecture rescue remains complete; this is the first product slice.
+None. Speaker presence completed 2026-08-12 with an autonomous live proof
+(below); the next slice is selected at a review stop with the master.
+
+## Completed slice: speaker presence (2026-08-12)
 
 **Shared vocabulary** (master ↔ canon, agreed 2026-08-12): a **speaker** is
 the Conversation Agent presence in one chat — all speakers are instances of
@@ -315,19 +317,20 @@ speaker-bound authorize.
 `listening` chats receive Memory runs (Memory slice); proactive restraint
 policy; the Root authoring protocol and the master's special chat.
 
-**Status (2026-08-12).** Implemented; deterministic gates green. The
-`conversation_speakers` table (migration `0003`), the gate in
-`setPendingWindow`/`claimNext` with the `attendFrom` watermark, upsert-listed
-seeding from `conversation.speakers`, per-chat instructions snapshotted into
-claims and run input, the speaker-bound production outbound guard, and proof
-harness activation are in place. `vp check` clean (48 files); `vp test`
-73/73 across 12 files (ten new gate/watermark/seed/instructions tests);
+**Proof.** Deterministic: `vp check` clean (50 files); `vp test` 73/73
+across 12 files (ten new gate, watermark, seed, and instructions tests);
 `drizzle-kit check` clean; frozen strict-peer install clean; no live model
-call or WhatsApp send in deterministic tests. Remaining before the slice is
-complete: the controlled live proof — seed the real `Tst` JID, set
-`enabled: true` and `outboundMode: "conversation"`, and receive one guarded
-live reply (or run `proof:whatsapp-conversation`, which activates the
-matched target through the harness).
+call or WhatsApp send in deterministic tests. Live (autonomous,
+2026-08-12): the two-account rig ran the full loop — one peer ping accepted
+exactly once, one Conversation run claimed behind the speaker gate and
+succeeded, `recall` and `send_message` tool evidence retained with a
+durable operation receipt, and the reply delivered to the peer's own mirror
+with the loop token echoed. No human was involved. En route the loop
+exposed a real defect: the `credential: "none"` provider path resolved no
+stream-time key, so every vibe-backed run failed; `src/models/runtime.ts`
+now resolves pi-ai's `"unused"` placeholder. Production go-live in `Tst` is
+now purely an operator config flip (seed the real group id,
+`enabled: true`, `outboundMode: "conversation"`).
 
 ### Research note: prompt and skill primitives (2026-08-12)
 
@@ -357,6 +360,20 @@ evidence, model-judged cases under the reserved `evaluator` role, and an
 offline replay harness across `promptVersion`s — fed by real `Tst` traffic
 from the presence slice.
 
+## Live test rig
+
+Two linked proof profiles copied (checksums verified) from the whatsappd
+repo's real-account rig into gitignored `.proof-private/`; the originals in
+the whatsappd worktree are now dormant — never run both copies of one
+profile concurrently. `android` is the subject and runs the production
+composition; `ios` is the peer that plays the human counterpart. The peer's
+mirror holds real correspondence, so anything that sends resolves against
+`.proof-private/send-allowlist.json` and refuses everything else, per the
+whatsappd runbook (`docs/runbooks/real-account-testing.md` in that repo).
+Real identifiers never enter code, logs, commits, or receipts — statuses,
+counts, and lengths only. `pnpm run proof:whatsapp-live-loop` runs the
+whole loop autonomously; testing never requires the operator.
+
 ## Known debt
 
 Accepted, durable, and owned here rather than in commit messages:
@@ -381,6 +398,9 @@ Accepted, durable, and owned here rather than in commit messages:
   `subscribe` seam on the session controller have no consumer outside the
   WhatsApp module since the facade landed; the Memory slice either adopts them
   onto the facade or deletes them.
+- **libsignal stdout noise** — live runs print session-establishment output
+  (including key buffers) directly from the libsignal dependency, bypassing
+  the session logger; capture live-run output to private files only.
 
 ## Product-discovery themes
 

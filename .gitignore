@@ -35,3 +35,6 @@ artifacts
 .env
 .env.*
 !.env.example
+
+# Real-account proof profiles: credentials, mirrors, allowlist — never committed
+.proof-private/
