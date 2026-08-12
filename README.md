@@ -117,10 +117,14 @@ history already retained in the local WhatsApp mirror.
 single-writer lease. Two processes on one account is refused before a socket
 opens, so a second `pnpm start` fails rather than fighting the first.
 
-Role model settings are resolved at startup and snapshotted into every Agent Run.
-`MODEL_PROVIDER` and `AMBIENT_MODEL` provide shared defaults; role-specific
-variables such as `CONVERSATION_MODEL`, `WORKER_MODEL`, and `MEMORY_MODEL`
-override them.
+Model providers and role model settings live in `ambient.config.json`
+(override the path with `AMBIENT_CONFIG`). The document defines provider
+endpoints with secret references and per-role model profiles; it is validated
+once at startup, every configured role is resolved and fails closed on missing
+credentials, and the resolved settings are snapshotted into every Agent Run.
+Secrets themselves stay in the environment (for the bundled Qwen provider:
+`QWEN_API_KEY` or `DASHSCOPE_API_KEY`). Adding another OpenAI-compatible
+provider is a configuration change, not a code change.
 
 ## Toolchain and schema
 

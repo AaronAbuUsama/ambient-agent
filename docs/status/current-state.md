@@ -40,12 +40,12 @@ are correct.
 | Area          | Preserve                                                                         | Problem                                                                                                       | Intended boundary                                      |
 | ------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
 | Application   | Correct startup and reverse-order shutdown                                       | Proofs still bypass the rescued production composition                                                        | One authoritative `createAmbient(config)`              |
-| Models        | Successful Qwen run and durable model snapshots                                  | Provider, transport, credentials, role settings, and Pi objects leak across configuration and callers         | One deep `ModelRuntime` resolved at startup            |
+| Models        | Successful Qwen run and durable model snapshots                                  | Rescued: one `ModelRuntime` resolves configured roles once; providers, credentials, and Pi stay in `models/`  | One deep `ModelRuntime` resolved at startup            |
 | Conversation  | Durable debounce, claims, leases, tools, sends, and recovery                     | Rescued: one `ConversationService` over one Conversation-owned `ConversationWorkStore` port                   | `ConversationService` plus one `ConversationWorkStore` |
 | WhatsApp      | Session recovery, accepted-source ingestion, retained mirror, durable operations | Concrete controller and callback mechanics leak into composition; Conversation has only an ad hoc text sender | Ambient-owned service plus conversation-bound effects  |
 | Persistence   | Proven atomic transactions                                                       | Conversation work is store-shaped; remaining repositories are still table-shaped behind the public bag        | Stores shaped around transactional invariants          |
 | Proofs        | Guarded live destination and retained evidence                                   | Proofs rebuild production wiring and duplicate policy                                                         | Shared Ambient composition with explicit proof ports   |
-| Configuration | Secrets stay out of durable runs                                                 | Environment variables are becoming a structured configuration language                                        | Validated YAML or JSON plus external secret values     |
+| Configuration | Secrets stay out of durable runs                                                 | Models are a validated JSON document; remaining deployment scalars still load from environment variables      | Validated structured document plus external secrets    |
 
 ## Completed slices
 
@@ -138,39 +138,73 @@ and one authoritative durable work store, with no runtime behaviour change:
 - frozen strict-peer installation: clean;
 - no live model invocation or WhatsApp send occurred.
 
+### Model runtime and structured configuration
+
+The model subsystem is now one deep module resolved once at startup:
+
+- `src/models/contract.ts` owns the provider-neutral vocabulary: the durable
+  `ModelConfig` snapshot, `ModelRole`, and the validated models document
+  (provider definitions with secret references, role profiles). The deployment
+  catalogue is data: `ambient.config.json` committed at the default path, not
+  a document shadow-copied in code.
+- `src/models/runtime.ts` (`createModelRuntime`) constructs Pi providers,
+  resolves credentials from the environment (the only application code that
+  does), validates every configured role once, and hands each role a
+  `ModelRunner`: snapshot, resolved immutable model, and a stream bound to the
+  role's generation limits. Missing credentials, unknown providers, and
+  unconfigured roles fail closed with precise errors.
+- `conversation/pi-agent.ts` keeps only role behaviour (prompt, tools, input
+  formatting, terminal result) and consumes a bound runner; the role-agent
+  contract no longer carries a model parameter. The per-role environment
+  matrix, `agent-models.ts`, and the repository's last `any` are gone.
+- The models section of configuration is a validated JSON document
+  (`ambient.config.json`, path via `AMBIENT_CONFIG`); adding another
+  OpenAI-compatible provider is a configuration-only change, proven by a
+  deterministic test. `proof:model-runtime` runs every configured role live
+  outside WhatsApp when invoked explicitly — Qwen by default, local Vibe by
+  pointing a role at the bundled `vibe` provider.
+
+**Proof**
+
+- `vp check`: clean, 45 source files;
+- `vp test`: 67 tests across 12 files, including model-runtime resolution,
+  fail-closed credential and provider errors, and the config-only provider
+  addition;
+- `drizzle-kit check`: clean;
+- frozen strict-peer installation: clean;
+- no live model invocation or WhatsApp send in deterministic tests.
+
 ## Active slice
 
 None selected. Per delivery practice, the next slice is chosen after the
-post-slice review of the Conversation rescue. The leading candidate is the
-model runtime and structured configuration rescue below.
+post-slice review of the model-runtime rescue.
 
 ## Likely next slice
 
-### Model runtime and structured configuration
+### Proof composition
 
-Once Conversation consumes a narrow provider-neutral runner, replace
-provider-specific construction and role/environment configuration with one deep
-model module and validated structured configuration. The cut should prove Qwen
-and local Vibe outside WhatsApp before any live channel use.
+Migrate the two proofs onto the production `createAmbient` composition with
+explicit narrow proof ports instead of the lower-level resource factory and
+repository bag. The Conversation and model boundaries the proofs need now
+exist, which raises this candidate's dependency value: it retires the last
+alternate composition root and the direct store access in
+`proofs/whatsapp-conversation.ts`.
 
 ## Rescue-candidate comparison
 
 Scores are 1 (weak) to 5 (strong). Risk is scored inversely, so 5 means lower
-implementation risk.
+implementation risk. Conversation (23) and model runtime (20) are completed
+above.
 
-| Candidate                       | Leverage | Interface certainty | Dependency value | Proofability | Risk |  Total |
-| ------------------------------- | -------: | ------------------: | ---------------: | -----------: | ---: | -----: |
-| Conversation service and store  |        5 |                   5 |                5 |            5 |    3 | **23** |
-| Model runtime and configuration |        4 |                   4 |                4 |            4 |    4 | **20** |
-| WhatsApp boundary and effects   |        4 |                   3 |                4 |            4 |    2 | **17** |
-| Proof composition               |        3 |                   3 |                2 |            5 |    4 | **17** |
+| Candidate                     | Leverage | Interface certainty | Dependency value | Proofability | Risk |  Total |
+| ----------------------------- | -------: | ------------------: | ---------------: | -----------: | ---: | -----: |
+| Proof composition             |        3 |                   4 |                3 |            5 |    4 | **19** |
+| WhatsApp boundary and effects |        4 |                   3 |                4 |            4 |    2 | **17** |
 
-Conversation wins because it is already a complete durable vertical path, its
-current mutation overlap is demonstrable, and its rescued ports reduce
-uncertainty for all three other candidates. Model runtime is likely next because
-the Conversation agent currently constructs Qwen/Pi directly and contains
-`Model<any>`, but doing it after the Conversation boundary prevents a second
-parallel role/runtime graph.
+Proof composition edges ahead now that the boundaries it must consume exist:
+its interface uncertainty dropped, and retiring the proof-only composition
+path unblocks safe guarded validation of the riskier WhatsApp boundary slice
+that follows.
 
 ## Product-discovery themes
 

@@ -1,4 +1,3 @@
-import type { ModelConfig } from "../agent-models";
 import { messageOf } from "../platform/errors";
 import type {
   ConversationAgent,
@@ -27,7 +26,6 @@ export interface ConversationServiceOptions {
   readonly promptVersion?: string;
   readonly instructions?: string;
   readonly scheduling: ConversationSchedulingConfig;
-  readonly model: ModelConfig;
   readonly work: ConversationWorkStore;
   readonly recall: ConversationRecall;
   readonly evaluation: ConversationEvaluationSink;
@@ -128,7 +126,6 @@ export function createConversationService(
     try {
       const input = await contextBuilder.build(claim);
       const result = await options.agent.run(
-        options.model,
         input,
         {
           async sendMessage(text, callId) {
@@ -235,7 +232,7 @@ export function createConversationService(
     const claim = await options.work.claimNext({
       leaseOwner,
       now: at,
-      model: options.model,
+      model: options.agent.model,
       agentId: options.agentId ?? "conversation-main",
       promptVersion,
       scheduling: options.scheduling,

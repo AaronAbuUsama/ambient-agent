@@ -1,4 +1,4 @@
-import type { ModelConfig } from "../agent-models";
+import type { ModelConfig } from "../models/contract";
 
 export interface ConversationSchedulingConfig {
   readonly debounceMs: number;
@@ -172,8 +172,13 @@ export interface ConversationAgentTools {
 }
 
 export interface ConversationAgent {
+  /**
+   * The durable snapshot of the model this agent actually runs, stamped on
+   * every claimed Agent Run. Carried by the agent so no caller can pair a
+   * service with a snapshot that disagrees with the bound model.
+   */
+  readonly model: ModelConfig;
   run(
-    model: ModelConfig,
     input: ConversationInput,
     tools: ConversationAgentTools,
     signal?: AbortSignal,

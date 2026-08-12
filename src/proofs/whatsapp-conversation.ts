@@ -6,15 +6,13 @@ import { createAppResources } from "../app/resources";
 import { createPiConversationAgent } from "../conversation/pi-agent";
 import { createConversationService } from "../conversation/service";
 import { agentRuns, evaluationRuns, toolCalls } from "../database/schema";
+import { createModelRuntime } from "../models/runtime";
 
 const timeoutMs = 180_000;
 const pollMs = 500;
 const targetHint = process.env.PROOF_WHATSAPP_TARGET_HINT?.trim().toLocaleLowerCase();
 if (!targetHint) {
   throw new Error("PROOF_WHATSAPP_TARGET_HINT must identify the authorized test group or +44 chat");
-}
-if (!process.env.QWEN_API_KEY && !process.env.DASHSCOPE_API_KEY) {
-  throw new Error("QWEN_API_KEY or DASHSCOPE_API_KEY is required");
 }
 
 const config = loadAppConfig({
@@ -24,6 +22,8 @@ const config = loadAppConfig({
     process.env.CONVERSATION_INSTRUCTIONS ??
     "This is a controlled Ambient Phase 2B proof. Reply once with a brief acknowledgement.",
 });
+// Fail closed on credentials and model resolution before any WhatsApp use.
+const conversationRunner = createModelRuntime(config.models).forRole("conversation");
 const acceptedMessages: Array<{
   readonly observationId: string;
   readonly conversationId: string;
@@ -83,12 +83,11 @@ try {
   await new Promise((resolve) => setTimeout(resolve, config.conversation.scheduling.debounceMs));
   const scheduler = createConversationService({
     scheduling: config.conversation.scheduling,
-    model: config.models.conversation,
     instructions: config.conversation.instructions,
     work: resources.database.repositories.conversationWork,
     recall: resources.database.repositories.memory,
     evaluation: resources.database.repositories.conversationEvaluation,
-    agent: createPiConversationAgent(),
+    agent: createPiConversationAgent(conversationRunner),
     sender: {
       // The guard is intentionally repeated at the last side-effect boundary.
       // fallow-ignore-next-line complexity

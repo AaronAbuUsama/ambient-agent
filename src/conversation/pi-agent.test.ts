@@ -6,14 +6,21 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai";
 import { expect, test } from "vite-plus/test";
+import type { ModelRunner } from "../models/runtime";
 import { createPiConversationAgent } from "./pi-agent";
 
-const modelConfig = {
-  provider: "faux",
-  model: "faux",
-  thinking: "off" as const,
-  maxOutputTokens: 1024,
-};
+function fauxRunner(faux: ReturnType<typeof fauxProvider>, maxOutputTokens = 1024): ModelRunner {
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const model = faux.getModel()!;
+  return {
+    snapshot: { provider: "faux", model: model.id, thinking: "off", maxOutputTokens },
+    model,
+    thinkingLevel: "off",
+    stream: (context, options) =>
+      models.streamSimple(model, context, { ...options, maxTokens: maxOutputTokens }),
+  };
+}
 
 const input = {
   conversationId: "chat-1",
@@ -41,15 +48,11 @@ test("Pi Conversation calls the scoped send tool and returns an internal summary
     }),
     fauxAssistantMessage([fauxText("Replied to the greeting.")]),
   ]);
-  const models = createModels();
-  models.setProvider(faux.provider);
   const sends: string[] = [];
   const recalls: string[] = [];
-  const agent = createPiConversationAgent({
-    resolveModel: () => ({ models, model: faux.getModel()! }),
-  });
+  const agent = createPiConversationAgent(fauxRunner(faux));
 
-  const result = await agent.run(modelConfig, input, {
+  const result = await agent.run(input, {
     async sendMessage(text) {
       sends.push(text);
       return { operationId: "operation-1" };
@@ -78,13 +81,9 @@ test("Pi Conversation calls the scoped send tool and returns an internal summary
 test("Pi Conversation can deliberately finish without sending", async () => {
   const faux = fauxProvider();
   faux.setResponses([fauxAssistantMessage([fauxText("Silence was appropriate.")])]);
-  const models = createModels();
-  models.setProvider(faux.provider);
-  const agent = createPiConversationAgent({
-    resolveModel: () => ({ models, model: faux.getModel()! }),
-  });
+  const agent = createPiConversationAgent(fauxRunner(faux));
 
-  const result = await agent.run(modelConfig, input, {
+  const result = await agent.run(input, {
     async sendMessage() {
       throw new Error("send_message must not be called");
     },
@@ -109,14 +108,10 @@ test("Pi Conversation forwards output limits and propagates provider errors", as
       });
     },
   ]);
-  const models = createModels();
-  models.setProvider(faux.provider);
-  const agent = createPiConversationAgent({
-    resolveModel: () => ({ models, model: faux.getModel()! }),
-  });
+  const agent = createPiConversationAgent(fauxRunner(faux, 321));
 
   await expect(
-    agent.run({ ...modelConfig, maxOutputTokens: 321 }, input, {
+    agent.run(input, {
       async sendMessage() {
         throw new Error("send_message must not be called");
       },

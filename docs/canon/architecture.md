@@ -108,20 +108,25 @@ The model subsystem resolves provider definitions and role profiles once at
 startup:
 
 ```ts
-type ModelRole = "root" | "conversation" | "worker" | "memory" | "evaluator";
+type ModelRole = "conversation" | "worker" | "memory" | "evaluator";
 
 interface ModelRuntime {
+  readonly roles: readonly ModelRole[];
   forRole(role: ModelRole): ModelRunner;
 }
 ```
 
-A `ModelRunner` is provider-neutral. Pi model collections, protocol adapters,
-base URLs, authentication, and provider catalogue types remain private to the
-model adapter.
+A `ModelRunner` is one role's ready-to-use binding: the durable
+provider/model/settings snapshot, the resolved immutable model, and a stream
+bound to the role's generation limits. Mutable Pi model collections, protocol
+adapters, credential values, and provider construction remain private to
+`src/models/runtime.ts`, which is also the only application code that reads
+secret values from the environment.
 
 Role agents receive a bound runner. They do not receive a provider name,
 environment object, mutable model registry, credential, or parallel
-configuration graph.
+configuration graph. Only configured roles exist; an unconfigured role fails
+closed at resolution.
 
 Structured configuration distinguishes:
 
@@ -543,11 +548,12 @@ Disposition meanings:
 | `src/app/ambient.ts`                       | Keep                           | sole production composition root                        |
 | `src/app/lifecycle.ts`                     | Keep                           | Ambient lifecycle                                       |
 | `src/app/resources.ts`                     | Reshape, then internalize      | private composition assembly                            |
-| `src/app/config.ts`                        | Reshape                        | validated structured application configuration          |
-| `src/agent-models.ts`                      | Merge                          | `models/` role profiles and snapshots                   |
+| `src/app/config.ts`                        | Keep, reshape remaining env    | validated structured application configuration          |
+| `src/models/contract.ts`                   | Keep (rescued)                 | model vocabulary and configuration document             |
+| `src/models/runtime.ts`                    | Keep (rescued)                 | provider construction, secrets, and role runners        |
 | `src/conversation/contract.ts`             | Keep (rescued)                 | Conversation-owned domain contracts and ports           |
 | `src/conversation/context-builder.ts`      | Keep (rescued)                 | Conversation service internal                           |
-| `src/conversation/pi-agent.ts`             | Reshape                        | Conversation agent adapter using a bound `ModelRunner`  |
+| `src/conversation/pi-agent.ts`             | Keep (rescued)                 | Conversation agent adapter using a bound `ModelRunner`  |
 | `src/conversation/service.ts`              | Keep (rescued)                 | `ConversationService`                                   |
 | `src/database/conversation-work.ts`        | Keep (rescued)                 | storage implementation of `ConversationWorkStore`       |
 | `src/database/conversation-inbox.ts`       | Keep (reduced)                 | Inbox retention and pending read model                  |

@@ -2,7 +2,7 @@ import { expect, test } from "vite-plus/test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ModelConfig } from "../agent-models";
+import type { ModelConfig } from "../models/contract";
 import { openAmbientDatabase, type AmbientDatabase } from "../database/database";
 import { createConversationEvaluationSink } from "../database/evaluations";
 import type { ConversationAgent, ScopedMessageSender } from "./contract";
@@ -82,7 +82,6 @@ function service(
   return createConversationService({
     leaseOwner: "service-1",
     scheduling,
-    model,
     work: database.repositories.conversationWork,
     recall: database.repositories.memory,
     evaluation: createConversationEvaluationSink({
@@ -109,8 +108,8 @@ test("Conversation builds retained context and scopes one send to its conversati
     }> = [];
     const evaluationSubjects: string[] = [];
     const agent: ConversationAgent = {
-      async run(receivedModel, input, tools) {
-        expect(receivedModel).toEqual(model);
+      model,
+      async run(input, tools) {
         expect(input).toMatchObject({
           conversationId: "chat-1",
           newMessages: [
@@ -167,6 +166,7 @@ test("Conversation can deliberately remain silent", async () => {
     await retainMessage(database);
     await database.repositories.conversationWork.notify("chat-1", scheduling);
     const agent: ConversationAgent = {
+      model,
       async run() {
         return { summary: "No response was useful." };
       },
@@ -189,7 +189,8 @@ test("failed sends retry with the same durable idempotency key", async () => {
     const keys: string[] = [];
     let attempts = 0;
     const agent: ConversationAgent = {
-      async run(_model, _input, tools) {
+      model,
+      async run(_input, tools) {
         try {
           await tools.sendMessage("retry me", "call-1");
         } catch {
@@ -231,7 +232,8 @@ test("a submitted message consumes the run even if post-send agent work fails", 
     await retainMessage(database);
     await database.repositories.conversationWork.notify("chat-1", scheduling);
     const agent: ConversationAgent = {
-      async run(_model, _input, tools) {
+      model,
+      async run(_input, tools) {
         await tools.sendMessage("already submitted", "call-1");
         throw new Error("follow-up model turn failed");
       },
@@ -255,7 +257,6 @@ test("Conversation coalesces wake bursts and reconciles only at startup", async 
     const runner = createConversationService({
       leaseOwner: "service-1",
       scheduling,
-      model,
       work: {
         ...work,
         async reconcile(config) {
@@ -270,6 +271,7 @@ test("Conversation coalesces wake bursts and reconciles only at startup", async 
       recall: database.repositories.memory,
       evaluation: createConversationEvaluationSink(database.repositories.evaluations),
       agent: {
+        model,
         async run() {
           throw new Error("no run should be due");
         },
@@ -302,7 +304,8 @@ test("Conversation stop aborts an active agent run", async () => {
     const runner = service(
       database,
       {
-        async run(_model, _input, _tools, signal) {
+        model,
+        async run(_input, _tools, signal) {
           started();
           return new Promise((_resolve, reject) => {
             signal?.addEventListener(
@@ -348,6 +351,7 @@ test("restart reconciliation recovers committed Inbox work after a lost wake cal
       const runner = service(
         restarted,
         {
+          model,
           async run() {
             return { summary: "Recovered after restart." };
           },

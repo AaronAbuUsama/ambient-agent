@@ -1,6 +1,7 @@
 import { openAmbientDatabase, type AmbientDatabase } from "../database/database";
 import { createPiConversationAgent } from "../conversation/pi-agent";
 import { createConversationService, type ConversationService } from "../conversation/service";
+import { createModelRuntime } from "../models/runtime";
 import { createWhatsAppAcceptedSourceConsumer } from "../whatsapp/message-ingestion";
 import { WhatsAppSessionController } from "../whatsapp/session/controller";
 import { localDeployment } from "../whatsapp/session/local-deployment";
@@ -44,14 +45,14 @@ export async function createAppResources(
       acceptedSource,
     });
     if (config.conversation.enabled) {
+      const runner = createModelRuntime(config.models).forRole("conversation");
       conversation = createConversationService({
         scheduling: config.conversation.scheduling,
-        model: config.models.conversation,
         instructions: config.conversation.instructions,
         work: database.repositories.conversationWork,
         recall: database.repositories.memory,
         evaluation: database.repositories.conversationEvaluation,
-        agent: createPiConversationAgent(),
+        agent: createPiConversationAgent(runner),
         sender: {
           async sendText({ conversationId, text, idempotencyKey }) {
             const target =

@@ -1,17 +1,27 @@
 import { expect, test } from "vite-plus/test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { loadAppConfig } from "./config";
+
+async function withConfigFile(
+  content: string,
+  work: (path: string) => Promise<void>,
+): Promise<void> {
+  const directory = await mkdtemp(join(tmpdir(), "ambient-config-"));
+  const path = join(directory, "ambient.config.json");
+  await writeFile(path, content);
+  try {
+    await work(path);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
 
 test("history backfill is unlimited by default", () => {
   const config = loadAppConfig({});
   expect(config.whatsapp.historyBackfillLimit).toBeUndefined();
   expect(config.database.url).toMatch(/\/data\/ambient\.db$/);
-  expect(config.models.conversation).toEqual({
-    provider: "qwen",
-    model: "qwen3.6-flash",
-    thinking: "off",
-    maxOutputTokens: 4096,
-  });
-  expect(config.models.evaluator).toBeUndefined();
   expect(config.conversation.scheduling).toEqual({
     debounceMs: 750,
     maximumWaitMs: 5_000,
@@ -34,24 +44,63 @@ test.each(["all", "1"])("history backfill rejects invalid limit %s", (limit) => 
   );
 });
 
-test("role model configuration overrides shared defaults", () => {
-  const config = loadAppConfig({
-    MODEL_PROVIDER: "shared-provider",
-    AMBIENT_MODEL: "shared-model",
-    CONVERSATION_MODEL: "conversation-model",
-    CONVERSATION_MODEL_THINKING: "medium",
-    CONVERSATION_MODEL_MAX_OUTPUT_TOKENS: "8192",
-    EVALUATOR_MODEL: "evaluator-model",
+test("the committed configuration document supplies the Qwen deployment by default", () => {
+  const config = loadAppConfig({});
+  expect(config.models.roles.conversation).toEqual({
+    provider: "qwen",
+    model: "qwen3.6-flash",
+    thinking: "off",
+    maxOutputTokens: 4096,
   });
+  expect(config.models.providers.qwen).toMatchObject({
+    adapter: "openai-compatible",
+    credential: { env: ["QWEN_API_KEY", "DASHSCOPE_API_KEY"] },
+  });
+  expect(config.models.roles.worker).toBeUndefined();
+});
 
-  expect(config.models.conversation).toEqual({
-    provider: "shared-provider",
-    model: "conversation-model",
-    thinking: "medium",
-    maxOutputTokens: 8192,
+test("a configuration document replaces the built-in models section entirely", async () => {
+  await withConfigFile(
+    JSON.stringify({
+      models: {
+        providers: {
+          local: {
+            adapter: "openai-compatible",
+            baseUrl: "http://127.0.0.1:9999/v1",
+            credential: "none",
+          },
+        },
+        roles: {
+          conversation: { provider: "local", model: "test-model", maxOutputTokens: 512 },
+        },
+      },
+    }),
+    async (path) => {
+      const config = loadAppConfig({ AMBIENT_CONFIG: path });
+      expect(config.models.roles.conversation).toEqual({
+        provider: "local",
+        model: "test-model",
+        thinking: "off",
+        maxOutputTokens: 512,
+      });
+      expect(config.models.providers.qwen).toBeUndefined();
+    },
+  );
+});
+
+test("an explicitly configured document path must exist", () => {
+  expect(() => loadAppConfig({ AMBIENT_CONFIG: "/nonexistent/ambient.config.json" })).toThrow(
+    'cannot read configuration file "/nonexistent/ambient.config.json"',
+  );
+});
+
+test("an invalid configuration document fails closed", async () => {
+  await withConfigFile("not json", async (path) => {
+    expect(() => loadAppConfig({ AMBIENT_CONFIG: path })).toThrow("is not valid JSON");
   });
-  expect(config.models.worker.model).toBe("shared-model");
-  expect(config.models.evaluator?.model).toBe("evaluator-model");
+  await withConfigFile(JSON.stringify({ models: { providers: {} } }), async (path) => {
+    expect(() => loadAppConfig({ AMBIENT_CONFIG: path })).toThrow();
+  });
 });
 
 test("conversation scheduling accepts explicit deployment values", () => {

@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { modelConfigSchema, type ModelConfig } from "../agent-models";
+import { modelConfigSchema, type ModelConfig } from "../models/contract";
 import type { AmbientDatabaseConnection } from "./database";
 import { agentRuns, toolCalls } from "./schema";
 

@@ -1,15 +1,6 @@
 import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
-import {
-  createModels,
-  createProvider,
-  envApiKeyAuth,
-  Type,
-  type Model,
-  type Models,
-} from "@earendil-works/pi-ai";
-import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import type { ModelConfig } from "../agent-models";
+import { Type } from "@earendil-works/pi-ai";
+import type { ModelRunner } from "../models/runtime";
 import type {
   ConversationAgent,
   ConversationAgentTools,
@@ -24,50 +15,6 @@ Use recall when retained facts would materially improve the answer. Decide wheth
 response. To reply, call send_message exactly once with the full message. To remain silent, do not
 call it. Never claim you sent a message unless the tool succeeds. After acting or choosing silence,
 return a short internal summary of the decision.`;
-
-function qwenProvider(modelId: string, environment: NodeJS.ProcessEnv) {
-  const baseUrl =
-    environment.QWEN_BASE_URL ?? "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
-  const model: Model<"openai-completions"> = {
-    id: modelId,
-    name: modelId,
-    api: "openai-completions",
-    provider: "qwen",
-    baseUrl,
-    reasoning: true,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 262_144,
-    maxTokens: 65_536,
-    compat: {
-      supportsDeveloperRole: false,
-      supportsReasoningEffort: false,
-    },
-  };
-  return createProvider({
-    id: "qwen",
-    name: "Qwen",
-    baseUrl,
-    auth: {
-      apiKey: envApiKeyAuth("Qwen API key", ["QWEN_API_KEY", "DASHSCOPE_API_KEY"]),
-    },
-    models: [model],
-    api: openAICompletionsApi(),
-  });
-}
-
-function createModelCollection(
-  config: ModelConfig,
-  environment: NodeJS.ProcessEnv,
-): { readonly models: Models; readonly model: Model<any> } {
-  const models = config.provider === "qwen" ? createModels() : builtinModels();
-  if (config.provider === "qwen") models.setProvider(qwenProvider(config.model, environment));
-  const model = models.getModel(config.provider, config.model);
-  if (!model) {
-    throw new Error(`conversation model "${config.provider}/${config.model}" is not available`);
-  }
-  return { models, model };
-}
 
 function prompt(input: ConversationInput): string {
   return JSON.stringify(
@@ -91,16 +38,21 @@ function lastAssistantText(agent: Agent): string {
   return text || "Conversation run completed";
 }
 
+const sendMessageParameters = Type.Object({
+  text: Type.String({ minLength: 1, description: "The complete message to send." }),
+});
+
+const recallParameters = Type.Object({
+  query: Type.String({ minLength: 1, description: "A concise memory search phrase." }),
+});
+
 function sendMessageTool(tools: ConversationAgentTools): AgentTool {
-  const parameters = Type.Object({
-    text: Type.String({ minLength: 1, description: "The complete message to send." }),
-  });
   let used = false;
-  const tool: AgentTool<typeof parameters> = {
+  const tool: AgentTool<typeof sendMessageParameters> = {
     name: "send_message",
     label: "Send message",
     description: "Send one WhatsApp text reply to this run's scoped destination.",
-    parameters,
+    parameters: sendMessageParameters,
     executionMode: "sequential",
     async execute(toolCallId, { text }) {
       if (used) throw new Error("send_message can only be called once per Conversation run");
@@ -116,14 +68,11 @@ function sendMessageTool(tools: ConversationAgentTools): AgentTool {
 }
 
 function recallTool(tools: ConversationAgentTools): AgentTool {
-  const parameters = Type.Object({
-    query: Type.String({ minLength: 1, description: "A concise memory search phrase." }),
-  });
-  const tool: AgentTool<typeof parameters> = {
+  const tool: AgentTool<typeof recallParameters> = {
     name: "recall",
     label: "Recall memory",
     description: "Recall evidence-backed facts scoped to this conversation and its participants.",
-    parameters,
+    parameters: recallParameters,
     async execute(toolCallId, { query }) {
       const result = await tools.recall(query, toolCallId);
       return {
@@ -135,32 +84,18 @@ function recallTool(tools: ConversationAgentTools): AgentTool {
   return tool;
 }
 
-export function createPiConversationAgent(
-  options: {
-    readonly environment?: NodeJS.ProcessEnv;
-    readonly resolveModel?: (config: ModelConfig) => {
-      readonly models: Models;
-      readonly model: Model<any>;
-    };
-  } = {},
-): ConversationAgent {
-  const environment = options.environment ?? process.env;
+export function createPiConversationAgent(runner: ModelRunner): ConversationAgent {
   return {
-    async run(modelConfig, input, tools, signal): Promise<ConversationResult> {
-      const { models, model } =
-        options.resolveModel?.(modelConfig) ?? createModelCollection(modelConfig, environment);
+    model: runner.snapshot,
+    async run(input, tools, signal): Promise<ConversationResult> {
       const agent = new Agent({
         initialState: {
           systemPrompt,
-          model,
-          thinkingLevel: modelConfig.thinking,
+          model: runner.model,
+          thinkingLevel: runner.thinkingLevel,
           tools: [recallTool(tools), sendMessageTool(tools)],
         },
-        streamFn: (activeModel, context, streamOptions) =>
-          models.streamSimple(activeModel, context, {
-            ...streamOptions,
-            maxTokens: modelConfig.maxOutputTokens,
-          }),
+        streamFn: (_model, context, streamOptions) => runner.stream(context, streamOptions),
         toolExecution: "sequential",
       });
       const abort = () => agent.abort();

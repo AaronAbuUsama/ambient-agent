@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { modelConfigSchema, type AgentModelConfig, type ModelConfig } from "../agent-models";
+import { z } from "zod";
 import type { ConversationSchedulingConfig } from "../conversation/contract";
+import { modelsDocumentSchema, type ModelsDocument } from "../models/contract";
 
 function historyBackfillLimit(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
@@ -27,27 +29,38 @@ function boolean(name: string, value: string | undefined, fallback: boolean): bo
   throw new Error(`${name} must be "true" or "false"`);
 }
 
-function modelConfig(
-  environment: NodeJS.ProcessEnv,
-  role: "CONVERSATION" | "WORKER" | "MEMORY" | "EVALUATOR",
-): ModelConfig {
-  return modelConfigSchema.parse({
-    provider: environment[`${role}_MODEL_PROVIDER`] ?? environment.MODEL_PROVIDER ?? "qwen",
-    model: environment[`${role}_MODEL`] ?? environment.AMBIENT_MODEL ?? "qwen3.6-flash",
-    thinking: environment[`${role}_MODEL_THINKING`] ?? environment.MODEL_THINKING ?? "off",
-    maxOutputTokens: positiveInteger(
-      `${role}_MODEL_MAX_OUTPUT_TOKENS`,
-      environment[`${role}_MODEL_MAX_OUTPUT_TOKENS`] ?? environment.MODEL_MAX_OUTPUT_TOKENS,
-      4096,
-    ),
-  });
+const configurationDocumentSchema = z.object({
+  models: modelsDocumentSchema,
+});
+
+/**
+ * Load the structured configuration document (default `./ambient.config.json`,
+ * path via AMBIENT_CONFIG). The document is required and validated once; the
+ * repository ships the deployment catalogue at the default path. Secret values
+ * never live here.
+ */
+function loadModelsDocument(environment: NodeJS.ProcessEnv): ModelsDocument {
+  const path = environment.AMBIENT_CONFIG ?? "./ambient.config.json";
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (error) {
+    throw new Error(`cannot read configuration file "${path}"`, { cause: error });
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`configuration file "${path}" is not valid JSON`, { cause: error });
+  }
+  return configurationDocumentSchema.parse(parsed).models;
 }
 
 export interface AppConfig {
   readonly database: {
     readonly url: string;
   };
-  readonly models: AgentModelConfig;
+  readonly models: ModelsDocument;
   readonly conversation: {
     readonly enabled: boolean;
     readonly outboundMode: "loopback" | "conversation";
@@ -94,12 +107,7 @@ export function loadAppConfig(environment: NodeJS.ProcessEnv = process.env): App
     database: {
       url: environment.AMBIENT_DATABASE_URL ?? `file:${join(resolve(dataDirectory), "ambient.db")}`,
     },
-    models: {
-      conversation: modelConfig(environment, "CONVERSATION"),
-      worker: modelConfig(environment, "WORKER"),
-      memory: modelConfig(environment, "MEMORY"),
-      evaluator: environment.EVALUATOR_MODEL ? modelConfig(environment, "EVALUATOR") : undefined,
-    },
+    models: loadModelsDocument(environment),
     conversation: {
       enabled: boolean("CONVERSATION_ENABLED", environment.CONVERSATION_ENABLED, false),
       outboundMode,
