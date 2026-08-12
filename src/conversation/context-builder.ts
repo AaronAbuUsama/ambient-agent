@@ -1,22 +1,23 @@
-import type { ObservationRepository } from "../database/observations";
 import { whatsAppTextMessagePayloadSchema } from "../whatsapp/observation-mapper";
-import type { ConversationInput, ConversationMessage, ConversationRunClaim } from "./contract";
+import type {
+  ConversationClaim,
+  ConversationInput,
+  ConversationMessage,
+  ConversationWorkStore,
+} from "./contract";
 
 export interface ConversationContextBuilder {
-  build(claim: ConversationRunClaim): Promise<ConversationInput>;
+  build(claim: ConversationClaim): Promise<ConversationInput>;
 }
 
 export function createConversationContextBuilder(
-  observations: ObservationRepository,
+  evidence: Pick<ConversationWorkStore, "observations">,
   instructions: string,
 ): ConversationContextBuilder {
   return {
     async build(claim) {
-      if (!claim.run.conversationId) {
-        throw new Error(`conversation run "${claim.run.id}" has no conversation`);
-      }
       const messageItems = claim.items.filter(({ kind }) => kind === "message");
-      const retained = await observations.getMany(
+      const retained = await evidence.observations(
         messageItems.map(({ referenceId }) => referenceId),
       );
       const byId = new Map(retained.map((observation) => [observation.id, observation]));
@@ -28,7 +29,7 @@ export function createConversationContextBuilder(
         if (
           observation.source !== "whatsapp" ||
           observation.kind !== "message" ||
-          observation.conversationId !== claim.run.conversationId
+          observation.conversationId !== claim.conversationId
         ) {
           throw new Error(`conversation inbox observation "${item.referenceId}" is not a message`);
         }
@@ -44,7 +45,7 @@ export function createConversationContextBuilder(
       });
 
       return {
-        conversationId: claim.run.conversationId,
+        conversationId: claim.conversationId,
         newMessages,
         instructions,
       };

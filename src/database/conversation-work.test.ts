@@ -65,36 +65,24 @@ function claimInput(
 
 test("conversation schedule slides debounce without exceeding maximum wait", async () => {
   await withDatabase(async (database) => {
+    const work = database.repositories.conversationWork;
     await enqueue(database, "1", "2026-08-11T10:00:00.000Z");
-    expect(
-      await database.repositories.conversationSchedule.notify("chat-1", scheduling),
-    ).toMatchObject({
-      firstPendingAt: "2026-08-11T10:00:00.000Z",
-      latestPendingAt: "2026-08-11T10:00:00.000Z",
-      dueAt: "2026-08-11T10:00:01.000Z",
-    });
+    await work.notify("chat-1", scheduling);
+    expect(await work.nextWakeAt()).toBe("2026-08-11T10:00:01.000Z");
 
     await enqueue(database, "2", "2026-08-11T10:00:00.500Z");
-    expect(
-      await database.repositories.conversationSchedule.notify("chat-1", scheduling),
-    ).toMatchObject({
-      firstPendingAt: "2026-08-11T10:00:00.000Z",
-      latestPendingAt: "2026-08-11T10:00:00.500Z",
-      dueAt: "2026-08-11T10:00:01.500Z",
-    });
+    await work.notify("chat-1", scheduling);
+    expect(await work.nextWakeAt()).toBe("2026-08-11T10:00:01.500Z");
 
     await enqueue(database, "3", "2026-08-11T10:00:04.800Z");
-    expect(
-      await database.repositories.conversationSchedule.notify("chat-1", scheduling),
-    ).toMatchObject({
-      latestPendingAt: "2026-08-11T10:00:04.800Z",
-      dueAt: "2026-08-11T10:00:05.000Z",
-    });
+    await work.notify("chat-1", scheduling);
+    expect(await work.nextWakeAt()).toBe("2026-08-11T10:00:05.000Z");
   });
 });
 
 test("due claims are bounded, single-flight, and immutable while new items arrive", async () => {
   await withDatabase(async (database) => {
+    const work = database.repositories.conversationWork;
     for (const [id, time] of [
       ["1", "2026-08-11T10:00:00.000Z"],
       ["2", "2026-08-11T10:00:00.100Z"],
@@ -102,74 +90,120 @@ test("due claims are bounded, single-flight, and immutable while new items arriv
     ] as const) {
       await enqueue(database, id, time);
     }
-    await database.repositories.conversationSchedule.notify("chat-1", scheduling);
+    await work.notify("chat-1", scheduling);
 
-    const claim = await database.repositories.conversationSchedule.claimDue(
-      claimInput("scheduler-1", "2026-08-11T10:00:01.200Z"),
-    );
+    const claim = await work.claimNext(claimInput("scheduler-1", "2026-08-11T10:00:01.200Z"));
+    expect(claim?.conversationId).toBe("chat-1");
     expect(claim?.items.map(({ id }) => id)).toEqual(["inbox-1", "inbox-2"]);
-    expect(claim?.run.input).toEqual({
+    const frozenInput = {
       inboxItems: [
         { inboxItemId: "inbox-1", kind: "message", referenceId: "observation-1" },
         { inboxItemId: "inbox-2", kind: "message", referenceId: "observation-2" },
       ],
-    });
+    };
+    const run = await database.repositories.runs.get(claim!.runId);
+    expect(run?.input).toEqual(frozenInput);
+    expect(run?.model).toEqual(model);
+    expect(run?.status).toBe("running");
     expect(
-      await database.repositories.conversationSchedule.claimDue(
-        claimInput("scheduler-2", "2026-08-11T10:00:01.200Z"),
-      ),
+      await work.claimNext(claimInput("scheduler-2", "2026-08-11T10:00:01.200Z")),
     ).toBeUndefined();
 
     await enqueue(database, "4", "2026-08-11T10:00:01.300Z");
-    await database.repositories.conversationSchedule.notify("chat-1", scheduling);
-    expect(claim?.run.input).toEqual({
-      inboxItems: [
-        { inboxItemId: "inbox-1", kind: "message", referenceId: "observation-1" },
-        { inboxItemId: "inbox-2", kind: "message", referenceId: "observation-2" },
-      ],
-    });
+    await work.notify("chat-1", scheduling);
+    expect((await database.repositories.runs.get(claim!.runId))?.input).toEqual(frozenInput);
     expect((await database.repositories.inbox.pending("chat-1")).map(({ id }) => id)).toEqual([
       "inbox-3",
       "inbox-4",
     ]);
 
-    expect(
-      await database.repositories.conversationSchedule.succeed({
-        runId: claim!.run.id,
+    await work.complete({
+      runId: claim!.runId,
+      leaseOwner: "scheduler-1",
+      result: { summary: "handled" },
+      completedAt: "2026-08-11T10:00:02.000Z",
+      scheduling,
+    });
+    expect((await database.repositories.inbox.pending("chat-1")).map(({ id }) => id)).toEqual([
+      "inbox-3",
+      "inbox-4",
+    ]);
+    expect(await work.nextWakeAt()).toBe("2026-08-11T10:00:02.300Z");
+  });
+});
+
+test("no completion is possible while tool calls remain active", async () => {
+  await withDatabase(async (database) => {
+    const work = database.repositories.conversationWork;
+    await enqueue(database, "1", "2026-08-11T10:00:00.000Z");
+    await work.notify("chat-1", scheduling);
+    const claim = await work.claimNext(claimInput("scheduler-1", "2026-08-11T10:00:01.000Z"));
+    const { toolCallId } = await work.beginTool({
+      runId: claim!.runId,
+      callId: "model-call-1",
+      toolName: "recall",
+      input: { query: "project" },
+    });
+
+    await expect(
+      work.complete({
+        runId: claim!.runId,
         leaseOwner: "scheduler-1",
-        result: { summary: "handled" },
+        result: { summary: "too early" },
         completedAt: "2026-08-11T10:00:02.000Z",
         scheduling,
       }),
-    ).toBe(2);
-    expect(await database.repositories.conversationSchedule.get("chat-1")).toMatchObject({
-      firstPendingAt: "2026-08-11T10:00:00.200Z",
-      latestPendingAt: "2026-08-11T10:00:01.300Z",
-      dueAt: "2026-08-11T10:00:02.300Z",
+    ).rejects.toThrow("is not running");
+
+    await work.finishTool({
+      toolCallId,
+      result: { outcome: "succeeded", output: { claims: [] } },
     });
+    await expect(
+      work.finishTool({
+        toolCallId,
+        result: { outcome: "failed", error: "already finished" },
+      }),
+    ).rejects.toThrow('cannot finish from outcome "succeeded"');
+    await work.complete({
+      runId: claim!.runId,
+      leaseOwner: "scheduler-1",
+      result: { summary: "done" },
+      completedAt: "2026-08-11T10:00:03.000Z",
+      scheduling,
+    });
+
+    expect((await database.repositories.runs.get(claim!.runId))?.status).toBe("succeeded");
+    await expect(
+      work.beginTool({
+        runId: claim!.runId,
+        callId: "late-call",
+        toolName: "recall",
+        input: {},
+      }),
+    ).rejects.toThrow('cannot start tool calls from status "succeeded"');
   });
 });
 
 test("failed and expired leases release exact run ranges for retry", async () => {
   await withDatabase(async (database) => {
+    const work = database.repositories.conversationWork;
     await enqueue(database, "1", "2026-08-11T10:00:00.000Z");
-    await database.repositories.conversationSchedule.notify("chat-1", scheduling);
-    const first = await database.repositories.conversationSchedule.claimDue(
+    await work.notify("chat-1", scheduling);
+    const first = await work.claimNext(
       claimInput("scheduler-1", "2026-08-11T10:00:01.000Z", { leaseMs: 1_000 }),
     );
     expect(first).toBeDefined();
-    await database.repositories.runs.startToolCall({
-      id: "expired-call",
-      runId: first!.run.id,
+    const { toolCallId } = await work.beginTool({
+      runId: first!.runId,
       callId: "model-call-1",
       toolName: "recall",
       input: { query: "project" },
-      startedAt: "2026-08-11T10:00:01.100Z",
     });
 
     await expect(
-      database.repositories.conversationSchedule.fail({
-        runId: first!.run.id,
+      work.fail({
+        runId: first!.runId,
         leaseOwner: "scheduler-2",
         error: "wrong owner",
         completedAt: "2026-08-11T10:00:01.500Z",
@@ -177,29 +211,25 @@ test("failed and expired leases release exact run ranges for retry", async () =>
       }),
     ).rejects.toThrow('does not have an active lease for "scheduler-2"');
 
-    const retried = await database.repositories.conversationSchedule.claimDue(
-      claimInput("scheduler-2", "2026-08-11T10:00:02.100Z"),
-    );
+    const retried = await work.claimNext(claimInput("scheduler-2", "2026-08-11T10:00:02.100Z"));
     expect(retried?.items.map(({ id }) => id)).toEqual(["inbox-1"]);
-    expect((await database.repositories.runs.get(first!.run.id))?.status).toBe("failed");
-    expect((await database.repositories.runs.get(first!.run.id))?.error).toBe(
+    expect((await database.repositories.runs.get(first!.runId))?.status).toBe("failed");
+    expect((await database.repositories.runs.get(first!.runId))?.error).toBe(
       "conversation lease expired",
     );
-    expect(await database.repositories.runs.getToolCall("expired-call")).toMatchObject({
+    expect(await database.repositories.runs.getToolCall(toolCallId)).toMatchObject({
       outcome: "failed",
       error: "conversation lease expired",
       completedAt: "2026-08-11T10:00:02.100Z",
     });
 
-    expect(
-      await database.repositories.conversationSchedule.fail({
-        runId: retried!.run.id,
-        leaseOwner: "scheduler-2",
-        error: "model unavailable",
-        completedAt: "2026-08-11T10:00:03.000Z",
-        scheduling,
-      }),
-    ).toBe(1);
+    await work.fail({
+      runId: retried!.runId,
+      leaseOwner: "scheduler-2",
+      error: "model unavailable",
+      completedAt: "2026-08-11T10:00:03.000Z",
+      scheduling,
+    });
     expect((await database.repositories.inbox.pending("chat-1")).map(({ id }) => id)).toEqual([
       "inbox-1",
     ]);
@@ -213,12 +243,11 @@ test("startup reconciliation recovers pending items that were never notified", a
 
     const reopened = await openAmbientDatabase(url);
     try {
-      expect(await reopened.repositories.conversationSchedule.get("chat-1")).toBeUndefined();
-      await reopened.repositories.conversationSchedule.reconcile(scheduling);
-      expect(await reopened.repositories.conversationSchedule.get("chat-1")).toMatchObject({
-        firstPendingAt: "2026-08-11T10:00:00.000Z",
-        dueAt: "2026-08-11T10:00:01.000Z",
-      });
+      expect(await reopened.repositories.conversationWork.nextWakeAt()).toBeUndefined();
+      await reopened.repositories.conversationWork.reconcile(scheduling);
+      expect(await reopened.repositories.conversationWork.nextWakeAt()).toBe(
+        "2026-08-11T10:00:01.000Z",
+      );
     } finally {
       await reopened.close();
     }
@@ -228,14 +257,14 @@ test("startup reconciliation recovers pending items that were never notified", a
 test("two scheduler connections cannot claim the same due conversation", async () => {
   await withDatabase(async (database, url) => {
     await enqueue(database, "1", "2026-08-11T10:00:00.000Z");
-    await database.repositories.conversationSchedule.notify("chat-1", scheduling);
+    await database.repositories.conversationWork.notify("chat-1", scheduling);
     const second = await openAmbientDatabase(url);
     try {
       const claims = await Promise.all([
-        database.repositories.conversationSchedule.claimDue(
+        database.repositories.conversationWork.claimNext(
           claimInput("scheduler-1", "2026-08-11T10:00:01.000Z"),
         ),
-        second.repositories.conversationSchedule.claimDue(
+        second.repositories.conversationWork.claimNext(
           claimInput("scheduler-2", "2026-08-11T10:00:01.000Z"),
         ),
       ]);

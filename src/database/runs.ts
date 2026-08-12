@@ -1,4 +1,4 @@
-import { and, eq, notExists } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { modelConfigSchema, type ModelConfig } from "../agent-models";
 import type { AmbientDatabaseConnection } from "./database";
@@ -30,7 +30,8 @@ export interface AgentRun {
 export interface NewAgentRun {
   readonly id?: string;
   readonly agentId: string;
-  readonly role: AgentRun["role"];
+  /** Conversation runs are created only by the conversation work store's claim. */
+  readonly role: Exclude<AgentRun["role"], "conversation">;
   readonly conversationId?: string;
   readonly taskId?: string;
   readonly model: ModelConfig;
@@ -52,26 +53,15 @@ export interface ToolCall {
   readonly completedAt?: string;
 }
 
+/**
+ * Run creation for non-conversation roles and retained-evidence reads.
+ *
+ * Conversation run and tool-evidence transitions are owned exclusively by the
+ * conversation work store.
+ */
 export interface RunRepository {
   start(input: NewAgentRun): Promise<AgentRun>;
   get(id: string): Promise<AgentRun | undefined>;
-  succeed(id: string, result: AgentRun["input"], completedAt?: string): Promise<AgentRun>;
-  fail(id: string, error: string, completedAt?: string): Promise<AgentRun>;
-  startToolCall(input: {
-    readonly id?: string;
-    readonly runId: string;
-    readonly callId: string;
-    readonly toolName: string;
-    readonly input: ToolCall["input"];
-    readonly startedAt?: string;
-  }): Promise<ToolCall>;
-  completeToolCall(
-    id: string,
-    result:
-      | { readonly outcome: "succeeded"; readonly output: ToolCall["input"] }
-      | { readonly outcome: "failed"; readonly error: string },
-    completedAt?: string,
-  ): Promise<ToolCall>;
   getToolCall(id: string): Promise<ToolCall | undefined>;
 }
 
@@ -116,66 +106,6 @@ function decodeToolCall(row: typeof toolCalls.$inferSelect): ToolCall {
 }
 
 export function createRunRepository(database: AmbientDatabaseConnection): RunRepository {
-  const get = async (id: string): Promise<AgentRun | undefined> => {
-    const [row] = await database.select().from(agentRuns).where(eq(agentRuns.id, id)).limit(1);
-    return row ? decodeRun(row) : undefined;
-  };
-
-  const requireRun = async (id: string): Promise<AgentRun> => {
-    const run = await get(id);
-    if (!run) throw new Error(`agent run "${id}" not found`);
-    return run;
-  };
-
-  const finish = async (
-    id: string,
-    update:
-      | { readonly status: "succeeded"; readonly result: AgentRun["input"] }
-      | { readonly status: "failed"; readonly error: string },
-    completedAt = new Date().toISOString(),
-  ): Promise<AgentRun> => {
-    const [row] = await database
-      .update(agentRuns)
-      .set({
-        status: update.status,
-        result: update.status === "succeeded" ? update.result : null,
-        error: update.status === "failed" ? update.error : null,
-        completedAt,
-        updatedAt: completedAt,
-      })
-      .where(
-        and(
-          eq(agentRuns.id, id),
-          eq(agentRuns.status, "running"),
-          notExists(
-            database
-              .select({ id: toolCalls.id })
-              .from(toolCalls)
-              .where(and(eq(toolCalls.runId, id), eq(toolCalls.outcome, "running"))),
-          ),
-        ),
-      )
-      .returning();
-    if (row) return decodeRun(row);
-
-    const run = await requireRun(id);
-    if (run.status === "running") {
-      throw new Error(`agent run "${id}" cannot finish with active tool calls`);
-    }
-    throw new Error(`agent run "${id}" cannot finish from status "${run.status}"`);
-  };
-
-  const getToolCall = async (id: string): Promise<ToolCall | undefined> => {
-    const [row] = await database.select().from(toolCalls).where(eq(toolCalls.id, id)).limit(1);
-    return row ? decodeToolCall(row) : undefined;
-  };
-
-  const requireToolCall = async (id: string): Promise<ToolCall> => {
-    const call = await getToolCall(id);
-    if (!call) throw new Error(`tool call "${id}" not found`);
-    return call;
-  };
-
   return {
     async start(input) {
       const model = modelConfigSchema.parse(input.model);
@@ -205,66 +135,14 @@ export function createRunRepository(database: AmbientDatabaseConnection): RunRep
       return decodeRun(row);
     },
 
-    get,
-
-    succeed(id, result, completedAt) {
-      return finish(id, { status: "succeeded", result }, completedAt);
+    async get(id) {
+      const [row] = await database.select().from(agentRuns).where(eq(agentRuns.id, id)).limit(1);
+      return row ? decodeRun(row) : undefined;
     },
 
-    fail(id, error, completedAt) {
-      return finish(id, { status: "failed", error }, completedAt);
+    async getToolCall(id) {
+      const [row] = await database.select().from(toolCalls).where(eq(toolCalls.id, id)).limit(1);
+      return row ? decodeToolCall(row) : undefined;
     },
-
-    startToolCall(input) {
-      return database.transaction(async (transaction) => {
-        const [run] = await transaction
-          .select({ status: agentRuns.status })
-          .from(agentRuns)
-          .where(eq(agentRuns.id, input.runId))
-          .limit(1);
-        if (!run) throw new Error(`agent run "${input.runId}" not found`);
-        if (run.status !== "running") {
-          throw new Error(
-            `agent run "${input.runId}" cannot start tool calls from status "${run.status}"`,
-          );
-        }
-
-        const id = input.id ?? crypto.randomUUID();
-        const startedAt = input.startedAt ?? new Date().toISOString();
-        const [row] = await transaction
-          .insert(toolCalls)
-          .values({
-            id,
-            runId: input.runId,
-            callId: input.callId,
-            toolName: input.toolName,
-            input: input.input,
-            outcome: "running",
-            startedAt,
-          })
-          .returning();
-        if (!row) throw new Error(`tool call "${id}" was not inserted`);
-        return decodeToolCall(row);
-      });
-    },
-
-    async completeToolCall(id, update, completedAt = new Date().toISOString()) {
-      const [row] = await database
-        .update(toolCalls)
-        .set({
-          outcome: update.outcome,
-          output: update.outcome === "succeeded" ? update.output : null,
-          error: update.outcome === "failed" ? update.error : null,
-          completedAt,
-        })
-        .where(and(eq(toolCalls.id, id), eq(toolCalls.outcome, "running")))
-        .returning();
-      if (row) return decodeToolCall(row);
-
-      const call = await requireToolCall(id);
-      throw new Error(`tool call "${id}" cannot finish from outcome "${call.outcome}"`);
-    },
-
-    getToolCall,
   };
 }

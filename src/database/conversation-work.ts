@@ -1,13 +1,14 @@
 import { and, asc, eq, inArray, isNull, lte, max, min, notExists, sql } from "drizzle-orm";
 import type {
-  ClaimConversationRunInput,
-  ConversationRunClaim,
-  ConversationScheduleState,
+  ClaimConversationWork,
+  ConversationClaim,
+  ConversationResult,
   ConversationSchedulingConfig,
+  ConversationWorkStore,
 } from "../conversation/contract";
 import type { AmbientDatabaseConnection } from "./database";
-import { decodeConversationInboxItem, type ConversationInboxItem } from "./conversation-inbox";
-import type { AgentRun } from "./runs";
+import { decodeConversationInboxItem } from "./conversation-inbox";
+import { createObservationRepository } from "./observations";
 import {
   agentRuns,
   conversationInbox,
@@ -18,37 +19,6 @@ import {
 
 type AmbientTransaction = Parameters<Parameters<AmbientDatabaseConnection["transaction"]>[0]>[0];
 type AmbientExecutor = AmbientDatabaseConnection | AmbientTransaction;
-
-export interface ConversationScheduleRepository {
-  reconcile(scheduling: ConversationSchedulingConfig): Promise<void>;
-  notify(
-    conversationId: string,
-    scheduling: ConversationSchedulingConfig,
-  ): Promise<ConversationScheduleState | undefined>;
-  get(conversationId: string): Promise<ConversationScheduleState | undefined>;
-  nextWakeAt(): Promise<string | undefined>;
-  renewLease(input: {
-    readonly runId: string;
-    readonly leaseOwner: string;
-    readonly now?: string;
-    readonly leaseUntil: string;
-  }): Promise<boolean>;
-  claimDue(input: ClaimConversationRunInput): Promise<ConversationRunClaim | undefined>;
-  succeed(input: {
-    readonly runId: string;
-    readonly leaseOwner: string;
-    readonly result: AgentRun["input"];
-    readonly completedAt?: string;
-    readonly scheduling: ConversationSchedulingConfig;
-  }): Promise<number>;
-  fail(input: {
-    readonly runId: string;
-    readonly leaseOwner: string;
-    readonly error: string;
-    readonly completedAt?: string;
-    readonly scheduling: ConversationSchedulingConfig;
-  }): Promise<number>;
-}
 
 interface PendingWindow {
   readonly conversationId: string;
@@ -65,18 +35,6 @@ function isSqliteBusy(error: unknown): boolean {
     current = current.cause;
   }
   return false;
-}
-
-function decodeSchedule(row: typeof conversationSchedule.$inferSelect): ConversationScheduleState {
-  return {
-    conversationId: row.conversationId,
-    firstPendingAt: row.firstPendingAt ?? undefined,
-    latestPendingAt: row.latestPendingAt ?? undefined,
-    dueAt: row.dueAt ?? undefined,
-    leaseOwner: row.leaseOwner ?? undefined,
-    leaseUntil: row.leaseUntil ?? undefined,
-    activeRunId: row.activeRunId ?? undefined,
-  };
 }
 
 function dueAt(window: PendingWindow, scheduling: ConversationSchedulingConfig): string {
@@ -114,10 +72,10 @@ async function setPendingWindow(
   database: AmbientExecutor,
   conversationId: string,
   scheduling: ConversationSchedulingConfig,
-): Promise<ConversationScheduleState | undefined> {
+): Promise<void> {
   const window = await pendingWindow(database, conversationId);
   if (!window) {
-    const [cleared] = await database
+    await database
       .update(conversationSchedule)
       .set({ firstPendingAt: null, latestPendingAt: null, dueAt: null })
       .where(
@@ -125,9 +83,8 @@ async function setPendingWindow(
           eq(conversationSchedule.conversationId, conversationId),
           isNull(conversationSchedule.activeRunId),
         ),
-      )
-      .returning();
-    return cleared ? decodeSchedule(cleared) : undefined;
+      );
+    return;
   }
 
   const [row] = await database
@@ -146,58 +103,22 @@ async function setPendingWindow(
         dueAt: dueAt(window, scheduling),
       },
     })
-    .returning();
+    .returning({ conversationId: conversationSchedule.conversationId });
   if (!row) throw new Error(`conversation schedule "${conversationId}" was not retained`);
-  return decodeSchedule(row);
 }
 
-function runFromClaim(
-  id: string,
-  input: ClaimConversationRunInput,
-  conversationId: string,
-  items: readonly ConversationInboxItem[],
-  startedAt: string,
-): AgentRun {
-  return {
-    id,
-    agentId: input.agentId,
-    role: "conversation",
-    conversationId,
-    status: "running",
-    model: input.model,
-    promptVersion: input.promptVersion,
-    input: {
-      inboxItems: items.map(({ id: inboxItemId, kind, referenceId }) => ({
-        inboxItemId,
-        kind,
-        referenceId,
-      })),
-    },
-    startedAt,
-    createdAt: startedAt,
-    updatedAt: startedAt,
-  };
-}
-
-export function createConversationScheduleRepository(
+export function createConversationWorkStore(
   database: AmbientDatabaseConnection,
-): ConversationScheduleRepository {
-  const get = async (conversationId: string): Promise<ConversationScheduleState | undefined> => {
-    const [row] = await database
-      .select()
-      .from(conversationSchedule)
-      .where(eq(conversationSchedule.conversationId, conversationId))
-      .limit(1);
-    return row ? decodeSchedule(row) : undefined;
-  };
+): ConversationWorkStore {
+  const observations = createObservationRepository(database);
 
-  const complete = async (
+  const finish = async (
     input:
       | {
           readonly status: "succeeded";
           readonly runId: string;
           readonly leaseOwner: string;
-          readonly result: AgentRun["input"];
+          readonly result: ConversationResult;
           readonly completedAt?: string;
           readonly scheduling: ConversationSchedulingConfig;
         }
@@ -209,7 +130,7 @@ export function createConversationScheduleRepository(
           readonly completedAt?: string;
           readonly scheduling: ConversationSchedulingConfig;
         },
-  ): Promise<number> => {
+  ): Promise<void> => {
     const completedAt = input.completedAt ?? new Date().toISOString();
     return database.transaction(async (transaction) => {
       const [schedule] = await transaction
@@ -253,28 +174,19 @@ export function createConversationScheduleRepository(
         .returning({ id: agentRuns.id });
       if (!run) throw new Error(`conversation run "${input.runId}" is not running`);
 
-      const claimed =
-        input.status === "succeeded"
-          ? await transaction
-              .update(conversationInbox)
-              .set({ consumedByRunId: input.runId, consumedAt: completedAt })
-              .where(
-                and(
-                  eq(conversationInbox.claimedByRunId, input.runId),
-                  isNull(conversationInbox.consumedByRunId),
-                ),
-              )
-              .returning({ id: conversationInbox.id })
-          : await transaction
-              .update(conversationInbox)
-              .set({ claimedByRunId: null })
-              .where(
-                and(
-                  eq(conversationInbox.claimedByRunId, input.runId),
-                  isNull(conversationInbox.consumedByRunId),
-                ),
-              )
-              .returning({ id: conversationInbox.id });
+      await transaction
+        .update(conversationInbox)
+        .set(
+          input.status === "succeeded"
+            ? { consumedByRunId: input.runId, consumedAt: completedAt }
+            : { claimedByRunId: null },
+        )
+        .where(
+          and(
+            eq(conversationInbox.claimedByRunId, input.runId),
+            isNull(conversationInbox.consumedByRunId),
+          ),
+        );
 
       await transaction
         .update(conversationSchedule)
@@ -294,7 +206,6 @@ export function createConversationScheduleRepository(
             ),
           );
       }
-      return claimed.length;
     });
   };
 
@@ -324,13 +235,11 @@ export function createConversationScheduleRepository(
       });
     },
 
-    notify(conversationId, scheduling) {
-      return database.transaction((transaction) =>
+    async notify(conversationId, scheduling) {
+      await database.transaction((transaction) =>
         setPendingWindow(transaction, conversationId, scheduling),
       );
     },
-
-    get,
 
     async nextWakeAt() {
       const [row] = await database
@@ -365,7 +274,11 @@ export function createConversationScheduleRepository(
       return Boolean(renewed);
     },
 
-    async claimDue(input) {
+    observations(ids) {
+      return observations.getMany(ids);
+    },
+
+    async claimNext(input: ClaimConversationWork): Promise<ConversationClaim | undefined> {
       const now = input.now ?? new Date().toISOString();
       const leaseUntil = new Date(Date.parse(now) + input.scheduling.leaseMs).toISOString();
       try {
@@ -446,22 +359,27 @@ export function createConversationScheduleRepository(
 
           const runId = crypto.randomUUID();
           const items = rows.map(decodeConversationInboxItem);
-          const run = runFromClaim(runId, input, candidate.conversationId, items, now);
           await transaction.insert(agentRuns).values({
-            id: run.id,
-            agentId: run.agentId,
-            role: run.role,
-            conversationId: run.conversationId,
-            status: run.status,
-            provider: run.model.provider,
-            model: run.model.model,
-            thinking: run.model.thinking,
-            maxOutputTokens: run.model.maxOutputTokens,
-            promptVersion: run.promptVersion,
-            input: run.input,
-            startedAt: run.startedAt,
-            createdAt: run.createdAt,
-            updatedAt: run.updatedAt,
+            id: runId,
+            agentId: input.agentId,
+            role: "conversation",
+            conversationId: candidate.conversationId,
+            status: "running",
+            provider: input.model.provider,
+            model: input.model.model,
+            thinking: input.model.thinking,
+            maxOutputTokens: input.model.maxOutputTokens,
+            promptVersion: input.promptVersion,
+            input: {
+              inboxItems: items.map(({ id: inboxItemId, kind, referenceId }) => ({
+                inboxItemId,
+                kind,
+                referenceId,
+              })),
+            },
+            startedAt: now,
+            createdAt: now,
+            updatedAt: now,
           });
           const [leased] = await transaction
             .update(conversationSchedule)
@@ -471,7 +389,7 @@ export function createConversationScheduleRepository(
               dueAt: null,
               leaseOwner: input.leaseOwner,
               leaseUntil,
-              activeRunId: run.id,
+              activeRunId: runId,
             })
             .where(
               and(
@@ -485,7 +403,7 @@ export function createConversationScheduleRepository(
 
           const claimed = await transaction
             .update(conversationInbox)
-            .set({ claimedByRunId: run.id })
+            .set({ claimedByRunId: runId })
             .where(
               and(
                 inArray(
@@ -501,10 +419,11 @@ export function createConversationScheduleRepository(
 
           await transaction
             .insert(conversationRunItems)
-            .values(rows.map(({ id }, position) => ({ runId: run.id, inboxItemId: id, position })));
+            .values(rows.map(({ id }, position) => ({ runId, inboxItemId: id, position })));
           return {
-            run,
-            items: items.map((item) => ({ ...item, claimedByRunId: run.id })),
+            runId,
+            conversationId: candidate.conversationId,
+            items: items.map(({ id, kind, referenceId }) => ({ id, kind, referenceId })),
           };
         });
       } catch (error) {
@@ -513,12 +432,67 @@ export function createConversationScheduleRepository(
       }
     },
 
-    succeed(input) {
-      return complete({ status: "succeeded", ...input });
+    beginTool(input) {
+      return database.transaction(async (transaction) => {
+        const [run] = await transaction
+          .select({ status: agentRuns.status })
+          .from(agentRuns)
+          .where(eq(agentRuns.id, input.runId))
+          .limit(1);
+        if (!run) throw new Error(`agent run "${input.runId}" not found`);
+        if (run.status !== "running") {
+          throw new Error(
+            `agent run "${input.runId}" cannot start tool calls from status "${run.status}"`,
+          );
+        }
+
+        const toolCallId = crypto.randomUUID();
+        const [row] = await transaction
+          .insert(toolCalls)
+          .values({
+            id: toolCallId,
+            runId: input.runId,
+            callId: input.callId,
+            toolName: input.toolName,
+            input: input.input,
+            outcome: "running",
+            startedAt: new Date().toISOString(),
+          })
+          .returning({ id: toolCalls.id });
+        if (!row) throw new Error(`tool call "${toolCallId}" was not inserted`);
+        return { toolCallId: row.id };
+      });
+    },
+
+    async finishTool({ toolCallId, result }) {
+      const completedAt = new Date().toISOString();
+      const [row] = await database
+        .update(toolCalls)
+        .set({
+          outcome: result.outcome,
+          output: result.outcome === "succeeded" ? result.output : null,
+          error: result.outcome === "failed" ? result.error : null,
+          completedAt,
+        })
+        .where(and(eq(toolCalls.id, toolCallId), eq(toolCalls.outcome, "running")))
+        .returning({ id: toolCalls.id });
+      if (row) return;
+
+      const [call] = await database
+        .select({ outcome: toolCalls.outcome })
+        .from(toolCalls)
+        .where(eq(toolCalls.id, toolCallId))
+        .limit(1);
+      if (!call) throw new Error(`tool call "${toolCallId}" not found`);
+      throw new Error(`tool call "${toolCallId}" cannot finish from outcome "${call.outcome}"`);
+    },
+
+    complete(input) {
+      return finish({ status: "succeeded", ...input });
     },
 
     fail(input) {
-      return complete({ status: "failed", ...input });
+      return finish({ status: "failed", ...input });
     },
   };
 }

@@ -5,16 +5,18 @@ import { migrate } from "drizzle-orm/libsql/migrator";
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ConversationEvaluationSink, ConversationWorkStore } from "../conversation/contract";
 import * as schema from "./schema";
 import {
   createConversationInboxRepository,
   type ConversationInboxRepository,
 } from "./conversation-inbox";
+import { createConversationWorkStore } from "./conversation-work";
 import {
-  createConversationScheduleRepository,
-  type ConversationScheduleRepository,
-} from "./conversation-schedule";
-import { createEvaluationRepository, type EvaluationRepository } from "./evaluations";
+  createConversationEvaluationSink,
+  createEvaluationRepository,
+  type EvaluationRepository,
+} from "./evaluations";
 import { createMemoryRepository, type MemoryRepository } from "./memory";
 import {
   createMessageIngestionRepository,
@@ -28,11 +30,12 @@ export interface AmbientRepositories {
   readonly observations: ObservationRepository;
   readonly messageIngestion: MessageIngestionRepository;
   readonly inbox: ConversationInboxRepository;
-  readonly conversationSchedule: ConversationScheduleRepository;
+  readonly conversationWork: ConversationWorkStore;
   readonly memory: MemoryRepository;
   readonly runs: RunRepository;
   readonly tasks: TaskRepository;
   readonly evaluations: EvaluationRepository;
+  readonly conversationEvaluation: ConversationEvaluationSink;
 }
 
 export interface AmbientDatabase {
@@ -50,14 +53,16 @@ async function prepareLocalDirectory(url: string): Promise<void> {
 }
 
 function repositories(database: AmbientDatabaseConnection): AmbientRepositories {
+  const evaluations = createEvaluationRepository(database);
   return {
     observations: createObservationRepository(database),
     messageIngestion: createMessageIngestionRepository(database),
     inbox: createConversationInboxRepository(database),
-    conversationSchedule: createConversationScheduleRepository(database),
+    conversationWork: createConversationWorkStore(database),
     runs: createRunRepository(database),
     tasks: createTaskRepository(database),
-    evaluations: createEvaluationRepository(database),
+    evaluations,
+    conversationEvaluation: createConversationEvaluationSink(evaluations),
     memory: createMemoryRepository(database),
   };
 }

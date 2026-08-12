@@ -4,7 +4,7 @@ import { eq, sql } from "drizzle-orm";
 import { loadAppConfig } from "../app/config";
 import { createAppResources } from "../app/resources";
 import { createPiConversationAgent } from "../conversation/pi-agent";
-import { createConversationScheduler } from "../conversation/scheduler";
+import { createConversationService } from "../conversation/service";
 import { agentRuns, evaluationRuns, toolCalls } from "../database/schema";
 
 const timeoutMs = 180_000;
@@ -81,15 +81,13 @@ try {
     acceptedMessages.find(({ conversationId }) => conversationId === target.id),
   );
   await new Promise((resolve) => setTimeout(resolve, config.conversation.scheduling.debounceMs));
-  const scheduler = createConversationScheduler({
+  const scheduler = createConversationService({
     scheduling: config.conversation.scheduling,
     model: config.models.conversation,
     instructions: config.conversation.instructions,
-    schedule: resources.database.repositories.conversationSchedule,
-    observations: resources.database.repositories.observations,
-    memory: resources.database.repositories.memory,
-    runs: resources.database.repositories.runs,
-    evaluations: resources.database.repositories.evaluations,
+    work: resources.database.repositories.conversationWork,
+    recall: resources.database.repositories.memory,
+    evaluation: resources.database.repositories.conversationEvaluation,
     agent: createPiConversationAgent(),
     sender: {
       // The guard is intentionally repeated at the last side-effect boundary.
@@ -103,7 +101,7 @@ try {
       },
     },
   });
-  await resources.database.repositories.conversationSchedule.notify(
+  await resources.database.repositories.conversationWork.notify(
     target.id,
     config.conversation.scheduling,
   );

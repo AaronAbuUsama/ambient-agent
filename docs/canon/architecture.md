@@ -256,20 +256,23 @@ One aggregate-shaped store owns authoritative Conversation work mutations:
 
 ```ts
 interface ConversationWorkStore {
-  reconcile(policy: ConversationSchedulingPolicy): Promise<void>;
-  nextWakeAt(): Promise<Instant | undefined>;
+  reconcile(scheduling: ConversationSchedulingConfig): Promise<void>;
+  notify(conversationId: string, scheduling: ConversationSchedulingConfig): Promise<void>;
+  nextWakeAt(): Promise<string | undefined>;
   claimNext(input: ClaimConversationWork): Promise<ConversationClaim | undefined>;
-  renew(claim: ConversationClaimToken, until: Instant): Promise<boolean>;
-  beginTool(input: BeginConversationTool): Promise<ToolEvidence>;
-  finishTool(input: FinishConversationTool): Promise<ToolEvidence>;
+  renewLease(input: RenewConversationLease): Promise<boolean>;
+  observations(ids: readonly string[]): Promise<readonly RetainedConversationObservation[]>;
+  beginTool(input: BeginConversationTool): Promise<{ toolCallId: string }>;
+  finishTool(input: FinishConversationTool): Promise<void>;
   complete(input: CompleteConversationRun): Promise<void>;
   fail(input: FailConversationRun): Promise<void>;
 }
 ```
 
-This store hides the current `conversation_schedule`, `conversation_inbox`,
-`conversation_run_items`, `agent_runs`, and `tool_calls` transaction details.
-It is authoritative for:
+The port is owned by `src/conversation/contract.ts` and implemented by
+`src/database/conversation-work.ts`. It hides the `conversation_schedule`,
+`conversation_inbox`, `conversation_run_items`, `agent_runs`, and `tool_calls`
+transaction details. It is authoritative for:
 
 - one active lease per conversation;
 - immutable claimed Inbox membership;
@@ -277,11 +280,13 @@ It is authoritative for:
 - consume-on-success and release-on-failure;
 - fenced completion by lease owner and expiry;
 - expired run and tool recovery;
-- retry eligibility and the next durable work window.
+- retry eligibility and the next durable work window;
+- reading the retained observations referenced by claimed work.
 
-The separate current Inbox and Run repositories may remain as private
-implementation helpers or read models, but their overlapping mutation methods
-must not remain public peers.
+The Inbox repository is reduced to retention and a pending read model, and the
+Run repository to non-conversation run creation and evidence reads. Their
+former claim, consumption, release, and completion methods are owned
+exclusively by the work store and no longer exist as public peers.
 
 ### WhatsApp ingestion store
 
@@ -354,10 +359,11 @@ interface EvaluationSink {
 }
 ```
 
-The current Conversation scheduler performs evaluation inline after completion.
-That path should be internalized and later replaced by an asynchronous evidence
-consumer. Evaluation failure must not change whether a WhatsApp effect or Agent
-Run succeeded.
+The Conversation service records its run-contract evaluation inline through a
+Conversation-owned `ConversationEvaluationSink`, implemented next to the
+evaluations store. That sink should later be replaced by an asynchronous
+evidence consumer. Evaluation failure must not change whether a WhatsApp effect
+or Agent Run succeeded.
 
 ### Proofs and operations
 
@@ -517,13 +523,13 @@ Disposition meanings:
 | `src/app/resources.ts`                     | Reshape, then internalize      | private composition assembly                            |
 | `src/app/config.ts`                        | Reshape                        | validated structured application configuration          |
 | `src/agent-models.ts`                      | Merge                          | `models/` role profiles and snapshots                   |
-| `src/conversation/contract.ts`             | Reshape                        | Conversation-owned domain contracts                     |
-| `src/conversation/context-builder.ts`      | Reshape, internalize           | Conversation service                                    |
+| `src/conversation/contract.ts`             | Keep (rescued)                 | Conversation-owned domain contracts and ports           |
+| `src/conversation/context-builder.ts`      | Keep (rescued)                 | Conversation service internal                           |
 | `src/conversation/pi-agent.ts`             | Reshape                        | Conversation agent adapter using a bound `ModelRunner`  |
-| `src/conversation/scheduler.ts`            | Reshape, merge                 | `ConversationService`                                   |
-| `src/database/conversation-schedule.ts`    | Reshape                        | storage implementation of `ConversationWorkStore`       |
-| `src/database/conversation-inbox.ts`       | Merge, internalize             | Conversation work store and read models                 |
-| `src/database/runs.ts`                     | Merge, internalize             | role-owned work stores and evidence reads               |
+| `src/conversation/service.ts`              | Keep (rescued)                 | `ConversationService`                                   |
+| `src/database/conversation-work.ts`        | Keep (rescued)                 | storage implementation of `ConversationWorkStore`       |
+| `src/database/conversation-inbox.ts`       | Keep (reduced)                 | Inbox retention and pending read model                  |
+| `src/database/runs.ts`                     | Keep (reduced), later reshape  | non-conversation run creation and evidence reads        |
 | `src/database/message-ingestion.ts`        | Keep, reshape                  | storage implementation of `WhatsAppIngestionStore`      |
 | `src/database/observations.ts`             | Reshape                        | evidence read ports, mutation internal to ingestion     |
 | `src/database/database.ts`                 | Internalize                    | database connection and adapter assembly                |
@@ -541,10 +547,10 @@ Disposition meanings:
 | `src/platform/logging.ts`                  | Keep, internalize              | platform adapter                                        |
 | `src/platform/errors.ts`                   | Keep, internalize              | platform utility                                        |
 
-The public repository bag, independent Inbox mutation API, independent Run
-completion API, concrete controller exposure, and proof-only alternate
-composition root are obsolete concepts. They are removed after their callers
-migrate, not before.
+The independent Inbox mutation API and independent Run completion API were
+removed with the Conversation work-store rescue. The public repository bag,
+concrete controller exposure, and proof-only alternate composition root remain
+obsolete concepts to be removed after their callers migrate, not before.
 
 ## Frontier definitions
 

@@ -1,59 +1,49 @@
 import type { ModelConfig } from "../agent-models";
-import type { ConversationScheduleRepository } from "../database/conversation-schedule";
-import type { EvaluationRepository } from "../database/evaluations";
-import type { MemoryRepository } from "../database/memory";
-import type { ObservationRepository } from "../database/observations";
-import type { AgentRun, RunRepository } from "../database/runs";
 import { messageOf } from "../platform/errors";
 import type {
   ConversationAgent,
-  ConversationRunClaim,
+  ConversationClaim,
+  ConversationEvaluationSink,
+  ConversationRecall,
   ConversationSchedulingConfig,
+  ConversationWorkStore,
+  ScopedMessageSender,
 } from "./contract";
 import {
   createConversationContextBuilder,
   type ConversationContextBuilder,
 } from "./context-builder";
 
-export interface ScopedMessageSender {
-  sendText(input: {
-    readonly conversationId: string;
-    readonly text: string;
-    readonly idempotencyKey: string;
-  }): Promise<{ readonly operationId: string }>;
-}
-
-export interface ConversationScheduler {
+export interface ConversationService {
   start(): Promise<void>;
   wake(conversationId?: string): Promise<void>;
   stop(): Promise<void>;
   runOnce(now?: string): Promise<"idle" | "succeeded" | "failed">;
 }
 
-export interface ConversationSchedulerOptions {
+export interface ConversationServiceOptions {
   readonly leaseOwner?: string;
   readonly agentId?: string;
   readonly promptVersion?: string;
   readonly instructions?: string;
   readonly scheduling: ConversationSchedulingConfig;
   readonly model: ModelConfig;
-  readonly schedule: ConversationScheduleRepository;
-  readonly observations: ObservationRepository;
-  readonly memory: MemoryRepository;
-  readonly runs: RunRepository;
-  readonly evaluations: EvaluationRepository;
+  readonly work: ConversationWorkStore;
+  readonly recall: ConversationRecall;
+  readonly evaluation: ConversationEvaluationSink;
   readonly agent: ConversationAgent;
   readonly sender: ScopedMessageSender;
   readonly now?: () => Date;
 }
 
-export function createConversationScheduler(
-  options: ConversationSchedulerOptions,
-): ConversationScheduler {
-  const leaseOwner = options.leaseOwner ?? `conversation-scheduler:${crypto.randomUUID()}`;
+export function createConversationService(
+  options: ConversationServiceOptions,
+): ConversationService {
+  const leaseOwner = options.leaseOwner ?? `conversation-service:${crypto.randomUUID()}`;
+  const promptVersion = options.promptVersion ?? "conversation-v1";
   const now = options.now ?? (() => new Date());
   const contextBuilder: ConversationContextBuilder = createConversationContextBuilder(
-    options.observations,
+    options.work,
     options.instructions ?? "Respond naturally and helpfully when a response is useful.",
   );
   let active = false;
@@ -67,93 +57,44 @@ export function createConversationScheduler(
     runId: string,
     callId: string,
     toolName: string,
-    input: AgentRun["input"],
+    input: unknown,
     work: () => Promise<T>,
-    persistedOutput: (value: T) => AgentRun["input"],
+    persistedOutput: (value: T) => unknown,
   ): Promise<T> => {
-    const toolCall = await options.runs.startToolCall({
-      runId,
-      callId,
-      toolName,
-      input,
-    });
+    const { toolCallId } = await options.work.beginTool({ runId, callId, toolName, input });
     try {
       const value = await work();
-      await options.runs.completeToolCall(toolCall.id, {
-        outcome: "succeeded",
-        output: persistedOutput(value),
+      await options.work.finishTool({
+        toolCallId,
+        result: { outcome: "succeeded", output: persistedOutput(value) },
       });
       return value;
     } catch (error) {
-      await options.runs.completeToolCall(toolCall.id, {
-        outcome: "failed",
-        error: messageOf(error),
+      await options.work.finishTool({
+        toolCallId,
+        result: { outcome: "failed", error: messageOf(error) },
       });
       throw error;
     }
   };
 
-  const evaluate = async (
-    claim: ConversationRunClaim,
-    result:
+  const evaluate = (
+    claim: ConversationClaim,
+    outcome:
       | { readonly status: "succeeded"; readonly operationId?: string }
       | { readonly status: "failed"; readonly error: string },
-  ): Promise<void> => {
-    let evaluationId: string | undefined;
-    try {
-      const evaluation = await options.evaluations.start({
-        role: "conversation",
-        subjectRunId: claim.run.id,
-        caseId: "conversation-contract-v1",
-        configuration: {
-          promptVersion: claim.run.promptVersion,
-          maximumItemsPerRun: options.scheduling.maximumItemsPerRun,
-        },
-        startedAt: now().toISOString(),
-      });
-      evaluationId = evaluation.id;
-      await options.evaluations.recordResult({
-        evaluationRunId: evaluation.id,
-        metric: "bounded_input",
-        score: claim.items.length <= options.scheduling.maximumItemsPerRun ? 1 : 0,
-        passed: claim.items.length <= options.scheduling.maximumItemsPerRun,
-        detail: {
-          itemCount: claim.items.length,
-          maximumItemsPerRun: options.scheduling.maximumItemsPerRun,
-        },
-      });
-      await options.evaluations.recordResult({
-        evaluationRunId: evaluation.id,
-        metric: "reply_or_silence",
-        passed: result.status === "succeeded",
-        detail:
-          result.status === "succeeded"
-            ? {
-                decision: result.operationId ? "reply" : "silence",
-                ...(result.operationId ? { operationId: result.operationId } : {}),
-              }
-            : { decision: "failed", error: result.error },
-      });
-      await options.evaluations.recordResult({
-        evaluationRunId: evaluation.id,
-        metric: "scoped_tools",
-        passed: true,
-        detail: {
-          conversationId: claim.run.conversationId ?? null,
-          destinationOwnedBy: "conversation-scheduler",
-        },
-      });
-      await options.evaluations.finish(evaluation.id, { status: "succeeded" }, now().toISOString());
-    } catch (error) {
-      if (evaluationId) {
-        await options.evaluations
-          .finish(evaluationId, { status: "failed", error: messageOf(error) }, now().toISOString())
-          .catch(() => {});
-      }
-    }
-  };
+  ): Promise<void> =>
+    options.evaluation.recordRunContract({
+      runId: claim.runId,
+      conversationId: claim.conversationId,
+      promptVersion,
+      itemCount: claim.items.length,
+      maximumItemsPerRun: options.scheduling.maximumItemsPerRun,
+      at: now().toISOString(),
+      outcome,
+    });
 
-  const executeClaim = async (claim: ConversationRunClaim): Promise<"succeeded" | "failed"> => {
+  const executeClaim = async (claim: ConversationClaim): Promise<"succeeded" | "failed"> => {
     const abort = new AbortController();
     activeRunAbort = abort;
     let leaseLost: Error | undefined;
@@ -164,16 +105,16 @@ export function createConversationScheduler(
       () => {
         const renewedAt = now();
         const leaseUntil = new Date(renewedAt.getTime() + options.scheduling.leaseMs).toISOString();
-        void options.schedule
+        void options.work
           .renewLease({
-            runId: claim.run.id,
+            runId: claim.runId,
             leaseOwner,
             now: renewedAt.toISOString(),
             leaseUntil,
           })
           .then((renewed) => {
             if (renewed) return;
-            leaseLost = new Error(`conversation run "${claim.run.id}" lost its lease`);
+            leaseLost = new Error(`conversation run "${claim.runId}" lost its lease`);
             abort.abort(leaseLost);
           })
           .catch((error: unknown) => {
@@ -195,7 +136,7 @@ export function createConversationScheduler(
             sendAttempted = true;
             try {
               const output = await executeTool(
-                claim.run.id,
+                claim.runId,
                 callId,
                 "send_message",
                 { conversationId: input.conversationId, text },
@@ -217,24 +158,19 @@ export function createConversationScheduler(
           async recall(query, callId) {
             if (abort.signal.aborted) throw abort.signal.reason;
             const claims = await executeTool(
-              claim.run.id,
+              claim.runId,
               callId,
               "recall",
               { query },
               () =>
-                options.memory.recall({
+                options.recall.recall({
                   nativeIds: [
                     input.conversationId,
                     ...new Set(input.newMessages.map(({ senderId }) => senderId)),
                   ],
                   query,
                 }),
-              (recalled) => ({
-                claims: recalled.map((memory) => ({
-                  ...memory,
-                  evidenceObservationIds: [...memory.evidenceObservationIds],
-                })),
-              }),
+              (recalled) => ({ claims: recalled }),
             );
             return { claims };
           },
@@ -245,8 +181,8 @@ export function createConversationScheduler(
       if (sendAttempted && !submittedOperationId) {
         throw new Error(`send_message did not succeed: ${sendFailure ?? "unknown failure"}`);
       }
-      await options.schedule.succeed({
-        runId: claim.run.id,
+      await options.work.complete({
+        runId: claim.runId,
         leaseOwner,
         result: { summary: result.summary },
         completedAt: now().toISOString(),
@@ -260,8 +196,8 @@ export function createConversationScheduler(
     } catch (error) {
       if (!leaseLost) {
         if (submittedOperationId) {
-          await options.schedule.succeed({
-            runId: claim.run.id,
+          await options.work.complete({
+            runId: claim.runId,
             leaseOwner,
             result: {
               summary: `WhatsApp operation ${submittedOperationId} was submitted before agent completion failed: ${messageOf(error)}`,
@@ -276,8 +212,8 @@ export function createConversationScheduler(
           return "succeeded";
         }
         try {
-          await options.schedule.fail({
-            runId: claim.run.id,
+          await options.work.fail({
+            runId: claim.runId,
             leaseOwner,
             error: messageOf(error),
             completedAt: now().toISOString(),
@@ -296,12 +232,12 @@ export function createConversationScheduler(
   };
 
   const runOnce = async (at = now().toISOString()): Promise<"idle" | "succeeded" | "failed"> => {
-    const claim = await options.schedule.claimDue({
+    const claim = await options.work.claimNext({
       leaseOwner,
       now: at,
       model: options.model,
       agentId: options.agentId ?? "conversation-main",
-      promptVersion: options.promptVersion ?? "conversation-v1",
+      promptVersion,
       scheduling: options.scheduling,
     });
     if (!claim) return "idle";
@@ -315,14 +251,14 @@ export function createConversationScheduler(
     const notifications = [...pendingNotifications];
     pendingNotifications.clear();
     for (const conversationId of notifications) {
-      await options.schedule.notify(conversationId, options.scheduling);
+      await options.work.notify(conversationId, options.scheduling);
     }
     while (active) {
       const result = await runOnce();
       if (result === "idle" || result === "failed") break;
     }
     if (!active) return;
-    const nextWakeAt = await options.schedule.nextWakeAt();
+    const nextWakeAt = await options.work.nextWakeAt();
     if (!nextWakeAt) return;
     timer = setTimeout(
       () => {
@@ -353,7 +289,7 @@ export function createConversationScheduler(
     async start() {
       if (active) return;
       active = true;
-      await options.schedule.reconcile(options.scheduling);
+      await options.work.reconcile(options.scheduling);
       await wake();
     },
 
@@ -361,7 +297,7 @@ export function createConversationScheduler(
 
     async stop() {
       active = false;
-      activeRunAbort?.abort(new Error("Conversation scheduler stopped"));
+      activeRunAbort?.abort(new Error("Conversation service stopped"));
       if (timer) clearTimeout(timer);
       timer = undefined;
       await scheduled;

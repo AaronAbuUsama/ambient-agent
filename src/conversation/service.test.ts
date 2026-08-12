@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ModelConfig } from "../agent-models";
 import { openAmbientDatabase, type AmbientDatabase } from "../database/database";
-import type { ConversationAgent } from "./contract";
-import { createConversationScheduler, type ScopedMessageSender } from "./scheduler";
+import { createConversationEvaluationSink } from "../database/evaluations";
+import type { ConversationAgent, ScopedMessageSender } from "./contract";
+import { createConversationService } from "./service";
 
 const model: ModelConfig = {
   provider: "test",
@@ -21,11 +22,14 @@ const scheduling = {
   maximumItemsPerRun: 10,
 };
 
-async function withDatabase(work: (database: AmbientDatabase) => Promise<void>): Promise<void> {
+async function withDatabase(
+  work: (database: AmbientDatabase, url: string) => Promise<void>,
+): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), "ambient-conversation-"));
-  const database = await openAmbientDatabase(`file:${join(directory, "ambient.db")}`);
+  const url = `file:${join(directory, "ambient.db")}`;
+  const database = await openAmbientDatabase(url);
   try {
-    await work(database);
+    await work(database, url);
   } finally {
     await database.close();
     await rm(directory, { recursive: true, force: true });
@@ -67,7 +71,7 @@ async function retainMessage(
   });
 }
 
-function scheduler(
+function service(
   database: AmbientDatabase,
   agent: ConversationAgent,
   sender: ScopedMessageSender,
@@ -75,21 +79,19 @@ function scheduler(
   evaluationSubjects: string[] = [],
 ) {
   const evaluations = database.repositories.evaluations;
-  return createConversationScheduler({
-    leaseOwner: "scheduler-1",
+  return createConversationService({
+    leaseOwner: "service-1",
     scheduling,
     model,
-    schedule: database.repositories.conversationSchedule,
-    observations: database.repositories.observations,
-    memory: database.repositories.memory,
-    runs: database.repositories.runs,
-    evaluations: {
+    work: database.repositories.conversationWork,
+    recall: database.repositories.memory,
+    evaluation: createConversationEvaluationSink({
       ...evaluations,
       start(input) {
         if (input.subjectRunId) evaluationSubjects.push(input.subjectRunId);
         return evaluations.start(input);
       },
-    },
+    }),
     agent,
     sender,
     now: () => new Date(completedAt()),
@@ -99,7 +101,7 @@ function scheduler(
 test("Conversation builds retained context and scopes one send to its conversation", async () => {
   await withDatabase(async (database) => {
     await retainMessage(database);
-    await database.repositories.conversationSchedule.notify("chat-1", scheduling);
+    await database.repositories.conversationWork.notify("chat-1", scheduling);
     const sends: Array<{
       readonly conversationId: string;
       readonly text: string;
@@ -125,7 +127,7 @@ test("Conversation builds retained context and scopes one send to its conversati
         return { summary: "Replied to the greeting." };
       },
     };
-    const runner = scheduler(
+    const runner = service(
       database,
       agent,
       {
@@ -163,13 +165,13 @@ test("Conversation builds retained context and scopes one send to its conversati
 test("Conversation can deliberately remain silent", async () => {
   await withDatabase(async (database) => {
     await retainMessage(database);
-    await database.repositories.conversationSchedule.notify("chat-1", scheduling);
+    await database.repositories.conversationWork.notify("chat-1", scheduling);
     const agent: ConversationAgent = {
       async run() {
         return { summary: "No response was useful." };
       },
     };
-    const runner = scheduler(database, agent, {
+    const runner = service(database, agent, {
       async sendText() {
         throw new Error("silence must not send");
       },
@@ -183,7 +185,7 @@ test("Conversation can deliberately remain silent", async () => {
 test("failed sends retry with the same durable idempotency key", async () => {
   await withDatabase(async (database) => {
     await retainMessage(database);
-    await database.repositories.conversationSchedule.notify("chat-1", scheduling);
+    await database.repositories.conversationWork.notify("chat-1", scheduling);
     const keys: string[] = [];
     let attempts = 0;
     const agent: ConversationAgent = {
@@ -197,7 +199,7 @@ test("failed sends retry with the same durable idempotency key", async () => {
       },
     };
     let completedAt = "2026-08-11T10:00:00.020Z";
-    const runner = scheduler(
+    const runner = service(
       database,
       agent,
       {
@@ -227,14 +229,14 @@ test("failed sends retry with the same durable idempotency key", async () => {
 test("a submitted message consumes the run even if post-send agent work fails", async () => {
   await withDatabase(async (database) => {
     await retainMessage(database);
-    await database.repositories.conversationSchedule.notify("chat-1", scheduling);
+    await database.repositories.conversationWork.notify("chat-1", scheduling);
     const agent: ConversationAgent = {
       async run(_model, _input, tools) {
         await tools.sendMessage("already submitted", "call-1");
         throw new Error("follow-up model turn failed");
       },
     };
-    const runner = scheduler(database, agent, {
+    const runner = service(database, agent, {
       async sendText() {
         return { operationId: "operation-1" };
       },
@@ -247,28 +249,26 @@ test("a submitted message consumes the run even if post-send agent work fails", 
 
 test("Conversation coalesces wake bursts and reconciles only at startup", async () => {
   await withDatabase(async (database) => {
-    const schedule = database.repositories.conversationSchedule;
+    const work = database.repositories.conversationWork;
     const notifications: string[] = [];
     let reconciliations = 0;
-    const runner = createConversationScheduler({
-      leaseOwner: "scheduler-1",
+    const runner = createConversationService({
+      leaseOwner: "service-1",
       scheduling,
       model,
-      schedule: {
-        ...schedule,
+      work: {
+        ...work,
         async reconcile(config) {
           reconciliations += 1;
-          return schedule.reconcile(config);
+          return work.reconcile(config);
         },
         async notify(conversationId, config) {
           notifications.push(conversationId);
-          return schedule.notify(conversationId, config);
+          await work.notify(conversationId, config);
         },
       },
-      observations: database.repositories.observations,
-      memory: database.repositories.memory,
-      runs: database.repositories.runs,
-      evaluations: database.repositories.evaluations,
+      recall: database.repositories.memory,
+      evaluation: createConversationEvaluationSink(database.repositories.evaluations),
       agent: {
         async run() {
           throw new Error("no run should be due");
@@ -299,7 +299,7 @@ test("Conversation stop aborts an active agent run", async () => {
       started = resolve;
     });
     let aborted = false;
-    const runner = scheduler(
+    const runner = service(
       database,
       {
         async run(_model, _input, _tools, signal) {
@@ -332,5 +332,47 @@ test("Conversation stop aborts an active agent run", async () => {
     expect((await database.repositories.inbox.pending("chat-1")).map(({ id }) => id)).toEqual([
       "inbox-1",
     ]);
+  });
+});
+
+test("restart reconciliation recovers committed Inbox work after a lost wake callback", async () => {
+  await withDatabase(async (database, url) => {
+    // Commit the Observation and Inbox item, then lose the process before the
+    // in-memory wake callback ever reaches the Conversation service.
+    await retainMessage(database);
+    await database.close();
+
+    const restarted = await openAmbientDatabase(url);
+    try {
+      const evaluationSubjects: string[] = [];
+      const runner = service(
+        restarted,
+        {
+          async run() {
+            return { summary: "Recovered after restart." };
+          },
+        },
+        {
+          async sendText() {
+            throw new Error("recovery must not send");
+          },
+        },
+        () => "2026-08-11T10:00:01.000Z",
+        evaluationSubjects,
+      );
+
+      // start() reconciles from durable Inbox state and drains due work before
+      // resolving; no notify or wake hint is ever delivered.
+      await runner.start();
+      await runner.stop();
+
+      expect(await restarted.repositories.inbox.pending("chat-1")).toEqual([]);
+      expect(evaluationSubjects).toHaveLength(1);
+      expect((await restarted.repositories.runs.get(evaluationSubjects[0]!))?.status).toBe(
+        "succeeded",
+      );
+    } finally {
+      await restarted.close();
+    }
   });
 });

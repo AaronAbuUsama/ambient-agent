@@ -71,11 +71,11 @@ test("migrations are repeatable and retained observations survive restart", asyn
     expect(duplicate.observation.id).toBe("observation-1");
     await database.repositories.runs.start({
       id: "restart-run",
-      agentId: "conversation-main",
-      role: "conversation",
+      agentId: "memory-main",
+      role: "memory",
       conversationId: "chat-1",
       model,
-      promptVersion: "conversation-v1",
+      promptVersion: "memory-v1",
       input: { observationIds: ["observation-1"] },
     });
     await database.repositories.inbox.enqueue({
@@ -131,124 +131,15 @@ test("relative file URLs create the same database libSQL opens", async () => {
   }
 });
 
-test("agent runs retain model snapshots and enforce terminal state", async () => {
-  await withDatabase(async ({ repositories }) => {
-    const run = await repositories.runs.start({
-      id: "run-1",
-      agentId: "conversation-main",
-      role: "conversation",
-      conversationId: "chat-1",
-      model,
-      promptVersion: "conversation-v1",
-      input: { observationIds: ["observation-1"] },
-      startedAt: "2026-08-11T10:00:00.000Z",
-    });
-    const call = await repositories.runs.startToolCall({
-      id: "call-1",
-      runId: run.id,
-      callId: "model-call-1",
-      toolName: "recall",
-      input: { query: "project" },
-      startedAt: "2026-08-11T10:00:01.000Z",
-    });
-
-    await expectFailure(
-      () => repositories.runs.succeed(run.id, { summary: "too early" }),
-      "cannot finish with active tool calls",
-    );
-    await repositories.runs.completeToolCall(
-      call.id,
-      { outcome: "succeeded", output: { claims: [] } },
-      "2026-08-11T10:00:02.000Z",
-    );
-    const completed = await repositories.runs.succeed(
-      run.id,
-      { summary: "done" },
-      "2026-08-11T10:00:03.000Z",
-    );
-
-    expect(completed.model).toEqual(model);
-    expect(completed.status).toBe("succeeded");
-    await expectFailure(
-      () =>
-        repositories.runs.startToolCall({
-          runId: run.id,
-          callId: "late-call",
-          toolName: "recall",
-          input: {},
-        }),
-      'cannot start tool calls from status "succeeded"',
-    );
-    await expectFailure(
-      () => repositories.runs.fail(run.id, "too late"),
-      'cannot finish from status "succeeded"',
-    );
-  });
-});
-
-test("inbox claims retain immutable run ranges and consume each item once", async () => {
-  await withDatabase(async ({ repositories }) => {
-    for (const id of ["run-1", "run-2", "run-3"]) {
-      await repositories.runs.start({
-        id,
-        agentId: "conversation-main",
-        role: "conversation",
-        conversationId: "chat-1",
-        model,
-        promptVersion: "conversation-v1",
-        input: {},
-      });
-    }
-    await repositories.runs.start({
-      id: "wrong-conversation-run",
-      agentId: "conversation-main",
-      role: "conversation",
-      conversationId: "chat-2",
-      model,
-      promptVersion: "conversation-v1",
-      input: {},
-    });
-    for (const [index, referenceId] of ["observation-1", "observation-2"].entries()) {
-      await repositories.inbox.enqueue({
-        id: `inbox-${index + 1}`,
-        conversationId: "chat-1",
-        kind: "message",
-        referenceId,
-        createdAt: `2026-08-11T10:00:0${index}.000Z`,
-      });
-    }
-
-    await expectFailure(
-      () => repositories.inbox.claim("chat-1", "wrong-conversation-run", 1),
-      "cannot claim inbox",
-    );
-    const firstRange = await repositories.inbox.claim("chat-1", "run-1", 1);
-    const secondRange = await repositories.inbox.claim("chat-1", "run-2", 10);
-    expect(firstRange.map((item) => item.id)).toEqual(["inbox-1"]);
-    expect(secondRange.map((item) => item.id)).toEqual(["inbox-2"]);
-
-    await expectFailure(() => repositories.inbox.consume("run-1"), "must succeed before");
-    await repositories.runs.succeed("run-1", {});
-    expect(await repositories.inbox.consume("run-1")).toBe(1);
-    expect(await repositories.inbox.consume("run-1")).toBe(0);
-    await expectFailure(() => repositories.inbox.release("run-2"), "must fail before");
-    await repositories.runs.fail("run-2", "retry");
-    expect(await repositories.inbox.release("run-2")).toBe(1);
-
-    const retriedRange = await repositories.inbox.claim("chat-1", "run-3", 10);
-    expect(retriedRange.map((item) => item.id)).toEqual(["inbox-2"]);
-  });
-});
-
 test("task leases are single-flight and invalid transitions are rejected", async () => {
   await withDatabase(async ({ repositories }) => {
     const requestRun = await repositories.runs.start({
       id: "request-run",
-      agentId: "conversation-main",
-      role: "conversation",
+      agentId: "worker-main",
+      role: "worker",
       conversationId: "chat-1",
       model,
-      promptVersion: "conversation-v1",
+      promptVersion: "worker-v1",
       input: {},
     });
     const task = await repositories.tasks.create({

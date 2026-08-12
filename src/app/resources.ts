@@ -1,6 +1,6 @@
 import { openAmbientDatabase, type AmbientDatabase } from "../database/database";
 import { createPiConversationAgent } from "../conversation/pi-agent";
-import { createConversationScheduler, type ConversationScheduler } from "../conversation/scheduler";
+import { createConversationService, type ConversationService } from "../conversation/service";
 import { createWhatsAppAcceptedSourceConsumer } from "../whatsapp/message-ingestion";
 import { WhatsAppSessionController } from "../whatsapp/session/controller";
 import { localDeployment } from "../whatsapp/session/local-deployment";
@@ -10,7 +10,7 @@ import type { AmbientLifecycleDependencies } from "./lifecycle";
 export interface AppResources extends AmbientLifecycleDependencies {
   readonly database: AmbientDatabase;
   readonly whatsapp: WhatsAppSessionController;
-  readonly conversation?: ConversationScheduler;
+  readonly conversation?: ConversationService;
 }
 
 export async function createAppResources(
@@ -22,7 +22,7 @@ export async function createAppResources(
 ): Promise<AppResources> {
   const database = await openAmbientDatabase(config.database.url);
   try {
-    let conversation: ConversationScheduler | undefined;
+    let conversation: ConversationService | undefined;
     const acceptedSource = createWhatsAppAcceptedSourceConsumer(
       config.whatsapp.accountId,
       database.repositories.messageIngestion,
@@ -44,15 +44,13 @@ export async function createAppResources(
       acceptedSource,
     });
     if (config.conversation.enabled) {
-      conversation = createConversationScheduler({
+      conversation = createConversationService({
         scheduling: config.conversation.scheduling,
         model: config.models.conversation,
         instructions: config.conversation.instructions,
-        schedule: database.repositories.conversationSchedule,
-        observations: database.repositories.observations,
-        memory: database.repositories.memory,
-        runs: database.repositories.runs,
-        evaluations: database.repositories.evaluations,
+        work: database.repositories.conversationWork,
+        recall: database.repositories.memory,
+        evaluation: database.repositories.conversationEvaluation,
         agent: createPiConversationAgent(),
         sender: {
           async sendText({ conversationId, text, idempotencyKey }) {
