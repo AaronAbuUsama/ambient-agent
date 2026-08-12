@@ -1,0 +1,990 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ambient durable protocol map</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --paper: #f5f5f5;
+        --white: #ffffff;
+        --ink: #2d3142;
+        --muted: #4f5d75;
+        --soft: #7a8399;
+        --rule: rgba(45, 49, 66, 0.12);
+        --accent: #eb6c36;
+        --accent-tint: rgba(235, 108, 54, 0.08);
+        --link: #2e5aa8;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background: var(--paper);
+        font-family: "Geist", system-ui, sans-serif;
+      }
+
+      main {
+        width: min(1200px, calc(100% - 48px));
+        margin: 0 auto;
+        padding: 64px 0 48px;
+      }
+
+      .eyebrow {
+        margin: 0 0 12px;
+        color: var(--soft);
+        font:
+          500 10px/1.4 "Geist Mono",
+          monospace;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2 {
+        margin: 0;
+        font-family: "Instrument Serif", serif;
+        font-weight: 400;
+      }
+
+      h1 {
+        max-width: 920px;
+        font-size: clamp(42px, 6vw, 72px);
+        line-height: 0.98;
+      }
+
+      h2 {
+        font-size: 32px;
+      }
+
+      .lede {
+        max-width: 840px;
+        margin: 24px 0 0;
+        color: var(--muted);
+        font-size: 17px;
+        line-height: 1.65;
+      }
+
+      section {
+        margin-top: 64px;
+      }
+
+      .section-head {
+        display: grid;
+        grid-template-columns: 1fr minmax(280px, 460px);
+        gap: 48px;
+        align-items: end;
+        margin-bottom: 24px;
+      }
+
+      .section-copy {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .diagram {
+        overflow-x: auto;
+        border-top: 1px solid var(--rule);
+        border-bottom: 1px solid var(--rule);
+        padding: 24px 0;
+      }
+
+      svg {
+        display: block;
+        width: 100%;
+        min-width: 880px;
+        height: auto;
+      }
+
+      .invariants {
+        display: grid;
+        grid-template-columns: 1.15fr 0.85fr;
+        gap: 20px;
+      }
+
+      .card {
+        background: var(--white);
+        border: 1px solid var(--rule);
+        border-radius: 6px;
+        padding: 24px;
+      }
+
+      .card h3 {
+        margin: 0 0 12px;
+        font-size: 18px;
+      }
+
+      .card ul {
+        margin: 0;
+        padding-left: 20px;
+      }
+
+      .card li,
+      .card p {
+        color: var(--muted);
+        line-height: 1.55;
+      }
+
+      code {
+        color: var(--link);
+        font-family: "Geist Mono", monospace;
+        font-size: 0.9em;
+      }
+
+      footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        margin-top: 56px;
+        padding-top: 20px;
+        border-top: 1px solid var(--rule);
+        color: var(--soft);
+        font:
+          500 9px/1.5 "Geist Mono",
+          monospace;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      @media (max-width: 760px) {
+        main {
+          width: min(100% - 28px, 1200px);
+          padding-top: 40px;
+        }
+
+        .section-head,
+        .invariants {
+          grid-template-columns: 1fr;
+          gap: 20px;
+        }
+
+        footer {
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Ambient architecture · durable protocols</p>
+        <h1>Callbacks wake the system. Retained records carry responsibility.</h1>
+        <p class="lede">
+          WhatsApp ingress and Conversation execution are separate protocols joined by a durable
+          Inbox item. Claims, tool calls, operation receipts, and terminal results remain
+          inspectable across process or model failure.
+        </p>
+      </header>
+
+      <section>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">01 · Accepted WhatsApp input</p>
+            <h2>Commit before wake</h2>
+          </div>
+          <p class="section-copy">
+            The accepted-source sequence, native identity, Observation, Inbox item, and cursor form
+            one transaction boundary. The post-commit wake is only an optimization.
+          </p>
+        </div>
+        <div class="diagram">
+          <svg viewBox="0 0 1080 600" role="img" aria-labelledby="ingress-title ingress-desc">
+            <title id="ingress-title">Accepted WhatsApp input protocol</title>
+            <desc id="ingress-desc">
+              WhatsAppd retains accepted input. The WhatsApp ingress adapter reads the next batch
+              and asks the ingestion store to retain the Observation, Conversation Inbox item, and
+              cursor atomically. After commit it optionally wakes Conversation.
+            </desc>
+            <defs>
+              <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#4f5d75" />
+              </marker>
+              <marker
+                id="arrow-accent"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill="#eb6c36" />
+              </marker>
+              <marker
+                id="arrow-open"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2" />
+              </marker>
+              <marker
+                id="arrow-link"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill="#2e5aa8" />
+              </marker>
+            </defs>
+            <rect width="1080" height="600" fill="#f5f5f5" />
+
+            <!-- lifelines -->
+            <line
+              x1="120"
+              y1="104"
+              x2="120"
+              y2="516"
+              stroke="rgba(45,49,66,0.20)"
+              stroke-dasharray="3,3"
+            />
+            <line
+              x1="360"
+              y1="104"
+              x2="360"
+              y2="516"
+              stroke="rgba(45,49,66,0.20)"
+              stroke-dasharray="3,3"
+            />
+            <line
+              x1="628"
+              y1="104"
+              x2="628"
+              y2="516"
+              stroke="rgba(45,49,66,0.20)"
+              stroke-dasharray="3,3"
+            />
+            <line
+              x1="920"
+              y1="104"
+              x2="920"
+              y2="516"
+              stroke="rgba(45,49,66,0.20)"
+              stroke-dasharray="3,3"
+            />
+
+            <!-- messages -->
+            <line
+              x1="120"
+              y1="160"
+              x2="352"
+              y2="160"
+              stroke="#2e5aa8"
+              stroke-width="1.2"
+              marker-end="url(#arrow-link)"
+            />
+            <rect x="180" y="136" width="112" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="236"
+              y="148"
+              fill="#2e5aa8"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              ACCEPTED BATCH N
+            </text>
+
+            <line
+              x1="360"
+              y1="224"
+              x2="620"
+              y2="224"
+              stroke="#4f5d75"
+              stroke-width="1.2"
+              marker-end="url(#arrow)"
+            />
+            <rect x="420" y="200" width="140" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="490"
+              y="212"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              RETAIN NEXT SEQUENCE
+            </text>
+
+            <path
+              d="M 628 276 H 704 Q 712 276 712 284 V 388 Q 712 396 704 396 H 628"
+              fill="none"
+              stroke="#eb6c36"
+              stroke-width="1.2"
+              marker-end="url(#arrow-accent)"
+            />
+            <rect x="724" y="324" width="176" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="812"
+              y="336"
+              fill="#eb6c36"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              ONE TRANSACTION: O + I + CURSOR
+            </text>
+
+            <line
+              x1="620"
+              y1="432"
+              x2="368"
+              y2="432"
+              stroke="#4f5d75"
+              stroke-width="1"
+              stroke-dasharray="4,3"
+              marker-end="url(#arrow)"
+            />
+            <rect x="440" y="408" width="108" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="494"
+              y="420"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              COMMITTED ITEMS
+            </text>
+
+            <line
+              x1="360"
+              y1="480"
+              x2="912"
+              y2="480"
+              stroke="#4f5d75"
+              stroke-width="1"
+              stroke-dasharray="4,3"
+              marker-end="url(#arrow-open)"
+            />
+            <rect x="560" y="456" width="152" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="636"
+              y="468"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              OPTIONAL WAKE HINT
+            </text>
+
+            <!-- actors -->
+            <rect x="56" y="40" width="128" height="64" rx="6" fill="#ffffff" stroke="#2e5aa8" />
+            <text
+              x="120"
+              y="68"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="middle"
+            >
+              whatsappd
+            </text>
+            <text
+              x="120"
+              y="88"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              accepted source
+            </text>
+
+            <rect x="272" y="40" width="176" height="64" rx="6" fill="#ffffff" stroke="#2d3142" />
+            <text
+              x="360"
+              y="68"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="middle"
+            >
+              WhatsApp Ingress
+            </text>
+            <text
+              x="360"
+              y="88"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              map accepted input
+            </text>
+
+            <rect
+              x="520"
+              y="40"
+              width="216"
+              height="64"
+              rx="6"
+              fill="rgba(235,108,54,0.08)"
+              stroke="#eb6c36"
+            />
+            <text
+              x="628"
+              y="68"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="middle"
+            >
+              Ingestion Store
+            </text>
+            <text
+              x="628"
+              y="88"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              sequence + transaction owner
+            </text>
+
+            <rect x="824" y="40" width="192" height="64" rx="6" fill="#ffffff" stroke="#2d3142" />
+            <text
+              x="920"
+              y="68"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="middle"
+            >
+              Conversation Service
+            </text>
+            <text
+              x="920"
+              y="88"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              reconcile is authority
+            </text>
+
+            <line x1="40" y1="548" x2="1040" y2="548" stroke="rgba(45,49,66,0.12)" />
+            <text
+              x="40"
+              y="576"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              letter-spacing="0.14em"
+            >
+              SOLID = AUTHORITATIVE CALL · DASHED = RETURN OR WAKE ACCELERATION
+            </text>
+          </svg>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">02 · Conversation run</p>
+            <h2>Claim, act, retain, complete</h2>
+          </div>
+          <p class="section-copy">
+            The work store creates and fences the run. Every model tool call is retained before the
+            effect. A WhatsApp operation receipt survives a later model failure.
+          </p>
+        </div>
+        <div class="diagram">
+          <svg viewBox="0 0 1080 760" role="img" aria-labelledby="run-title run-desc">
+            <title id="run-title">Conversation run durable protocol</title>
+            <desc id="run-desc">
+              Conversation service claims durable work, builds context, runs the Conversation Agent,
+              records a tool call, submits a scoped WhatsApp effect, retains the receipt, and
+              completes the run by consuming Inbox items and releasing its lease.
+            </desc>
+            <defs>
+              <marker
+                id="run-arrow"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill="#4f5d75" />
+              </marker>
+              <marker
+                id="run-accent"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill="#eb6c36" />
+              </marker>
+              <marker
+                id="run-link"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill="#2e5aa8" />
+              </marker>
+            </defs>
+            <rect width="1080" height="760" fill="#f5f5f5" />
+
+            <!-- lifelines -->
+            <line
+              x1="120"
+              y1="104"
+              x2="120"
+              y2="672"
+              stroke="rgba(45,49,66,0.20)"
+              stroke-dasharray="3,3"
+            />
+            <line
+              x1="336"
+              y1="104"
+              x2="336"
+              y2="672"
+              stroke="rgba(45,49,66,0.20)"
+              stroke-dasharray="3,3"
+            />
+            <line
+              x1="540"
+              y1="104"
+              x2="540"
+              y2="672"
+              stroke="rgba(45,49,66,0.20)"
+              stroke-dasharray="3,3"
+            />
+            <line
+              x1="744"
+              y1="104"
+              x2="744"
+              y2="672"
+              stroke="rgba(45,49,66,0.20)"
+              stroke-dasharray="3,3"
+            />
+            <line
+              x1="960"
+              y1="104"
+              x2="960"
+              y2="672"
+              stroke="rgba(45,49,66,0.20)"
+              stroke-dasharray="3,3"
+            />
+
+            <!-- messages -->
+            <line
+              x1="120"
+              y1="152"
+              x2="328"
+              y2="152"
+              stroke="#eb6c36"
+              stroke-width="1.2"
+              marker-end="url(#run-accent)"
+            />
+            <rect x="172" y="128" width="104" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="224"
+              y="140"
+              fill="#eb6c36"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              CLAIM NEXT WORK
+            </text>
+
+            <line
+              x1="328"
+              y1="208"
+              x2="128"
+              y2="208"
+              stroke="#4f5d75"
+              stroke-width="1"
+              stroke-dasharray="4,3"
+              marker-end="url(#run-arrow)"
+            />
+            <rect x="172" y="184" width="112" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="228"
+              y="196"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              RUN + ITEMS + LEASE
+            </text>
+
+            <line
+              x1="120"
+              y1="264"
+              x2="532"
+              y2="264"
+              stroke="#4f5d75"
+              stroke-width="1.2"
+              marker-end="url(#run-arrow)"
+            />
+            <rect x="264" y="240" width="124" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="326"
+              y="252"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              CURATED INPUT + TOOLS
+            </text>
+
+            <line
+              x1="540"
+              y1="328"
+              x2="112"
+              y2="328"
+              stroke="#4f5d75"
+              stroke-width="1.2"
+              marker-end="url(#run-arrow)"
+            />
+            <rect x="260" y="304" width="132" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="326"
+              y="316"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              SELECT GRANTED TOOL
+            </text>
+
+            <line
+              x1="120"
+              y1="384"
+              x2="328"
+              y2="384"
+              stroke="#4f5d75"
+              stroke-width="1.2"
+              marker-end="url(#run-arrow)"
+            />
+            <rect x="164" y="360" width="120" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="224"
+              y="372"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              BEGIN TOOL EVIDENCE
+            </text>
+
+            <line
+              x1="120"
+              y1="440"
+              x2="736"
+              y2="440"
+              stroke="#2e5aa8"
+              stroke-width="1.2"
+              marker-end="url(#run-link)"
+            />
+            <rect x="340" y="416" width="176" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="428"
+              y="428"
+              fill="#2e5aa8"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              SCOPED EFFECT · FIXED DESTINATION
+            </text>
+
+            <line
+              x1="744"
+              y1="496"
+              x2="952"
+              y2="496"
+              stroke="#eb6c36"
+              stroke-width="1.2"
+              marker-end="url(#run-accent)"
+            />
+            <rect x="788" y="472" width="120" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="848"
+              y="484"
+              fill="#eb6c36"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              DURABLE OPERATION
+            </text>
+
+            <line
+              x1="952"
+              y1="544"
+              x2="752"
+              y2="544"
+              stroke="#4f5d75"
+              stroke-width="1"
+              stroke-dasharray="4,3"
+              marker-end="url(#run-arrow)"
+            />
+            <rect x="796" y="520" width="112" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="852"
+              y="532"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              OPERATION RECEIPT
+            </text>
+
+            <path
+              d="M 120 584 H 224 Q 232 584 232 592 V 608 Q 232 616 240 616 H 328"
+              fill="none"
+              stroke="#4f5d75"
+              stroke-width="1.2"
+              marker-end="url(#run-arrow)"
+            />
+            <rect x="172" y="568" width="104" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="224"
+              y="580"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              FINISH TOOL
+            </text>
+
+            <line
+              x1="120"
+              y1="656"
+              x2="328"
+              y2="656"
+              stroke="#eb6c36"
+              stroke-width="1.2"
+              marker-end="url(#run-accent)"
+            />
+            <rect x="152" y="632" width="144" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="224"
+              y="644"
+              fill="#eb6c36"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              COMPLETE + CONSUME + RELEASE
+            </text>
+
+            <!-- actors -->
+            <rect
+              x="40"
+              y="40"
+              width="160"
+              height="64"
+              rx="6"
+              fill="rgba(235,108,54,0.08)"
+              stroke="#eb6c36"
+            />
+            <text
+              x="120"
+              y="68"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="middle"
+            >
+              Conversation Service
+            </text>
+            <text
+              x="120"
+              y="88"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              protocol owner
+            </text>
+
+            <rect
+              x="248"
+              y="40"
+              width="176"
+              height="64"
+              rx="6"
+              fill="rgba(235,108,54,0.08)"
+              stroke="#eb6c36"
+            />
+            <text
+              x="336"
+              y="68"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="middle"
+            >
+              Work Store
+            </text>
+            <text
+              x="336"
+              y="88"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              transaction owner
+            </text>
+
+            <rect x="456" y="40" width="168" height="64" rx="6" fill="#ffffff" stroke="#2d3142" />
+            <text
+              x="540"
+              y="68"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="middle"
+            >
+              Conversation Agent
+            </text>
+            <text
+              x="540"
+              y="88"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              bounded judgement
+            </text>
+
+            <rect x="656" y="40" width="176" height="64" rx="6" fill="#ffffff" stroke="#2d3142" />
+            <text
+              x="744"
+              y="68"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="middle"
+            >
+              Scoped Effects
+            </text>
+            <text
+              x="744"
+              y="88"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              capability bound
+            </text>
+
+            <rect x="880" y="40" width="160" height="64" rx="6" fill="#ffffff" stroke="#2e5aa8" />
+            <text
+              x="960"
+              y="68"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="middle"
+            >
+              whatsappd
+            </text>
+            <text
+              x="960"
+              y="88"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              operation queue
+            </text>
+
+            <line x1="40" y1="704" x2="1040" y2="704" stroke="rgba(45,49,66,0.12)" />
+            <text
+              x="40"
+              y="732"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              letter-spacing="0.14em"
+            >
+              AN EFFECT RECEIPT IS EVIDENCE EVEN IF LATER MODEL EXECUTION FAILS
+            </text>
+          </svg>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">03 · Protocol invariants</p>
+            <h2>What restart must not change</h2>
+          </div>
+          <p class="section-copy">
+            Timers, callbacks, and live model sessions can disappear. These retained identities and
+            transitions prevent loss or duplication.
+          </p>
+        </div>
+        <div class="invariants">
+          <article class="card">
+            <h3>Ingress authority</h3>
+            <ul>
+              <li>Source sequence advances with Observation and Inbox retention.</li>
+              <li>Native WhatsApp identity deduplicates replayed accepted input.</li>
+              <li>Conversation reconciliation finds committed Inbox work after a lost wake.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Run authority</h3>
+            <ul>
+              <li>Claim membership and lease ownership fence every terminal transition.</li>
+              <li>Tool starts and outcomes remain attached to one run and call identity.</li>
+              <li>WhatsApp idempotency derives from retained run work, not model text.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <footer>
+        <span>Derived map · canonical source: docs/canon/architecture.md</span>
+        <span>Ambient · 2026-08-12</span>
+      </footer>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ambient frontiers and rescue selection</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --paper: #f5f5f5;
+        --white: #ffffff;
+        --ink: #2d3142;
+        --muted: #4f5d75;
+        --soft: #7a8399;
+        --rule: rgba(45, 49, 66, 0.12);
+        --accent: #eb6c36;
+        --accent-tint: rgba(235, 108, 54, 0.08);
+        --link: #2e5aa8;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background: var(--paper);
+        font-family: "Geist", system-ui, sans-serif;
+      }
+
+      main {
+        width: min(1200px, calc(100% - 48px));
+        margin: 0 auto;
+        padding: 64px 0 48px;
+      }
+
+      .eyebrow {
+        margin: 0 0 12px;
+        color: var(--soft);
+        font:
+          500 10px/1.4 "Geist Mono",
+          monospace;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2 {
+        margin: 0;
+        font-family: "Instrument Serif", serif;
+        font-weight: 400;
+      }
+
+      h1 {
+        max-width: 920px;
+        font-size: clamp(42px, 6vw, 72px);
+        line-height: 0.98;
+      }
+
+      h2 {
+        font-size: 32px;
+      }
+
+      .lede {
+        max-width: 840px;
+        margin: 24px 0 0;
+        color: var(--muted);
+        font-size: 17px;
+        line-height: 1.65;
+      }
+
+      section {
+        margin-top: 64px;
+      }
+
+      .section-head {
+        display: grid;
+        grid-template-columns: 1fr minmax(280px, 460px);
+        gap: 48px;
+        align-items: end;
+        margin-bottom: 24px;
+      }
+
+      .section-copy {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .diagram {
+        overflow-x: auto;
+        border-top: 1px solid var(--rule);
+        border-bottom: 1px solid var(--rule);
+        padding: 24px 0;
+      }
+
+      svg {
+        display: block;
+        width: 100%;
+        min-width: 880px;
+        height: auto;
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: 1.15fr 0.85fr;
+        gap: 20px;
+      }
+
+      .card {
+        background: var(--white);
+        border: 1px solid var(--rule);
+        border-radius: 6px;
+        padding: 24px;
+      }
+
+      .card h3 {
+        margin: 0 0 12px;
+        font-size: 18px;
+      }
+
+      .card p,
+      .card li {
+        color: var(--muted);
+        line-height: 1.55;
+      }
+
+      .card ul {
+        margin: 0;
+        padding-left: 20px;
+      }
+
+      code {
+        color: var(--link);
+        font-family: "Geist Mono", monospace;
+        font-size: 0.9em;
+      }
+
+      footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        margin-top: 56px;
+        padding-top: 20px;
+        border-top: 1px solid var(--rule);
+        color: var(--soft);
+        font:
+          500 9px/1.5 "Geist Mono",
+          monospace;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      @media (max-width: 760px) {
+        main {
+          width: min(100% - 28px, 1200px);
+          padding-top: 40px;
+        }
+
+        .section-head,
+        .cards {
+          grid-template-columns: 1fr;
+          gap: 20px;
+        }
+
+        footer {
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Ambient architecture · implementation frontier</p>
+        <h1>The baseline works. The internal ownership still needs rescue.</h1>
+        <p class="lede">
+          Proven behaviour and target product concepts are deliberately wider than the current
+          architecture frontier. The next cut is selected for leverage and proofability, not because
+          it was pre-committed as a phase.
+        </p>
+      </header>
+
+      <section>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">01 · Frontier stack</p>
+            <h2>Know what is proven, leaky, and absent</h2>
+          </div>
+          <p class="section-copy">
+            “Not implemented” is not the same as “architecturally broken.” Rescue only the boundary
+            needed for the active slice while preserving the behaviour below it.
+          </p>
+        </div>
+        <div class="diagram">
+          <svg viewBox="0 0 1040 520" role="img" aria-labelledby="frontier-title frontier-desc">
+            <title id="frontier-title">
+              Ambient behaviour, architecture, and product frontiers
+            </title>
+            <desc id="frontier-desc">
+              Four stacked layers show the proven runtime, rescued outer boundary, unresolved
+              internal architecture, and deliberately unimplemented Root-led product behaviours. The
+              unresolved internal architecture is the active focus.
+            </desc>
+            <defs>
+              <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#4f5d75" />
+              </marker>
+              <marker
+                id="arrow-accent"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill="#eb6c36" />
+              </marker>
+              <marker
+                id="arrow-link"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill="#2e5aa8" />
+              </marker>
+            </defs>
+            <rect width="1040" height="520" fill="#f5f5f5" />
+
+            <line
+              x1="60"
+              y1="416"
+              x2="60"
+              y2="104"
+              stroke="#4f5d75"
+              stroke-width="1.2"
+              marker-end="url(#arrow)"
+            />
+            <text
+              x="32"
+              y="264"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+              transform="rotate(-90 32 264)"
+              letter-spacing="0.12em"
+            >
+              PRODUCT AMBITION
+            </text>
+
+            <rect
+              x="104"
+              y="80"
+              width="856"
+              height="80"
+              fill="#ffffff"
+              stroke="rgba(45,49,66,0.20)"
+            />
+            <text
+              x="136"
+              y="112"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              letter-spacing="0.12em"
+            >
+              L4 · DELIBERATELY UNIMPLEMENTED
+            </text>
+            <text
+              x="360"
+              y="116"
+              fill="#2d3142"
+              font-size="16"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+            >
+              Root-led product behaviour
+            </text>
+            <text
+              x="360"
+              y="140"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+            >
+              attention · assignments · Workers · Memory jobs · reports
+            </text>
+
+            <rect
+              x="104"
+              y="160"
+              width="856"
+              height="104"
+              fill="rgba(235,108,54,0.08)"
+              stroke="#eb6c36"
+              stroke-width="1.2"
+            />
+            <text
+              x="136"
+              y="196"
+              fill="#eb6c36"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              letter-spacing="0.12em"
+            >
+              L3 · ACTIVE ARCHITECTURE FRONTIER
+            </text>
+            <text
+              x="360"
+              y="200"
+              fill="#2d3142"
+              font-size="16"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+            >
+              Internal ownership is still mechanism-first
+            </text>
+            <text
+              x="360"
+              y="224"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+            >
+              Conversation overlap · model leakage · controller exposure · proof drift
+            </text>
+            <text
+              x="360"
+              y="244"
+              fill="#eb6c36"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+            >
+              NEXT CUT: Conversation Service + Conversation Work Store
+            </text>
+
+            <rect x="104" y="264" width="856" height="80" fill="#ffffff" stroke="#2e5aa8" />
+            <text
+              x="136"
+              y="296"
+              fill="#2e5aa8"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              letter-spacing="0.12em"
+            >
+              L2 · RESCUED OUTER BOUNDARY
+            </text>
+            <text
+              x="360"
+              y="300"
+              fill="#2d3142"
+              font-size="16"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+            >
+              One composition root and deterministic lifecycle
+            </text>
+            <text
+              x="360"
+              y="324"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+            >
+              main → createAmbient → start · wait · stop · committed as 0c0f312
+            </text>
+
+            <rect
+              x="104"
+              y="344"
+              width="856"
+              height="104"
+              fill="rgba(45,49,66,0.05)"
+              stroke="#4f5d75"
+            />
+            <text
+              x="136"
+              y="380"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              letter-spacing="0.12em"
+            >
+              L1 · PROVEN BEHAVIOUR FRONTIER
+            </text>
+            <text
+              x="360"
+              y="384"
+              fill="#2d3142"
+              font-size="16"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+            >
+              Durable WhatsApp Conversation baseline
+            </text>
+            <text
+              x="360"
+              y="408"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+            >
+              authenticated session · exact ingestion · claims · leases · recall · text effects
+            </text>
+            <text
+              x="360"
+              y="428"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+            >
+              Live Qwen reply proved only in the authorized Tst group
+            </text>
+
+            <line x1="104" y1="480" x2="960" y2="480" stroke="rgba(45,49,66,0.12)" />
+            <text
+              x="104"
+              y="508"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              letter-spacing="0.14em"
+            >
+              LOWER LAYERS CONSTRAIN EVERY RESCUE ABOVE THEM
+            </text>
+          </svg>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">02 · Rescue comparison</p>
+            <h2>Conversation wins on leverage</h2>
+          </div>
+          <p class="section-copy">
+            Scores combine leverage, interface certainty, dependency value, deterministic
+            proofability, and inverse risk. They are selection evidence, not a permanent roadmap.
+          </p>
+        </div>
+        <div class="diagram">
+          <svg viewBox="0 0 1040 560" role="img" aria-labelledby="score-title score-desc">
+            <title id="score-title">Ambient rescue candidate scores</title>
+            <desc id="score-desc">
+              Horizontal bars compare Conversation service and store at 23, model runtime and
+              configuration at 20, WhatsApp boundary and effects at 17, and proof composition at 17.
+            </desc>
+            <defs>
+              <marker
+                id="score-arrow"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill="#4f5d75" />
+              </marker>
+              <marker
+                id="score-accent"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill="#eb6c36" />
+              </marker>
+              <marker
+                id="score-link"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill="#2e5aa8" />
+              </marker>
+            </defs>
+            <rect width="1040" height="560" fill="#f5f5f5" />
+
+            <!-- grid -->
+            <line x1="328" y1="64" x2="328" y2="440" stroke="rgba(45,49,66,0.25)" />
+            <line x1="460" y1="64" x2="460" y2="440" stroke="rgba(45,49,66,0.08)" />
+            <line x1="592" y1="64" x2="592" y2="440" stroke="rgba(45,49,66,0.08)" />
+            <line x1="724" y1="64" x2="724" y2="440" stroke="rgba(45,49,66,0.08)" />
+            <line x1="856" y1="64" x2="856" y2="440" stroke="rgba(45,49,66,0.08)" />
+            <line x1="988" y1="64" x2="988" y2="440" stroke="rgba(45,49,66,0.08)" />
+            <text
+              x="328"
+              y="468"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              0
+            </text>
+            <text
+              x="460"
+              y="468"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              5
+            </text>
+            <text
+              x="592"
+              y="468"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              10
+            </text>
+            <text
+              x="724"
+              y="468"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              15
+            </text>
+            <text
+              x="856"
+              y="468"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              20
+            </text>
+            <text
+              x="988"
+              y="468"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              25
+            </text>
+
+            <!-- labels -->
+            <text
+              x="304"
+              y="132"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="end"
+            >
+              Conversation service + store
+            </text>
+            <text
+              x="304"
+              y="220"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="end"
+            >
+              Model runtime + config
+            </text>
+            <text
+              x="304"
+              y="308"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="end"
+            >
+              WhatsApp boundary + effects
+            </text>
+            <text
+              x="304"
+              y="396"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="end"
+            >
+              Proof composition
+            </text>
+
+            <!-- bars: 26.4 px per score -->
+            <rect
+              x="328"
+              y="100"
+              width="608"
+              height="48"
+              fill="rgba(235,108,54,0.12)"
+              stroke="#eb6c36"
+            />
+            <text
+              x="948"
+              y="128"
+              fill="#eb6c36"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+            >
+              23
+            </text>
+
+            <rect
+              x="328"
+              y="188"
+              width="528"
+              height="48"
+              fill="rgba(79,93,117,0.15)"
+              stroke="#4f5d75"
+            />
+            <text
+              x="868"
+              y="216"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+            >
+              20
+            </text>
+
+            <rect
+              x="328"
+              y="276"
+              width="448"
+              height="48"
+              fill="rgba(79,93,117,0.15)"
+              stroke="#4f5d75"
+            />
+            <text
+              x="788"
+              y="304"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+            >
+              17
+            </text>
+
+            <rect
+              x="328"
+              y="364"
+              width="448"
+              height="48"
+              fill="rgba(79,93,117,0.15)"
+              stroke="#4f5d75"
+            />
+            <text
+              x="788"
+              y="392"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+            >
+              17
+            </text>
+
+            <line x1="40" y1="504" x2="1000" y2="504" stroke="rgba(45,49,66,0.12)" />
+            <text
+              x="40"
+              y="532"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              letter-spacing="0.14em"
+            >
+              SCORE = LEVERAGE + CERTAINTY + DEPENDENCY VALUE + PROOFABILITY + INVERSE RISK
+            </text>
+          </svg>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">03 · Selection rationale</p>
+            <h2>One active cut, one likely next</h2>
+          </div>
+          <p class="section-copy">
+            The mapping creates ordering constraints without turning uncertain future work into
+            phases.
+          </p>
+        </div>
+        <div class="cards">
+          <article class="card">
+            <h3>Active: Conversation service and store</h3>
+            <ul>
+              <li>It is already a complete proven durable vertical path.</li>
+              <li>Mutation overlap is concrete and testable today.</li>
+              <li>
+                Its ports reduce uncertainty for models, WhatsApp effects, proofs, and Root
+                handoffs.
+              </li>
+              <li>The cut requires no live model invocation or WhatsApp send.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Likely next: model runtime</h3>
+            <p>
+              Conversation currently constructs Qwen and Pi directly and contains
+              <code>Model&lt;any&gt;</code>. Once the role boundary is clean, one structured model
+              module can bind Qwen and local Vibe without creating a parallel application graph.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <footer>
+        <span>Derived from docs/canon/architecture.md and docs/status/current-state.md</span>
+        <span>Ambient · 2026-08-12</span>
+      </footer>
+    </main>
+  </body>
+</html>

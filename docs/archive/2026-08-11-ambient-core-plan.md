@@ -1,10 +1,13 @@
-# Ambient core
+# Archived: Ambient core
+
+> Historical document from 2026-08-11. It describes the superseded
+> Conversation → Task Coordinator → Worker phase model and is not current
+> implementation guidance. Start at [`../README.md`](../README.md).
 
 Status: proposed hard cut.
 
-This document defines the smallest complete architecture for Ambient. It replaces
-the initial implementation plan without modifying [`plan.md`](./plan.md), which
-remains as historical context.
+This document records the architecture believed current at the time it was
+written. It is retained as historical context.
 
 Ambient is a durable conversational agent that can remember, start work, perform
 that work through Workers, and return results to the originating conversation.

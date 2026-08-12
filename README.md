@@ -139,6 +139,17 @@ pnpm check
 pnpm test
 ```
 
-The target architecture and implementation sequence are in
-[`plan.md`](./plan.md). The current position, complete system map, and proof gates
-for the next cuts are in [`docs/ambient-map.html`](./docs/ambient-map.html).
+Current documentation starts at [`docs/README.md`](./docs/README.md):
+
+- [`docs/canon/product-model.md`](./docs/canon/product-model.md) defines what
+  Ambient is;
+- [`docs/canon/architecture.md`](./docs/canon/architecture.md) defines module,
+  interface, dependency, and durable-protocol ownership;
+- [`docs/canon/delivery-practice.md`](./docs/canon/delivery-practice.md) defines
+  rolling evidence-driven slices;
+- [`docs/status/current-state.md`](./docs/status/current-state.md) records proven
+  behaviour, the active rescue slice, and the implementation frontiers;
+- [`docs/maps/`](./docs/maps/) contains derived visual maps.
+
+Superseded plans and roadmaps are retained under [`docs/archive/`](./docs/archive/)
+as historical evidence, not current implementation instructions.

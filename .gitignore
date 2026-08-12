@@ -15,6 +15,7 @@ dist-ssr
 # WhatsApp account data: credentials, mirror database, media bytes
 data
 artifacts
+.factory/workbench/
 
 # Editor directories and files
 .vscode/*
