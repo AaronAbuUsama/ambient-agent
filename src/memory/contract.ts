@@ -8,13 +8,25 @@ import type { ModelConfig } from "../models/contract";
  * job without touching the ontology.
  */
 
-/** One retained message given to the Memory Agent as evidence. */
+/**
+ * One retained message given to the Memory Agent as evidence.
+ *
+ * `senderId` is absent when the retained record never carried the author
+ * (historical group sync loses it); it is never fabricated. Quoted-reply
+ * recovery in the job store fills it back in where the evidence names the
+ * quoted author. `mentions` are real native ids and are linkable identities.
+ */
 export interface MemoryMessage {
   readonly observationId: string;
-  readonly senderId: string;
+  readonly senderId?: string;
   readonly fromMe: boolean;
   readonly sentAt: string;
   readonly text: string;
+  readonly mentions?: readonly string[];
+  /** The observation this message replies to, when it is inside the batch. */
+  readonly inReplyTo?: string;
+  /** Present when the message carries media; the bytes stay in the store. */
+  readonly attachment?: { readonly kind: string; readonly caption?: string };
 }
 
 export interface MemoryOntologyEntity {

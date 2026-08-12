@@ -61,7 +61,7 @@
         "provider": "vibe",
         "model": "gemini-3.6-flash-high",
         "thinking": "off",
-        "maxOutputTokens": 1024
+        "maxOutputTokens": 2048
       },
       "memory": {
         "provider": "vibe",

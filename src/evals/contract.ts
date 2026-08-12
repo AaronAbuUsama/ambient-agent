@@ -32,6 +32,16 @@ export interface MemoryRunEvidence {
   readonly promptVersion: string;
   readonly batchObservationIds: readonly string[];
   readonly batchSenderIds: readonly string[];
+  /**
+   * The full digested window in order, so completeness is judgeable: a judge
+   * that sees only cited evidence is structurally blind to omissions.
+   */
+  readonly windowMessages: readonly {
+    readonly senderId?: string;
+    readonly fromMe: boolean;
+    readonly text: string;
+    readonly attachment?: string;
+  }[];
   readonly appliedClaims: readonly {
     readonly claimId: string;
     readonly entityName: string;

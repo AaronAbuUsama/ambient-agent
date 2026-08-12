@@ -26,7 +26,7 @@ const CONTRACT_CASE = "conversation-contract-v1";
 const JUDGED_CASE = "conversation-judged-v1";
 const MEMORY_CONTRACT_CASE = "memory-contract-v1";
 const MEMORY_JUDGED_CASE = "memory-judged-v1";
-const MEMORY_CLAIM_CAP = 50;
+const MEMORY_CLAIM_CAP = 80;
 
 /**
  * The asynchronous evaluation runner: claims durable evaluation signals,
@@ -161,7 +161,11 @@ export function createEvaluationService(options: EvaluationServiceOptions): Eval
       const grounded = evidence.appliedClaims.every(({ grounded: ok }) => ok);
       const inConversation = evidence.appliedClaims.every(({ inConversation: ok }) => ok);
       const senders = new Set(evidence.batchSenderIds);
-      const identityScoped = evidence.linkedNativeIds.every((id) => senders.has(id));
+      // A chat id is never a person: linking one poisons every recall through
+      // it (the Memory v1 defect this metric now permanently guards against).
+      const identityScoped = evidence.linkedNativeIds.every(
+        (id) => senders.has(id) && !id.endsWith("@g.us"),
+      );
       await options.recorder.recordResult({
         evaluationRunId: evaluation.id,
         metric: "grounded_claims",

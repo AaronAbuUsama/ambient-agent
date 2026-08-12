@@ -48,6 +48,21 @@ const messagePayloadSchema = z.looseObject({
   text: z.string(),
 });
 
+/** Historical group rows may lack sender and text; media carries a caption. */
+const memoryMessagePayloadSchema = z.looseObject({
+  sender: z.looseObject({ id: z.string().min(1) }).optional(),
+  fromMe: z.boolean().optional(),
+  kind: z.string().optional(),
+  text: z.string().optional(),
+  media: z.looseObject({ caption: z.string().optional() }).optional(),
+  context: z
+    .looseObject({
+      mentions: z.array(z.string().min(1)).optional(),
+      quoted: z.looseObject({ from: z.string().min(1) }).optional(),
+    })
+    .optional(),
+});
+
 const sendInputSchema = z.looseObject({ text: z.string() });
 const sendOutputSchema = z.looseObject({ operationId: z.string().optional() });
 const resultSchema = z.looseObject({ summary: z.string() });
@@ -76,16 +91,34 @@ export function createEvaluationWorkStore(
           .select({
             id: observations.id,
             conversationId: observations.conversationId,
+            occurredAt: observations.occurredAt,
             payload: observations.payload,
           })
           .from(observations)
           .where(inArray(observations.id, input.observationIds))
+          .orderBy(asc(observations.occurredAt), asc(observations.id))
       : [];
     const byId = new Map(rows.map((row) => [row.id, row]));
+    // Linkable identities mirror the memory service: real senders + mentions.
     const senders = new Set<string>();
+    const windowMessages: MemoryRunEvidence["windowMessages"][number][] = [];
     for (const row of rows) {
-      const parsed = messagePayloadSchema.safeParse(row.payload);
-      if (parsed.success) senders.add(parsed.data.sender.id);
+      const parsed = memoryMessagePayloadSchema.safeParse(row.payload);
+      if (!parsed.success) continue;
+      const payload = parsed.data;
+      if (payload.sender) senders.add(payload.sender.id);
+      for (const mention of payload.context?.mentions ?? []) senders.add(mention);
+      // Quoted replies name the quoted message's author — the same recovered
+      // identity the memory service treats as linkable.
+      if (payload.context?.quoted) senders.add(payload.context.quoted.from);
+      windowMessages.push({
+        ...(payload.sender ? { senderId: payload.sender.id } : {}),
+        fromMe: payload.fromMe ?? false,
+        text: payload.text ?? payload.media?.caption ?? "",
+        ...(payload.kind !== undefined && payload.kind !== "text"
+          ? { attachment: payload.kind }
+          : {}),
+      });
     }
 
     const result = run.result === null ? undefined : memoryRunResultSchema.safeParse(run.result);
@@ -101,8 +134,9 @@ export function createEvaluationWorkStore(
         evidenceObservationIds: claim.evidenceObservationIds,
         evidenceTexts: cited.flatMap((row) => {
           if (!row) return [];
-          const parsed = messagePayloadSchema.safeParse(row.payload);
-          return parsed.success ? [parsed.data.text] : [];
+          const parsed = memoryMessagePayloadSchema.safeParse(row.payload);
+          if (!parsed.success) return [];
+          return [parsed.data.text ?? parsed.data.media?.caption ?? ""];
         }),
         grounded: claim.evidenceObservationIds.every((id) => batch.has(id)),
         inConversation: cited.every((row) => row?.conversationId === input.conversationId),
@@ -117,6 +151,7 @@ export function createEvaluationWorkStore(
       promptVersion: run.promptVersion,
       batchObservationIds: input.observationIds,
       batchSenderIds: [...senders],
+      windowMessages,
       appliedClaims,
       linkedNativeIds: applied?.linkedNativeIds ?? [],
       patchStatus: applied ? applied.patchStatus : "none",

@@ -11,6 +11,7 @@ import {
   identityLinks,
   memoryPatches,
   memoryPatchOperations,
+  observations,
   predicateDefinitions,
 } from "./schema";
 
@@ -73,6 +74,24 @@ export interface MemoryRepository {
     readonly query: string;
     readonly limit?: number;
   }): Promise<readonly RecalledMemory[]>;
+  /** Current claims whose evidence was observed in one conversation. */
+  recallForConversation(input: {
+    readonly conversationId: string;
+    readonly limit?: number;
+  }): Promise<readonly RecalledMemory[]>;
+  /** Shape counts for proof gates: entity kinds, identities, claim volume. */
+  summary(): Promise<{
+    readonly entitiesByKind: Readonly<Record<string, number>>;
+    readonly identityNativeIds: readonly string[];
+    readonly claimCount: number;
+  }>;
+  /** The current (unsuperseded) claim for one (entity, predicate), if any. */
+  currentClaim(input: {
+    readonly entityId: string;
+    readonly predicateId: string;
+  }): Promise<
+    { readonly claimId: string; readonly version: number; readonly value: unknown } | undefined
+  >;
   getPatch(id: string): Promise<
     | {
         readonly id: string;
@@ -92,6 +111,63 @@ export interface MemoryRepository {
 
 export function createMemoryRepository(database: AmbientDatabaseConnection): MemoryRepository {
   const successorClaims = alias(claims, "successor_claims");
+
+  const isCurrent = notExists(
+    database
+      .select({ id: successorClaims.id })
+      .from(successorClaims)
+      .where(
+        and(
+          eq(successorClaims.entityId, claims.entityId),
+          eq(successorClaims.predicateId, claims.predicateId),
+          gt(successorClaims.version, claims.version),
+        ),
+      ),
+  );
+
+  const claimColumns = {
+    id: claims.id,
+    entityId: claims.entityId,
+    predicateId: claims.predicateId,
+    value: claims.value,
+    confidence: claims.confidence,
+    version: claims.version,
+    entityName: entities.canonicalName,
+    predicateName: predicateDefinitions.name,
+  };
+
+  const withEvidence = async (
+    rows: readonly {
+      id: string;
+      value: unknown;
+      confidence: RecalledMemory["confidence"];
+      entityName: string;
+      predicateName: string;
+    }[],
+  ): Promise<readonly RecalledMemory[]> => {
+    if (rows.length === 0) return [];
+    const evidence = await database
+      .select()
+      .from(claimEvidence)
+      .where(
+        inArray(
+          claimEvidence.claimId,
+          rows.map(({ id }) => id),
+        ),
+      );
+    const evidenceByClaim = new Map<string, string[]>();
+    for (const row of evidence) {
+      const ids = evidenceByClaim.get(row.claimId) ?? [];
+      ids.push(row.observationId);
+      evidenceByClaim.set(row.claimId, ids);
+    }
+    return rows.map((row) => ({
+      claimId: row.id,
+      text: `${row.entityName} ${row.predicateName}: ${JSON.stringify(row.value)}`,
+      confidence: row.confidence,
+      evidenceObservationIds: evidenceByClaim.get(row.id) ?? [],
+    }));
+  };
 
   return {
     async putEntity(input) {
@@ -191,34 +267,14 @@ export function createMemoryRepository(database: AmbientDatabaseConnection): Mem
         .replaceAll("%", "!%")
         .replaceAll("_", "!_")}%`;
       const rows = await database
-        .select({
-          id: claims.id,
-          entityId: claims.entityId,
-          predicateId: claims.predicateId,
-          value: claims.value,
-          confidence: claims.confidence,
-          version: claims.version,
-          entityName: entities.canonicalName,
-          predicateName: predicateDefinitions.name,
-        })
+        .select(claimColumns)
         .from(claims)
         .innerJoin(entities, eq(entities.id, claims.entityId))
         .innerJoin(predicateDefinitions, eq(predicateDefinitions.id, claims.predicateId))
         .where(
           and(
             inArray(claims.entityId, entityIds),
-            notExists(
-              database
-                .select({ id: successorClaims.id })
-                .from(successorClaims)
-                .where(
-                  and(
-                    eq(successorClaims.entityId, claims.entityId),
-                    eq(successorClaims.predicateId, claims.predicateId),
-                    gt(successorClaims.version, claims.version),
-                  ),
-                ),
-            ),
+            isCurrent,
             ...(normalized
               ? [
                   or(
@@ -232,29 +288,57 @@ export function createMemoryRepository(database: AmbientDatabaseConnection): Mem
         )
         .orderBy(desc(claims.createdAt), desc(claims.id))
         .limit(limit);
-      if (rows.length === 0) return [];
+      return withEvidence(rows);
+    },
 
-      const evidence = await database
-        .select()
+    async recallForConversation({ conversationId, limit = 100 }) {
+      if (limit <= 0) return [];
+      const cited = await database
+        .selectDistinct({ claimId: claimEvidence.claimId })
         .from(claimEvidence)
+        .innerJoin(observations, eq(observations.id, claimEvidence.observationId))
+        .where(eq(observations.conversationId, conversationId));
+      if (cited.length === 0) return [];
+      const rows = await database
+        .select(claimColumns)
+        .from(claims)
+        .innerJoin(entities, eq(entities.id, claims.entityId))
+        .innerJoin(predicateDefinitions, eq(predicateDefinitions.id, claims.predicateId))
         .where(
-          inArray(
-            claimEvidence.claimId,
-            rows.map(({ id }) => id),
+          and(
+            inArray(
+              claims.id,
+              cited.map(({ claimId }) => claimId),
+            ),
+            isCurrent,
           ),
-        );
-      const evidenceByClaim = new Map<string, string[]>();
-      for (const row of evidence) {
-        const ids = evidenceByClaim.get(row.claimId) ?? [];
-        ids.push(row.observationId);
-        evidenceByClaim.set(row.claimId, ids);
-      }
-      return rows.map((row) => ({
-        claimId: row.id,
-        text: `${row.entityName} ${row.predicateName}: ${JSON.stringify(row.value)}`,
-        confidence: row.confidence,
-        evidenceObservationIds: evidenceByClaim.get(row.id) ?? [],
-      }));
+        )
+        .orderBy(desc(claims.createdAt), desc(claims.id))
+        .limit(limit);
+      return withEvidence(rows);
+    },
+
+    async currentClaim({ entityId, predicateId }) {
+      const [row] = await database
+        .select({ id: claims.id, version: claims.version, value: claims.value })
+        .from(claims)
+        .where(and(eq(claims.entityId, entityId), eq(claims.predicateId, predicateId), isCurrent))
+        .limit(1);
+      return row ? { claimId: row.id, version: row.version, value: row.value } : undefined;
+    },
+
+    async summary() {
+      const entityRows = await database
+        .select({ kind: entities.kind, count: sql<number>`count(*)` })
+        .from(entities)
+        .groupBy(entities.kind);
+      const links = await database.select({ nativeId: identityLinks.nativeId }).from(identityLinks);
+      const [claimRow] = await database.select({ count: sql<number>`count(*)` }).from(claims);
+      return {
+        entitiesByKind: Object.fromEntries(entityRows.map((row) => [row.kind, Number(row.count)])),
+        identityNativeIds: links.map(({ nativeId }) => nativeId),
+        claimCount: Number(claimRow?.count ?? 0),
+      };
     },
 
     async getPatch(id) {

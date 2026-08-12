@@ -161,6 +161,121 @@ test("a digest applies validated memory, recall returns it, and evals judge it",
   });
 });
 
+test("unattributed history regains quoted authors, mentions are linkable, chat ids are not", async () => {
+  await withDatabase(async (database) => {
+    // A historical group row whose author the mirror never synced: no sender,
+    // but a later reply quotes it and names its real author.
+    await database.repositories.observations.retain({
+      id: "observation-1",
+      source: "whatsapp",
+      accountId: "main",
+      nativeId: "native-1",
+      conversationId: "group-1@g.us",
+      occurredAt: "2026-07-15T10:01:00.000Z",
+      kind: "message",
+      payload: {
+        version: 1,
+        messageId: "m-1",
+        chatId: "group-1@g.us",
+        fromMe: false,
+        timestamp: 1752573600000,
+        historical: true,
+        kind: "text",
+        text: "the compass drifts on Android",
+        context: { mentions: ["androiddev@lid"] },
+      },
+    });
+    await database.repositories.observations.retain({
+      id: "observation-2",
+      source: "whatsapp",
+      accountId: "main",
+      nativeId: "native-2",
+      conversationId: "group-1@g.us",
+      occurredAt: "2026-07-15T10:02:00.000Z",
+      kind: "message",
+      payload: {
+        version: 1,
+        messageId: "m-2",
+        chatId: "group-1@g.us",
+        sender: { id: "me@s.whatsapp.net", mode: "pn" },
+        fromMe: true,
+        timestamp: 1752573660000,
+        historical: true,
+        kind: "text",
+        text: "noted, filing it",
+        context: { quoted: { from: "reporter@lid", id: "m-1" } },
+      },
+    });
+    await database.repositories.memoryJobs.create({
+      conversationId: "group-1@g.us",
+      observationIds: ["observation-1", "observation-2"],
+    });
+
+    const runner = service(
+      database,
+      agentWith(async (input) => {
+        // Quoted-reply recovery attributed the first message; the reply threads.
+        expect(input.messages[0]?.senderId).toBe("reporter@lid");
+        expect(input.messages[0]?.mentions).toEqual(["androiddev@lid"]);
+        expect(input.messages[1]?.inReplyTo).toBe("observation-1");
+        return {
+          entities: [
+            // A mentioned id is linkable evidence even though it never "sent".
+            {
+              ref: "e1",
+              kind: "person",
+              canonicalName: "Android Dev",
+              nativeIds: ["androiddev@lid"],
+            },
+          ],
+          predicates: [{ ref: "p1", name: "works_on", description: "what they work on" }],
+          claims: [
+            {
+              entity: "e1",
+              predicate: "p1",
+              value: "Android compass",
+              confidence: "medium",
+              evidenceObservationIds: ["observation-1"],
+            },
+          ],
+          report: "One person recovered from mention evidence.",
+        };
+      }),
+    );
+    expect((await runner.runOnce()).outcome).toBe("done");
+    expect(
+      await database.repositories.memory.recall({
+        nativeIds: ["androiddev@lid"],
+        query: "",
+        limit: 10,
+      }),
+    ).toHaveLength(1);
+    expect(
+      await database.repositories.memory.recallForConversation({
+        conversationId: "group-1@g.us",
+      }),
+    ).toHaveLength(1);
+
+    // A chat id can never become an identity, even when it appears as a sender.
+    await database.repositories.memoryJobs.create({
+      conversationId: "group-1@g.us",
+      observationIds: ["observation-1", "observation-2"],
+    });
+    const poisoner = service(
+      database,
+      agentWith(async () => ({
+        entities: [
+          { ref: "e1", kind: "person", canonicalName: "Wrong", nativeIds: ["group-1@g.us"] },
+        ],
+        predicates: [],
+        claims: [],
+        report: "poison attempt",
+      })),
+    );
+    expect((await poisoner.runOnce()).outcome).toBe("failed");
+  });
+});
+
 test("a proposal citing evidence outside the batch fails the job without touching the ontology", async () => {
   await withDatabase(async (database) => {
     await retainHistory(database, "1", "a@s.whatsapp.net", "hello");
@@ -202,6 +317,85 @@ test("a proposal citing evidence outside the batch fails the job without touchin
     expect(evidence.status).toBe("failed");
     expect(evidence.patchStatus).toBe("none");
     expect(evidence.error).toContain("cites evidence outside the batch");
+  });
+});
+
+test("a restated fact reinforces and a changed fact supersedes — never a duplicate claim", async () => {
+  await withDatabase(async (database) => {
+    await retainHistory(database, "1", "a@s.whatsapp.net", "I run the Lavin project");
+    await retainHistory(database, "2", "a@s.whatsapp.net", "Lavin is now called Lumen");
+    const single: MemoryProposal = {
+      ...goodProposal,
+      entities: [goodProposal.entities[0]!],
+      claims: [goodProposal.claims[0]!],
+    };
+    await database.repositories.memoryJobs.create({
+      conversationId: "group-1",
+      observationIds: ["observation-1"],
+    });
+    expect(
+      (
+        await service(
+          database,
+          agentWith(async () => single),
+        ).runOnce()
+      ).outcome,
+    ).toBe("done");
+
+    // A later window restates the same fact: the host reinforces instead of
+    // violating the one-current-claim key.
+    await database.repositories.memoryJobs.create({
+      conversationId: "group-1",
+      observationIds: ["observation-2"],
+    });
+    const restated: MemoryProposal = {
+      ...single,
+      claims: [{ ...single.claims[0]!, evidenceObservationIds: ["observation-2"] }],
+    };
+    expect(
+      (
+        await service(
+          database,
+          agentWith(async () => restated),
+        ).runOnce()
+      ).outcome,
+    ).toBe("done");
+    const afterRestate = await database.repositories.memory.recall({
+      nativeIds: ["a@s.whatsapp.net"],
+      query: "",
+      limit: 10,
+    });
+    expect(afterRestate).toHaveLength(1);
+    expect(afterRestate[0]?.evidenceObservationIds.toSorted()).toEqual([
+      "observation-1",
+      "observation-2",
+    ]);
+
+    // A later window changes the fact without declaring supersedes: the host
+    // supersedes the current claim on its behalf.
+    await database.repositories.memoryJobs.create({
+      conversationId: "group-1",
+      observationIds: ["observation-2"],
+    });
+    const changed: MemoryProposal = {
+      ...single,
+      claims: [{ ...single.claims[0]!, value: "Lumen", evidenceObservationIds: ["observation-2"] }],
+    };
+    expect(
+      (
+        await service(
+          database,
+          agentWith(async () => changed),
+        ).runOnce()
+      ).outcome,
+    ).toBe("done");
+    const afterChange = await database.repositories.memory.recall({
+      nativeIds: ["a@s.whatsapp.net"],
+      query: "",
+      limit: 10,
+    });
+    expect(afterChange).toHaveLength(1);
+    expect(afterChange[0]?.text).toContain("Lumen");
   });
 });
 

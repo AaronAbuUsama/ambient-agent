@@ -5,6 +5,7 @@ import type { MemoryInput, MemoryJobStore, MemoryOntologyClaim } from "../memory
 import type { AmbientDatabaseConnection } from "./database";
 import {
   agentRuns,
+  claimEvidence,
   claims,
   entities,
   evaluationPending,
@@ -17,9 +18,18 @@ import {
 const jobInputSchema = z.object({ observationIds: z.array(z.string().min(1)).min(1) });
 
 const messagePayloadSchema = z.looseObject({
-  sender: z.looseObject({ id: z.string().min(1) }),
+  messageId: z.string().min(1).optional(),
+  sender: z.looseObject({ id: z.string().min(1) }).optional(),
   fromMe: z.boolean().optional(),
-  text: z.string(),
+  kind: z.string().optional(),
+  text: z.string().optional(),
+  media: z.looseObject({ caption: z.string().optional() }).optional(),
+  context: z
+    .looseObject({
+      mentions: z.array(z.string().min(1)).optional(),
+      quoted: z.looseObject({ from: z.string().min(1), id: z.string().min(1) }).optional(),
+    })
+    .optional(),
 });
 
 const confidenceSchema = z.enum(["low", "medium", "high", "confirmed"]);
@@ -34,18 +44,53 @@ export function createMemoryJobStore(database: AmbientDatabaseConnection): Memor
       .from(observations)
       .where(inArray(observations.id, [...observationIds]))
       .orderBy(asc(observations.occurredAt), asc(observations.id));
-    const messages = rows.map((row) => {
-      const payload = messagePayloadSchema.parse(row.payload);
+    const parsed = rows.map((row) => ({ row, payload: messagePayloadSchema.parse(row.payload) }));
+
+    // Quoted-reply recovery: a quoted context names the quoted message's real
+    // author, so unattributed historical rows regain their sender when the
+    // batch itself proves it. Nothing is ever guessed.
+    const authorByMessageId = new Map<string, string>();
+    const observationByMessageId = new Map<string, string>();
+    for (const { row, payload } of parsed) {
+      if (payload.messageId) observationByMessageId.set(payload.messageId, row.id);
+      const quoted = payload.context?.quoted;
+      if (quoted) authorByMessageId.set(quoted.id, quoted.from);
+    }
+
+    const messages = parsed.map(({ row, payload }) => {
+      const recovered = payload.messageId ? authorByMessageId.get(payload.messageId) : undefined;
+      const senderId = payload.sender?.id ?? recovered;
+      const inReplyTo = payload.context?.quoted
+        ? observationByMessageId.get(payload.context.quoted.id)
+        : undefined;
+      const isMedia = payload.kind !== undefined && payload.kind !== "text";
       return {
         observationId: row.id,
-        senderId: payload.sender.id,
+        ...(senderId === undefined ? {} : { senderId }),
         fromMe: payload.fromMe ?? false,
         sentAt: row.occurredAt,
-        text: payload.text,
+        text: payload.text ?? payload.media?.caption ?? "",
+        ...(payload.context?.mentions?.length ? { mentions: payload.context.mentions } : {}),
+        ...(inReplyTo === undefined ? {} : { inReplyTo }),
+        ...(isMedia
+          ? {
+              attachment: {
+                kind: payload.kind ?? "media",
+                ...(payload.media?.caption ? { caption: payload.media.caption } : {}),
+              },
+            }
+          : {}),
       };
     });
 
-    const senders = [...new Set(messages.map(({ senderId }) => senderId))];
+    const senders = [
+      ...new Set(
+        messages.flatMap((message) => [
+          ...(message.senderId === undefined ? [] : [message.senderId]),
+          ...(message.mentions ?? []),
+        ]),
+      ),
+    ];
     const senderLinks = senders.length
       ? await database
           .select({ entityId: identityLinks.entityId })
@@ -54,7 +99,21 @@ export function createMemoryJobStore(database: AmbientDatabaseConnection): Memor
             and(eq(identityLinks.namespace, "whatsapp"), inArray(identityLinks.nativeId, senders)),
           )
       : [];
-    const entityIds = [...new Set(senderLinks.map(({ entityId }) => entityId))];
+    // Entities without identity links (issues, repos) are visible through the
+    // conversation their evidence came from — without this, later windows can
+    // never reuse or supersede what earlier windows learned.
+    const conversationEntities = await database
+      .selectDistinct({ entityId: claims.entityId })
+      .from(claims)
+      .innerJoin(claimEvidence, eq(claimEvidence.claimId, claims.id))
+      .innerJoin(observations, eq(observations.id, claimEvidence.observationId))
+      .where(eq(observations.conversationId, conversationId));
+    const entityIds = [
+      ...new Set([
+        ...senderLinks.map(({ entityId }) => entityId),
+        ...conversationEntities.map(({ entityId }) => entityId),
+      ]),
+    ];
 
     const entityRows = entityIds.length
       ? await database.select().from(entities).where(inArray(entities.id, entityIds))

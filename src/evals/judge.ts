@@ -115,27 +115,43 @@ export function createPiConversationJudge(
 
 const memoryJudgeSystemPrompt = `You are Ambient's memory evaluator.
 
-You receive claims a memory analyst extracted from a WhatsApp conversation, each with the exact
-messages it cited as evidence. Judge each claim strictly against ONLY its cited messages. Respond
-with exactly one JSON object and nothing else:
+You receive the FULL window of WhatsApp messages a memory analyst digested, plus every claim it
+extracted with the exact messages each claim cited as evidence. Judge two things:
 
-{"claims": [{"index": 0, "supported": boolean}], "missedFacts": "one sentence on salient facts the
-analyst obviously missed, or an empty string"}
+1. Faithfulness: each claim strictly against ONLY its cited messages. A claim is supported only
+   when its cited messages actually state or clearly imply it.
+2. Completeness: against the WHOLE window. Durable knowledge means: who the people are, every
+   distinct bug or feature discussed (and its latest status when it evolved), repositories and
+   filed issues, and standing preferences. Ephemeral chatter, test markers, and greetings do not
+   count against completeness.
 
-A claim is supported only when its cited messages actually state or clearly imply it.`;
+Respond with exactly one JSON object and nothing else:
+
+{"claims": [{"index": 0, "supported": boolean}],
+ "completeness": number,
+ "missedFacts": "short list of durable facts from the window the analyst missed, or an empty string"}
+
+- completeness: 0 to 1 — the fraction of the window's durable knowledge the claims actually cover.`;
 
 const memoryVerdictSchema = z.object({
   claims: z.array(z.object({ index: z.number().int().nonnegative(), supported: z.boolean() })),
+  completeness: z.number().min(0).max(1),
   missedFacts: z.string(),
 });
 
-const memoryJudgePromptVersion = "memory-judge-v1";
+const memoryJudgePromptVersion = "memory-judge-v2";
 
 /** Judges one Memory run's applied claims with the evaluator-role model. */
 export function createPiMemoryJudge(runner: ModelRunner, runs: JudgeRunStore): MemoryJudge {
   return {
     async judge(evidence: MemoryRunEvidence) {
       const subject = {
+        windowMessages: evidence.windowMessages.map((message, index) => ({
+          index,
+          from: message.senderId ?? (message.fromMe ? "agent-side" : "unknown"),
+          ...(message.attachment === undefined ? {} : { attachment: message.attachment }),
+          text: message.text,
+        })),
         claims: evidence.appliedClaims.map((claim, index) => ({
           index,
           claim: `${claim.entityName} ${claim.predicateName}: ${JSON.stringify(claim.value)}`,
@@ -181,6 +197,12 @@ export function createPiMemoryJudge(runner: ModelRunner, runs: JudgeRunStore): M
               score: faithfulness,
               passed: faithfulness >= 0.8,
               detail: { total, supported: supportedCount },
+            },
+            {
+              metric: "memory_completeness",
+              score: verdict.completeness,
+              passed: verdict.completeness >= 0.6,
+              detail: { windowMessages: evidence.windowMessages.length },
             },
             {
               metric: "memory_missed_facts",

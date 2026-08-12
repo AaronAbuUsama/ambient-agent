@@ -56,18 +56,31 @@ export interface AmbientProofHarness {
     readonly chatId: string;
     readonly limit?: number;
   }): Promise<HistoryImportResult>;
-  /** Create and immediately digest one bounded memory job for a conversation. */
+  /**
+   * Digest one conversation's retained history as sequential windowed memory
+   * jobs, so later windows see the ontology earlier windows built (the
+   * dedup/supersession pressure a single giant batch cannot exert).
+   */
   requestMemoryDigest(
     conversationId: string,
-    limit?: number,
+    options?: { readonly limit?: number; readonly window?: number },
   ): Promise<{
-    readonly outcome: "idle" | "done" | "failed";
-    readonly runId?: string;
+    readonly outcome: "done" | "failed";
+    readonly runIds: readonly string[];
+    readonly jobs: number;
     readonly batchSize: number;
     readonly senders: readonly string[];
   }>;
   /** Current evidence-backed claims for the given identities; proof-side reads only. */
   recallFor(nativeIds: readonly string[], query?: string): Promise<readonly RecalledMemory[]>;
+  /** Current claims evidenced inside one conversation; proof-side reads only. */
+  recallForConversation(conversationId: string): Promise<readonly RecalledMemory[]>;
+  /** Ontology shape counts for proof gates; no content leaves the database. */
+  ontologySummary(): Promise<{
+    readonly entitiesByKind: Readonly<Record<string, number>>;
+    readonly identityNativeIds: readonly string[];
+    readonly claimCount: number;
+  }>;
   /** Replay the latest retained run offline: a live model call with a stubbed sender, no WhatsApp. */
   replayConversationRun(conversationId: string): Promise<{
     readonly decision: "reply" | "silence";
@@ -200,7 +213,7 @@ export async function createAmbientProofHarness(
       return importChatHistory({ ...options, sink: repositories.observations });
     },
 
-    async requestMemoryDigest(conversationId, limit = 400) {
+    async requestMemoryDigest(conversationId, { limit = 1000, window = 40 } = {}) {
       const memoryService = resources.memoryService;
       if (!memoryService) {
         throw new Error("this proof harness was composed without the memory role");
@@ -219,21 +232,34 @@ export async function createAmbientProofHarness(
           }),
         ),
       ];
-      await repositories.memoryJobs.create({
-        conversationId,
-        observationIds: batch.map(({ id }) => id),
-      });
-      const { outcome, runId } = await memoryService.runOnce();
-      return {
-        outcome,
-        ...(runId === undefined ? {} : { runId }),
-        batchSize: batch.length,
-        senders,
-      };
+      const runIds: string[] = [];
+      let jobs = 0;
+      for (let start = 0; start < batch.length; start += window) {
+        const chunk = batch.slice(start, start + window);
+        await repositories.memoryJobs.create({
+          conversationId,
+          observationIds: chunk.map(({ id }) => id),
+        });
+        jobs += 1;
+        const { outcome, runId } = await memoryService.runOnce();
+        if (runId !== undefined) runIds.push(runId);
+        if (outcome !== "done") {
+          return { outcome: "failed", runIds, jobs, batchSize: batch.length, senders };
+        }
+      }
+      return { outcome: "done", runIds, jobs, batchSize: batch.length, senders };
     },
 
     recallFor(nativeIds, query = "") {
       return repositories.memory.recall({ nativeIds: [...nativeIds], query, limit: 100 });
+    },
+
+    recallForConversation(conversationId) {
+      return repositories.memory.recallForConversation({ conversationId, limit: 200 });
+    },
+
+    ontologySummary() {
+      return repositories.memory.summary();
     },
 
     async replayConversationRun(conversationId) {

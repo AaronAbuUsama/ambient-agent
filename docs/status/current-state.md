@@ -234,9 +234,98 @@ the proof override still strengthening the final guard; all gates pass.
 
 ## Active slice
 
-None. Memory Agent v1 completed 2026-08-12 (below) and shipped the Bug
-Reports group's first real memory into the production database. Workers v1
-is next; its brief lands at the next planning stop.
+None. Memory v2 completed 2026-08-12 (below): the golden-first rebuild the
+Memory v1 post-slice review demanded, shipped into production. Workers v1
+is next; its brief lands at the next planning stop. Memory's repo-routing
+claims (repository URLs, the master's GitHub identity, per-repo purpose)
+are now real and evidence-backed — the input Workers v1 needs.
+
+## Completed slice: Memory v2 — golden-first rebuild (2026-08-12)
+
+Selected from the Memory v1 post-slice review, in the master's words: look
+at the group and the ontology first, make the golden data set, and treat
+the screenshots as part of the record.
+
+**Product question.** Does the Bug Reports group's memory now match what a
+careful human reader finds in the same thread — every person, repo, and
+issue with its evolution — instead of a green-but-hollow digest?
+
+**The golden pass (private reference, `.proof-private/`).** A full manual
+read of all 252 mirror messages plus every image and video frame produced
+a hand-labeled reference ontology: the real people behind the lids (the
+group was never two-participant — quoted replies and mentions carry five
+distinct voices), 5 repositories including the wrong-target design-system
+dump and the unnamed API repo, 18 distinct issues with status evolution
+(the prayer-times saga ends root-caused with a Reset-button follow-up;
+pinch-zoom ends fixed-verified), the product's stable facts, and the
+master's standing agent-quality preferences. The screenshots carried
+decisive evidence — the Fajr comparison set shows iOS disagreeing with
+four independent sources by ~50 minutes — so media is now imported as
+evidence (refs and captions retained; bytes stay in the store).
+
+**Defects fixed before extraction.**
+
+- The mirror's historical group rows carry NO author — `sender` and
+  `ref.participant` are both the chat id, worse than the v1 audit
+  believed. Import now drops the group-id sender instead of presenting
+  the chat as a person, and carries mentions and quoted-reply context
+  through; the job store deterministically recovers authorship where a
+  quoted reply names the quoted author, and mentions become linkable
+  identities. Chat ids are banned as identities at the mutation path AND
+  in the `identity_scope` eval metric.
+- The poisoned v1 digest was surgically reset from both databases
+  (pre-reset backups in `.proof-private/backups/`), integrity-checked
+  before commit.
+
+**Extraction reshaped from the reference.**
+
+- `memory-v2` prompt: issue-centric coverage mandate ("missing an issue is
+  worse than a modestly-worded claim"), dedup/evolution via supersession,
+  attribution honesty, attachments as citable evidence, claim economy.
+- Sequential windowed digestion (40 messages per durable job) so later
+  windows see the ontology earlier windows built.
+- The ontology view a window receives now includes entities evidenced in
+  the conversation, not only sender-linked ones — without this, issue
+  entities (which have no identity links) were invisible to later windows
+  and cross-window dedup was structurally impossible.
+- One current claim per (entity, predicate) is now a host invariant: a
+  restated fact becomes a reinforcement, a changed fact becomes a
+  supersession, and the model's uuid transcription can no longer
+  invalidate a proposal (the adapter presents m1/E1/P1/C1 symbols and
+  translates back).
+
+**Evals that can now see.** `memory-judged-v2` gives the judge the FULL
+window plus the claims — the v1 judge saw only cited evidence and was
+structurally blind to omission — and adds a `memory_completeness` score.
+The digest proof grades the shipped ontology against the golden reference
+mechanically: mustFind pattern coverage with a minimum, banned identity
+suffixes, and minimum issue/person entity counts. Judged gates aggregate
+across windows (mean faithfulness ≥ 0.85 with a 0.7 per-window floor) so
+one verdict on a small window cannot flip the proof.
+
+**Proof.** Deterministic: `vp check` clean (67 files); `vp test` 84/84
+across 15 files (new: quoted-author recovery + mention linking + chat-id
+rejection; reinforce/supersede dedup invariant; media-aware import);
+`drizzle-kit check` clean (no schema change). Autonomous rig + production
+(2026-08-12, gemini pool): 251 observations imported per database
+(media included), 7 windowed digests each, every contract metric green on
+every window. Rig: faithfulness 1.0 on all 7 windows, completeness mean
+0.93, 159 recalled claims, 37 issue / 4 person / 4 repository entities,
+golden coverage 17/22 (minimum 16). Production ship: faithfulness mean
+0.95 (floor 0.83), completeness mean 0.93, 181 recalled claims, 37 issue /
+5 person / 4 repository / 1 product entities, 185 claims, golden coverage
+17/22. Zero identity links to chat ids in either database.
+
+**Honest headroom.** Five golden labels stay unmet (the two developers'
+names, the root-cause-in-one-claim phrasing, the sunrise-minus widget bug,
+the "prayer times are vital" preference) — real extraction targets the
+reference keeps visible, not gate failures. Vision-derived claims from
+screenshot content remain future work; media refs and captions are
+retained for it.
+
+**Open questions.** Incremental memory on live traffic; who authors memory
+jobs in production (the Root, later); predicate governance as the ontology
+grows; when speaker recall should use the new conversation-scoped read.
 
 ## Completed slice: Memory Agent v1 (2026-08-12)
 
