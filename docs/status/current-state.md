@@ -176,8 +176,35 @@ The model subsystem is now one deep module resolved once at startup:
 
 ## Active slice
 
-None selected. Per delivery practice, the next slice is chosen after the
-post-slice review of the model-runtime rescue.
+Rescue sprint (agreed 2026-08-12): finish all remaining rescue as separately
+gated slices — proof composition with the configuration sweep as a rider, then
+the WhatsApp boundary — then stop for a full replanning session.
+
+### Slice: proof composition and configuration sweep
+
+**Product question.** Can both proofs run on the same composition assembly as
+production through one narrow harness — destination discovery, accepted-input
+waiting, one bounded run, read-only evidence — with no raw schema access, no
+rebuilt services, and all structured configuration in the validated document?
+
+**Owner.** `app/proof.ts` owns the harness over the private composition
+assembly; `app/config.ts` owns the full validated document; the run repository
+gains two evidence reads; proof scripts keep only proof policy (target hint
+matching, timeouts, reporting).
+
+**Safety.** The harness takes an explicit `authorizeDestination` override that
+strengthens the final outbound guard inside the production sender; without it
+the Conversation role is not composed at all. No live send or model call in
+deterministic tests.
+
+**Non-goals.** No WhatsApp facade change (next slice); no new proof kinds.
+
+**Proof gate.** Proof scripts import no Drizzle, schema, repository, service,
+or model-runtime symbols; every former `CONVERSATION_*`/`WHATSAPP_*` structured
+env var is document-owned with env retained only for secrets, `AMBIENT_CONFIG`,
+and deployment overrides (`AMBIENT_DATABASE_URL`, `WHATSAPP_DATA_DIR`,
+`WA_LOG_LEVEL`); all gates (`vp check`, `vp test`, `drizzle-kit check`, frozen
+strict-peer install) pass.
 
 ## Likely next slice
 

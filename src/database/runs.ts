@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { modelConfigSchema, type ModelConfig } from "../models/contract";
 import type { AmbientDatabaseConnection } from "./database";
@@ -63,6 +63,8 @@ export interface RunRepository {
   start(input: NewAgentRun): Promise<AgentRun>;
   get(id: string): Promise<AgentRun | undefined>;
   getToolCall(id: string): Promise<ToolCall | undefined>;
+  latestRunForConversation(conversationId: string): Promise<AgentRun | undefined>;
+  toolCallsForRun(runId: string): Promise<readonly ToolCall[]>;
 }
 
 function decodeRun(row: typeof agentRuns.$inferSelect): AgentRun {
@@ -143,6 +145,25 @@ export function createRunRepository(database: AmbientDatabaseConnection): RunRep
     async getToolCall(id) {
       const [row] = await database.select().from(toolCalls).where(eq(toolCalls.id, id)).limit(1);
       return row ? decodeToolCall(row) : undefined;
+    },
+
+    async latestRunForConversation(conversationId) {
+      const [row] = await database
+        .select()
+        .from(agentRuns)
+        .where(eq(agentRuns.conversationId, conversationId))
+        .orderBy(desc(agentRuns.createdAt), desc(agentRuns.id))
+        .limit(1);
+      return row ? decodeRun(row) : undefined;
+    },
+
+    async toolCallsForRun(runId) {
+      const rows = await database
+        .select()
+        .from(toolCalls)
+        .where(eq(toolCalls.runId, runId))
+        .orderBy(asc(toolCalls.startedAt), asc(toolCalls.id));
+      return rows.map(decodeToolCall);
     },
   };
 }

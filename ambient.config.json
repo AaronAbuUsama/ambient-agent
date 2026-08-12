@@ -1,4 +1,8 @@
 {
+  "conversation": {
+    "enabled": false,
+    "outboundMode": "loopback"
+  },
   "models": {
     "providers": {
       "qwen": {

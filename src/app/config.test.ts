@@ -4,6 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadAppConfig } from "./config";
 
+const models = {
+  providers: {
+    local: {
+      adapter: "openai-compatible",
+      baseUrl: "http://127.0.0.1:9999/v1",
+      credential: "none",
+    },
+  },
+  roles: {
+    conversation: { provider: "local", model: "test-model", maxOutputTokens: 512 },
+  },
+};
+
 async function withConfigFile(
   content: string,
   work: (path: string) => Promise<void>,
@@ -18,8 +31,9 @@ async function withConfigFile(
   }
 }
 
-test("history backfill is unlimited by default", () => {
+test("the committed configuration document supplies the deployment defaults", () => {
   const config = loadAppConfig({});
+  expect(config.whatsapp.accountId).toBe("main");
   expect(config.whatsapp.historyBackfillLimit).toBeUndefined();
   expect(config.database.url).toMatch(/\/data\/ambient\.db$/);
   expect(config.conversation.scheduling).toEqual({
@@ -30,22 +44,6 @@ test("history backfill is unlimited by default", () => {
   });
   expect(config.conversation.enabled).toBe(false);
   expect(config.conversation.outboundMode).toBe("loopback");
-});
-
-test("history backfill accepts an explicit deployment limit", () => {
-  expect(loadAppConfig({ WHATSAPP_BACKFILL_LIMIT: "5000" }).whatsapp.historyBackfillLimit).toBe(
-    5000,
-  );
-});
-
-test.each(["all", "1"])("history backfill rejects invalid limit %s", (limit) => {
-  expect(() => loadAppConfig({ WHATSAPP_BACKFILL_LIMIT: limit })).toThrow(
-    "WHATSAPP_BACKFILL_LIMIT must be a positive multiple of 25",
-  );
-});
-
-test("the committed configuration document supplies the Qwen deployment by default", () => {
-  const config = loadAppConfig({});
   expect(config.models.roles.conversation).toEqual({
     provider: "qwen",
     model: "qwen3.6-flash",
@@ -59,31 +57,63 @@ test("the committed configuration document supplies the Qwen deployment by defau
   expect(config.models.roles.worker).toBeUndefined();
 });
 
-test("a configuration document replaces the built-in models section entirely", async () => {
+test("a configuration document owns every structured section", async () => {
   await withConfigFile(
     JSON.stringify({
-      models: {
-        providers: {
-          local: {
-            adapter: "openai-compatible",
-            baseUrl: "http://127.0.0.1:9999/v1",
-            credential: "none",
-          },
-        },
-        roles: {
-          conversation: { provider: "local", model: "test-model", maxOutputTokens: 512 },
+      database: { url: "file:/tmp/custom.db" },
+      whatsapp: { accountId: "second", dataDirectory: "/var/ambient", historyBackfillLimit: 75 },
+      conversation: {
+        enabled: true,
+        outboundMode: "conversation",
+        instructions: "Be concise.",
+        scheduling: {
+          debounceMs: 1_000,
+          maximumWaitMs: 6_000,
+          leaseMs: 90_000,
+          maximumItemsPerRun: 25,
         },
       },
+      logging: { level: "info" },
+      models,
     }),
     async (path) => {
       const config = loadAppConfig({ AMBIENT_CONFIG: path });
-      expect(config.models.roles.conversation).toEqual({
-        provider: "local",
-        model: "test-model",
-        thinking: "off",
-        maxOutputTokens: 512,
+      expect(config.database.url).toBe("file:/tmp/custom.db");
+      expect(config.whatsapp).toEqual({
+        accountId: "second",
+        dataDirectory: "/var/ambient",
+        historyBackfillLimit: 75,
       });
-      expect(config.models.providers.qwen).toBeUndefined();
+      expect(config.conversation).toMatchObject({
+        enabled: true,
+        outboundMode: "conversation",
+        instructions: "Be concise.",
+      });
+      expect(config.conversation.scheduling).toEqual({
+        debounceMs: 1_000,
+        maximumWaitMs: 6_000,
+        leaseMs: 90_000,
+        maximumItemsPerRun: 25,
+      });
+      expect(config.logging.level).toBe("info");
+      expect(config.models.roles.conversation?.model).toBe("test-model");
+    },
+  );
+});
+
+test("deployment environment overrides win over the document", async () => {
+  await withConfigFile(
+    JSON.stringify({ database: { url: "file:/tmp/document.db" }, models }),
+    async (path) => {
+      const config = loadAppConfig({
+        AMBIENT_CONFIG: path,
+        AMBIENT_DATABASE_URL: "file:/tmp/override.db",
+        WHATSAPP_DATA_DIR: "/tmp/override-data",
+        WA_LOG_LEVEL: "debug",
+      });
+      expect(config.database.url).toBe("file:/tmp/override.db");
+      expect(config.whatsapp.dataDirectory).toBe("/tmp/override-data");
+      expect(config.logging.level).toBe("debug");
     },
   );
 });
@@ -94,74 +124,25 @@ test("an explicitly configured document path must exist", () => {
   );
 });
 
-test("an invalid configuration document fails closed", async () => {
-  await withConfigFile("not json", async (path) => {
-    expect(() => loadAppConfig({ AMBIENT_CONFIG: path })).toThrow("is not valid JSON");
-  });
-  await withConfigFile(JSON.stringify({ models: { providers: {} } }), async (path) => {
-    expect(() => loadAppConfig({ AMBIENT_CONFIG: path })).toThrow();
-  });
-});
-
-test("conversation scheduling accepts explicit deployment values", () => {
-  const config = loadAppConfig({
-    CONVERSATION_ENABLED: "true",
-    CONVERSATION_OUTBOUND_MODE: "conversation",
-    CONVERSATION_INSTRUCTIONS: "Be concise.",
-    CONVERSATION_DEBOUNCE_MS: "1000",
-    CONVERSATION_MAXIMUM_WAIT_MS: "6000",
-    CONVERSATION_LEASE_MS: "90000",
-    CONVERSATION_MAXIMUM_ITEMS_PER_RUN: "25",
-  });
-  expect(config.conversation).toMatchObject({
-    enabled: true,
-    outboundMode: "conversation",
-    instructions: "Be concise.",
-  });
-  expect(config.conversation.scheduling).toEqual({
-    debounceMs: 1000,
-    maximumWaitMs: 6000,
-    leaseMs: 90000,
-    maximumItemsPerRun: 25,
-  });
-});
-
 test.each([
-  ["CONVERSATION_ENABLED", "yes", 'CONVERSATION_ENABLED must be "true" or "false"'],
+  ["not json", "is not valid JSON"],
+  [JSON.stringify({ models: { providers: {} } }), undefined],
+  [JSON.stringify({ whatsapp: { historyBackfillLimit: 30 }, models }), undefined],
   [
-    "CONVERSATION_OUTBOUND_MODE",
-    "disabled",
-    'CONVERSATION_OUTBOUND_MODE must be "loopback" or "conversation"',
+    JSON.stringify({
+      conversation: { scheduling: { debounceMs: 1_000, maximumWaitMs: 500 } },
+      models,
+    }),
+    "maximumWaitMs must be at least debounceMs",
   ],
-] as const)("conversation rejects invalid %s", (name, value, message) => {
-  expect(() =>
-    loadAppConfig({
-      [name]: value,
-    }),
-  ).toThrow(message);
-});
-
-test("conversation scheduling values are independently configurable", () => {
-  expect(
-    loadAppConfig({
-      CONVERSATION_DEBOUNCE_MS: "1000",
-      CONVERSATION_MAXIMUM_WAIT_MS: "6000",
-      CONVERSATION_LEASE_MS: "90000",
-      CONVERSATION_MAXIMUM_ITEMS_PER_RUN: "25",
-    }).conversation.scheduling,
-  ).toEqual({
-    debounceMs: 1000,
-    maximumWaitMs: 6000,
-    leaseMs: 90000,
-    maximumItemsPerRun: 25,
+  [JSON.stringify({ conversation: { outboundMode: "disabled" }, models }), undefined],
+] as const)("invalid configuration documents fail closed (%#)", async (content, message) => {
+  await withConfigFile(content, async (path) => {
+    const load = () => loadAppConfig({ AMBIENT_CONFIG: path });
+    if (message) {
+      expect(load).toThrow(message);
+    } else {
+      expect(load).toThrow();
+    }
   });
-});
-
-test("conversation maximum wait cannot be shorter than its debounce", () => {
-  expect(() =>
-    loadAppConfig({
-      CONVERSATION_DEBOUNCE_MS: "1000",
-      CONVERSATION_MAXIMUM_WAIT_MS: "500",
-    }),
-  ).toThrow("CONVERSATION_MAXIMUM_WAIT_MS must be at least CONVERSATION_DEBOUNCE_MS");
 });

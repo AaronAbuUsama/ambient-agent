@@ -1,34 +1,19 @@
 import { loadAppConfig } from "../app/config";
-import { createAppResources } from "../app/resources";
+import { createAmbientProofHarness } from "../app/proof";
 
 const config = loadAppConfig();
-const retained = Promise.withResolvers<{
-  readonly observationId: string;
-  readonly conversationId: string;
-}>();
-const { database, whatsapp } = await createAppResources(config, (message) => {
-  retained.resolve(message);
-});
-
-const timeout = AbortSignal.timeout(120_000);
-const timedOut = new Promise<never>((_, reject) => {
-  timeout.addEventListener(
-    "abort",
-    () => reject(new Error("No new inbound text message arrived within 120 seconds")),
-    { once: true },
-  );
-});
+// No authorizeDestination: a listen-only harness that cannot send at all.
+const harness = await createAmbientProofHarness(config);
 
 try {
-  await whatsapp.attach();
+  await harness.start();
   console.info(
     `Listening on WhatsApp account "${config.whatsapp.accountId}". Send one new text message to the linked account.`,
   );
-  const result = await Promise.race([retained.promise, timedOut]);
+  const result = await harness.waitForAccepted(() => true, 120_000);
   console.info(
     `Retained Observation "${result.observationId}" for conversation "${result.conversationId}". No outbound message was sent.`,
   );
 } finally {
-  await whatsapp.dispose();
-  await database.close();
+  await harness.stop();
 }

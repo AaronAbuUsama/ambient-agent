@@ -14,12 +14,22 @@ export interface AppResources extends AmbientLifecycleDependencies {
   readonly conversation?: ConversationService;
 }
 
-export async function createAppResources(
-  config: AppConfig,
-  onAcceptedMessage?: (input: {
+export interface AppResourceOptions {
+  readonly onAcceptedMessage?: (input: {
     readonly observationId: string;
     readonly conversationId: string;
-  }) => void,
+  }) => void;
+  /**
+   * Proof-only safety override that STRENGTHENS the final outbound guard: the
+   * resolved destination must be explicitly authorized or the send refuses.
+   * Production passes nothing and keeps the unmodified guard.
+   */
+  readonly authorizeOutbound?: (conversationId: string) => boolean;
+}
+
+export async function createAppResources(
+  config: AppConfig,
+  options: AppResourceOptions = {},
 ): Promise<AppResources> {
   const database = await openAmbientDatabase(config.database.url);
   try {
@@ -28,7 +38,7 @@ export async function createAppResources(
       config.whatsapp.accountId,
       database.repositories.messageIngestion,
       (result) => {
-        onAcceptedMessage?.({
+        options.onAcceptedMessage?.({
           observationId: result.observationId,
           conversationId: result.conversationId,
         });
@@ -60,6 +70,9 @@ export async function createAppResources(
                 ? whatsapp.loopbackAddress()
                 : conversationId;
             if (!target) throw new Error("WhatsApp loopback address is not available");
+            if (options.authorizeOutbound && !options.authorizeOutbound(target)) {
+              throw new Error(`outbound destination "${target}" is not authorized for this run`);
+            }
             const operation = await whatsapp.sendText(target, text, idempotencyKey);
             return { operationId: operation.id };
           },
