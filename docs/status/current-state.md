@@ -206,6 +206,31 @@ its interface uncertainty dropped, and retiring the proof-only composition
 path unblocks safe guarded validation of the riskier WhatsApp boundary slice
 that follows.
 
+## Known debt
+
+Accepted, durable, and owned here rather than in commit messages:
+
+- **Proof composition drift** — both proofs still build on the lower-level
+  resource factory; `proofs/whatsapp-conversation.ts` additionally wires its
+  own Conversation service, work-store `notify`, and model runner. Retired by
+  the proof-composition slice.
+- **Remaining environment scalars** — database URL, WhatsApp, scheduling,
+  logging, and conversation toggles still load from env rather than the
+  structured document. A later configuration sweep moves them; secrets stay in
+  env by policy.
+- **WhatsApp exposure** — `AppResources` still exposes the concrete
+  `WhatsAppSessionController`, and Conversation's outbound text effect is an
+  ad hoc scoped sender built in composition. Owned by the WhatsApp boundary
+  and effects slice.
+- **Repository bag** — `AmbientRepositories` remains a public bag pending
+  internalization behind explicit surfaces; `runs.start` has no production
+  caller until a Memory or Worker slice; `inbox.enqueue` is the retention
+  path awaiting its first `task_update` producer.
+- **`root` model role** — the implemented `ModelRole` union and `agent_runs`
+  role enum omit `root` until a Root slice creates the first root run.
+- **Duplicated text extraction** — the assistant-text flatten exists in
+  `pi-agent.ts` and `proofs/model-runtime.ts`; extract on a third caller.
+
 ## Product-discovery themes
 
 These are not committed sequential phases:

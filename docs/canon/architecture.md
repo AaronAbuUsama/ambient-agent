@@ -108,13 +108,18 @@ The model subsystem resolves provider definitions and role profiles once at
 startup:
 
 ```ts
-type ModelRole = "conversation" | "worker" | "memory" | "evaluator";
+type ModelRole = "root" | "conversation" | "worker" | "memory" | "evaluator";
 
 interface ModelRuntime {
   readonly roles: readonly ModelRole[];
   forRole(role: ModelRole): ModelRunner;
 }
 ```
+
+The implemented union currently omits `root`: the durable `agent_runs` role
+enum has no root runs yet, and both are extended together when a Root slice
+lands. The target keeps `root` because the product model makes the Root a
+first-class agent kind.
 
 A `ModelRunner` is one role's ready-to-use binding: the durable
 provider/model/settings snapshot, the resolved immutable model, and a stream
