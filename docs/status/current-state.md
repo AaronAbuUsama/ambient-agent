@@ -628,6 +628,14 @@ whole loop autonomously; testing never requires the operator.
 
 Accepted, durable, and owned here rather than in commit messages:
 
+- **Memory prompt embeds one chat's focus** — the `memory-v2` analyst prompt
+  hard-codes the Bug Reports group's shape (issues as the unit of memory,
+  GitHub filing). The general machinery (grounding, dedup invariant,
+  supersession, windowing, golden-first method) is chat-independent; when a
+  second memory bed arrives, split the base prompt from a per-chat digestion
+  brief carried the same way speakers carry per-chat instructions. Do not
+  build the brief machinery before that second real use.
+
 - **Repository bag** — `AmbientRepositories` is now consumed only inside
   `src/app/` (resources and the proof harness) but remains a bag rather than
   explicit surfaces; `runs.start` has no production caller until a Memory or
