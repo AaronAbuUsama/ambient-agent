@@ -325,21 +325,40 @@ having survived a crash.
 
 ### Memory
 
-Memory currently provides useful evidence-backed recall but mixes ontology
-administration, patch application, identity linkage, and Conversation-facing
-recall in one repository.
-
-The stable Conversation dependency is a narrow read port:
+Memory is a proven role since the 2026-08-12 Memory v2 slice. `memory/` owns
+the Memory Agent contract, prompt, and host-side validation; `database/`
+implements its stores. The Memory Agent is a bounded evidence analyst: it
+receives one immutable batch of retained messages plus the current ontology
+view and proposes entities, identity links, predicates, and claims. It never
+writes; the host validates every proposal and applies it through the patch
+machinery, so an invalid proposal fails the job without touching the ontology.
 
 ```ts
-interface ConversationRecall {
-  recall(input: ConversationRecallQuery): Promise<readonly RecalledClaim[]>;
+interface MemoryAgent {
+  propose(input: MemoryInput, signal?: AbortSignal): Promise<MemoryProposal>;
 }
 ```
 
-Memory-owned write and analysis ports will be reshaped when a Memory Agent slice
-is selected. Conversation never receives unrestricted ontology or database
-access.
+Host-owned invariants, enforced at the mutation path (not by prompt):
+
+- one current claim per (entity, predicate): a restated fact becomes a
+  reinforcement, a changed fact becomes a supersession;
+- a chat or group id can never be linked as an identity;
+- linkable identities are only ids evidenced in the batch (senders,
+  mentions, and quoted-reply authors — historical group sync loses
+  authorship, and the import never fabricates it);
+- `applyPatch` remains the only claim mutation path, idempotent per job;
+- the model never sees or copies real uuids — the adapter presents compact
+  symbols and translates back.
+
+The ontology view a digest receives includes entities evidenced in its
+conversation, not only identity-linked ones, so identity-less entities
+(issues, repositories) stay visible and deduplicable across windows.
+
+Conversation's stable dependency remains a narrow read port: recall by
+identity, plus conversation-scoped recall (current claims whose evidence was
+observed in one conversation). Conversation never receives unrestricted
+ontology or database access.
 
 ### Assignments and Workers
 
@@ -519,6 +538,24 @@ model selects recall
 
 Owner: Conversation service for scope and evidence, Memory for recall semantics.
 
+### Memory digestion
+
+```text
+designated mirror history + retained observations
+  -> bounded Memory Job (durable, fenced lease)
+  -> Memory Agent proposes over batch + ontology view
+  -> host validates and applies one idempotent patch
+  -> job + memory run + evaluation signal terminalize in one transaction
+  -> conversation-scoped recall returns current claims
+```
+
+Owner: memory service for validation and application; the job store for
+claim, lease, and terminal transitions; `applyPatch` for ontology mutation.
+
+History import retains evidence only — it never creates Inbox work and never
+wakes a speaker. Media messages are retained with their store refs and
+captions; bytes stay in the media store.
+
 ### Evaluation
 
 ```text
@@ -529,6 +566,11 @@ terminal Agent Run evidence
 ```
 
 Owner: evaluations subsystem.
+
+The memory judge receives the full digested window plus the applied claims —
+a judge that sees only cited evidence is structurally blind to omission
+(the recorded Memory v1 lesson: an eval only measures what it is pointed
+at).
 
 Evaluation observes effects and run outcomes. It does not decide whether they
 occurred.
@@ -567,7 +609,15 @@ Disposition meanings:
 | `src/database/database.ts`                 | Internalize                    | database connection and adapter assembly                |
 | `src/database/schema.ts`                   | Keep, internalize              | storage schema                                          |
 | `src/database/tasks.ts`                    | Defer                          | future assignments and Worker protocol                  |
-| `src/database/memory.ts`                   | Reshape in a Memory slice      | Memory store plus narrow recall read model              |
+| `src/memory/contract.ts`                   | Keep (proven 2026-08-12)       | Memory-owned agent, job, and proposal contracts         |
+| `src/memory/service.ts`                    | Keep (proven 2026-08-12)       | memory runner: validate, apply, host invariants         |
+| `src/memory/pi-agent.ts`                   | Keep (proven 2026-08-12)       | Memory agent adapter with symbol translation            |
+| `src/database/memory.ts`                   | Keep (reshaped 2026-08-12)     | ontology store, patch application, recall read models   |
+| `src/database/memory-jobs.ts`              | Keep (proven 2026-08-12)       | durable memory jobs: claim, lease, terminalize          |
+| `src/whatsapp/history-import.ts`           | Keep (proven 2026-08-12)       | mirror history to evidence, attribution-honest          |
+| `src/evals/service.ts`                     | Keep (proven 2026-08-12)       | async evaluation runner and contract metrics            |
+| `src/evals/judge.ts`                       | Keep (proven 2026-08-12)       | evaluator-role judges for conversation and memory       |
+| `src/database/conversation-speakers.ts`    | Keep (proven 2026-08-12)       | durable speaker records and activation watermarks       |
 | `src/database/evaluations.ts`              | Keep (rescued)                 | evaluation retention behind the evals recorder port     |
 | `src/whatsapp/service.ts`                  | Keep (rescued)                 | Ambient-owned WhatsApp service facade                   |
 | `src/whatsapp/session/controller.ts`       | Keep (internal)                | private WhatsApp service implementation                 |

@@ -953,7 +953,402 @@
       <section>
         <div class="section-head">
           <div>
-            <p class="eyebrow">03 · Protocol invariants</p>
+            <p class="eyebrow">03 · Memory digestion</p>
+            <h2>Evidence in, validated ontology out</h2>
+          </div>
+          <p class="section-copy">
+            History is imported as evidence only — it never creates Inbox work and never wakes a
+            speaker. A durable Memory Job carries one bounded window; the Memory Agent proposes, the
+            host validates and applies, and the terminal transition commits job, run, and evaluation
+            signal together.
+          </p>
+        </div>
+
+        <div class="diagram">
+          <svg viewBox="0 0 1200 560" role="img" aria-labelledby="memory-title memory-desc">
+            <title id="memory-title">Ambient memory digestion protocol</title>
+            <desc id="memory-desc">
+              A designated mirror is read into Observations by the history import. The memory job
+              store claims windowed batches under a fenced lease. The Memory Agent proposes over the
+              batch plus the ontology view; the host validates and applies one idempotent patch;
+              job, run, and evaluation signal terminalize in one transaction.
+            </desc>
+            <defs>
+              <marker id="m-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#4f5d75" />
+              </marker>
+              <marker
+                id="m-arrow-open"
+                markerWidth="8"
+                markerHeight="6"
+                refX="7"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill="#7a8399" />
+              </marker>
+            </defs>
+
+            <rect width="1200" height="560" fill="#f5f5f5" />
+
+            <!-- top row: evidence path -->
+            <rect x="56" y="48" width="168" height="64" rx="6" fill="#ffffff" stroke="#2e5aa8" />
+            <text
+              x="140"
+              y="76"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="middle"
+            >
+              Designated mirror
+            </text>
+            <text
+              x="140"
+              y="96"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              read-only history
+            </text>
+
+            <rect x="300" y="48" width="184" height="64" rx="6" fill="#ffffff" stroke="#2d3142" />
+            <text
+              x="392"
+              y="76"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="middle"
+            >
+              History Import
+            </text>
+            <text
+              x="392"
+              y="96"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              attribution-honest · media as refs
+            </text>
+
+            <rect
+              x="560"
+              y="48"
+              width="200"
+              height="64"
+              rx="6"
+              fill="rgba(235,108,54,0.08)"
+              stroke="#eb6c36"
+            />
+            <text
+              x="660"
+              y="76"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="middle"
+            >
+              Observations
+            </text>
+            <text
+              x="660"
+              y="96"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              evidence · never Inbox
+            </text>
+
+            <rect
+              x="840"
+              y="48"
+              width="200"
+              height="64"
+              rx="6"
+              fill="rgba(235,108,54,0.08)"
+              stroke="#eb6c36"
+            />
+            <text
+              x="940"
+              y="76"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="middle"
+            >
+              Memory Job Store
+            </text>
+            <text
+              x="940"
+              y="96"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              fenced lease + terminal owner
+            </text>
+
+            <line
+              x1="224"
+              y1="80"
+              x2="300"
+              y2="80"
+              stroke="#4f5d75"
+              stroke-width="1"
+              marker-end="url(#m-arrow)"
+            />
+            <line
+              x1="484"
+              y1="80"
+              x2="560"
+              y2="80"
+              stroke="#4f5d75"
+              stroke-width="1"
+              marker-end="url(#m-arrow)"
+            />
+            <rect x="472" y="112" width="120" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="532"
+              y="124"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              RETAIN + DEDUPE
+            </text>
+            <line
+              x1="760"
+              y1="80"
+              x2="840"
+              y2="80"
+              stroke="#4f5d75"
+              stroke-width="1"
+              marker-end="url(#m-arrow)"
+            />
+            <rect x="736" y="112" width="152" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="812"
+              y="124"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              WINDOWED BATCHES
+            </text>
+
+            <!-- middle row: digest path -->
+            <rect x="300" y="240" width="184" height="64" rx="6" fill="#ffffff" stroke="#2d3142" />
+            <text
+              x="392"
+              y="268"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="middle"
+            >
+              Memory Agent
+            </text>
+            <text
+              x="392"
+              y="288"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              batch + ontology view · proposes only
+            </text>
+
+            <rect x="560" y="240" width="200" height="64" rx="6" fill="#ffffff" stroke="#2d3142" />
+            <text
+              x="660"
+              y="268"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="middle"
+            >
+              Host validate + apply
+            </text>
+            <text
+              x="660"
+              y="288"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              invariants enforced here
+            </text>
+
+            <rect
+              x="840"
+              y="240"
+              width="200"
+              height="64"
+              rx="6"
+              fill="rgba(235,108,54,0.08)"
+              stroke="#eb6c36"
+            />
+            <text
+              x="940"
+              y="268"
+              fill="#2d3142"
+              font-size="12"
+              font-weight="600"
+              font-family="'Geist', sans-serif"
+              text-anchor="middle"
+            >
+              Patches → Claims
+            </text>
+            <text
+              x="940"
+              y="288"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              one mutation path · per-job id
+            </text>
+
+            <line
+              x1="940"
+              y1="112"
+              x2="416"
+              y2="240"
+              stroke="#4f5d75"
+              stroke-width="1"
+              marker-end="url(#m-arrow)"
+            />
+            <rect x="560" y="164" width="152" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="636"
+              y="176"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              CLAIM UNDER LEASE
+            </text>
+            <line
+              x1="484"
+              y1="272"
+              x2="560"
+              y2="272"
+              stroke="#4f5d75"
+              stroke-width="1"
+              marker-end="url(#m-arrow)"
+            />
+            <rect x="452" y="304" width="176" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="540"
+              y="316"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              SYMBOLIC PROPOSAL
+            </text>
+            <line
+              x1="760"
+              y1="272"
+              x2="840"
+              y2="272"
+              stroke="#4f5d75"
+              stroke-width="1"
+              marker-end="url(#m-arrow)"
+            />
+
+            <!-- terminal transaction -->
+            <rect
+              x="300"
+              y="392"
+              width="740"
+              height="48"
+              rx="6"
+              fill="#ffffff"
+              stroke="#eb6c36"
+              stroke-dasharray="5,4"
+            />
+            <text
+              x="670"
+              y="412"
+              fill="#eb6c36"
+              font-size="9"
+              font-weight="600"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              ONE TRANSACTION: JOB TERMINAL + MEMORY RUN + EVALUATION SIGNAL
+            </text>
+            <text
+              x="670"
+              y="428"
+              fill="#7a8399"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              expired lease reopens the job · recovered patch never digests twice
+            </text>
+
+            <line
+              x1="940"
+              y1="304"
+              x2="940"
+              y2="392"
+              stroke="#4f5d75"
+              stroke-width="1"
+              marker-end="url(#m-arrow)"
+            />
+            <line
+              x1="392"
+              y1="440"
+              x2="392"
+              y2="500"
+              stroke="#4f5d75"
+              stroke-width="1"
+              stroke-dasharray="4,3"
+              marker-end="url(#m-arrow-open)"
+            />
+            <rect x="416" y="460" width="288" height="16" rx="2" fill="#f5f5f5" />
+            <text
+              x="560"
+              y="472"
+              fill="#4f5d75"
+              font-size="8"
+              font-family="'Geist Mono', monospace"
+              text-anchor="middle"
+            >
+              WINDOW-AWARE JUDGE + GOLDEN-REFERENCE GATES
+            </text>
+          </svg>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">04 · Protocol invariants</p>
             <h2>What restart must not change</h2>
           </div>
           <p class="section-copy">
@@ -976,6 +1371,17 @@
               <li>Claim membership and lease ownership fence every terminal transition.</li>
               <li>Tool starts and outcomes remain attached to one run and call identity.</li>
               <li>WhatsApp idempotency derives from retained run work, not model text.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Memory authority</h3>
+            <ul>
+              <li>
+                One current claim per entity and predicate: restatements reinforce, changes
+                supersede.
+              </li>
+              <li>A chat id is never an identity; linkable ids must be evidenced in the batch.</li>
+              <li>Patches apply idempotently per job; the judge sees the full digested window.</li>
             </ul>
           </article>
         </div>
