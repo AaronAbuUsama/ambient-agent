@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import type { AmbientDatabaseConnection } from "./database";
 import { evaluationAnnotations, evaluationResults, evaluationRuns } from "./schema";
@@ -31,6 +31,7 @@ export interface EvaluationRepository {
     readonly startedAt?: string;
   }): Promise<EvaluationRun>;
   get(id: string): Promise<EvaluationRun | undefined>;
+  forSubject(subjectRunId: string): Promise<readonly EvaluationRun[]>;
   finish(
     id: string,
     result:
@@ -110,6 +111,15 @@ export function createEvaluationRepository(
     },
 
     get,
+
+    async forSubject(subjectRunId) {
+      const rows = await database
+        .select()
+        .from(evaluationRuns)
+        .where(eq(evaluationRuns.subjectRunId, subjectRunId))
+        .orderBy(asc(evaluationRuns.startedAt), asc(evaluationRuns.id));
+      return rows.map(decode);
+    },
 
     async finish(id, update, completedAt = new Date().toISOString()) {
       const [row] = await database

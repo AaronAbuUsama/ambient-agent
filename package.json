@@ -13,6 +13,8 @@
     "prepare": "vp config"
   },
   "dependencies": {
+    "@earendil-works/pi-agent-core": "0.84.1",
+    "@earendil-works/pi-ai": "0.84.1",
     "@libsql/client": "^0.15.15",
     "drizzle-orm": "^0.44.5",
     "pino": "^10.3.1",

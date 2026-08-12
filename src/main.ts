@@ -3,8 +3,8 @@ import { loadAppConfig } from "./app/config";
 import { createAppResources } from "./app/resources";
 
 const config = loadAppConfig();
-const { database, whatsapp } = await createAppResources(config);
-const ambient = createAmbient({ database, whatsapp });
+const { database, whatsapp, conversation } = await createAppResources(config);
+const ambient = createAmbient({ database, whatsapp, ...(conversation ? { conversation } : {}) });
 let shuttingDown = false;
 
 function nextShutdownSignal(): Promise<NodeJS.Signals> {

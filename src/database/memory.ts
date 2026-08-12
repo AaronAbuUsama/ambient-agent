@@ -1,11 +1,14 @@
-import { eq } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, notExists, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
+import type { RecalledMemory } from "../conversation/contract";
 import type { AmbientDatabaseConnection } from "./database";
 import {
   agentRuns,
   claimEvidence,
   claims,
   entities,
+  identityLinks,
   memoryPatches,
   memoryPatchOperations,
   predicateDefinitions,
@@ -58,6 +61,18 @@ export interface MemoryRepository {
     readonly valueSchema: z.infer<typeof jsonValueSchema>;
     readonly at?: string;
   }): Promise<void>;
+  linkIdentity(input: {
+    readonly id?: string;
+    readonly entityId: string;
+    readonly namespace: string;
+    readonly nativeId: string;
+    readonly createdAt?: string;
+  }): Promise<void>;
+  recall(input: {
+    readonly nativeIds: readonly string[];
+    readonly query: string;
+    readonly limit?: number;
+  }): Promise<readonly RecalledMemory[]>;
   getPatch(id: string): Promise<
     | {
         readonly id: string;
@@ -76,6 +91,8 @@ export interface MemoryRepository {
 }
 
 export function createMemoryRepository(database: AmbientDatabaseConnection): MemoryRepository {
+  const successorClaims = alias(claims, "successor_claims");
+
   return {
     async putEntity(input) {
       const at = input.at ?? new Date().toISOString();
@@ -119,6 +136,125 @@ export function createMemoryRepository(database: AmbientDatabaseConnection): Mem
             updatedAt: at,
           },
         });
+    },
+
+    async linkIdentity(input) {
+      const [inserted] = await database
+        .insert(identityLinks)
+        .values({
+          id: input.id ?? crypto.randomUUID(),
+          entityId: input.entityId,
+          namespace: input.namespace,
+          nativeId: input.nativeId,
+          createdAt: input.createdAt ?? new Date().toISOString(),
+        })
+        .onConflictDoNothing({
+          target: [identityLinks.namespace, identityLinks.nativeId],
+        })
+        .returning({ entityId: identityLinks.entityId });
+      if (inserted) return;
+
+      const [existing] = await database
+        .select({ entityId: identityLinks.entityId })
+        .from(identityLinks)
+        .where(
+          and(
+            eq(identityLinks.namespace, input.namespace),
+            eq(identityLinks.nativeId, input.nativeId),
+          ),
+        )
+        .limit(1);
+      if (existing?.entityId !== input.entityId) {
+        throw new Error(
+          `identity "${input.namespace}:${input.nativeId}" is already linked to another entity`,
+        );
+      }
+    },
+
+    async recall({ nativeIds, query, limit = 10 }) {
+      if (nativeIds.length === 0 || limit <= 0) return [];
+      const links = await database
+        .select({ entityId: identityLinks.entityId })
+        .from(identityLinks)
+        .where(
+          and(
+            eq(identityLinks.namespace, "whatsapp"),
+            inArray(identityLinks.nativeId, [...nativeIds]),
+          ),
+        );
+      const entityIds = [...new Set(links.map(({ entityId }) => entityId))];
+      if (entityIds.length === 0) return [];
+
+      const normalized = query.trim().toLocaleLowerCase();
+      const queryPattern = `%${normalized
+        .replaceAll("!", "!!")
+        .replaceAll("%", "!%")
+        .replaceAll("_", "!_")}%`;
+      const rows = await database
+        .select({
+          id: claims.id,
+          entityId: claims.entityId,
+          predicateId: claims.predicateId,
+          value: claims.value,
+          confidence: claims.confidence,
+          version: claims.version,
+          entityName: entities.canonicalName,
+          predicateName: predicateDefinitions.name,
+        })
+        .from(claims)
+        .innerJoin(entities, eq(entities.id, claims.entityId))
+        .innerJoin(predicateDefinitions, eq(predicateDefinitions.id, claims.predicateId))
+        .where(
+          and(
+            inArray(claims.entityId, entityIds),
+            notExists(
+              database
+                .select({ id: successorClaims.id })
+                .from(successorClaims)
+                .where(
+                  and(
+                    eq(successorClaims.entityId, claims.entityId),
+                    eq(successorClaims.predicateId, claims.predicateId),
+                    gt(successorClaims.version, claims.version),
+                  ),
+                ),
+            ),
+            ...(normalized
+              ? [
+                  or(
+                    sql`lower(${entities.canonicalName}) like ${queryPattern} escape '!'`,
+                    sql`lower(${predicateDefinitions.name}) like ${queryPattern} escape '!'`,
+                    sql`lower(cast(${claims.value} as text)) like ${queryPattern} escape '!'`,
+                  ),
+                ]
+              : []),
+          ),
+        )
+        .orderBy(desc(claims.createdAt), desc(claims.id))
+        .limit(limit);
+      if (rows.length === 0) return [];
+
+      const evidence = await database
+        .select()
+        .from(claimEvidence)
+        .where(
+          inArray(
+            claimEvidence.claimId,
+            rows.map(({ id }) => id),
+          ),
+        );
+      const evidenceByClaim = new Map<string, string[]>();
+      for (const row of evidence) {
+        const ids = evidenceByClaim.get(row.claimId) ?? [];
+        ids.push(row.observationId);
+        evidenceByClaim.set(row.claimId, ids);
+      }
+      return rows.map((row) => ({
+        claimId: row.id,
+        text: `${row.entityName} ${row.predicateName}: ${JSON.stringify(row.value)}`,
+        confidence: row.confidence,
+        evidenceObservationIds: evidenceByClaim.get(row.id) ?? [],
+      }));
     },
 
     async getPatch(id) {

@@ -22,6 +22,7 @@ import {
   idleHistoryBackfill,
   type HistoryBackfillProgress,
 } from "./history-backfill";
+import { messageOf } from "../../platform/errors";
 
 /**
  * A backend whose deployment may own a connection to close.
@@ -82,10 +83,6 @@ export interface WhatsAppSessionOptions {
     wake(): Promise<void>;
     stop(): Promise<void>;
   };
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -242,11 +239,23 @@ export class WhatsAppSessionController {
     });
   }
 
-  /** Send a text message through the account's durable operation queue. */
-  async sendText(chatId: string, text: string): Promise<WhatsAppOperation<MessageRef>> {
+  /** The linked account's own chat address, suitable for a send-only loopback proof. */
+  loopbackAddress(): string | undefined {
+    const identity = this.#session?.identity?.();
+    if (!identity) return undefined;
+    if (identity.phoneE164) return `${identity.phoneE164.replace(/^\+/, "")}@s.whatsapp.net`;
+    return identity.jid.replace(/:\d+@/, "@");
+  }
+
+  /** Send a text message through the account's durable idempotent operation queue. */
+  async sendText(
+    chatId: string,
+    text: string,
+    idempotencyKey: string,
+  ): Promise<WhatsAppOperation<MessageRef>> {
     const client = this.#client;
     if (!client) throw new Error("not connected");
-    return client.messages.send.text(chatId, text);
+    return client.messages.send.text(chatId, text, { idempotencyKey });
   }
 
   async dispose(): Promise<void> {

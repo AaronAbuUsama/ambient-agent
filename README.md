@@ -6,6 +6,8 @@ session, loads all locally retained chat history, and maintains a separate
 Ambient database for observations, runs, tool calls, inbox work, tasks, memory
 records, and evaluations. Each new live inbound text message is now retained
 exactly once as one Observation plus one pending Conversation Inbox item.
+Conversation scheduling and model behavior are implemented behind an opt-in
+safety switch.
 
 ```bash
 pnpm install
@@ -17,7 +19,39 @@ The process claims the configured account on launch and runs until `SIGINT` or
 in its data directory. A new pairing flow will return as a channel capability,
 not as a terminal interface.
 
-Ambient does not yet invoke a Conversation model or send replies.
+Conversation is disabled by default, so a normal `pnpm start` still invokes no
+model and submits no outbound operation.
+
+## Conversation
+
+Set `CONVERSATION_ENABLED=true` to activate the durable Conversation scheduler.
+It reconciles pending Inbox work on startup, coalesces rapid messages behind a
+sliding debounce and maximum wait, leases one conversation at a time, and
+freezes a bounded Inbox range into each Agent Run. Arrivals during a run remain
+pending for the next run.
+
+The role-specific Pi agent can recall evidence-backed memory, submit one scoped
+`send_message` operation, or deliberately remain silent. Tool calls, model
+configuration, run outcomes, claimed ranges, and Conversation contract
+evaluations are retained.
+
+Outbound mode defaults to `loopback`, which resolves the linked account's own
+WhatsApp address and never lets the model choose a destination. Set
+`CONVERSATION_OUTBOUND_MODE=conversation` only for an explicitly authorized
+deployment that should reply to originating chats. WhatsApp sends use durable
+idempotency keys derived from the oldest Inbox item in the run.
+
+Scheduling defaults can be overridden with:
+
+- `CONVERSATION_DEBOUNCE_MS` (default `750`)
+- `CONVERSATION_MAXIMUM_WAIT_MS` (default `5000`)
+- `CONVERSATION_LEASE_MS` (default `120000`)
+- `CONVERSATION_MAXIMUM_ITEMS_PER_RUN` (default `50`)
+- `CONVERSATION_INSTRUCTIONS`
+
+The default `qwen` provider uses `QWEN_API_KEY` (or `DASHSCOPE_API_KEY`) and the
+international DashScope OpenAI-compatible endpoint. Override the endpoint with
+`QWEN_BASE_URL`. No live model or outbound proof is run by the test suite.
 
 ## WhatsApp ingestion
 

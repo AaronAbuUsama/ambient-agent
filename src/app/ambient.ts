@@ -15,28 +15,39 @@ export interface DurableResource {
 export interface AmbientDependencies {
   readonly database: DurableResource;
   readonly whatsapp: WhatsAppLifecycle;
+  readonly conversation?: {
+    start(): Promise<void>;
+    stop(): Promise<void>;
+  };
 }
 
 /**
  * Own the backend process lifecycle behind one small application boundary.
  */
-export function createAmbient({ database, whatsapp }: AmbientDependencies): Ambient {
+export function createAmbient({ database, whatsapp, conversation }: AmbientDependencies): Ambient {
   let starting: Promise<void> | undefined;
   let stopping: Promise<void> | undefined;
 
   return {
     start() {
       if (stopping) return Promise.reject(new Error("Ambient has stopped"));
-      starting ??= whatsapp.attach().then(() => {});
+      starting ??= (async () => {
+        await whatsapp.attach();
+        await conversation?.start();
+      })();
       return starting;
     },
     stop() {
       stopping ??= (async () => {
         await starting?.catch(() => {});
         try {
-          await whatsapp.dispose();
+          await conversation?.stop();
         } finally {
-          await database.close();
+          try {
+            await whatsapp.dispose();
+          } finally {
+            await database.close();
+          }
         }
       })();
       return stopping;

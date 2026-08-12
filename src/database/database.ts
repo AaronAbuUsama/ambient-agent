@@ -10,6 +10,10 @@ import {
   createConversationInboxRepository,
   type ConversationInboxRepository,
 } from "./conversation-inbox";
+import {
+  createConversationScheduleRepository,
+  type ConversationScheduleRepository,
+} from "./conversation-schedule";
 import { createEvaluationRepository, type EvaluationRepository } from "./evaluations";
 import { createMemoryRepository, type MemoryRepository } from "./memory";
 import {
@@ -24,6 +28,7 @@ export interface AmbientRepositories {
   readonly observations: ObservationRepository;
   readonly messageIngestion: MessageIngestionRepository;
   readonly inbox: ConversationInboxRepository;
+  readonly conversationSchedule: ConversationScheduleRepository;
   readonly memory: MemoryRepository;
   readonly runs: RunRepository;
   readonly tasks: TaskRepository;
@@ -49,6 +54,7 @@ function repositories(database: AmbientDatabaseConnection): AmbientRepositories 
     observations: createObservationRepository(database),
     messageIngestion: createMessageIngestionRepository(database),
     inbox: createConversationInboxRepository(database),
+    conversationSchedule: createConversationScheduleRepository(database),
     runs: createRunRepository(database),
     tasks: createTaskRepository(database),
     evaluations: createEvaluationRepository(database),

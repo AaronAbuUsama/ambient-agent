@@ -385,6 +385,12 @@ test("claim versions and evidence references are enforced by the database", asyn
       kind: "person",
       canonicalName: "Alice",
     });
+    await repositories.memory.linkIdentity({
+      id: "identity-1",
+      entityId: "entity-1",
+      namespace: "whatsapp",
+      nativeId: "alice@s.whatsapp.net",
+    });
     await repositories.memory.putPredicate({
       id: "predicate-1",
       name: "works_at",
@@ -407,7 +413,6 @@ test("claim versions and evidence references are enforced by the database", asyn
         },
       ],
     });
-
     await expectFailure(
       () =>
         repositories.memory.applyPatch({
@@ -445,6 +450,25 @@ test("claim versions and evidence references are enforced by the database", asyn
         },
       ],
     });
+    expect(
+      await repositories.memory.recall({
+        nativeIds: ["alice@s.whatsapp.net"],
+        query: "works",
+      }),
+    ).toEqual([
+      {
+        claimId: "claim-2",
+        text: 'Alice works_at: "New Acme"',
+        confidence: "confirmed",
+        evidenceObservationIds: ["evidence-1"],
+      },
+    ]);
+    expect(
+      await repositories.memory.recall({
+        nativeIds: ["unrelated@s.whatsapp.net"],
+        query: "",
+      }),
+    ).toEqual([]);
     await expectFailure(
       () =>
         repositories.memory.applyPatch({
@@ -508,6 +532,102 @@ test("claim versions and evidence references are enforced by the database", asyn
       expect.objectContaining({ id: "stale-patch", status: "rejected" }),
       expect.objectContaining({ id: "second-successor-patch", status: "rejected" }),
       expect.objectContaining({ id: "unsupported-patch", status: "rejected" }),
+    ]);
+  });
+});
+
+test("memory recall limits current claims after collapsing historical versions", async () => {
+  await withDatabase(async ({ repositories }) => {
+    await repositories.runs.start({
+      id: "recall-run",
+      agentId: "memory-main",
+      role: "memory",
+      model,
+      promptVersion: "memory-v1",
+      input: {},
+    });
+    await repositories.observations.retain({
+      id: "recall-evidence",
+      source: "whatsapp",
+      accountId: "main",
+      nativeId: "recall-message",
+      occurredAt: "2026-08-11T10:00:00.000Z",
+      kind: "message",
+      payload: { text: "Alice's favorite color is orange" },
+    });
+    await repositories.memory.putEntity({
+      id: "recall-entity",
+      kind: "person",
+      canonicalName: "Alice",
+    });
+    await repositories.memory.linkIdentity({
+      entityId: "recall-entity",
+      namespace: "whatsapp",
+      nativeId: "recall@s.whatsapp.net",
+    });
+    await repositories.memory.putPredicate({
+      id: "000-history",
+      name: "history",
+      description: "A deliberately long claim history",
+      valueSchema: { type: "number" },
+    });
+    await repositories.memory.putPredicate({
+      id: "zzz-favorite",
+      name: "favorite_color",
+      description: "Favorite color",
+      valueSchema: { type: "string" },
+    });
+    await repositories.memory.applyPatch({
+      id: "recall-history-patch",
+      runId: "recall-run",
+      source: {},
+      operations: [
+        {
+          operation: "create",
+          claimId: "history-1",
+          entityId: "recall-entity",
+          predicateId: "000-history",
+          value: 1,
+          confidence: "high",
+          evidenceObservationIds: ["recall-evidence"],
+        },
+        ...Array.from({ length: 500 }, (_, index) => {
+          const version = index + 2;
+          return {
+            operation: "supersede" as const,
+            claimId: `history-${version}`,
+            supersedesClaimId: `history-${version - 1}`,
+            expectedVersion: version - 1,
+            value: version,
+            confidence: "high" as const,
+            evidenceObservationIds: ["recall-evidence"],
+          };
+        }),
+        {
+          operation: "create",
+          claimId: "favorite-color",
+          entityId: "recall-entity",
+          predicateId: "zzz-favorite",
+          value: "orange",
+          confidence: "confirmed",
+          evidenceObservationIds: ["recall-evidence"],
+        },
+      ],
+    });
+
+    expect(
+      await repositories.memory.recall({
+        nativeIds: ["recall@s.whatsapp.net"],
+        query: "favorite",
+        limit: 1,
+      }),
+    ).toEqual([
+      {
+        claimId: "favorite-color",
+        text: 'Alice favorite_color: "orange"',
+        confidence: "confirmed",
+        evidenceObservationIds: ["recall-evidence"],
+      },
     ]);
   });
 });

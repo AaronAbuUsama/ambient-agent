@@ -34,7 +34,9 @@ export interface ConversationInboxRepository {
   release(runId: string): Promise<number>;
 }
 
-function decode(row: typeof conversationInbox.$inferSelect): ConversationInboxItem {
+export function decodeConversationInboxItem(
+  row: typeof conversationInbox.$inferSelect,
+): ConversationInboxItem {
   return {
     id: row.id,
     conversationId: row.conversationId,
@@ -67,7 +69,7 @@ export function createConversationInboxRepository(
           target: [conversationInbox.kind, conversationInbox.referenceId],
         })
         .returning();
-      if (inserted) return { item: decode(inserted), accepted: true };
+      if (inserted) return { item: decodeConversationInboxItem(inserted), accepted: true };
 
       const [row] = await database
         .select()
@@ -80,7 +82,7 @@ export function createConversationInboxRepository(
         )
         .limit(1);
       if (!row) throw new Error("inbox conflict did not resolve to a retained row");
-      return { item: decode(row), accepted: false };
+      return { item: decodeConversationInboxItem(row), accepted: false };
     },
 
     async pending(conversationId, limit = 100) {
@@ -96,7 +98,7 @@ export function createConversationInboxRepository(
         )
         .orderBy(asc(conversationInbox.createdAt), asc(conversationInbox.id))
         .limit(limit);
-      return rows.map(decode);
+      return rows.map(decodeConversationInboxItem);
     },
 
     claim(conversationId, runId, limit) {
@@ -160,7 +162,7 @@ export function createConversationInboxRepository(
           })),
         );
 
-        return rows.map((row) => decode({ ...row, claimedByRunId: runId }));
+        return rows.map((row) => decodeConversationInboxItem({ ...row, claimedByRunId: runId }));
       });
     },
 

@@ -254,11 +254,11 @@
         <p class="eyebrow">Ambient · system and delivery roadmap</p>
         <h1>From durable spine to a working conversational agent.</h1>
         <p class="lede">
-          The durable foundation and receive-only ingestion path are proven. The next implementation
-          cut turns retained records into bounded, inspectable Conversation runs.
+          The durable foundation, exactly-once ingestion, and bounded Conversation path are proven.
+          The next implementation cut hands durable tasks to a Worker and returns results.
         </p>
         <div class="status">
-          <span class="status-dot"></span>Current position: Phase 2A complete · Phase 2B next
+          <span class="status-dot"></span>Current position: Phase 2B complete · Phase 3 next
         </div>
       </header>
 
@@ -270,8 +270,9 @@
           </div>
           <p class="section-copy">
             Phase 0 removed the abandoned terminal product. Phase 1 built the durable authority.
-            Phase 2A now retains live inbound text exactly once and has passed its receive-only live
-            proof. Conversation scheduling is the next cut.
+            Phase 2A retains live inbound text exactly once. Phase 2B coalesces retained input into
+            restart-safe Conversation runs with recall, scoped send, or deliberate silence. Tasks
+            and Worker handoff are next.
           </p>
         </div>
 
@@ -280,8 +281,8 @@
             <title id="roadmap-title">Ambient implementation roadmap</title>
             <desc id="roadmap-desc">
               Six delivery phases. Hard cut and durable spine are complete. WhatsApp ingestion is
-              complete, followed by Conversation, Worker handoff, Memory, and comparative
-              evaluation.
+              complete. Conversation is also complete, followed by Worker handoff, Memory, and
+              comparative evaluation.
             </desc>
             <defs>
               <marker
@@ -391,25 +392,16 @@
             </g>
 
             <g>
-              <line x1="488" y1="184" x2="488" y2="120" stroke="#eb6c36" stroke-width="1.2" />
-              <circle cx="488" cy="184" r="7" fill="#eb6c36" />
-              <rect
-                x="400"
-                y="40"
-                width="176"
-                height="80"
-                rx="6"
-                fill="rgba(235,108,54,0.08)"
-                stroke="#eb6c36"
-                stroke-width="1.2"
-              />
+              <line x1="488" y1="184" x2="488" y2="120" stroke="#4f5d75" stroke-width="1" />
+              <circle cx="488" cy="184" r="5" fill="#f5f5f5" stroke="#4f5d75" />
+              <rect x="400" y="40" width="176" height="80" rx="6" fill="#ffffff" stroke="#2d3142" />
               <text
                 x="488"
                 y="64"
                 text-anchor="middle"
                 font-family="Geist Mono, monospace"
                 font-size="8"
-                fill="#eb6c36"
+                fill="#7a8399"
                 letter-spacing="1.2"
               >
                 PHASE 2A · COMPLETE
@@ -458,7 +450,7 @@
                 fill="#7a8399"
                 letter-spacing="1.2"
               >
-                PHASE 2B
+                PHASE 2B · COMPLETE
               </text>
               <text
                 x="680"
@@ -484,25 +476,17 @@
             </g>
 
             <g>
-              <line
-                x1="872"
-                y1="184"
-                x2="872"
-                y2="120"
-                stroke="#7a8399"
-                stroke-width="1"
-                stroke-dasharray="4,3"
-              />
-              <circle cx="872" cy="184" r="5" fill="#f5f5f5" stroke="#7a8399" />
+              <line x1="872" y1="184" x2="872" y2="120" stroke="#eb6c36" stroke-width="1.2" />
+              <circle cx="872" cy="184" r="7" fill="#eb6c36" />
               <rect
                 x="792"
                 y="48"
                 width="160"
                 height="72"
                 rx="6"
-                fill="rgba(45,49,66,0.02)"
-                stroke="rgba(45,49,66,0.20)"
-                stroke-dasharray="4,3"
+                fill="rgba(235,108,54,0.08)"
+                stroke="#eb6c36"
+                stroke-width="1.2"
               />
               <text
                 x="872"
@@ -510,10 +494,10 @@
                 text-anchor="middle"
                 font-family="Geist Mono, monospace"
                 font-size="8"
-                fill="#7a8399"
+                fill="#eb6c36"
                 letter-spacing="1.2"
               >
-                PHASE 3
+                PHASE 3 · NEXT
               </text>
               <text
                 x="872"
@@ -555,9 +539,9 @@
                 width="160"
                 height="80"
                 rx="6"
-                fill="rgba(45,49,66,0.02)"
-                stroke="rgba(45,49,66,0.20)"
-                stroke-dasharray="4,3"
+                fill="rgba(235,108,54,0.08)"
+                stroke="#eb6c36"
+                stroke-width="1.2"
               />
               <text
                 x="1064"
@@ -565,7 +549,7 @@
                 text-anchor="middle"
                 font-family="Geist Mono, monospace"
                 font-size="8"
-                fill="#7a8399"
+                fill="#eb6c36"
                 letter-spacing="1.2"
               >
                 PHASES 4–5
@@ -628,19 +612,19 @@
           </article>
           <article class="card current">
             <p class="eyebrow">Next cut</p>
-            <h3>Build Conversation scheduling</h3>
+            <h3>Build Worker handoff</h3>
             <ul>
-              <li>Coalesce rapid messages behind a sliding debounce</li>
-              <li>Enforce maximum wait and one active lease</li>
-              <li>Claim one immutable bounded Inbox range</li>
-              <li>Create an inspectable Conversation run</li>
+              <li>Add scoped start, get, and list task tools</li>
+              <li>Claim Worker execution with fenced leases</li>
+              <li>Persist artifacts, outcomes, and retries</li>
+              <li>Return terminal updates to Conversation</li>
             </ul>
           </article>
           <article class="card">
             <p class="eyebrow">Not built yet</p>
-            <h3>No model behavior is live</h3>
+            <h3>No autonomous work is live</h3>
             <ul>
-              <li>No Conversation Agent or outbound reply</li>
+              <li>Conversation remains opt-in and loopback-safe by default</li>
               <li>No Worker execution or task report-back</li>
               <li>No episode construction or Memory Analyst</li>
               <li>No live account end-to-end journey proof</li>
@@ -913,9 +897,8 @@
                 width="160"
                 height="80"
                 rx="6"
-                fill="rgba(235,108,54,0.08)"
-                stroke="#eb6c36"
-                stroke-width="1.2"
+                fill="#ffffff"
+                stroke="#2d3142"
               />
               <text
                 x="368"
@@ -1001,8 +984,9 @@
                 width="200"
                 height="80"
                 rx="6"
-                fill="#ffffff"
-                stroke="#2d3142"
+                fill="rgba(235,108,54,0.08)"
+                stroke="#eb6c36"
+                stroke-width="1.2"
               />
               <text
                 x="980"
@@ -1034,8 +1018,9 @@
                 width="200"
                 height="80"
                 rx="6"
-                fill="#ffffff"
-                stroke="#2d3142"
+                fill="rgba(235,108,54,0.08)"
+                stroke="#eb6c36"
+                stroke-width="1.2"
               />
               <text
                 x="980"
@@ -1217,18 +1202,19 @@
       <section>
         <div class="section-head">
           <div>
-            <p class="eyebrow">03 · Next cutover</p>
-            <h2>What we prove next</h2>
+            <p class="eyebrow">03 · Completed cutover</p>
+            <h2>What Phase 2 proved</h2>
           </div>
           <p class="section-copy">
-            Ingestion passed deterministic and live receive-only proofs. The next gate is
-            deterministic scheduling and scoped Conversation behavior over retained input.
+            Ingestion passed deterministic and live receive-only proofs. Conversation now passes
+            controlled proofs for coalescing, leases, recall, scoped durable sends, deliberate
+            silence, restart recovery, and role evaluations.
           </p>
         </div>
 
         <div class="diagram">
           <svg viewBox="0 0 1200 420" role="img" aria-labelledby="cut-title cut-desc">
-            <title id="cut-title">The next two Ambient proof cuts</title>
+            <title id="cut-title">The two completed Ambient Phase 2 proof cuts</title>
             <desc id="cut-desc">
               Cut 2A retains one WhatsApp message exactly once and survives replay. Cut 2B coalesces
               pending items into a Conversation run that replies or deliberately remains silent.
@@ -1430,7 +1416,7 @@
               fill="#7a8399"
               letter-spacing="1.2"
             >
-              CUT 2B · CONVERSATION · IMMEDIATE NEXT
+              CUT 2B · CONVERSATION · COMPLETE
             </text>
             <line
               x1="256"
@@ -1601,7 +1587,7 @@
         </div>
 
         <div class="proof-grid">
-          <article class="proof next">
+          <article class="proof">
             <p>Exit gate · Cut 2A</p>
             <h3>Exactly-once channel ingestion</h3>
             <ol>
@@ -1617,8 +1603,10 @@
             <ol>
               <li>One retained message creates one Conversation run.</li>
               <li>Rapid messages coalesce; arrivals during the run remain pending.</li>
-              <li>The run either sends through its bound chat or records deliberate silence.</li>
-              <li>Restart never consumes an item twice or targets another conversation.</li>
+              <li>
+                The run recalls scoped memory, submits one bound operation, or records silence.
+              </li>
+              <li>Restart never consumes an item twice or lets the model choose a destination.</li>
             </ol>
           </article>
         </div>

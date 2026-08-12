@@ -260,13 +260,20 @@ export const conversationSchedule = sqliteTable(
     dueAt: text("due_at"),
     leaseOwner: text("lease_owner"),
     leaseUntil: text("lease_until"),
+    activeRunId: text("active_run_id").references(() => agentRuns.id),
   },
   (table) => [
     check(
       "conversation_schedule_lease",
-      sql`(${table.leaseOwner} IS NULL AND ${table.leaseUntil} IS NULL)
-        OR (${table.leaseOwner} IS NOT NULL AND ${table.leaseUntil} IS NOT NULL)`,
+      sql`(${table.leaseOwner} IS NULL AND ${table.leaseUntil} IS NULL AND ${table.activeRunId} IS NULL)
+        OR (${table.leaseOwner} IS NOT NULL AND ${table.leaseUntil} IS NOT NULL AND ${table.activeRunId} IS NOT NULL)`,
     ),
+    index("conversation_schedule_due")
+      .on(table.dueAt, table.conversationId)
+      .where(sql`${table.activeRunId} IS NULL AND ${table.dueAt} IS NOT NULL`),
+    index("conversation_schedule_expired")
+      .on(table.leaseUntil, table.conversationId)
+      .where(sql`${table.activeRunId} IS NOT NULL`),
   ],
 );
 

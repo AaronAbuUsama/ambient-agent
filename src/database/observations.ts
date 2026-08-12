@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { AmbientDatabaseConnection } from "./database";
 import { observations } from "./schema";
@@ -34,6 +34,7 @@ export interface ObservationRepository {
     observation: NewObservation,
   ): Promise<{ readonly observation: Observation; accepted: boolean }>;
   get(id: string): Promise<Observation | undefined>;
+  getMany(ids: readonly string[]): Promise<readonly Observation[]>;
 }
 
 function decode(row: typeof observations.$inferSelect): Observation {
@@ -113,6 +114,19 @@ export function createObservationRepository(
         .where(eq(observations.id, id))
         .limit(1);
       return row ? decode(row) : undefined;
+    },
+
+    async getMany(ids) {
+      if (ids.length === 0) return [];
+      const rows = await database
+        .select()
+        .from(observations)
+        .where(inArray(observations.id, [...ids]));
+      const byId = new Map(rows.map((row) => [row.id, decode(row)]));
+      return ids.flatMap((id) => {
+        const observation = byId.get(id);
+        return observation ? [observation] : [];
+      });
     },
   };
 }
