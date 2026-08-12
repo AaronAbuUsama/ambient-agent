@@ -44,6 +44,11 @@ Derived, regenerable views of durable truth: legible per-chat files, the wiki.
 Never authoritative.
 _Avoid_: cache, export
 
+**State directory**:
+The machine-owned area of the home (`state/`). The runtime alone writes it;
+everything outside it is human and Root territory.
+_Avoid_: data directory, internal files
+
 ### Chats and speakers
 
 **Speaker**:
@@ -73,6 +78,12 @@ file
 The runtime projection of a mandate plus the activation watermark. Protocol
 plane; the claim gate reads it transactionally. Not the grant itself.
 _Avoid_: Conversation mandate (retired 2026-08-12)
+
+**Binding file**:
+The per-chat file (`chat.yaml`) that binds a folder's slug to its real chat
+id. Identity, written once when the folder is created; a broken mandate can
+never touch it.
+_Avoid_: chat config
 
 **Chat slug**:
 The human label naming a chat folder: kebab-case `a-z0-9-`, at most 64
