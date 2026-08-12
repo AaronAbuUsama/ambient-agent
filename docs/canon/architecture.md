@@ -455,6 +455,28 @@ identity, and deterministic WhatsApp operation keys.
 Recovery: expired runs and active tool calls fail, claimed Inbox is released,
 and pending work becomes eligible again.
 
+A concrete trace with default timings (750 ms debounce, 5 s maximum wait,
+120 s lease):
+
+1. 10:00:00.000 — inbound "are we still on for Friday?" commits an
+   Observation, an Inbox item, and the cursor in one ingestion transaction;
+   a process-local wake hint fires.
+2. `notify` computes `dueAt` 10:00:00.750; the service sets a timer instead of
+   running immediately.
+3. 10:00:00.400 — "also send the address?" commits; `dueAt` slides to
+   10:00:01.150, coalescing both messages into one future run.
+4. 10:00:01.150 — `claimNext` freezes both items into one Agent Run under a
+   lease until 10:02:01; a racing claimer gets nothing.
+5. The service builds curated input from the retained Observations and runs
+   the agent; one `send_message` call retains tool evidence and the durable
+   operation receipt.
+6. `complete` records the private summary, consumes both Inbox items, releases
+   the lease, and schedules any work that arrived meanwhile.
+
+A crash before step 6 changes nothing durable until the lease expires; the
+next claim fails the abandoned run and releases its items for retry with the
+same idempotency key.
+
 ### Conversation WhatsApp effect
 
 ```text

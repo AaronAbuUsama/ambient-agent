@@ -7,14 +7,30 @@ export interface ConversationSchedulingConfig {
   readonly maximumItemsPerRun: number;
 }
 
-/** One durable Inbox item frozen into a claimed Conversation run. */
+/**
+ * One durable Conversation Inbox item: something this conversation's agent has
+ * not dealt with yet. It is the retained handoff into a Conversation run — an
+ * envelope, not the content.
+ *
+ * - `kind: "message"`: an accepted inbound WhatsApp message; `referenceId` is
+ *   the retained Observation id, dereferenced when building run input.
+ * - `kind: "task_update"`: a Worker result returned to the conversation that
+ *   delegated it. No slice produces these yet; the kind reserves the seam.
+ */
 export interface ConversationWorkItem {
   readonly id: string;
   readonly kind: "message" | "task_update";
   readonly referenceId: string;
 }
 
-/** One bounded immutable claim: the Agent Run plus its ordered Inbox membership. */
+/**
+ * One bounded immutable claim: the checkout receipt for a batch of Inbox work.
+ *
+ * "Claim" is queue vocabulary here — work checked out under a fenced lease —
+ * unrelated to Memory's evidence-backed claims (facts). Membership is frozen
+ * at claim time: at most `maximumItemsPerRun` items in Inbox order, and later
+ * arrivals wait for the next run.
+ */
 export interface ConversationClaim {
   readonly runId: string;
   readonly conversationId: string;
@@ -46,6 +62,12 @@ export interface RetainedConversationObservation {
  * Owns scheduling windows, bounded immutable claims, fenced leases, Agent Run
  * and tool evidence transitions, Inbox consumption or release, retries, and
  * expired-lease recovery.
+ *
+ * A lease is a time-limited exclusive right to run one conversation. A healthy
+ * runner renews it mid-run; a crashed runner leaves it to expire, and the next
+ * claim anywhere fails the abandoned run and releases its items for retry.
+ * Completion is fenced: it succeeds only while the caller still holds the
+ * lease, so a stalled process cannot corrupt work it no longer owns.
  */
 export interface ConversationWorkStore {
   reconcile(scheduling: ConversationSchedulingConfig): Promise<void>;
