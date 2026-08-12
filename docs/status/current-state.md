@@ -302,6 +302,26 @@ Digests are deliberately conservative (few strong claims); richer
 extraction is prompt iteration, now measurable through the eval cases and
 replay.
 
+**Post-slice review (2026-08-12, with the master).** The master's audit
+showed the green metrics measured internal consistency, not truth. Three
+defects: the history import kept the mirror's `sender` field — which for
+group messages is the chat itself — so 174 of 238 messages lost their true
+author (`ref.participant`) and the one identity link bound a person to the
+group id; the completeness probe judged only the cited claims and never saw
+the batch, so omissions were structurally invisible; and the
+conservative prompt yielded roughly a tenth of the salient facts. A manual
+read of the full corpus found ~18 issue-worthy bugs and features (several
+with status evolution and a root-caused fix — supersession material), five
+distinct people, four repositories, and the master's standing
+agent-quality preferences — none captured. Media messages (screenshots,
+part of future issue filing) were skipped entirely by the import.
+Memory v2 is therefore golden-first: fix attribution and media import,
+reset the poisoned digest from both databases, hand-label the corpus
+(including images) into a private reference ontology, derive the target
+ontology shape from it, then reshape the extractor and score coverage
+against the reference. Recorded lesson: an eval only measures what it is
+pointed at.
+
 **Open questions.** Incremental memory production for post-watermark
 traffic; who authors memory jobs in production (the Root, later);
 predicate governance as the ontology grows.
