@@ -50,6 +50,27 @@ test("a terminal WhatsApp session is torn down and surfaced as detached", async 
   }
 });
 
+test("an unexpected terminal session resolves the failure boundary", async () => {
+  const driver = createTestWhatsAppSession();
+  const session = new WhatsAppSessionController({
+    accountId: "terminal-failure",
+    createBackend: () => memoryBackend(),
+    openSession: () => driver.session,
+  });
+
+  try {
+    await session.attach();
+    const failure = session.waitForFailure();
+    await driver.session.stop();
+
+    await expect(failure).resolves.toEqual({
+      error: new Error("WhatsApp detached unexpectedly"),
+    });
+  } finally {
+    await session.dispose();
+  }
+});
+
 test("an attached account follows committed accepted-source changes", async () => {
   const driver = createTestWhatsAppSession();
   let starts = 0;

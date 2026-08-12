@@ -1,38 +1,13 @@
 import { createAmbient } from "./app/ambient";
 import { loadAppConfig } from "./app/config";
-import { createAppResources } from "./app/resources";
 
 const config = loadAppConfig();
-const { database, whatsapp, conversation } = await createAppResources(config);
-const ambient = createAmbient({ database, whatsapp, ...(conversation ? { conversation } : {}) });
-let shuttingDown = false;
+const ambient = await createAmbient(config);
 
 function nextShutdownSignal(): Promise<NodeJS.Signals> {
   return new Promise((resolve) => {
     process.once("SIGINT", resolve);
     process.once("SIGTERM", resolve);
-  });
-}
-
-function unexpectedWhatsAppDetachment(): Promise<Error> {
-  return new Promise((resolve) => {
-    let unsubscribe = () => {};
-    const changed = () => {
-      const snapshot = whatsapp.getSnapshot();
-      if (snapshot.attachment !== "detached") return;
-
-      unsubscribe();
-      resolve(
-        new Error(
-          snapshot.error
-            ? `WhatsApp detached unexpectedly: ${snapshot.error}`
-            : "WhatsApp detached unexpectedly",
-        ),
-      );
-    };
-
-    unsubscribe = whatsapp.subscribe(changed);
-    changed();
   });
 }
 
@@ -42,24 +17,15 @@ try {
   await ambient.start();
   console.info(`Ambient connected WhatsApp account "${config.whatsapp.accountId}"`);
 
-  void whatsapp
-    .waitForHistoryBackfill()
-    .then((progress) => {
-      console.info(
-        `WhatsApp history backfill ${progress.state}: ${progress.messages} messages across ${progress.done}/${progress.total} chats`,
-      );
-    })
-    .catch((error: unknown) => {
-      if (!shuttingDown) console.error("WhatsApp history backfill failed", error);
-    });
-
   const outcome = await Promise.race([
     signal.then((received) => ({ kind: "signal" as const, received })),
-    unexpectedWhatsAppDetachment().then((error) => ({ kind: "failure" as const, error })),
+    ambient.wait().then((exit) => ({ kind: "ambient" as const, exit })),
   ]);
-  if (outcome.kind === "failure") throw outcome.error;
-  console.info(`Received ${outcome.received}; stopping Ambient`);
+  if (outcome.kind === "ambient") {
+    if (outcome.exit.kind === "failed") throw outcome.exit.error;
+  } else {
+    console.info(`Received ${outcome.received}; stopping Ambient`);
+  }
 } finally {
-  shuttingDown = true;
   await ambient.stop();
 }

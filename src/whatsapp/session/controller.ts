@@ -35,6 +35,10 @@ export type ClosableBackend = WhatsAppBackend & { close?(): Promise<void> };
 /** How this process is attached to the account, independent of WhatsApp's own state. */
 export type Attachment = "detached" | "attaching" | "attached" | "detaching";
 
+export interface WhatsAppFailure {
+  readonly error: Error;
+}
+
 /**
  * One identity-stable view of the retained account and live session.
  *
@@ -129,12 +133,31 @@ export class WhatsAppSessionController {
     return this.#snapshot;
   };
 
-  // Main observes unexpected detachments through this public lifecycle seam.
-  // fallow-ignore-next-line unused-class-member
+  // Proofs observe retained account state through this read-only lifecycle seam.
   subscribe = (listener: () => void): (() => void) => {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
   };
+
+  /** Resolve when an attached account becomes unexpectedly unavailable. */
+  waitForFailure(): Promise<WhatsAppFailure> {
+    return new Promise((resolve) => {
+      let unsubscribe = () => {};
+      const changed = () => {
+        if (this.#disposed || this.#attachment !== "detached") return;
+        unsubscribe();
+        resolve({
+          error: new Error(
+            this.#error
+              ? `WhatsApp detached unexpectedly: ${this.#error}`
+              : "WhatsApp detached unexpectedly",
+          ),
+        });
+      };
+      unsubscribe = this.subscribe(changed);
+      changed();
+    });
+  }
 
   /**
    * Wait for the current full-mirror history pass to reach a terminal state.

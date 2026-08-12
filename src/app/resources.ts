@@ -4,10 +4,10 @@ import { createConversationScheduler, type ConversationScheduler } from "../conv
 import { createWhatsAppAcceptedSourceConsumer } from "../whatsapp/message-ingestion";
 import { WhatsAppSessionController } from "../whatsapp/session/controller";
 import { localDeployment } from "../whatsapp/session/local-deployment";
-import type { AmbientDependencies } from "./ambient";
 import type { AppConfig } from "./config";
+import type { AmbientLifecycleDependencies } from "./lifecycle";
 
-export interface AppResources extends AmbientDependencies {
+export interface AppResources extends AmbientLifecycleDependencies {
   readonly database: AmbientDatabase;
   readonly whatsapp: WhatsAppSessionController;
   readonly conversation?: ConversationScheduler;

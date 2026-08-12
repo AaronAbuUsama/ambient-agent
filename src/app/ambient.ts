@@ -1,56 +1,14 @@
-export interface Ambient {
-  start(): Promise<void>;
-  stop(): Promise<void>;
-}
-
-export interface WhatsAppLifecycle {
-  attach(): Promise<unknown>;
-  dispose(): Promise<void>;
-}
-
-export interface DurableResource {
-  close(): Promise<void>;
-}
-
-export interface AmbientDependencies {
-  readonly database: DurableResource;
-  readonly whatsapp: WhatsAppLifecycle;
-  readonly conversation?: {
-    start(): Promise<void>;
-    stop(): Promise<void>;
-  };
-}
+import type { AppConfig } from "./config";
+import { createAmbientLifecycle, type Ambient } from "./lifecycle";
+import { createAppResources } from "./resources";
 
 /**
- * Own the backend process lifecycle behind one small application boundary.
+ * The sole production composition root.
+ *
+ * Opens every durable resource and hides concrete infrastructure behind the
+ * Ambient lifecycle facade.
  */
-export function createAmbient({ database, whatsapp, conversation }: AmbientDependencies): Ambient {
-  let starting: Promise<void> | undefined;
-  let stopping: Promise<void> | undefined;
-
-  return {
-    start() {
-      if (stopping) return Promise.reject(new Error("Ambient has stopped"));
-      starting ??= (async () => {
-        await whatsapp.attach();
-        await conversation?.start();
-      })();
-      return starting;
-    },
-    stop() {
-      stopping ??= (async () => {
-        await starting?.catch(() => {});
-        try {
-          await conversation?.stop();
-        } finally {
-          try {
-            await whatsapp.dispose();
-          } finally {
-            await database.close();
-          }
-        }
-      })();
-      return stopping;
-    },
-  };
+export async function createAmbient(config: AppConfig): Promise<Ambient> {
+  const resources = await createAppResources(config);
+  return createAmbientLifecycle(resources);
 }
