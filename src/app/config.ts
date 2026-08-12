@@ -1,8 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { z } from "zod";
-import type { ConversationSchedulingConfig } from "../conversation/contract";
-import { modelsDocumentSchema, type ModelsDocument } from "../models/contract";
+import { modelsDocumentSchema } from "../models/contract";
 
 const configurationDocumentSchema = z
   .object({
@@ -41,31 +40,12 @@ const configurationDocumentSchema = z
     { message: "conversation.scheduling.maximumWaitMs must be at least debounceMs" },
   );
 
-export interface AppConfig {
-  readonly database: {
-    readonly url: string;
-  };
-  readonly models: ModelsDocument;
-  readonly conversation: {
-    readonly enabled: boolean;
-    readonly outboundMode: "loopback" | "conversation";
-    readonly instructions: string;
-    readonly scheduling: ConversationSchedulingConfig;
-  };
-  readonly whatsapp: {
-    readonly accountId: string;
-    readonly dataDirectory: string;
-    /**
-     * Optional safety limit for loading retained messages into memory.
-     *
-     * Undefined means backfill the entire local WhatsApp mirror.
-     */
-    readonly historyBackfillLimit?: number;
-  };
-  readonly logging: {
-    readonly level: string;
-  };
-}
+type ConfigurationDocument = z.infer<typeof configurationDocumentSchema>;
+
+/** The document shape with every deployment override and default resolved. */
+export type AppConfig = Omit<ConfigurationDocument, "database"> & {
+  readonly database: { readonly url: string };
+};
 
 /**
  * Read and validate the structured configuration document once at the process
@@ -92,23 +72,14 @@ export function loadAppConfig(environment: NodeJS.ProcessEnv = process.env): App
 
   const dataDirectory = environment.WHATSAPP_DATA_DIR ?? document.whatsapp.dataDirectory;
   return {
+    ...document,
     database: {
       url:
         environment.AMBIENT_DATABASE_URL ??
         document.database.url ??
         `file:${join(resolve(dataDirectory), "ambient.db")}`,
     },
-    models: document.models,
-    conversation: document.conversation,
-    whatsapp: {
-      accountId: document.whatsapp.accountId,
-      dataDirectory,
-      ...(document.whatsapp.historyBackfillLimit === undefined
-        ? {}
-        : { historyBackfillLimit: document.whatsapp.historyBackfillLimit }),
-    },
-    logging: {
-      level: environment.WA_LOG_LEVEL ?? document.logging.level,
-    },
+    whatsapp: { ...document.whatsapp, dataDirectory },
+    logging: { level: environment.WA_LOG_LEVEL ?? document.logging.level },
   };
 }

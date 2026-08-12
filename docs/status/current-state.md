@@ -255,6 +255,17 @@ Accepted, durable, and owned here rather than in commit messages:
   role enum omit `root` until a Root slice creates the first root run.
 - **Duplicated text extraction** — the assistant-text flatten exists in
   `pi-agent.ts` and `proofs/model-runtime.ts`; extract on a third caller.
+- **Proof harness stepping** — the harness deliberately steps bounded runs via
+  `notify` + `runOnce` instead of starting the live service loop (canon's
+  "requesting one bounded run" capability); production lifecycle-protocol
+  coverage stays with the lifecycle tests. Its accepted-input wait also rides
+  the in-memory ingestion callback rather than a durable read since a
+  watermark — acceptable for a hint-plus-durable-evidence proof, revisit if a
+  proof ever needs crash-safe waiting.
+- **Orphaned controller surface** — `waitForHistoryBackfill` and the snapshot
+  `subscribe` seam on the session controller have no consumer outside the
+  WhatsApp module since the facade landed; the Memory slice either adopts them
+  onto the facade or deletes them.
 
 ## Product-discovery themes
 

@@ -6,21 +6,15 @@ if (!targetHint) {
   throw new Error("PROOF_WHATSAPP_TARGET_HINT must identify the authorized test group or +44 chat");
 }
 
-const loaded = loadAppConfig();
-const config = {
-  ...loaded,
-  conversation: {
-    ...loaded.conversation,
-    instructions:
-      "This is a controlled Ambient Phase 2B proof. Reply once with a brief acknowledgement.",
-  },
-};
+const config = loadAppConfig();
 
 let authorizedTargetId: string | undefined;
 // Composing with authorizeDestination requires model credentials up front and
 // refuses any send whose resolved destination is not the matched target.
 const harness = await createAmbientProofHarness(config, {
   authorizeDestination: (conversationId) => conversationId === authorizedTargetId,
+  instructions:
+    "This is a controlled Ambient Phase 2B proof. Reply once with a brief acknowledgement.",
 });
 
 try {
@@ -43,7 +37,7 @@ try {
     180_000,
   );
   await new Promise((resolve) => setTimeout(resolve, config.conversation.scheduling.debounceMs));
-  const outcome = await harness.requestConversationRun(target.id, 180_000);
+  await harness.requestConversationRun(target.id, 180_000);
 
   const run = await harness.evidence.latestRun(target.id);
   if (!run) throw new Error("no conversation run evidence was retained");
@@ -69,7 +63,7 @@ try {
       2,
     ),
   );
-  if (outcome !== "succeeded") throw new Error(run.error ?? "Conversation run failed");
+  if (run.status !== "succeeded") throw new Error(run.error ?? "Conversation run failed");
 } finally {
   await harness.stop();
 }

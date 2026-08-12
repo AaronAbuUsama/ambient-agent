@@ -13,11 +13,13 @@ export interface AppResources extends AmbientLifecycleDependencies {
   readonly conversation?: ConversationService;
 }
 
+export interface AcceptedMessage {
+  readonly observationId: string;
+  readonly conversationId: string;
+}
+
 export interface AppResourceOptions {
-  readonly onAcceptedMessage?: (input: {
-    readonly observationId: string;
-    readonly conversationId: string;
-  }) => void;
+  readonly onAcceptedMessage?: (input: AcceptedMessage) => void;
   /**
    * Proof-only safety override that STRENGTHENS the final outbound guard: the
    * resolved destination must be explicitly authorized or the send refuses.

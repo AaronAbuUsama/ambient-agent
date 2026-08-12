@@ -1,12 +1,24 @@
-import type { AgentRun, ToolCall } from "../database/runs";
-import type { EvaluationRun } from "../database/evaluations";
 import type { WhatsAppDestination } from "../whatsapp/service";
 import type { AppConfig } from "./config";
-import { createAppResources, type AppResources } from "./resources";
+import { createAppResources, type AcceptedMessage, type AppResources } from "./resources";
 
-export interface AcceptedProofMessage {
-  readonly observationId: string;
-  readonly conversationId: string;
+/** Narrow run evidence: never the curated input or private terminal result. */
+export interface ProofRunEvidence {
+  readonly id: string;
+  readonly status: "running" | "succeeded" | "failed";
+  readonly error?: string;
+}
+
+export interface ProofToolEvidence {
+  readonly toolName: string;
+  readonly outcome: "running" | "succeeded" | "failed";
+  readonly output?: unknown;
+  readonly error?: string;
+}
+
+export interface ProofEvaluationEvidence {
+  readonly id: string;
+  readonly status: "running" | "succeeded" | "failed";
 }
 
 /**
@@ -21,18 +33,18 @@ export interface AmbientProofHarness {
   /** Chats the authenticated account can see, for proof-side target matching. */
   destinations(): readonly WhatsAppDestination[];
   waitForAccepted(
-    match: (message: AcceptedProofMessage) => boolean,
+    match: (message: AcceptedMessage) => boolean,
     timeoutMs: number,
-  ): Promise<AcceptedProofMessage>;
+  ): Promise<AcceptedMessage>;
   /** Notify one conversation and drive the production service until a run completes. */
   requestConversationRun(
     conversationId: string,
     timeoutMs: number,
   ): Promise<"succeeded" | "failed">;
   readonly evidence: {
-    latestRun(conversationId: string): Promise<AgentRun | undefined>;
-    toolCalls(runId: string): Promise<readonly ToolCall[]>;
-    evaluations(runId: string): Promise<readonly EvaluationRun[]>;
+    latestRun(conversationId: string): Promise<ProofRunEvidence | undefined>;
+    toolCalls(runId: string): Promise<readonly ProofToolEvidence[]>;
+    evaluations(runId: string): Promise<readonly ProofEvaluationEvidence[]>;
   };
   stop(): Promise<void>;
 }
@@ -41,10 +53,14 @@ export interface ProofSafety {
   /**
    * Explicit final-guard override: every resolved outbound destination must be
    * authorized or the send refuses. Providing it composes the Conversation
-   * role (model credentials are then required and validated at start); leaving
-   * it out composes a listen-only harness that cannot send at all.
+   * role (model credentials are then required and validated at start) and
+   * forces outbound mode to "conversation" so the guarded destination and the
+   * resolved destination cannot diverge; leaving it out composes a listen-only
+   * harness that cannot send at all.
    */
   readonly authorizeDestination?: (conversationId: string) => boolean;
+  /** Proof-scoped instructions override, applied inside the harness. */
+  readonly instructions?: string;
 }
 
 export async function createAmbientProofHarness(
@@ -54,16 +70,21 @@ export async function createAmbientProofHarness(
   const conversational = safety.authorizeDestination !== undefined;
   const proofConfig: AppConfig = {
     ...config,
-    conversation: { ...config.conversation, enabled: conversational },
+    conversation: {
+      ...config.conversation,
+      enabled: conversational,
+      outboundMode: conversational ? "conversation" : config.conversation.outboundMode,
+      instructions: safety.instructions ?? config.conversation.instructions,
+    },
   };
-  const accepted: AcceptedProofMessage[] = [];
-  const listeners = new Set<(message: AcceptedProofMessage) => void>();
+  const accepted: AcceptedMessage[] = [];
+  const listeners = new Set<(message: AcceptedMessage) => void>();
   const resources: AppResources = await createAppResources(proofConfig, {
     onAcceptedMessage: (message) => {
       accepted.push(message);
       for (const listener of listeners) listener(message);
     },
-    ...(safety.authorizeDestination ? { authorizeOutbound: safety.authorizeDestination } : {}),
+    authorizeOutbound: safety.authorizeDestination,
   });
   const { repositories } = resources.database;
 
@@ -84,7 +105,7 @@ export async function createAmbientProofHarness(
           listeners.delete(listener);
           rejectPromise(new Error(`no matching accepted message within ${timeoutMs}ms`));
         }, timeoutMs);
-        const listener = (message: AcceptedProofMessage) => {
+        const listener = (message: AcceptedMessage) => {
           if (!match(message)) return;
           clearTimeout(timer);
           listeners.delete(listener);
@@ -113,18 +134,29 @@ export async function createAmbientProofHarness(
     },
 
     evidence: {
-      latestRun(conversationId) {
-        return repositories.runs.latestRunForConversation(conversationId);
+      // Mapped, not passed through: the retained run also carries the curated
+      // input and private terminal result, which never belong in proof output.
+      async latestRun(conversationId) {
+        const run = await repositories.runs.latestRunForConversation(conversationId);
+        return run && { id: run.id, status: run.status, error: run.error };
       },
-      toolCalls(runId) {
-        return repositories.runs.toolCallsForRun(runId);
+      async toolCalls(runId) {
+        const calls = await repositories.runs.toolCallsForRun(runId);
+        return calls.map(({ toolName, outcome, output, error }) => ({
+          toolName,
+          outcome,
+          output,
+          error,
+        }));
       },
-      evaluations(runId) {
-        return repositories.evaluations.forSubject(runId);
+      async evaluations(runId) {
+        const evaluations = await repositories.evaluations.forSubject(runId);
+        return evaluations.map(({ id, status }) => ({ id, status }));
       },
     },
 
     async stop() {
+      await resources.conversation?.stop().catch(() => {});
       await resources.whatsapp.stop().catch(() => {});
       await resources.database.close().catch(() => {});
     },
