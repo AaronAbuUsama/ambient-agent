@@ -47,7 +47,7 @@ export function createConversationContextBuilder(
       return {
         conversationId: claim.conversationId,
         newMessages,
-        instructions,
+        instructions: claim.instructions ?? instructions,
       };
     },
   };

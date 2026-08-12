@@ -77,6 +77,7 @@ export async function createAmbientProofHarness(
       instructions: safety.instructions ?? config.conversation.instructions,
     },
   };
+  const harnessCreatedAt = new Date().toISOString();
   const accepted: AcceptedMessage[] = [];
   const listeners = new Set<(message: AcceptedMessage) => void>();
   const resources: AppResources = await createAppResources(proofConfig, {
@@ -120,6 +121,12 @@ export async function createAmbientProofHarness(
       if (!conversation) {
         throw new Error("this proof harness was composed without the Conversation role");
       }
+      // A bounded run requires an active responding speaker; the proof
+      // activates one for exactly this conversation, attending only messages
+      // accepted since the harness was created.
+      await repositories.speakers.seed([
+        { conversationId, mode: "responding", attendFrom: harnessCreatedAt },
+      ]);
       await repositories.conversationWork.notify(
         conversationId,
         proofConfig.conversation.scheduling,

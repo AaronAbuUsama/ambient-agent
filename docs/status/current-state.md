@@ -234,29 +234,128 @@ the proof override still strengthening the final guard; all gates pass.
 
 ## Active slice
 
-None. **The architecture rescue is complete**: every boundary from the
-canonical map is realized — one composition root, one Conversation service
-over one work store, one deep model runtime, the validated configuration
-document, the shared-composition proof harness, and the WhatsApp service
-facade. The next step is a full replanning session with the master to
-sequence the product frontier (conversation presence, Memory Agent, Workers,
-Root) to a usable outcome. No product slice starts before that session.
+Selected in the 2026-08-12 replanning session with the master. The
+architecture rescue remains complete; this is the first product slice.
 
-Constraints already agreed for that session:
+**Shared vocabulary** (master ↔ canon, agreed 2026-08-12): a **speaker** is
+the Conversation Agent presence in one chat — all speakers are instances of
+the same agent with different per-chat grants. An **allowed chat** is one
+with a durable speaker record (earlier ledger entries called this a
+"Conversation mandate"; same record, renamed — it remains the first form of
+the product model's Conversation assignment). A speaker record carries a
+**mode** (`listening` | `responding`; `proactive` reserved) and an
+**activation point**. The Root later authors these records through the
+master's special chat; until then the operator seeds them from
+configuration. The claiming-not-ingestion constraint stands: every accepted
+message is still observed and retained; speakers run only in allowed chats.
 
-- Conversation presence lands as **durable Conversation-mandate records**
-  (the first form of the product model's Conversation assignment), seeded
-  from an operator allowlist (the `Tst` group plus authorized numbers). The
-  Root slice later changes the **author** of those records, never their
-  consumers.
-- The presence gate belongs at **claiming, not ingestion**: Ambient keeps
-  observing and retaining every accepted message (Memory and future Root
-  attention need the evidence) but runs Conversation Agents only where
-  mandated.
-- Today there is no presence concept: every accepted message becomes Inbox
-  work, conversation is disabled in the document, and loopback mode is the
-  only live-send guard. Presence is therefore the gate to enabling live
-  replies.
+### Slice: speaker presence — live replies in allowed chats
+
+**Product question.** Can Ambient hold durable per-chat speaker presence —
+replying live only in chats the operator has allowed, in the right mode,
+from the activation point onward — without weakening the proven ingestion,
+claim, lease, and effect invariants?
+
+**Concrete journey.** The operator seeds the `Tst` group and their own
+number as `responding`. A member posts in `Tst`; the speaker claims the
+batch and one guarded live reply lands (`outboundMode: "conversation"`,
+conversation enabled). A message in any other chat is retained as an
+Observation and Inbox item but is never scheduled, claimed, or answered. A
+restart changes nothing durable.
+
+**Owner.** `conversation/contract.ts` owns the speaker-record vocabulary and
+seed port. `database/conversation-work.ts` gates window authoring inside its
+existing transactions: `setPendingWindow` never sets `dueAt` without an
+active `responding` speaker, and both Inbox reads (pending window, claim
+row-select) honour the activation watermark — `claimNext`, `nextWakeAt`, and
+the service loop stay untouched. `app/config.ts` owns the validated
+`conversation.speakers` seed list; composition seeds at startup before the
+Conversation service starts.
+
+**Durable records.**
+
+- `conversation_speakers`: `conversationId` PK, `mode`
+  (`listening` | `responding`), nullable `instructions` (the per-chat
+  overrideable standard prompt; the global config string stays the
+  fallback), `attendFrom` watermark, timestamps. `listening` rows are
+  accepted and inert until the Memory slice gives them behaviour.
+- Seeding is **upsert-listed**: configuration authors exactly the rows it
+  names and never touches rows it does not name (the future Root authors
+  those). A listed entry may set `mode: "listening"` to silence a chat.
+- The gate is the state transition: no active `responding` record ⇒ no
+  schedule window ⇒ no claim, while Observation and Inbox retention continue
+  unchanged for every accepted message. Backlog from before `attendFrom` is
+  never claimed; full history belongs to the Memory slice.
+
+**Smallest API.** One seed port on the Conversation contract plus the gate
+inside the existing work store. The production sender now receives an
+authorize bound to speaker records — the proof-only strengthening of the
+final outbound guard becomes a production invariant (destination sendable ⇔
+active `responding` speaker).
+
+**Preserved invariants.** Exactly-once ingestion; bounded immutable claims;
+fenced leases, retry, and expiry recovery; operation receipts as the only
+proof of communication; terminal results stay private; loopback proofs
+unchanged.
+
+**Non-goals.** No Memory Agent, no skill loading, no `proactive` wiring, no
+Root, no new WhatsApp capabilities (reactions, media), no per-chat
+scheduling overrides.
+
+**Proof gate.** Deterministic: an unlisted chat is never scheduled or
+claimed; `listening` never claims; pre-`attendFrom` items are never
+claimed; upsert-listed seed semantics (unnamed rows untouched); config
+validation fails closed. All repository gates (`vp check`, `vp test`,
+`drizzle-kit check`, frozen strict-peer install). Then one controlled live
+proof: a real reply in `Tst` with `outboundMode: "conversation"` under the
+speaker-bound authorize.
+
+**Open questions deliberately not resolved.** Skill-loading mechanics
+(researched below, deferred until the first real skill exists); whether
+`listening` chats receive Memory runs (Memory slice); proactive restraint
+policy; the Root authoring protocol and the master's special chat.
+
+**Status (2026-08-12).** Implemented; deterministic gates green. The
+`conversation_speakers` table (migration `0003`), the gate in
+`setPendingWindow`/`claimNext` with the `attendFrom` watermark, upsert-listed
+seeding from `conversation.speakers`, per-chat instructions snapshotted into
+claims and run input, the speaker-bound production outbound guard, and proof
+harness activation are in place. `vp check` clean (48 files); `vp test`
+73/73 across 12 files (ten new gate/watermark/seed/instructions tests);
+`drizzle-kit check` clean; frozen strict-peer install clean; no live model
+call or WhatsApp send in deterministic tests. Remaining before the slice is
+complete: the controlled live proof — seed the real `Tst` JID, set
+`enabled: true` and `outboundMode: "conversation"`, and receive one guarded
+live reply (or run `proof:whatsapp-conversation`, which activates the
+matched target through the harness).
+
+### Research note: prompt and skill primitives (2026-08-12)
+
+Requested by the master during replanning ("what primitives do we have?").
+
+- `pi-agent-core` (the only Pi layer Ambient depends on, with `pi-ai`) has
+  no prompt layering and no skill concept: `AgentState.systemPrompt` is one
+  plain string Ambient assembles; tools are explicit `AgentTool`s.
+- `pi-coding-agent` (present in the store, not a project dependency)
+  implements the Agent Skills standard (agentskills.io): SKILL.md packages,
+  names + descriptions always in the system prompt, full instructions loaded
+  on demand through a read tool (progressive disclosure). Prior art to copy,
+  not a library speakers can consume.
+- Ambient already retains the durable half, unused: `skills`
+  (name/description/instructions/revision) and `run_skills` (per-run
+  instruction snapshots) in the schema.
+- Speaker prompt model settled: fixed shared system prompt (identity, same
+  for every speaker) + per-chat overrideable standard prompt (this slice) +
+  granted skills (later: eager-append instructions while skills are few and
+  short; adopt progressive disclosure with a load tool if they multiply).
+
+## Likely next slice
+
+Asynchronous evaluations v1 (locked 2026-08-12): replace the in-path
+Conversation evaluation sink with an async consumer of terminal run
+evidence, model-judged cases under the reserved `evaluator` role, and an
+offline replay harness across `promptVersion`s — fed by real `Tst` traffic
+from the presence slice.
 
 ## Known debt
 
@@ -285,13 +384,18 @@ Accepted, durable, and owned here rather than in commit messages:
 
 ## Product-discovery themes
 
-These are not committed sequential phases:
+These are not committed sequential phases (the replanned frontier order after
+the active and likely-next slices is memory → workers → root, revisited at
+each review point):
 
-- Root-managed Conversation presence;
+- Memory Agent v1: full WhatsApp history ingested into memory as far back as
+  the mirror goes, plus behaviour for `listening` chats;
 - customer feedback delegated to a bounded GitHub Worker;
 - long-running supplier qualification;
 - cross-thread continuity with Rex;
-- Root attention and proactive commitment review;
+- Root v1: the master's special chat, Root attention, and the Root authoring
+  speaker records, prompts, and skills;
+- proactive speaker mode and its restraint policy;
 - dynamic Worker definitions assembled from skills and MCP capabilities.
 
 Each theme requires its own slice brief when selected.

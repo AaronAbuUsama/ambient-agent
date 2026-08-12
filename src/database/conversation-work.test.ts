@@ -48,6 +48,14 @@ async function enqueue(
   });
 }
 
+async function allow(
+  database: AmbientDatabase,
+  conversationId = "chat-1",
+  attendFrom = "2026-08-11T00:00:00.000Z",
+): Promise<void> {
+  await database.repositories.speakers.seed([{ conversationId, mode: "responding", attendFrom }]);
+}
+
 function claimInput(
   leaseOwner: string,
   now: string,
@@ -66,6 +74,7 @@ function claimInput(
 test("conversation schedule slides debounce without exceeding maximum wait", async () => {
   await withDatabase(async (database) => {
     const work = database.repositories.conversationWork;
+    await allow(database);
     await enqueue(database, "1", "2026-08-11T10:00:00.000Z");
     await work.notify("chat-1", scheduling);
     expect(await work.nextWakeAt()).toBe("2026-08-11T10:00:01.000Z");
@@ -83,6 +92,7 @@ test("conversation schedule slides debounce without exceeding maximum wait", asy
 test("due claims are bounded, single-flight, and immutable while new items arrive", async () => {
   await withDatabase(async (database) => {
     const work = database.repositories.conversationWork;
+    await allow(database);
     for (const [id, time] of [
       ["1", "2026-08-11T10:00:00.000Z"],
       ["2", "2026-08-11T10:00:00.100Z"],
@@ -135,6 +145,7 @@ test("due claims are bounded, single-flight, and immutable while new items arriv
 test("no completion is possible while tool calls remain active", async () => {
   await withDatabase(async (database) => {
     const work = database.repositories.conversationWork;
+    await allow(database);
     await enqueue(database, "1", "2026-08-11T10:00:00.000Z");
     await work.notify("chat-1", scheduling);
     const claim = await work.claimNext(claimInput("scheduler-1", "2026-08-11T10:00:01.000Z"));
@@ -188,6 +199,7 @@ test("no completion is possible while tool calls remain active", async () => {
 test("failed and expired leases release exact run ranges for retry", async () => {
   await withDatabase(async (database) => {
     const work = database.repositories.conversationWork;
+    await allow(database);
     await enqueue(database, "1", "2026-08-11T10:00:00.000Z");
     await work.notify("chat-1", scheduling);
     const first = await work.claimNext(
@@ -238,6 +250,7 @@ test("failed and expired leases release exact run ranges for retry", async () =>
 
 test("startup reconciliation recovers pending items that were never notified", async () => {
   await withDatabase(async (database, url) => {
+    await allow(database);
     await enqueue(database, "1", "2026-08-11T10:00:00.000Z");
     await database.close();
 
@@ -256,6 +269,7 @@ test("startup reconciliation recovers pending items that were never notified", a
 
 test("two scheduler connections cannot claim the same due conversation", async () => {
   await withDatabase(async (database, url) => {
+    await allow(database);
     await enqueue(database, "1", "2026-08-11T10:00:00.000Z");
     await database.repositories.conversationWork.notify("chat-1", scheduling);
     const second = await openAmbientDatabase(url);
@@ -275,5 +289,132 @@ test("two scheduler connections cannot claim the same due conversation", async (
     } finally {
       await second.close();
     }
+  });
+});
+
+test("chats without a responding speaker are retained but never scheduled or claimed", async () => {
+  await withDatabase(async (database) => {
+    const work = database.repositories.conversationWork;
+    await enqueue(database, "1", "2026-08-11T10:00:00.000Z");
+    await work.notify("chat-1", scheduling);
+    expect(await work.nextWakeAt()).toBeUndefined();
+    expect(
+      await work.claimNext(claimInput("scheduler-1", "2026-08-11T10:00:05.000Z")),
+    ).toBeUndefined();
+
+    await database.repositories.speakers.seed([
+      { conversationId: "chat-1", mode: "listening", attendFrom: "2026-08-11T00:00:00.000Z" },
+    ]);
+    await work.notify("chat-1", scheduling);
+    expect(await work.nextWakeAt()).toBeUndefined();
+
+    // The evidence is untouched: the item stays pending for a later activation.
+    expect((await database.repositories.inbox.pending("chat-1")).map(({ id }) => id)).toEqual([
+      "inbox-1",
+    ]);
+  });
+});
+
+test("reconciliation windows only chats with a responding speaker", async () => {
+  await withDatabase(async (database) => {
+    const work = database.repositories.conversationWork;
+    await allow(database, "chat-2");
+    await enqueue(database, "1", "2026-08-11T10:00:00.000Z", "chat-1");
+    await enqueue(database, "2", "2026-08-11T10:00:00.000Z", "chat-2");
+    await work.reconcile(scheduling);
+    expect(await work.nextWakeAt()).toBe("2026-08-11T10:00:01.000Z");
+
+    const claim = await work.claimNext(claimInput("scheduler-1", "2026-08-11T10:00:01.000Z"));
+    expect(claim?.conversationId).toBe("chat-2");
+    expect(
+      await work.claimNext(claimInput("scheduler-1", "2026-08-11T10:00:01.000Z")),
+    ).toBeUndefined();
+  });
+});
+
+test("activation watermark excludes backlog created before attendFrom", async () => {
+  await withDatabase(async (database) => {
+    const work = database.repositories.conversationWork;
+    await enqueue(database, "old", "2026-08-11T09:59:00.000Z");
+    await allow(database, "chat-1", "2026-08-11T10:00:00.000Z");
+    await enqueue(database, "new", "2026-08-11T10:00:01.000Z");
+    await work.notify("chat-1", scheduling);
+    expect(await work.nextWakeAt()).toBe("2026-08-11T10:00:02.000Z");
+
+    const claim = await work.claimNext(claimInput("scheduler-1", "2026-08-11T10:00:02.500Z"));
+    expect(claim?.items.map(({ id }) => id)).toEqual(["inbox-new"]);
+    await work.complete({
+      runId: claim!.runId,
+      leaseOwner: "scheduler-1",
+      result: { summary: "handled" },
+      completedAt: "2026-08-11T10:00:03.000Z",
+      scheduling,
+    });
+
+    // The pre-activation item stays retained but never becomes due work.
+    expect((await database.repositories.inbox.pending("chat-1")).map(({ id }) => id)).toEqual([
+      "inbox-old",
+    ]);
+    expect(await work.nextWakeAt()).toBeUndefined();
+  });
+});
+
+test("a silenced speaker clears its stale window at the next claim", async () => {
+  await withDatabase(async (database) => {
+    const work = database.repositories.conversationWork;
+    await allow(database);
+    await enqueue(database, "1", "2026-08-11T10:00:00.000Z");
+    await work.notify("chat-1", scheduling);
+    expect(await work.nextWakeAt()).toBe("2026-08-11T10:00:01.000Z");
+
+    await database.repositories.speakers.seed([{ conversationId: "chat-1", mode: "listening" }]);
+    expect(
+      await work.claimNext(claimInput("scheduler-1", "2026-08-11T10:00:01.000Z")),
+    ).toBeUndefined();
+    expect(await work.nextWakeAt()).toBeUndefined();
+  });
+});
+
+test("seeding is upsert-listed and preserves activation on re-seed", async () => {
+  await withDatabase(async (database) => {
+    const speakers = database.repositories.speakers;
+    const work = database.repositories.conversationWork;
+    await allow(database, "chat-1", "2026-08-11T00:00:00.000Z");
+    await allow(database, "chat-2", "2026-08-11T00:00:00.000Z");
+
+    // Re-seed without attendFrom (a restart): the watermark is preserved, so
+    // an item older than the re-seed time is still claimable.
+    await speakers.seed([{ conversationId: "chat-1", mode: "responding" }]);
+    await enqueue(database, "1", "2026-08-11T10:00:00.000Z");
+    await work.notify("chat-1", scheduling);
+    const claim = await work.claimNext(claimInput("scheduler-1", "2026-08-11T10:00:01.000Z"));
+    expect(claim?.items.map(({ id }) => id)).toEqual(["inbox-1"]);
+
+    // Rows the seed does not name are never touched: chat-2 still claims.
+    await enqueue(database, "2", "2026-08-11T10:00:00.000Z", "chat-2");
+    await work.notify("chat-2", scheduling);
+    expect(
+      (await work.claimNext(claimInput("scheduler-1", "2026-08-11T10:00:01.000Z")))?.conversationId,
+    ).toBe("chat-2");
+  });
+});
+
+test("turning a listening speaker responding re-activates from the flip, not the backlog", async () => {
+  await withDatabase(async (database) => {
+    const speakers = database.repositories.speakers;
+    const work = database.repositories.conversationWork;
+    await speakers.seed([
+      { conversationId: "chat-1", mode: "listening", attendFrom: "2026-08-11T00:00:00.000Z" },
+    ]);
+    await enqueue(database, "1", "2026-08-11T10:00:00.000Z");
+
+    // Flip to responding without an explicit watermark: attendFrom advances to
+    // the flip time, so the listening-era backlog is never claimed.
+    await speakers.seed([{ conversationId: "chat-1", mode: "responding" }]);
+    await work.notify("chat-1", scheduling);
+    expect(await work.nextWakeAt()).toBeUndefined();
+    expect((await database.repositories.inbox.pending("chat-1")).map(({ id }) => id)).toEqual([
+      "inbox-1",
+    ]);
   });
 });

@@ -34,7 +34,7 @@ export interface WhatsAppService {
    */
   conversationSender(
     mode: "loopback" | "conversation",
-    authorize?: (conversationId: string) => boolean,
+    authorize?: (conversationId: string) => boolean | Promise<boolean>,
   ): ScopedMessageSender;
   /** Chats the authenticated account can see, for proof-side target matching. */
   destinations(): readonly WhatsAppDestination[];
@@ -69,7 +69,7 @@ export function createWhatsAppService(options: WhatsAppServiceOptions): WhatsApp
         async sendText({ conversationId, text, idempotencyKey }) {
           const target = mode === "loopback" ? controller.loopbackAddress() : conversationId;
           if (!target) throw new Error("WhatsApp loopback address is not available");
-          if (authorize && !authorize(target)) {
+          if (authorize && !(await authorize(target))) {
             throw new Error(`outbound destination "${target}" is not authorized for this run`);
           }
           const operation = await controller.sendText(target, text, idempotencyKey);

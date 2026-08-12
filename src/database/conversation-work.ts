@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, lte, max, min, notExists, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte, max, min, notExists, sql } from "drizzle-orm";
 import type {
   ClaimConversationWork,
   ConversationClaim,
@@ -14,6 +14,7 @@ import {
   conversationInbox,
   conversationRunItems,
   conversationSchedule,
+  conversationSpeakers,
   toolCalls,
 } from "./schema";
 
@@ -43,9 +44,35 @@ function dueAt(window: PendingWindow, scheduling: ConversationSchedulingConfig):
   return new Date(Math.min(afterDebounce, maximumWait)).toISOString();
 }
 
+/**
+ * The presence gate: only a chat with an active `responding` speaker is ever
+ * eligible for Conversation work. Observation and Inbox retention are not
+ * affected — un-allowed chats keep their evidence but never get a window.
+ */
+async function respondingSpeaker(
+  database: AmbientExecutor,
+  conversationId: string,
+): Promise<{ attendFrom: string; instructions: string | null } | undefined> {
+  const [row] = await database
+    .select({
+      attendFrom: conversationSpeakers.attendFrom,
+      instructions: conversationSpeakers.instructions,
+    })
+    .from(conversationSpeakers)
+    .where(
+      and(
+        eq(conversationSpeakers.conversationId, conversationId),
+        eq(conversationSpeakers.mode, "responding"),
+      ),
+    )
+    .limit(1);
+  return row;
+}
+
 async function pendingWindow(
   database: AmbientExecutor,
   conversationId: string,
+  attendFrom: string,
 ): Promise<PendingWindow | undefined> {
   const [row] = await database
     .select({
@@ -58,6 +85,7 @@ async function pendingWindow(
         eq(conversationInbox.conversationId, conversationId),
         isNull(conversationInbox.claimedByRunId),
         isNull(conversationInbox.consumedByRunId),
+        gte(conversationInbox.createdAt, attendFrom),
       ),
     );
   if (!row?.firstPendingAt || !row.latestPendingAt) return undefined;
@@ -73,7 +101,8 @@ async function setPendingWindow(
   conversationId: string,
   scheduling: ConversationSchedulingConfig,
 ): Promise<void> {
-  const window = await pendingWindow(database, conversationId);
+  const speaker = await respondingSpeaker(database, conversationId);
+  const window = speaker && (await pendingWindow(database, conversationId, speaker.attendFrom));
   if (!window) {
     await database
       .update(conversationSchedule)
@@ -214,6 +243,13 @@ export function createConversationWorkStore(
       const pending = await database
         .select({ conversationId: conversationInbox.conversationId })
         .from(conversationInbox)
+        .innerJoin(
+          conversationSpeakers,
+          and(
+            eq(conversationSpeakers.conversationId, conversationInbox.conversationId),
+            eq(conversationSpeakers.mode, "responding"),
+          ),
+        )
         .where(
           and(isNull(conversationInbox.claimedByRunId), isNull(conversationInbox.consumedByRunId)),
         )
@@ -340,6 +376,13 @@ export function createConversationWorkStore(
             .limit(1);
           if (!candidate) return undefined;
 
+          const speaker = await respondingSpeaker(transaction, candidate.conversationId);
+          if (!speaker) {
+            // The speaker was silenced after this window was authored; clear it.
+            await setPendingWindow(transaction, candidate.conversationId, input.scheduling);
+            return undefined;
+          }
+
           const rows = await transaction
             .select()
             .from(conversationInbox)
@@ -348,6 +391,7 @@ export function createConversationWorkStore(
                 eq(conversationInbox.conversationId, candidate.conversationId),
                 isNull(conversationInbox.claimedByRunId),
                 isNull(conversationInbox.consumedByRunId),
+                gte(conversationInbox.createdAt, speaker.attendFrom),
               ),
             )
             .orderBy(asc(conversationInbox.createdAt), asc(conversationInbox.id))
@@ -376,6 +420,7 @@ export function createConversationWorkStore(
                 kind,
                 referenceId,
               })),
+              ...(speaker.instructions === null ? {} : { instructions: speaker.instructions }),
             },
             startedAt: now,
             createdAt: now,
@@ -424,6 +469,7 @@ export function createConversationWorkStore(
             runId,
             conversationId: candidate.conversationId,
             items: items.map(({ id, kind, referenceId }) => ({ id, kind, referenceId })),
+            ...(speaker.instructions === null ? {} : { instructions: speaker.instructions }),
           };
         });
       } catch (error) {

@@ -44,6 +44,7 @@ test("the committed configuration document supplies the deployment defaults", ()
   });
   expect(config.conversation.enabled).toBe(false);
   expect(config.conversation.outboundMode).toBe("loopback");
+  expect(config.conversation.speakers).toEqual([]);
   expect(config.models.roles.conversation).toEqual({
     provider: "qwen",
     model: "qwen3.6-flash",
@@ -66,6 +67,14 @@ test("a configuration document owns every structured section", async () => {
         enabled: true,
         outboundMode: "conversation",
         instructions: "Be concise.",
+        speakers: [
+          { conversationId: "1203@g.us", instructions: "You are in the test group." },
+          {
+            conversationId: "9715@s.whatsapp.net",
+            mode: "listening",
+            attendFrom: "2026-08-12T00:00:00.000Z",
+          },
+        ],
         scheduling: {
           debounceMs: 1_000,
           maximumWaitMs: 6_000,
@@ -89,6 +98,18 @@ test("a configuration document owns every structured section", async () => {
         outboundMode: "conversation",
         instructions: "Be concise.",
       });
+      expect(config.conversation.speakers).toEqual([
+        {
+          conversationId: "1203@g.us",
+          mode: "responding",
+          instructions: "You are in the test group.",
+        },
+        {
+          conversationId: "9715@s.whatsapp.net",
+          mode: "listening",
+          attendFrom: "2026-08-12T00:00:00.000Z",
+        },
+      ]);
       expect(config.conversation.scheduling).toEqual({
         debounceMs: 1_000,
         maximumWaitMs: 6_000,
@@ -136,6 +157,21 @@ test.each([
     "maximumWaitMs must be at least debounceMs",
   ],
   [JSON.stringify({ conversation: { outboundMode: "disabled" }, models }), undefined],
+  [JSON.stringify({ conversation: { speakers: [{ conversationId: "" }] }, models }), undefined],
+  [
+    JSON.stringify({
+      conversation: { speakers: [{ conversationId: "1203@g.us", mode: "proactive" }] },
+      models,
+    }),
+    undefined,
+  ],
+  [
+    JSON.stringify({
+      conversation: { speakers: [{ conversationId: "1203@g.us", attendFrom: "yesterday" }] },
+      models,
+    }),
+    undefined,
+  ],
 ] as const)("invalid configuration documents fail closed (%#)", async (content, message) => {
   await withConfigFile(content, async (path) => {
     const load = () => loadAppConfig({ AMBIENT_CONFIG: path });

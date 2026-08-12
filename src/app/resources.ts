@@ -53,8 +53,22 @@ export async function createAppResources(
       logLevel: config.logging.level,
       acceptedSource,
     });
+    await database.repositories.speakers.seed(config.conversation.speakers);
     if (config.conversation.enabled) {
       const runner = createModelRuntime(config.models).forRole("conversation");
+      // In live mode the durable speaker record is the production outbound
+      // belt: a destination is sendable only with an active responding
+      // speaker. A proof override composes with it and can only tighten it.
+      const proofGuard = options.authorizeOutbound;
+      const speakerGuard = (conversationId: string) =>
+        database.repositories.speakers.isResponding(conversationId);
+      const outboundGuard =
+        config.conversation.outboundMode === "conversation"
+          ? proofGuard
+            ? async (conversationId: string) =>
+                (await speakerGuard(conversationId)) && proofGuard(conversationId)
+            : speakerGuard
+          : proofGuard;
       conversation = createConversationService({
         scheduling: config.conversation.scheduling,
         instructions: config.conversation.instructions,
@@ -62,10 +76,7 @@ export async function createAppResources(
         recall: database.repositories.memory,
         evaluation: database.repositories.conversationEvaluation,
         agent: createPiConversationAgent(runner),
-        sender: whatsapp.conversationSender(
-          config.conversation.outboundMode,
-          options.authorizeOutbound,
-        ),
+        sender: whatsapp.conversationSender(config.conversation.outboundMode, outboundGuard),
       });
     }
 

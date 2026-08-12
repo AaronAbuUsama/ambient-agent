@@ -21,6 +21,18 @@ const configurationDocumentSchema = z
           .string()
           .min(1)
           .default("Respond naturally and helpfully when a response is useful."),
+        // The operator's speaker seed: upsert-listed durable records; chats
+        // this list does not name are never touched by configuration.
+        speakers: z
+          .array(
+            z.object({
+              conversationId: z.string().min(1),
+              mode: z.enum(["listening", "responding"]).default("responding"),
+              instructions: z.string().min(1).optional(),
+              attendFrom: z.iso.datetime().optional(),
+            }),
+          )
+          .default([]),
         scheduling: z
           .object({
             debounceMs: z.number().int().positive().default(750),

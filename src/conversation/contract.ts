@@ -24,6 +24,39 @@ export interface ConversationWorkItem {
 }
 
 /**
+ * One durable speaker record: Ambient's presence in one chat.
+ *
+ * A chat with no record is not allowed: its messages are still observed and
+ * retained as evidence, but no Conversation work is ever scheduled or claimed
+ * there. `listening` keeps the speaker silent (reserved for the Memory slice);
+ * `responding` lets it claim work and reply. `attendFrom` is the activation
+ * watermark: Inbox items created before it are never claimed, so a newly
+ * activated speaker starts from its activation point instead of draining the
+ * backlog. The operator seeds these records from configuration today; a Root
+ * slice later becomes their author without changing any consumer.
+ */
+export interface ConversationSpeakerSeedEntry {
+  readonly conversationId: string;
+  readonly mode: "listening" | "responding";
+  /** Per-chat standard-prompt override; the global configuration string is the fallback. */
+  readonly instructions?: string;
+  /** Explicit activation watermark, e.g. "attend from an hour ago". Defaults to the seed time. */
+  readonly attendFrom?: string;
+}
+
+export interface ConversationSpeakerStore {
+  /**
+   * Upsert exactly the listed records; rows not named are never touched, so a
+   * future Root author and the configuration seed can coexist. On re-seed,
+   * `attendFrom` is preserved; it advances only when a record turns
+   * `responding` again or the entry sets it explicitly.
+   */
+  seed(entries: readonly ConversationSpeakerSeedEntry[]): Promise<void>;
+  /** The production outbound guard: a destination is sendable only with an active responding speaker. */
+  isResponding(conversationId: string): Promise<boolean>;
+}
+
+/**
  * One bounded immutable claim: the checkout receipt for a batch of Inbox work.
  *
  * "Claim" is queue vocabulary here — work checked out under a fenced lease —
@@ -35,6 +68,8 @@ export interface ConversationClaim {
   readonly runId: string;
   readonly conversationId: string;
   readonly items: readonly ConversationWorkItem[];
+  /** The speaker's per-chat instructions captured at claim time, when it has any. */
+  readonly instructions?: string;
 }
 
 export interface ClaimConversationWork {

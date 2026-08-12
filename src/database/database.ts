@@ -5,12 +5,17 @@ import { migrate } from "drizzle-orm/libsql/migrator";
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ConversationEvaluationSink, ConversationWorkStore } from "../conversation/contract";
+import type {
+  ConversationEvaluationSink,
+  ConversationSpeakerStore,
+  ConversationWorkStore,
+} from "../conversation/contract";
 import * as schema from "./schema";
 import {
   createConversationInboxRepository,
   type ConversationInboxRepository,
 } from "./conversation-inbox";
+import { createConversationSpeakerStore } from "./conversation-speakers";
 import { createConversationWorkStore } from "./conversation-work";
 import {
   createConversationEvaluationSink,
@@ -31,6 +36,7 @@ export interface AmbientRepositories {
   readonly messageIngestion: MessageIngestionRepository;
   readonly inbox: ConversationInboxRepository;
   readonly conversationWork: ConversationWorkStore;
+  readonly speakers: ConversationSpeakerStore;
   readonly memory: MemoryRepository;
   readonly runs: RunRepository;
   readonly tasks: TaskRepository;
@@ -59,6 +65,7 @@ function repositories(database: AmbientDatabaseConnection): AmbientRepositories 
     messageIngestion: createMessageIngestionRepository(database),
     inbox: createConversationInboxRepository(database),
     conversationWork: createConversationWorkStore(database),
+    speakers: createConversationSpeakerStore(database),
     runs: createRunRepository(database),
     tasks: createTaskRepository(database),
     evaluations,

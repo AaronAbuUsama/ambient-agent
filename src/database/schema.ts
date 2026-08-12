@@ -251,6 +251,21 @@ export const conversationInbox = sqliteTable(
   ],
 );
 
+export const conversationSpeakers = sqliteTable(
+  "conversation_speakers",
+  {
+    conversationId: text("conversation_id").primaryKey(),
+    mode: text({ enum: ["listening", "responding"] }).notNull(),
+    instructions: text(),
+    attendFrom: text("attend_from").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check("conversation_speakers_mode", sql`${table.mode} IN ('listening', 'responding')`),
+  ],
+);
+
 export const conversationSchedule = sqliteTable(
   "conversation_schedule",
   {

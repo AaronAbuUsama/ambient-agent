@@ -71,6 +71,17 @@ async function retainMessage(
   });
 }
 
+async function allow(database: AmbientDatabase, instructions?: string): Promise<void> {
+  await database.repositories.speakers.seed([
+    {
+      conversationId: "chat-1",
+      mode: "responding",
+      attendFrom: "2026-08-11T00:00:00.000Z",
+      ...(instructions === undefined ? {} : { instructions }),
+    },
+  ]);
+}
+
 function service(
   database: AmbientDatabase,
   agent: ConversationAgent,
@@ -99,6 +110,7 @@ function service(
 
 test("Conversation builds retained context and scopes one send to its conversation", async () => {
   await withDatabase(async (database) => {
+    await allow(database);
     await retainMessage(database);
     await database.repositories.conversationWork.notify("chat-1", scheduling);
     const sends: Array<{
@@ -163,6 +175,7 @@ test("Conversation builds retained context and scopes one send to its conversati
 
 test("Conversation can deliberately remain silent", async () => {
   await withDatabase(async (database) => {
+    await allow(database);
     await retainMessage(database);
     await database.repositories.conversationWork.notify("chat-1", scheduling);
     const agent: ConversationAgent = {
@@ -184,6 +197,7 @@ test("Conversation can deliberately remain silent", async () => {
 
 test("failed sends retry with the same durable idempotency key", async () => {
   await withDatabase(async (database) => {
+    await allow(database);
     await retainMessage(database);
     await database.repositories.conversationWork.notify("chat-1", scheduling);
     const keys: string[] = [];
@@ -229,6 +243,7 @@ test("failed sends retry with the same durable idempotency key", async () => {
 
 test("a submitted message consumes the run even if post-send agent work fails", async () => {
   await withDatabase(async (database) => {
+    await allow(database);
     await retainMessage(database);
     await database.repositories.conversationWork.notify("chat-1", scheduling);
     const agent: ConversationAgent = {
@@ -295,6 +310,7 @@ test("Conversation coalesces wake bursts and reconciles only at startup", async 
 
 test("Conversation stop aborts an active agent run", async () => {
   await withDatabase(async (database) => {
+    await allow(database);
     await retainMessage(database);
     let started!: () => void;
     const runStarted = new Promise<void>((resolve) => {
@@ -342,6 +358,7 @@ test("restart reconciliation recovers committed Inbox work after a lost wake cal
   await withDatabase(async (database, url) => {
     // Commit the Observation and Inbox item, then lose the process before the
     // in-memory wake callback ever reaches the Conversation service.
+    await allow(database);
     await retainMessage(database);
     await database.close();
 
@@ -378,5 +395,39 @@ test("restart reconciliation recovers committed Inbox work after a lost wake cal
     } finally {
       await restarted.close();
     }
+  });
+});
+
+test("a speaker's own instructions override the global default for its runs", async () => {
+  await withDatabase(async (database) => {
+    await allow(database, "You are in the test group; maintain coherence.");
+    await retainMessage(database);
+    await database.repositories.conversationWork.notify("chat-1", scheduling);
+    const seen: string[] = [];
+    const runner = service(
+      database,
+      {
+        model,
+        async run(input) {
+          seen.push(input.instructions);
+          return { summary: "Noted." };
+        },
+      },
+      {
+        async sendText() {
+          throw new Error("no send expected");
+        },
+      },
+    );
+
+    expect(await runner.runOnce("2026-08-11T10:00:00.010Z")).toBe("succeeded");
+    expect(seen).toEqual(["You are in the test group; maintain coherence."]);
+
+    // Re-seeding without instructions clears the override; the global default returns.
+    await allow(database);
+    await retainMessage(database, "2", "2026-08-11T10:00:01.000Z");
+    await database.repositories.conversationWork.notify("chat-1", scheduling);
+    expect(await runner.runOnce("2026-08-11T10:00:02.000Z")).toBe("succeeded");
+    expect(seen[1]).toBe("Respond naturally and helpfully when a response is useful.");
   });
 });
