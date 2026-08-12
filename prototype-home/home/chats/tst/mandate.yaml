@@ -1,0 +1,7 @@
+# PROTOTYPE strawman schema — the real schema is ticket #4's decision.
+mode: responding
+instructions: |
+  Be concise. Prefer bug-report follow-ups over chit-chat.
+memoryBrief: |
+  Track bug reports: status, owner, evidence.
+activationPoint: 2026-08-12T00:00:00Z

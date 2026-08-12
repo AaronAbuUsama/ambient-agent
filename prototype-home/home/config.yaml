@@ -1,0 +1,3 @@
+# PROTOTYPE — fake deployment config; shape is NOT the decided one.
+providers: {}
+account: fake

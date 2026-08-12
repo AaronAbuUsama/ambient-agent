@@ -1,0 +1,4 @@
+# Deliberately INVALID: "shouting" is not a mode. Exercises the bad-file path.
+mode: shouting
+instructions: |
+  This mandate must fail validation and never project.

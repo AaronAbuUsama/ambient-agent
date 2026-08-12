@@ -1,0 +1,2 @@
+# Binds this folder's slug to the real chat id. Ids never become folder names.
+chatId: fake-tst-group@g.us
