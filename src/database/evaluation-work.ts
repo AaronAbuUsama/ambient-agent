@@ -1,8 +1,36 @@
 import { and, asc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import { z } from "zod";
-import type { ConversationRunEvidence, EvaluationWorkStore } from "../evals/contract";
+import type {
+  ConversationRunEvidence,
+  EvaluationWorkStore,
+  MemoryRunEvidence,
+  RunEvidence,
+} from "../evals/contract";
 import type { AmbientDatabaseConnection } from "./database";
 import { agentRuns, evaluationPending, observations, toolCalls } from "./schema";
+
+const memoryRunInputSchema = z.object({
+  jobId: z.string().min(1),
+  conversationId: z.string().min(1),
+  observationIds: z.array(z.string().min(1)),
+});
+
+const memoryRunResultSchema = z.object({
+  report: z.string(),
+  entitiesCreated: z.number().int().nonnegative(),
+  linkedNativeIds: z.array(z.string()),
+  claims: z.array(
+    z.object({
+      claimId: z.string().min(1),
+      entityName: z.string(),
+      predicateName: z.string(),
+      value: z.json(),
+      confidence: z.string(),
+      evidenceObservationIds: z.array(z.string().min(1)),
+    }),
+  ),
+  patchStatus: z.enum(["applied", "empty"]),
+});
 
 const runInputSchema = z.object({
   inboxItems: z.array(
@@ -27,12 +55,79 @@ const resultSchema = z.looseObject({ summary: z.string() });
 export function createEvaluationWorkStore(
   database: AmbientDatabaseConnection,
 ): EvaluationWorkStore {
-  const evidence = async (runId: string): Promise<ConversationRunEvidence> => {
+  const evidence = async (runId: string): Promise<RunEvidence> => {
     const [run] = await database.select().from(agentRuns).where(eq(agentRuns.id, runId)).limit(1);
     if (!run) throw new Error(`evaluation subject run "${runId}" not found`);
     if (run.status === "running") {
       throw new Error(`evaluation subject run "${runId}" is not terminal`);
     }
+    if (run.role === "memory") return memoryEvidence(run);
+    if (run.role !== "conversation") {
+      throw new Error(`evaluation subject run "${runId}" has unevaluated role "${run.role}"`);
+    }
+    return conversationEvidence(run);
+  };
+
+  const memoryEvidence = async (run: typeof agentRuns.$inferSelect): Promise<MemoryRunEvidence> => {
+    const input = memoryRunInputSchema.parse(run.input);
+    const batch = new Set(input.observationIds);
+    const rows = input.observationIds.length
+      ? await database
+          .select({
+            id: observations.id,
+            conversationId: observations.conversationId,
+            payload: observations.payload,
+          })
+          .from(observations)
+          .where(inArray(observations.id, input.observationIds))
+      : [];
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const senders = new Set<string>();
+    for (const row of rows) {
+      const parsed = messagePayloadSchema.safeParse(row.payload);
+      if (parsed.success) senders.add(parsed.data.sender.id);
+    }
+
+    const result = run.result === null ? undefined : memoryRunResultSchema.safeParse(run.result);
+    const applied = result?.success ? result.data : undefined;
+    const appliedClaims = (applied?.claims ?? []).map((claim) => {
+      const cited = claim.evidenceObservationIds.map((id) => byId.get(id));
+      return {
+        claimId: claim.claimId,
+        entityName: claim.entityName,
+        predicateName: claim.predicateName,
+        value: claim.value,
+        confidence: claim.confidence,
+        evidenceObservationIds: claim.evidenceObservationIds,
+        evidenceTexts: cited.flatMap((row) => {
+          if (!row) return [];
+          const parsed = messagePayloadSchema.safeParse(row.payload);
+          return parsed.success ? [parsed.data.text] : [];
+        }),
+        grounded: claim.evidenceObservationIds.every((id) => batch.has(id)),
+        inConversation: cited.every((row) => row?.conversationId === input.conversationId),
+      };
+    });
+
+    return {
+      role: "memory",
+      runId: run.id,
+      ...(run.conversationId === null ? {} : { conversationId: run.conversationId }),
+      status: run.status === "succeeded" ? "succeeded" : "failed",
+      promptVersion: run.promptVersion,
+      batchObservationIds: input.observationIds,
+      batchSenderIds: [...senders],
+      appliedClaims,
+      linkedNativeIds: applied?.linkedNativeIds ?? [],
+      patchStatus: applied ? applied.patchStatus : "none",
+      ...(run.error === null ? {} : { error: run.error }),
+    };
+  };
+
+  const conversationEvidence = async (
+    run: typeof agentRuns.$inferSelect,
+  ): Promise<ConversationRunEvidence> => {
+    const runId = run.id;
     const input = runInputSchema.parse(run.input);
 
     const messageIds = input.inboxItems
@@ -83,9 +178,10 @@ export function createEvaluationWorkStore(
         : undefined;
 
     return {
+      role: "conversation",
       runId,
       ...(run.conversationId === null ? {} : { conversationId: run.conversationId }),
-      status: run.status,
+      status: run.status === "succeeded" ? "succeeded" : "failed",
       promptVersion: run.promptVersion,
       itemCount: input.inboxItems.length,
       newMessages,

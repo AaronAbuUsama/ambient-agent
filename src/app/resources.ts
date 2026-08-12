@@ -2,8 +2,11 @@ import { openAmbientDatabase, type AmbientDatabase } from "../database/database"
 import { createPiConversationAgent } from "../conversation/pi-agent";
 import { createConversationService, type ConversationService } from "../conversation/service";
 import type { EvaluationService } from "../evals/contract";
-import { createPiConversationJudge } from "../evals/judge";
+import { createPiConversationJudge, createPiMemoryJudge } from "../evals/judge";
 import { createEvaluationService } from "../evals/service";
+import type { MemoryService } from "../memory/contract";
+import { createPiMemoryAgent } from "../memory/pi-agent";
+import { createMemoryService } from "../memory/service";
 import { createModelRuntime, type ModelRuntime } from "../models/runtime";
 import { createWhatsAppAcceptedSourceConsumer } from "../whatsapp/message-ingestion";
 import { createWhatsAppService, type WhatsAppService } from "../whatsapp/service";
@@ -15,6 +18,7 @@ export interface AppResources extends AmbientLifecycleDependencies {
   readonly whatsapp: WhatsAppService;
   readonly conversation?: ConversationService;
   readonly evaluations: EvaluationService;
+  readonly memoryService?: MemoryService;
   /** The startup-resolved model runtime, for app-internal consumers like the proof harness. */
   readonly models: ModelRuntime;
 }
@@ -70,10 +74,22 @@ export async function createAppResources(
               models.forRole("evaluator"),
               database.repositories.runs,
             ),
+            memoryJudge: createPiMemoryJudge(
+              models.forRole("evaluator"),
+              database.repositories.runs,
+            ),
           }
         : {}),
       maximumItemsPerRun: config.conversation.scheduling.maximumItemsPerRun,
     });
+    const memoryService = config.models.roles.memory
+      ? createMemoryService({
+          jobs: database.repositories.memoryJobs,
+          agent: createPiMemoryAgent(models.forRole("memory")),
+          ontology: database.repositories.memory,
+          runs: database.repositories.runs,
+        })
+      : undefined;
     if (config.conversation.enabled) {
       const runner = models.forRole("conversation");
       // In live mode the durable speaker record is the production outbound
@@ -99,7 +115,14 @@ export async function createAppResources(
       });
     }
 
-    return { database, whatsapp, evaluations, models, ...(conversation ? { conversation } : {}) };
+    return {
+      database,
+      whatsapp,
+      evaluations,
+      models,
+      ...(memoryService ? { memoryService } : {}),
+      ...(conversation ? { conversation } : {}),
+    };
   } catch (error) {
     await database.close();
     throw error;

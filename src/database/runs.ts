@@ -159,7 +159,10 @@ export function createRunRepository(database: AmbientDatabaseConnection): RunRep
           and(
             eq(agentRuns.id, id),
             eq(agentRuns.status, "running"),
+            // Conversation and memory runs terminalize through their own
+            // authoritative stores, never through this generic path.
             ne(agentRuns.role, "conversation"),
+            ne(agentRuns.role, "memory"),
           ),
         )
         .returning({ id: agentRuns.id });

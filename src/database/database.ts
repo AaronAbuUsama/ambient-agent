@@ -7,6 +7,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ConversationSpeakerStore, ConversationWorkStore } from "../conversation/contract";
 import type { EvaluationWorkStore } from "../evals/contract";
+import type { MemoryJobStore } from "../memory/contract";
 import * as schema from "./schema";
 import {
   createConversationInboxRepository,
@@ -17,6 +18,7 @@ import { createConversationWorkStore } from "./conversation-work";
 import { createEvaluationRepository, type EvaluationRepository } from "./evaluations";
 import { createEvaluationWorkStore } from "./evaluation-work";
 import { createMemoryRepository, type MemoryRepository } from "./memory";
+import { createMemoryJobStore } from "./memory-jobs";
 import {
   createMessageIngestionRepository,
   type MessageIngestionRepository,
@@ -32,6 +34,7 @@ export interface AmbientRepositories {
   readonly conversationWork: ConversationWorkStore;
   readonly speakers: ConversationSpeakerStore;
   readonly memory: MemoryRepository;
+  readonly memoryJobs: MemoryJobStore;
   readonly runs: RunRepository;
   readonly tasks: TaskRepository;
   readonly evaluations: EvaluationRepository;
@@ -65,6 +68,7 @@ function repositories(database: AmbientDatabaseConnection): AmbientRepositories 
     evaluations,
     evaluationWork: createEvaluationWorkStore(database),
     memory: createMemoryRepository(database),
+    memoryJobs: createMemoryJobStore(database),
   };
 }
 

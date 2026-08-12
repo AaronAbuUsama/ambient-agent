@@ -6,6 +6,7 @@
 
 /** Retained facts about one terminal Conversation run, assembled for judging. */
 export interface ConversationRunEvidence {
+  readonly role: "conversation";
   readonly runId: string;
   readonly conversationId?: string;
   readonly status: "succeeded" | "failed";
@@ -22,6 +23,35 @@ export interface ConversationRunEvidence {
   readonly error?: string;
 }
 
+/** Retained facts about one terminal Memory run, assembled for judging. */
+export interface MemoryRunEvidence {
+  readonly role: "memory";
+  readonly runId: string;
+  readonly conversationId?: string;
+  readonly status: "succeeded" | "failed";
+  readonly promptVersion: string;
+  readonly batchObservationIds: readonly string[];
+  readonly batchSenderIds: readonly string[];
+  readonly appliedClaims: readonly {
+    readonly claimId: string;
+    readonly entityName: string;
+    readonly predicateName: string;
+    readonly value: unknown;
+    readonly confidence: string;
+    readonly evidenceObservationIds: readonly string[];
+    readonly evidenceTexts: readonly string[];
+    /** Every cited observation belongs to the digested batch. */
+    readonly grounded: boolean;
+    /** Every cited observation belongs to the job's conversation. */
+    readonly inConversation: boolean;
+  }[];
+  readonly linkedNativeIds: readonly string[];
+  readonly patchStatus: "applied" | "empty" | "none";
+  readonly error?: string;
+}
+
+export type RunEvidence = ConversationRunEvidence | MemoryRunEvidence;
+
 /**
  * The one authoritative mutation path for the durable evaluation signal.
  *
@@ -35,7 +65,7 @@ export interface EvaluationWorkStore {
     readonly leaseOwner: string;
     readonly leaseMs: number;
     readonly now?: string;
-  }): Promise<ConversationRunEvidence | undefined>;
+  }): Promise<RunEvidence | undefined>;
   complete(runId: string): Promise<void>;
 }
 
@@ -58,10 +88,18 @@ export interface ConversationJudge {
   }>;
 }
 
+/** Judges applied memory claims for faithfulness against their cited evidence. */
+export interface MemoryJudge {
+  judge(evidence: MemoryRunEvidence): Promise<{
+    readonly evaluatorRunId: string;
+    readonly metrics: readonly JudgedMetric[];
+  }>;
+}
+
 /** The narrow recording port the runner needs; satisfied by the evaluations repository. */
 export interface EvaluationRecorder {
   start(input: {
-    readonly role: "conversation";
+    readonly role: "conversation" | "memory";
     readonly subjectRunId: string;
     readonly evaluatorRunId?: string;
     readonly caseId: string;

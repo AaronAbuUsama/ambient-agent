@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { createConversationContextBuilder } from "../conversation/context-builder";
+import type { RecalledMemory } from "../conversation/contract";
+import { importChatHistory, type HistoryImportResult } from "../whatsapp/history-import";
 import { createPiConversationAgent } from "../conversation/pi-agent";
 import type { WhatsAppDestination } from "../whatsapp/service";
 import type { AppConfig } from "./config";
@@ -47,6 +49,25 @@ export interface AmbientProofHarness {
   ): Promise<"succeeded" | "failed">;
   /** Step the asynchronous evaluation runner over one pending subject. */
   runEvaluationsOnce(): Promise<"idle" | "processed">;
+  /** Import one chat's history from a designated mirror as memory evidence. */
+  importHistory(options: {
+    readonly mirrorUrl: string;
+    readonly mirrorAccountId: string;
+    readonly chatId: string;
+    readonly limit?: number;
+  }): Promise<HistoryImportResult>;
+  /** Create and immediately digest one bounded memory job for a conversation. */
+  requestMemoryDigest(
+    conversationId: string,
+    limit?: number,
+  ): Promise<{
+    readonly outcome: "idle" | "done" | "failed";
+    readonly runId?: string;
+    readonly batchSize: number;
+    readonly senders: readonly string[];
+  }>;
+  /** Current evidence-backed claims for the given identities; proof-side reads only. */
+  recallFor(nativeIds: readonly string[], query?: string): Promise<readonly RecalledMemory[]>;
   /** Replay the latest retained run offline: a live model call with a stubbed sender, no WhatsApp. */
   replayConversationRun(conversationId: string): Promise<{
     readonly decision: "reply" | "silence";
@@ -56,6 +77,16 @@ export interface AmbientProofHarness {
     latestRun(conversationId: string): Promise<ProofRunEvidence | undefined>;
     toolCalls(runId: string): Promise<readonly ProofToolEvidence[]>;
     evaluations(runId: string): Promise<readonly ProofEvaluationEvidence[]>;
+    /** Evaluations of a subject with their metric rows: scores and pass flags only. */
+    evaluationDetails(subjectRunId: string): Promise<
+      readonly (ProofEvaluationEvidence & {
+        readonly results: readonly {
+          readonly metric: string;
+          readonly score?: number;
+          readonly passed?: boolean;
+        }[];
+      })[]
+    >;
   };
   stop(): Promise<void>;
 }
@@ -165,6 +196,46 @@ export async function createAmbientProofHarness(
       return resources.evaluations.runOnce();
     },
 
+    importHistory(options) {
+      return importChatHistory({ ...options, sink: repositories.observations });
+    },
+
+    async requestMemoryDigest(conversationId, limit = 400) {
+      const memoryService = resources.memoryService;
+      if (!memoryService) {
+        throw new Error("this proof harness was composed without the memory role");
+      }
+      const batch = await repositories.observations.forConversation(conversationId, {
+        kind: "message",
+        limit,
+      });
+      if (batch.length === 0) throw new Error("no retained observations to digest");
+      const senderSchema = z.looseObject({ sender: z.looseObject({ id: z.string().min(1) }) });
+      const senders = [
+        ...new Set(
+          batch.flatMap(({ payload }) => {
+            const parsed = senderSchema.safeParse(payload);
+            return parsed.success ? [parsed.data.sender.id] : [];
+          }),
+        ),
+      ];
+      await repositories.memoryJobs.create({
+        conversationId,
+        observationIds: batch.map(({ id }) => id),
+      });
+      const { outcome, runId } = await memoryService.runOnce();
+      return {
+        outcome,
+        ...(runId === undefined ? {} : { runId }),
+        batchSize: batch.length,
+        senders,
+      };
+    },
+
+    recallFor(nativeIds, query = "") {
+      return repositories.memory.recall({ nativeIds: [...nativeIds], query, limit: 100 });
+    },
+
     async replayConversationRun(conversationId) {
       const run = await repositories.runs.latestRunForConversation(conversationId);
       if (!run || run.role !== "conversation") {
@@ -240,6 +311,17 @@ export async function createAmbientProofHarness(
       async evaluations(runId) {
         const evaluations = await repositories.evaluations.forSubject(runId);
         return evaluations.map(({ id, caseId, status }) => ({ id, caseId, status }));
+      },
+      async evaluationDetails(subjectRunId) {
+        const evaluations = await repositories.evaluations.forSubject(subjectRunId);
+        return Promise.all(
+          evaluations.map(async ({ id, caseId, status }) => ({
+            id,
+            caseId,
+            status,
+            results: await repositories.evaluations.resultsFor(id),
+          })),
+        );
       },
     },
 

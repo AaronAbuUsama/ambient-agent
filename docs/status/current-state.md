@@ -234,7 +234,11 @@ the proof override still strengthening the final guard; all gates pass.
 
 ## Active slice
 
-### Slice: Memory Agent v1 — first evidence-backed memory from Bug Reports
+None. Memory Agent v1 completed 2026-08-12 (below) and shipped the Bug
+Reports group's first real memory into the production database. Workers v1
+is next; its brief lands at the next planning stop.
+
+## Completed slice: Memory Agent v1 (2026-08-12)
 
 Selected 2026-08-12 under the master's standing crack-on directive; the
 evaluations review found no owed simplifications (the pending-signal
@@ -281,13 +285,22 @@ enters code, logs, commits, or receipts.
 memory slice, needs a producer policy); listening-chat scheduling;
 cross-chat synthesis.
 
-**Proof gate.** Deterministic: import maps and dedupes history without
-creating Inbox rows; job lifecycle with lease recovery; a fake agent's
-operations apply through validation and invalid operations fail the job
-without corrupting the ontology; recall returns applied claims. Rig: real
-import of the blessed bed, one live memory run on the gemini pool, recall
-returning evidence-backed claims about the two participants — receipt in
-counts only. All repository gates.
+**Proof.** Deterministic: `vp check` clean (67 files); `vp test` 82/82
+across 15 files (digest apply + recall + evaluation, invalid-proposal
+rejection without ontology damage, lease recovery with the idempotent
+per-job patch, history import mapping/dedup with no Inbox rows). Rig and
+production (autonomous, 2026-08-12): 236 text messages imported from the
+designated mirror (16 non-text skipped); one live digest each on the
+gemini pool; `memory-contract-v1` passed all five rules with grounding
+1.0; `memory-judged-v1` faithfulness 1.0 with no missed-facts flag; recall
+returned evidence-backed claims on both databases (3 rig, 5 production).
+**Shipped:** production memory now knows the Bug Reports group — people,
+projects, and notably `github_username` and `repository_url` knowledge,
+which is exactly the repo-routing evidence Workers v1 needs. The private
+golden file was authored from the first digest and is operator-editable.
+Digests are deliberately conservative (few strong claims); richer
+extraction is prompt iteration, now measurable through the eval cases and
+replay.
 
 **Open questions.** Incremental memory production for post-watermark
 traffic; who authors memory jobs in production (the Root, later);
@@ -480,8 +493,13 @@ Requested by the master during replanning ("what primitives do we have?").
 Workers v1 — the customer-feedback journey: a bounded Worker files a
 GitHub issue from validated Bug Reports evidence, its durable result
 returns to the originating conversation's Inbox, and the speaker decides
-how to report it. GitHub credentials are already available on this
-machine; the proof targets a scratch repository.
+how to report it. Product context from the master (2026-08-12): a previous
+bug-filing agent lived in this group and was retired for being poor — the
+bar is real usefulness, and filing must target the **right repository**,
+so repo routing is part of the worker's design, not an afterthought.
+GitHub credentials are already available on this machine; the proof
+targets a scratch repository. Worker runs ship with `worker-*` evaluation
+cases per the standing rule.
 
 ## Live test rig
 

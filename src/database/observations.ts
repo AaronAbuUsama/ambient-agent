@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { AmbientDatabaseConnection } from "./database";
 import { observations } from "./schema";
@@ -24,9 +24,11 @@ export interface Observation {
   readonly createdAt: string;
 }
 
-export type NewObservation = Omit<Observation, "id" | "createdAt"> & {
+export type NewObservation = Omit<Observation, "id" | "createdAt" | "payload"> & {
   readonly id?: string;
   readonly createdAt?: string;
+  /** Stored verbatim as JSON; consumers validate at their boundary. */
+  readonly payload: unknown;
 };
 
 export interface ObservationRepository {
@@ -35,6 +37,11 @@ export interface ObservationRepository {
   ): Promise<{ readonly observation: Observation; accepted: boolean }>;
   get(id: string): Promise<Observation | undefined>;
   getMany(ids: readonly string[]): Promise<readonly Observation[]>;
+  /** Retained evidence for one conversation in time order, capped. */
+  forConversation(
+    conversationId: string,
+    options?: { readonly kind?: Observation["kind"]; readonly limit?: number },
+  ): Promise<readonly Observation[]>;
 }
 
 function decode(row: typeof observations.$inferSelect): Observation {
@@ -114,6 +121,21 @@ export function createObservationRepository(
         .where(eq(observations.id, id))
         .limit(1);
       return row ? decode(row) : undefined;
+    },
+
+    async forConversation(conversationId, options = {}) {
+      const rows = await database
+        .select()
+        .from(observations)
+        .where(
+          and(
+            eq(observations.conversationId, conversationId),
+            ...(options.kind ? [eq(observations.kind, options.kind)] : []),
+          ),
+        )
+        .orderBy(asc(observations.occurredAt), asc(observations.id))
+        .limit(options.limit ?? 500);
+      return rows.map(decode);
     },
 
     async getMany(ids) {

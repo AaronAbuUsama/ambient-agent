@@ -5,6 +5,8 @@ import type {
   EvaluationRecorder,
   EvaluationService,
   EvaluationWorkStore,
+  MemoryJudge,
+  MemoryRunEvidence,
 } from "./contract";
 
 export interface EvaluationServiceOptions {
@@ -12,6 +14,7 @@ export interface EvaluationServiceOptions {
   readonly recorder: EvaluationRecorder;
   /** Absent when no evaluator role is configured; contract metrics still run. */
   readonly judge?: ConversationJudge;
+  readonly memoryJudge?: MemoryJudge;
   readonly maximumItemsPerRun: number;
   readonly leaseOwner?: string;
   readonly leaseMs?: number;
@@ -21,6 +24,9 @@ export interface EvaluationServiceOptions {
 
 const CONTRACT_CASE = "conversation-contract-v1";
 const JUDGED_CASE = "conversation-judged-v1";
+const MEMORY_CONTRACT_CASE = "memory-contract-v1";
+const MEMORY_JUDGED_CASE = "memory-judged-v1";
+const MEMORY_CLAIM_CAP = 50;
 
 /**
  * The asynchronous evaluation runner: claims durable evaluation signals,
@@ -91,17 +97,27 @@ export function createEvaluationService(options: EvaluationServiceOptions): Eval
   };
 
   const recordJudged = async (
-    judge: ConversationJudge,
-    evidence: ConversationRunEvidence,
+    role: "conversation" | "memory",
+    caseId: string,
+    verdictOf: () => Promise<{
+      readonly evaluatorRunId: string;
+      readonly metrics: readonly {
+        readonly metric: string;
+        readonly score?: number;
+        readonly passed?: boolean;
+        readonly detail: unknown;
+      }[];
+    }>,
+    subject: { readonly runId: string; readonly promptVersion: string },
   ): Promise<void> => {
     try {
-      const verdict = await judge.judge(evidence);
+      const verdict = await verdictOf();
       const evaluation = await options.recorder.start({
-        role: "conversation",
-        subjectRunId: evidence.runId,
+        role,
+        subjectRunId: subject.runId,
         evaluatorRunId: verdict.evaluatorRunId,
-        caseId: JUDGED_CASE,
-        configuration: { promptVersion: evidence.promptVersion },
+        caseId,
+        configuration: { promptVersion: subject.promptVersion },
         startedAt: now().toISOString(),
       });
       for (const metric of verdict.metrics) {
@@ -117,10 +133,10 @@ export function createEvaluationService(options: EvaluationServiceOptions): Eval
     } catch (error) {
       // A failed judging attempt is itself retained evidence.
       const evaluation = await options.recorder.start({
-        role: "conversation",
-        subjectRunId: evidence.runId,
-        caseId: JUDGED_CASE,
-        configuration: { promptVersion: evidence.promptVersion },
+        role,
+        subjectRunId: subject.runId,
+        caseId,
+        configuration: { promptVersion: subject.promptVersion },
         startedAt: now().toISOString(),
       });
       await options.recorder.finish(
@@ -131,6 +147,69 @@ export function createEvaluationService(options: EvaluationServiceOptions): Eval
     }
   };
 
+  const recordMemoryContract = async (evidence: MemoryRunEvidence): Promise<void> => {
+    let evaluationId: string | undefined;
+    try {
+      const evaluation = await options.recorder.start({
+        role: "memory",
+        subjectRunId: evidence.runId,
+        caseId: MEMORY_CONTRACT_CASE,
+        configuration: { promptVersion: evidence.promptVersion },
+        startedAt: now().toISOString(),
+      });
+      evaluationId = evaluation.id;
+      const grounded = evidence.appliedClaims.every(({ grounded: ok }) => ok);
+      const inConversation = evidence.appliedClaims.every(({ inConversation: ok }) => ok);
+      const senders = new Set(evidence.batchSenderIds);
+      const identityScoped = evidence.linkedNativeIds.every((id) => senders.has(id));
+      await options.recorder.recordResult({
+        evaluationRunId: evaluation.id,
+        metric: "grounded_claims",
+        score: evidence.appliedClaims.length
+          ? evidence.appliedClaims.filter(({ grounded: ok }) => ok).length /
+            evidence.appliedClaims.length
+          : 1,
+        passed: grounded,
+        detail: { claims: evidence.appliedClaims.length },
+      });
+      await options.recorder.recordResult({
+        evaluationRunId: evaluation.id,
+        metric: "audience_scope",
+        passed: inConversation,
+        detail: { claims: evidence.appliedClaims.length },
+      });
+      await options.recorder.recordResult({
+        evaluationRunId: evaluation.id,
+        metric: "identity_scope",
+        passed: identityScoped,
+        detail: { linked: evidence.linkedNativeIds.length },
+      });
+      await options.recorder.recordResult({
+        evaluationRunId: evaluation.id,
+        metric: "patch_outcome",
+        passed: evidence.status === "succeeded" && evidence.patchStatus !== "none",
+        detail: {
+          status: evidence.status,
+          patchStatus: evidence.patchStatus,
+          ...(evidence.error === undefined ? {} : { error: evidence.error }),
+        },
+      });
+      await options.recorder.recordResult({
+        evaluationRunId: evaluation.id,
+        metric: "bounded_output",
+        passed: evidence.appliedClaims.length <= MEMORY_CLAIM_CAP,
+        detail: { claims: evidence.appliedClaims.length, cap: MEMORY_CLAIM_CAP },
+      });
+      await options.recorder.finish(evaluation.id, { status: "succeeded" }, now().toISOString());
+    } catch (error) {
+      if (evaluationId) {
+        await options.recorder
+          .finish(evaluationId, { status: "failed", error: messageOf(error) }, now().toISOString())
+          .catch(() => {});
+      }
+    }
+  };
+
   const runOnce = async (at?: string): Promise<"idle" | "processed"> => {
     const evidence = await options.work.claimNext({
       leaseOwner,
@@ -138,9 +217,23 @@ export function createEvaluationService(options: EvaluationServiceOptions): Eval
       ...(at === undefined ? {} : { now: at }),
     });
     if (!evidence) return "idle";
-    await recordContract(evidence);
-    if (options.judge && evidence.status === "succeeded") {
-      await recordJudged(options.judge, evidence);
+    if (evidence.role === "memory") {
+      await recordMemoryContract(evidence);
+      const memoryJudge = options.memoryJudge;
+      if (memoryJudge && evidence.status === "succeeded" && evidence.appliedClaims.length > 0) {
+        await recordJudged(
+          "memory",
+          MEMORY_JUDGED_CASE,
+          () => memoryJudge.judge(evidence),
+          evidence,
+        );
+      }
+    } else {
+      await recordContract(evidence);
+      const judge = options.judge;
+      if (judge && evidence.status === "succeeded") {
+        await recordJudged("conversation", JUDGED_CASE, () => judge.judge(evidence), evidence);
+      }
     }
     await options.work.complete(evidence.runId);
     return "processed";

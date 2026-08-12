@@ -310,6 +310,38 @@ export const conversationRunItems = sqliteTable(
   ],
 );
 
+export const memoryJobs = sqliteTable(
+  "memory_jobs",
+  {
+    id: text().primaryKey(),
+    conversationId: text("conversation_id").notNull(),
+    status: text({ enum: ["pending", "done", "failed"] }).notNull(),
+    input: text("input_json", { mode: "json" }).notNull().$type<unknown>(),
+    runId: text("run_id").references(() => agentRuns.id),
+    error: text(),
+    leaseOwner: text("lease_owner"),
+    leaseUntil: text("lease_until"),
+    createdAt: text("created_at").notNull(),
+    completedAt: text("completed_at"),
+  },
+  (table) => [
+    check("memory_jobs_status", sql`${table.status} IN ('pending', 'done', 'failed')`),
+    check(
+      "memory_jobs_terminal",
+      sql`(${table.status} = 'pending' AND ${table.completedAt} IS NULL)
+        OR (${table.status} IN ('done', 'failed') AND ${table.completedAt} IS NOT NULL)`,
+    ),
+    check(
+      "memory_jobs_lease",
+      sql`(${table.leaseOwner} IS NULL AND ${table.leaseUntil} IS NULL)
+        OR (${table.leaseOwner} IS NOT NULL AND ${table.leaseUntil} IS NOT NULL)`,
+    ),
+    index("memory_jobs_pending")
+      .on(table.createdAt, table.id)
+      .where(sql`${table.status} = 'pending'`),
+  ],
+);
+
 export const evaluationPending = sqliteTable(
   "evaluation_pending",
   {

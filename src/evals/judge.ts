@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { assistantText } from "../models/assistant-text";
 import type { ModelRunner } from "../models/runtime";
-import type { ConversationJudge, ConversationRunEvidence } from "./contract";
+import { extractJson } from "../models/structured-output";
+import type {
+  ConversationJudge,
+  ConversationRunEvidence,
+  MemoryJudge,
+  MemoryRunEvidence,
+} from "./contract";
 
 const systemPrompt = `You are Ambient's conversation evaluator.
 
@@ -21,15 +27,6 @@ const verdictSchema = z.object({
   quality: z.number().min(0).max(1),
   rationale: z.string().min(1),
 });
-
-function extractJson(text: string): unknown {
-  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
-  const raw = fenced?.[1] ?? text;
-  const start = raw.indexOf("{");
-  const end = raw.lastIndexOf("}");
-  if (start === -1 || end <= start) throw new Error("judge returned no JSON object");
-  return JSON.parse(raw.slice(start, end + 1));
-}
 
 /** The narrow run-evidence port the judge needs; satisfied by the run repository. */
 export interface JudgeRunStore {
@@ -100,6 +97,95 @@ export function createPiConversationJudge(
               metric: "reply_quality",
               score: verdict.quality,
               detail: { rationale: verdict.rationale },
+            },
+          ],
+        };
+      } catch (error) {
+        await runs
+          .finish(evaluatorRunId, {
+            status: "failed",
+            error: error instanceof Error ? error.message : String(error),
+          })
+          .catch(() => {});
+        throw error;
+      }
+    },
+  };
+}
+
+const memoryJudgeSystemPrompt = `You are Ambient's memory evaluator.
+
+You receive claims a memory analyst extracted from a WhatsApp conversation, each with the exact
+messages it cited as evidence. Judge each claim strictly against ONLY its cited messages. Respond
+with exactly one JSON object and nothing else:
+
+{"claims": [{"index": 0, "supported": boolean}], "missedFacts": "one sentence on salient facts the
+analyst obviously missed, or an empty string"}
+
+A claim is supported only when its cited messages actually state or clearly imply it.`;
+
+const memoryVerdictSchema = z.object({
+  claims: z.array(z.object({ index: z.number().int().nonnegative(), supported: z.boolean() })),
+  missedFacts: z.string(),
+});
+
+const memoryJudgePromptVersion = "memory-judge-v1";
+
+/** Judges one Memory run's applied claims with the evaluator-role model. */
+export function createPiMemoryJudge(runner: ModelRunner, runs: JudgeRunStore): MemoryJudge {
+  return {
+    async judge(evidence: MemoryRunEvidence) {
+      const subject = {
+        claims: evidence.appliedClaims.map((claim, index) => ({
+          index,
+          claim: `${claim.entityName} ${claim.predicateName}: ${JSON.stringify(claim.value)}`,
+          confidence: claim.confidence,
+          citedMessages: claim.evidenceTexts,
+        })),
+      };
+      const { id: evaluatorRunId } = await runs.start({
+        agentId: "evaluator-judge",
+        role: "evaluator",
+        ...(evidence.conversationId === undefined
+          ? {}
+          : { conversationId: evidence.conversationId }),
+        model: runner.snapshot,
+        promptVersion: memoryJudgePromptVersion,
+        input: { subjectRunId: evidence.runId, subject },
+      });
+      try {
+        const message = await runner
+          .stream({
+            systemPrompt: memoryJudgeSystemPrompt,
+            messages: [
+              { role: "user", content: JSON.stringify(subject, null, 2), timestamp: Date.now() },
+            ],
+          })
+          .result();
+        if (message.stopReason === "error" || message.stopReason === "aborted") {
+          throw new Error(message.errorMessage ?? `judge model ${message.stopReason}`);
+        }
+        const verdict = memoryVerdictSchema.parse(extractJson(assistantText(message)));
+        const supported = new Map(verdict.claims.map(({ index, supported: s }) => [index, s]));
+        const total = evidence.appliedClaims.length;
+        const supportedCount = evidence.appliedClaims.filter(
+          (_claim, index) => supported.get(index) === true,
+        ).length;
+        const faithfulness = total === 0 ? 1 : supportedCount / total;
+        await runs.finish(evaluatorRunId, { status: "succeeded", result: verdict });
+        return {
+          evaluatorRunId,
+          metrics: [
+            {
+              metric: "memory_faithfulness",
+              score: faithfulness,
+              passed: faithfulness >= 0.8,
+              detail: { total, supported: supportedCount },
+            },
+            {
+              metric: "memory_missed_facts",
+              passed: verdict.missedFacts.trim() === "",
+              detail: { missedFacts: verdict.missedFacts },
             },
           ],
         };

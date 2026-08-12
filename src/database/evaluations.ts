@@ -32,6 +32,11 @@ export interface EvaluationRepository {
   }): Promise<EvaluationRun>;
   get(id: string): Promise<EvaluationRun | undefined>;
   forSubject(subjectRunId: string): Promise<readonly EvaluationRun[]>;
+  resultsFor(
+    evaluationRunId: string,
+  ): Promise<
+    readonly { readonly metric: string; readonly score?: number; readonly passed?: boolean }[]
+  >;
   finish(
     id: string,
     result:
@@ -119,6 +124,23 @@ export function createEvaluationRepository(
         .where(eq(evaluationRuns.subjectRunId, subjectRunId))
         .orderBy(asc(evaluationRuns.startedAt), asc(evaluationRuns.id));
       return rows.map(decode);
+    },
+
+    async resultsFor(evaluationRunId) {
+      const rows = await database
+        .select({
+          metric: evaluationResults.metric,
+          score: evaluationResults.score,
+          passed: evaluationResults.passed,
+        })
+        .from(evaluationResults)
+        .where(eq(evaluationResults.evaluationRunId, evaluationRunId))
+        .orderBy(asc(evaluationResults.metric));
+      return rows.map((row) => ({
+        metric: row.metric,
+        ...(row.score === null ? {} : { score: row.score }),
+        ...(row.passed === null ? {} : { passed: row.passed }),
+      }));
     },
 
     async finish(id, update, completedAt = new Date().toISOString()) {

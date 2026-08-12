@@ -8,7 +8,9 @@
       "qwen": {
         "adapter": "openai-compatible",
         "baseUrl": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-        "credential": { "env": ["QWEN_API_KEY", "DASHSCOPE_API_KEY"] },
+        "credential": {
+          "env": ["QWEN_API_KEY", "DASHSCOPE_API_KEY"]
+        },
         "models": {
           "qwen3.6-flash": {
             "contextWindow": 262144,
@@ -24,7 +26,9 @@
         "baseUrl": "http://127.0.0.1:8317/v1",
         "credential": "none",
         "models": {
-          "claude-opus-4-6-thinking": { "reasoning": true },
+          "claude-opus-4-6-thinking": {
+            "reasoning": true
+          },
           "claude-sonnet-4-6": {},
           "gemini-3-flash": {},
           "gemini-3-flash-agent": {},
@@ -58,6 +62,12 @@
         "model": "gemini-3.6-flash-high",
         "thinking": "off",
         "maxOutputTokens": 1024
+      },
+      "memory": {
+        "provider": "vibe",
+        "model": "gemini-3.6-flash-high",
+        "thinking": "off",
+        "maxOutputTokens": 8192
       }
     }
   }
