@@ -234,8 +234,64 @@ the proof override still strengthening the final guard; all gates pass.
 
 ## Active slice
 
-None. Asynchronous evaluations v1 completed 2026-08-12 (below); the next
-planning stop selects Memory Agent v1 against the blessed Bug Reports bed.
+### Slice: Memory Agent v1 — first evidence-backed memory from Bug Reports
+
+Selected 2026-08-12 under the master's standing crack-on directive; the
+evaluations review found no owed simplifications (the pending-signal
+pattern now exists twice — evals and the coming memory jobs — and stays
+unshared until a third real use proves the promotion).
+
+**Product question.** Can Ambient turn retained real conversation history
+into evidence-backed memory — entities, identity links, and validated
+claims — that recall then actually returns?
+
+**Concrete journey.** The blessed Bug Reports history (~250 retained text
+messages, two participants) is imported read-only from the production
+device's mirror as historical Observations — evidence only, never Inbox
+work. One durable Memory Job digests them: the Memory Agent (memory role,
+gemini pool) receives the bounded batch plus the current ontology view and
+proposes entities, identity links, predicates, and claims; the host
+validates and applies them through the existing patch machinery. Recall
+for the two participants then returns real evidence-backed claims — proven
+offline on the rig, no WhatsApp connection, no human.
+
+**Owner.** `whatsapp/` owns mirror→observation history mapping (bounded
+import from a designated mirror, read-only); `memory/` owns the Memory
+Agent contract, prompt, and host-side validation; `database/` implements
+the job store; the proof harness gains narrow memory stepping.
+
+**Durable protocol.** `memory_jobs` — one digest job for one conversation
+batch: pending → claimed under a fenced lease → done or failed; the agent
+invocation is retained as an `agent_runs` row (role `memory`); ontology
+changes apply only through `memory_patches` with its existing
+memory-role gate; historical observations dedupe on native identity;
+lease expiry reopens an abandoned job.
+
+**Smallest API.** `MemoryAgent.run(input)` returning proposed operations
+plus a private report — one bounded model call, host-validated, no tools
+in v1; `MemoryJobStore { create, claimNext, complete, fail }`; one history
+import entry point on the WhatsApp module; recall unchanged.
+
+**Preserved invariants.** History creates no Inbox items and wakes no
+speaker; `applyPatch` remains the only claim mutation path and stays
+role-gated; mirrors are read read-only; nothing derived from the profiles
+enters code, logs, commits, or receipts.
+
+**Non-goals.** Episodes; incremental memory on live traffic (the next
+memory slice, needs a producer policy); listening-chat scheduling;
+cross-chat synthesis.
+
+**Proof gate.** Deterministic: import maps and dedupes history without
+creating Inbox rows; job lifecycle with lease recovery; a fake agent's
+operations apply through validation and invalid operations fail the job
+without corrupting the ontology; recall returns applied claims. Rig: real
+import of the blessed bed, one live memory run on the gemini pool, recall
+returning evidence-backed claims about the two participants — receipt in
+counts only. All repository gates.
+
+**Open questions.** Incremental memory production for post-watermark
+traffic; who authors memory jobs in production (the Root, later);
+predicate governance as the ontology grows.
 
 ## Completed slice: asynchronous evaluations v1 (2026-08-12)
 
@@ -421,11 +477,11 @@ Requested by the master during replanning ("what primitives do we have?").
 
 ## Likely next slice
 
-Memory Agent v1 against the blessed Bug Reports listening bed: the
-mirror-to-observations ingest for a designated mirror, identity links for
-its two participants, first evidence-backed claims through validated
-patches, and a speaker run that recalls a real fact. Brief at the next
-planning stop.
+Workers v1 — the customer-feedback journey: a bounded Worker files a
+GitHub issue from validated Bug Reports evidence, its durable result
+returns to the originating conversation's Inbox, and the speaker decides
+how to report it. GitHub credentials are already available on this
+machine; the proof targets a scratch repository.
 
 ## Live test rig
 
