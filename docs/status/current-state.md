@@ -242,6 +242,22 @@ facade. The next step is a full replanning session with the master to
 sequence the product frontier (conversation presence, Memory Agent, Workers,
 Root) to a usable outcome. No product slice starts before that session.
 
+Constraints already agreed for that session:
+
+- Conversation presence lands as **durable Conversation-mandate records**
+  (the first form of the product model's Conversation assignment), seeded
+  from an operator allowlist (the `Tst` group plus authorized numbers). The
+  Root slice later changes the **author** of those records, never their
+  consumers.
+- The presence gate belongs at **claiming, not ingestion**: Ambient keeps
+  observing and retaining every accepted message (Memory and future Root
+  attention need the evidence) but runs Conversation Agents only where
+  mandated.
+- Today there is no presence concept: every accepted message becomes Inbox
+  work, conversation is disabled in the document, and loopback mode is the
+  only live-send guard. Presence is therefore the gate to enabling live
+  replies.
+
 ## Known debt
 
 Accepted, durable, and owned here rather than in commit messages:
