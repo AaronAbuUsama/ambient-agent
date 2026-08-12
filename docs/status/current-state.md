@@ -409,7 +409,13 @@ the active and likely-next slices is memory → workers → root, revisited at
 each review point):
 
 - Memory Agent v1: full WhatsApp history ingested into memory as far back as
-  the mirror goes, plus behaviour for `listening` chats;
+  the mirror goes, plus behaviour for `listening` chats. The operator blessed
+  the real Bug Reports working group as the test bed (2026-08-12): ~250 text
+  messages over a month, two participants; it is seeded as a `listening`
+  speaker in both the production and rig databases, and its ids live only in
+  `.proof-private/memory-testbed.json`. Its history exists only in the
+  production device's mirror — linked devices do not share back-history — so
+  the ingest design must read a designated mirror, not "the" mirror;
 - customer feedback delegated to a bounded GitHub Worker;
 - long-running supplier qualification;
 - cross-thread continuity with Rex;
