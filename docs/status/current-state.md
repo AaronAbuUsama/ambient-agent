@@ -199,12 +199,34 @@ deterministic tests.
 
 **Non-goals.** No WhatsApp facade change (next slice); no new proof kinds.
 
-**Proof gate.** Proof scripts import no Drizzle, schema, repository, service,
-or model-runtime symbols; every former `CONVERSATION_*`/`WHATSAPP_*` structured
-env var is document-owned with env retained only for secrets, `AMBIENT_CONFIG`,
-and deployment overrides (`AMBIENT_DATABASE_URL`, `WHATSAPP_DATA_DIR`,
-`WA_LOG_LEVEL`); all gates (`vp check`, `vp test`, `drizzle-kit check`, frozen
-strict-peer install) pass.
+**Proof gate.** WhatsApp proof scripts import no Drizzle, schema, repository,
+service, or model-runtime symbols (the model proof consumes the models
+module's own public runtime by design); every former
+`CONVERSATION_*`/`WHATSAPP_*` structured env var is document-owned with env
+retained only for secrets, `AMBIENT_CONFIG`, and deployment overrides
+(`AMBIENT_DATABASE_URL`, `WHATSAPP_DATA_DIR`, `WA_LOG_LEVEL`); all gates
+(`vp check`, `vp test`, `drizzle-kit check`, frozen strict-peer install) pass.
+
+### Slice: WhatsApp boundary
+
+**Product question.** Can the application and proofs consume WhatsApp only
+through an Ambient-owned service facade — lifecycle, a conversation-bound text
+effect, and narrow destination discovery — with the concrete session
+controller private to the WhatsApp module?
+
+**Owner.** `whatsapp/service.ts` owns the facade (`start`, `waitForFailure`,
+`stop`, `conversationSender`, `destinations`) and hides controller
+construction, deployment options, snapshots, and raw send methods.
+Composition and the proof harness lose every concrete controller reference.
+
+**Non-goals.** No new model-visible WhatsApp tools or capability groups
+(reactions, media, read state follow real product slices); no change to
+ingestion or durable operation semantics.
+
+**Proof gate.** No file outside `src/whatsapp/` imports the session
+controller; the lifecycle consumes `start`/`stop`/`waitForFailure`; the
+outbound destination guard and loopback policy live behind the facade with
+the proof override still strengthening the final guard; all gates pass.
 
 ## Likely next slice
 

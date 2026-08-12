@@ -1,16 +1,12 @@
 import type { AgentRun, ToolCall } from "../database/runs";
 import type { EvaluationRun } from "../database/evaluations";
+import type { WhatsAppDestination } from "../whatsapp/service";
 import type { AppConfig } from "./config";
 import { createAppResources, type AppResources } from "./resources";
 
 export interface AcceptedProofMessage {
   readonly observationId: string;
   readonly conversationId: string;
-}
-
-export interface ProofDestination {
-  readonly id: string;
-  readonly label: string;
 }
 
 /**
@@ -23,7 +19,7 @@ export interface ProofDestination {
 export interface AmbientProofHarness {
   start(): Promise<void>;
   /** Chats the authenticated account can see, for proof-side target matching. */
-  destinations(): readonly ProofDestination[];
+  destinations(): readonly WhatsAppDestination[];
   waitForAccepted(
     match: (message: AcceptedProofMessage) => boolean,
     timeoutMs: number,
@@ -73,17 +69,11 @@ export async function createAmbientProofHarness(
 
   return {
     async start() {
-      await resources.whatsapp.attach();
+      await resources.whatsapp.start();
     },
 
     destinations() {
-      const snapshot = resources.whatsapp.getSnapshot();
-      return snapshot.chats.map((chat) => {
-        const group = chat.isGroup
-          ? snapshot.groups.find(({ groupId }) => groupId === chat.chatId)
-          : undefined;
-        return { id: chat.chatId, label: group?.subject ?? chat.subject ?? chat.chatId };
-      });
+      return resources.whatsapp.destinations();
     },
 
     waitForAccepted(match, timeoutMs) {
@@ -135,7 +125,7 @@ export async function createAmbientProofHarness(
     },
 
     async stop() {
-      await resources.whatsapp.dispose().catch(() => {});
+      await resources.whatsapp.stop().catch(() => {});
       await resources.database.close().catch(() => {});
     },
   };

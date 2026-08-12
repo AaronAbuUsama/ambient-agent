@@ -13,11 +13,11 @@ test("Ambient starts and stops its WhatsApp dependency once", async () => {
       },
     },
     whatsapp: {
-      attach: () => {
+      start: () => {
         attaches += 1;
         return Promise.resolve();
       },
-      dispose: () => {
+      stop: () => {
         disposes += 1;
         return Promise.resolve();
       },
@@ -46,8 +46,8 @@ test("Ambient wait resolves when WhatsApp detaches unexpectedly", async () => {
   const ambient = createAmbientLifecycle({
     database: { close: () => Promise.resolve() },
     whatsapp: {
-      attach: () => Promise.resolve(),
-      dispose: () => Promise.resolve(),
+      start: () => Promise.resolve(),
+      stop: () => Promise.resolve(),
       waitForFailure: () => failure.promise,
     },
   });
@@ -66,8 +66,8 @@ test("Ambient wait resolves as stopped during an intentional shutdown", async ()
   const ambient = createAmbientLifecycle({
     database: { close: () => Promise.resolve() },
     whatsapp: {
-      attach: () => Promise.resolve(),
-      dispose: () => Promise.resolve(),
+      start: () => Promise.resolve(),
+      stop: () => Promise.resolve(),
       waitForFailure: () => new Promise(() => {}),
     },
   });
@@ -90,8 +90,8 @@ test("Ambient wait resolves as failed when shutdown cleanup rejects", async () =
       },
     },
     whatsapp: {
-      attach: () => Promise.resolve(),
-      dispose() {
+      start: () => Promise.resolve(),
+      stop() {
         whatsappDisposes += 1;
         return Promise.resolve();
       },
@@ -116,8 +116,8 @@ test("Ambient does not start Conversation after WhatsApp fails during startup", 
   const ambient = createAmbientLifecycle({
     database: { close: () => Promise.resolve() },
     whatsapp: {
-      attach: () => Promise.resolve(),
-      dispose: () => Promise.resolve(),
+      start: () => Promise.resolve(),
+      stop: () => Promise.resolve(),
       waitForFailure: () => failure.promise,
     },
     conversation: {
@@ -144,8 +144,8 @@ test("Ambient does not start Conversation when shutdown is requested during atta
   const ambient = createAmbientLifecycle({
     database: { close: () => Promise.resolve() },
     whatsapp: {
-      attach: () => attached.promise,
-      dispose: () => Promise.resolve(),
+      start: () => attached.promise,
+      stop: () => Promise.resolve(),
       waitForFailure: () => new Promise(() => {}),
     },
     conversation: {

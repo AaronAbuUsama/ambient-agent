@@ -13,8 +13,8 @@ export interface AmbientLifecycleDependencies {
     close(): Promise<void>;
   };
   readonly whatsapp: {
-    attach(): Promise<unknown>;
-    dispose(): Promise<void>;
+    start(): Promise<unknown>;
+    stop(): Promise<void>;
     waitForFailure(): Promise<{ readonly error: Error }>;
   };
   readonly conversation?: {
@@ -44,7 +44,7 @@ export function createAmbientLifecycle({
     start() {
       if (stopping) return Promise.reject(new Error("Ambient has stopped"));
       starting ??= (async () => {
-        await whatsapp.attach();
+        await whatsapp.start();
         void whatsapp.waitForFailure().then(({ error }) => {
           if (stopping) return;
           failed = true;
@@ -71,7 +71,7 @@ export function createAmbientLifecycle({
           cleanupError = error;
         }
         try {
-          await whatsapp.dispose();
+          await whatsapp.stop();
         } catch (error) {
           cleanupError ??= error;
         }

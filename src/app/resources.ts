@@ -3,14 +3,13 @@ import { createPiConversationAgent } from "../conversation/pi-agent";
 import { createConversationService, type ConversationService } from "../conversation/service";
 import { createModelRuntime } from "../models/runtime";
 import { createWhatsAppAcceptedSourceConsumer } from "../whatsapp/message-ingestion";
-import { WhatsAppSessionController } from "../whatsapp/session/controller";
-import { localDeployment } from "../whatsapp/session/local-deployment";
+import { createWhatsAppService, type WhatsAppService } from "../whatsapp/service";
 import type { AppConfig } from "./config";
 import type { AmbientLifecycleDependencies } from "./lifecycle";
 
 export interface AppResources extends AmbientLifecycleDependencies {
   readonly database: AmbientDatabase;
-  readonly whatsapp: WhatsAppSessionController;
+  readonly whatsapp: WhatsAppService;
   readonly conversation?: ConversationService;
 }
 
@@ -45,13 +44,11 @@ export async function createAppResources(
         void conversation?.wake(result.conversationId).catch(() => {});
       },
     );
-    const whatsapp = new WhatsAppSessionController({
-      ...localDeployment({
-        accountId: config.whatsapp.accountId,
-        directory: config.whatsapp.dataDirectory,
-        historyBackfillLimit: config.whatsapp.historyBackfillLimit,
-        logLevel: config.logging.level,
-      }),
+    const whatsapp = createWhatsAppService({
+      accountId: config.whatsapp.accountId,
+      dataDirectory: config.whatsapp.dataDirectory,
+      historyBackfillLimit: config.whatsapp.historyBackfillLimit,
+      logLevel: config.logging.level,
       acceptedSource,
     });
     if (config.conversation.enabled) {
@@ -63,20 +60,10 @@ export async function createAppResources(
         recall: database.repositories.memory,
         evaluation: database.repositories.conversationEvaluation,
         agent: createPiConversationAgent(runner),
-        sender: {
-          async sendText({ conversationId, text, idempotencyKey }) {
-            const target =
-              config.conversation.outboundMode === "loopback"
-                ? whatsapp.loopbackAddress()
-                : conversationId;
-            if (!target) throw new Error("WhatsApp loopback address is not available");
-            if (options.authorizeOutbound && !options.authorizeOutbound(target)) {
-              throw new Error(`outbound destination "${target}" is not authorized for this run`);
-            }
-            const operation = await whatsapp.sendText(target, text, idempotencyKey);
-            return { operationId: operation.id };
-          },
-        },
+        sender: whatsapp.conversationSender(
+          config.conversation.outboundMode,
+          options.authorizeOutbound,
+        ),
       });
     }
 
