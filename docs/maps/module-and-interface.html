@@ -215,9 +215,9 @@
         <p class="eyebrow">Ambient architecture · target boundary</p>
         <h1>Small interfaces, one owner for each durable transition.</h1>
         <p class="lede">
-          The outer lifecycle is already rescued. The next cut compresses the proven Conversation
-          runtime behind one service and one aggregate-shaped work store, while model and WhatsApp
-          mechanics remain adapters.
+          Every mapped boundary is realized: one composition root, one Conversation service over one
+          aggregate-shaped work store, a deep model runtime, the validated configuration document,
+          the shared proof harness, and the WhatsApp service facade.
         </p>
       </header>
 
@@ -900,9 +900,9 @@
               <td>Ambient lifecycle facade</td>
             </tr>
             <tr>
-              <td><code>app/resources.ts</code></td>
-              <td>Reshape, internalize</td>
-              <td>Private composition assembly</td>
+              <td><code>app/resources.ts</code> + <code>app/proof.ts</code></td>
+              <td>Rescued</td>
+              <td>Private composition assembly and proof harness</td>
             </tr>
             <tr>
               <td><code>conversation/service.ts</code></td>
@@ -925,14 +925,14 @@
               <td>Role adapter consuming a bound Model Runner</td>
             </tr>
             <tr>
-              <td><code>whatsapp/session/controller.ts</code></td>
-              <td>Keep, reshape</td>
-              <td>Private WhatsApp Service implementation</td>
+              <td><code>whatsapp/service.ts</code></td>
+              <td>Rescued</td>
+              <td>Ambient-owned WhatsApp Service facade</td>
             </tr>
             <tr>
               <td><code>proofs/*</code></td>
-              <td>Reshape</td>
-              <td>Shared-composition proof harness</td>
+              <td>Rescued</td>
+              <td>Proof policy over the shared harness</td>
             </tr>
           </tbody>
         </table>

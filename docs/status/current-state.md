@@ -35,17 +35,19 @@ The existing backend has valuable behaviour that must survive restructuring:
 These are implementation assets, not proof that the current module boundaries
 are correct.
 
-## Current architectural problems
+## Rescue scorecard
 
-| Area          | Preserve                                                                         | Problem                                                                                                       | Intended boundary                                      |
-| ------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Application   | Correct startup and reverse-order shutdown                                       | Proofs still bypass the rescued production composition                                                        | One authoritative `createAmbient(config)`              |
-| Models        | Successful Qwen run and durable model snapshots                                  | Rescued: one `ModelRuntime` resolves configured roles once; providers, credentials, and Pi stay in `models/`  | One deep `ModelRuntime` resolved at startup            |
-| Conversation  | Durable debounce, claims, leases, tools, sends, and recovery                     | Rescued: one `ConversationService` over one Conversation-owned `ConversationWorkStore` port                   | `ConversationService` plus one `ConversationWorkStore` |
-| WhatsApp      | Session recovery, accepted-source ingestion, retained mirror, durable operations | Concrete controller and callback mechanics leak into composition; Conversation has only an ad hoc text sender | Ambient-owned service plus conversation-bound effects  |
-| Persistence   | Proven atomic transactions                                                       | Conversation work is store-shaped; remaining repositories are still table-shaped behind the public bag        | Stores shaped around transactional invariants          |
-| Proofs        | Guarded live destination and retained evidence                                   | Proofs rebuild production wiring and duplicate policy                                                         | Shared Ambient composition with explicit proof ports   |
-| Configuration | Secrets stay out of durable runs                                                 | Models are a validated JSON document; remaining deployment scalars still load from environment variables      | Validated structured document plus external secrets    |
+All boundaries from the 2026-08-12 architecture audit are realized:
+
+| Area          | Boundary                                                       | State                                                                                              |
+| ------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Application   | One authoritative `createAmbient(config)`                      | Rescued; proofs share the composition through the harness                                          |
+| Models        | One deep `ModelRuntime` resolved at startup                    | Rescued                                                                                            |
+| Conversation  | `ConversationService` plus one `ConversationWorkStore`         | Rescued                                                                                            |
+| WhatsApp      | Ambient-owned service facade plus conversation-bound text send | Rescued; further effect capabilities arrive with product                                           |
+| Persistence   | Stores shaped around transactional invariants                  | Conversation work rescued; remaining repositories are app-internal reads pending their role slices |
+| Proofs        | Shared composition with explicit proof surface                 | Rescued                                                                                            |
+| Configuration | Validated structured document plus external secrets            | Rescued                                                                                            |
 
 ## Completed slices
 
@@ -174,13 +176,15 @@ The model subsystem is now one deep module resolved once at startup:
 - frozen strict-peer installation: clean;
 - no live model invocation or WhatsApp send in deterministic tests.
 
-## Active slice
+### Rescue sprint: proof composition, configuration, WhatsApp boundary
 
-Rescue sprint (agreed 2026-08-12): finish all remaining rescue as separately
-gated slices — proof composition with the configuration sweep as a rider, then
-the WhatsApp boundary — then stop for a full replanning session.
+Agreed 2026-08-12 and completed the same day as two gated slices. Proof for
+both: `vp check` clean (47 files), `vp test` 63/63 across 12 files,
+`drizzle-kit check` clean, frozen strict-peer install clean, no live model
+call or WhatsApp send in deterministic tests, no controller import outside
+`src/whatsapp/`, no wiring import in WhatsApp proof scripts.
 
-### Slice: proof composition and configuration sweep
+#### Slice: proof composition and configuration sweep
 
 **Product question.** Can both proofs run on the same composition assembly as
 production through one narrow harness — destination discovery, accepted-input
@@ -207,7 +211,7 @@ retained only for secrets, `AMBIENT_CONFIG`, and deployment overrides
 (`AMBIENT_DATABASE_URL`, `WHATSAPP_DATA_DIR`, `WA_LOG_LEVEL`); all gates
 (`vp check`, `vp test`, `drizzle-kit check`, frozen strict-peer install) pass.
 
-### Slice: WhatsApp boundary
+#### Slice: WhatsApp boundary
 
 **Product question.** Can the application and proofs consume WhatsApp only
 through an Ambient-owned service facade — lifecycle, a conversation-bound text
@@ -228,53 +232,25 @@ controller; the lifecycle consumes `start`/`stop`/`waitForFailure`; the
 outbound destination guard and loopback policy live behind the facade with
 the proof override still strengthening the final guard; all gates pass.
 
-## Likely next slice
+## Active slice
 
-### Proof composition
-
-Migrate the two proofs onto the production `createAmbient` composition with
-explicit narrow proof ports instead of the lower-level resource factory and
-repository bag. The Conversation and model boundaries the proofs need now
-exist, which raises this candidate's dependency value: it retires the last
-alternate composition root and the direct store access in
-`proofs/whatsapp-conversation.ts`.
-
-## Rescue-candidate comparison
-
-Scores are 1 (weak) to 5 (strong). Risk is scored inversely, so 5 means lower
-implementation risk. Conversation (23) and model runtime (20) are completed
-above.
-
-| Candidate                     | Leverage | Interface certainty | Dependency value | Proofability | Risk |  Total |
-| ----------------------------- | -------: | ------------------: | ---------------: | -----------: | ---: | -----: |
-| Proof composition             |        3 |                   4 |                3 |            5 |    4 | **19** |
-| WhatsApp boundary and effects |        4 |                   3 |                4 |            4 |    2 | **17** |
-
-Proof composition edges ahead now that the boundaries it must consume exist:
-its interface uncertainty dropped, and retiring the proof-only composition
-path unblocks safe guarded validation of the riskier WhatsApp boundary slice
-that follows.
+None. **The architecture rescue is complete**: every boundary from the
+canonical map is realized — one composition root, one Conversation service
+over one work store, one deep model runtime, the validated configuration
+document, the shared-composition proof harness, and the WhatsApp service
+facade. The next step is a full replanning session with the master to
+sequence the product frontier (conversation presence, Memory Agent, Workers,
+Root) to a usable outcome. No product slice starts before that session.
 
 ## Known debt
 
 Accepted, durable, and owned here rather than in commit messages:
 
-- **Proof composition drift** — both proofs still build on the lower-level
-  resource factory; `proofs/whatsapp-conversation.ts` additionally wires its
-  own Conversation service, work-store `notify`, and model runner. Retired by
-  the proof-composition slice.
-- **Remaining environment scalars** — database URL, WhatsApp, scheduling,
-  logging, and conversation toggles still load from env rather than the
-  structured document. A later configuration sweep moves them; secrets stay in
-  env by policy.
-- **WhatsApp exposure** — `AppResources` still exposes the concrete
-  `WhatsAppSessionController`, and Conversation's outbound text effect is an
-  ad hoc scoped sender built in composition. Owned by the WhatsApp boundary
-  and effects slice.
-- **Repository bag** — `AmbientRepositories` remains a public bag pending
-  internalization behind explicit surfaces; `runs.start` has no production
-  caller until a Memory or Worker slice; `inbox.enqueue` is the retention
-  path awaiting its first `task_update` producer.
+- **Repository bag** — `AmbientRepositories` is now consumed only inside
+  `src/app/` (resources and the proof harness) but remains a bag rather than
+  explicit surfaces; `runs.start` has no production caller until a Memory or
+  Worker slice; `inbox.enqueue` is the retention path awaiting its first
+  `task_update` producer.
 - **`root` model role** — the implemented `ModelRole` union and `agent_runs`
   role enum omit `root` until a Root slice creates the first root run.
 - **Duplicated text extraction** — the assistant-text flatten exists in

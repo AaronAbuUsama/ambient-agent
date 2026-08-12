@@ -552,8 +552,9 @@ Disposition meanings:
 | `src/main.ts`                              | Keep                           | process boundary                                        |
 | `src/app/ambient.ts`                       | Keep                           | sole production composition root                        |
 | `src/app/lifecycle.ts`                     | Keep                           | Ambient lifecycle                                       |
-| `src/app/resources.ts`                     | Reshape, then internalize      | private composition assembly                            |
-| `src/app/config.ts`                        | Keep, reshape remaining env    | validated structured application configuration          |
+| `src/app/resources.ts`                     | Keep (app-internal)            | private composition assembly                            |
+| `src/app/proof.ts`                         | Keep (rescued)                 | shared-composition proof harness                        |
+| `src/app/config.ts`                        | Keep (rescued)                 | validated structured application configuration          |
 | `src/models/contract.ts`                   | Keep (rescued)                 | model vocabulary and configuration document             |
 | `src/models/runtime.ts`                    | Keep (rescued)                 | provider construction, secrets, and role runners        |
 | `src/conversation/contract.ts`             | Keep (rescued)                 | Conversation-owned domain contracts and ports           |
@@ -570,20 +571,21 @@ Disposition meanings:
 | `src/database/tasks.ts`                    | Defer                          | future assignments and Worker protocol                  |
 | `src/database/memory.ts`                   | Reshape in a Memory slice      | Memory store plus narrow recall read model              |
 | `src/database/evaluations.ts`              | Internalize, later reshape     | asynchronous evaluations store                          |
-| `src/whatsapp/session/controller.ts`       | Keep, reshape                  | private WhatsApp service implementation                 |
+| `src/whatsapp/service.ts`                  | Keep (rescued)                 | Ambient-owned WhatsApp service facade                   |
+| `src/whatsapp/session/controller.ts`       | Keep (internal)                | private WhatsApp service implementation                 |
 | `src/whatsapp/session/local-deployment.ts` | Keep, internalize              | WhatsApp deployment adapter                             |
 | `src/whatsapp/session/history-backfill.ts` | Keep, defer ownership decision | WhatsApp history operation, later Memory indexing input |
 | `src/whatsapp/message-ingestion.ts`        | Reshape                        | WhatsApp accepted-source ingress adapter                |
 | `src/whatsapp/observation-mapper.ts`       | Keep, internalize              | WhatsApp ingress mapping                                |
-| `src/proofs/whatsapp-ingestion.ts`         | Reshape                        | shared-composition proof harness                        |
-| `src/proofs/whatsapp-conversation.ts`      | Reshape                        | shared-composition proof harness and evidence reader    |
+| `src/proofs/whatsapp-ingestion.ts`         | Keep (rescued)                 | proof policy over the shared harness                    |
+| `src/proofs/whatsapp-conversation.ts`      | Keep (rescued)                 | proof policy over the shared harness                    |
 | `src/platform/logging.ts`                  | Keep, internalize              | platform adapter                                        |
 | `src/platform/errors.ts`                   | Keep, internalize              | platform utility                                        |
 
-The independent Inbox mutation API and independent Run completion API were
-removed with the Conversation work-store rescue. The public repository bag,
-concrete controller exposure, and proof-only alternate composition root remain
-obsolete concepts to be removed after their callers migrate, not before.
+The independent Inbox mutation API, independent Run completion API, concrete
+controller exposure, and proof-only alternate composition root are all
+removed. The repository bag survives only as an `src/app/`-internal assembly
+detail; it becomes explicit surfaces as role slices claim their stores.
 
 ## Frontier definitions
 
