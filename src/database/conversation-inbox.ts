@@ -52,6 +52,39 @@ export function decodeConversationInboxItem(
 export function createConversationInboxRepository(
   database: AmbientDatabaseConnection,
 ): ConversationInboxRepository {
+  const finishClaimedItems = async (
+    runId: string,
+    requiredStatus: "succeeded" | "failed",
+    update:
+      | { readonly consumedByRunId: string; readonly consumedAt: string }
+      | {
+          readonly claimedByRunId: null;
+        },
+  ): Promise<number> =>
+    database.transaction(async (transaction) => {
+      const [run] = await transaction
+        .select({ status: agentRuns.status })
+        .from(agentRuns)
+        .where(eq(agentRuns.id, runId))
+        .limit(1);
+      if (!run || run.status !== requiredStatus) {
+        throw new Error(
+          `agent run "${runId}" must ${requiredStatus === "succeeded" ? "succeed" : "fail"} before updating inbox items`,
+        );
+      }
+      const rows = await transaction
+        .update(conversationInbox)
+        .set(update)
+        .where(
+          and(
+            eq(conversationInbox.claimedByRunId, runId),
+            isNull(conversationInbox.consumedByRunId),
+          ),
+        )
+        .returning({ id: conversationInbox.id });
+      return rows.length;
+    });
+
   return {
     async enqueue(input) {
       const id = input.id ?? crypto.randomUUID();
@@ -167,51 +200,11 @@ export function createConversationInboxRepository(
     },
 
     consume(runId, consumedAt = new Date().toISOString()) {
-      return database.transaction(async (transaction) => {
-        const [run] = await transaction
-          .select({ status: agentRuns.status })
-          .from(agentRuns)
-          .where(eq(agentRuns.id, runId))
-          .limit(1);
-        if (!run || run.status !== "succeeded") {
-          throw new Error(`agent run "${runId}" must succeed before updating inbox items`);
-        }
-        const rows = await transaction
-          .update(conversationInbox)
-          .set({ consumedByRunId: runId, consumedAt })
-          .where(
-            and(
-              eq(conversationInbox.claimedByRunId, runId),
-              isNull(conversationInbox.consumedByRunId),
-            ),
-          )
-          .returning({ id: conversationInbox.id });
-        return rows.length;
-      });
+      return finishClaimedItems(runId, "succeeded", { consumedByRunId: runId, consumedAt });
     },
 
     release(runId) {
-      return database.transaction(async (transaction) => {
-        const [run] = await transaction
-          .select({ status: agentRuns.status })
-          .from(agentRuns)
-          .where(eq(agentRuns.id, runId))
-          .limit(1);
-        if (!run || run.status !== "failed") {
-          throw new Error(`agent run "${runId}" must fail before updating inbox items`);
-        }
-        const rows = await transaction
-          .update(conversationInbox)
-          .set({ claimedByRunId: null })
-          .where(
-            and(
-              eq(conversationInbox.claimedByRunId, runId),
-              isNull(conversationInbox.consumedByRunId),
-            ),
-          )
-          .returning({ id: conversationInbox.id });
-        return rows.length;
-      });
+      return finishClaimedItems(runId, "failed", { claimedByRunId: null });
     },
   };
 }

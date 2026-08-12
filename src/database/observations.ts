@@ -3,8 +3,8 @@ import { z } from "zod";
 import type { AmbientDatabaseConnection } from "./database";
 import { observations } from "./schema";
 
-export const observationSourceSchema = z.enum(["whatsapp", "worker"]);
-export const observationKindSchema = z.enum([
+const observationSourceSchema = z.enum(["whatsapp", "worker"]);
+const observationKindSchema = z.enum([
   "message",
   "task_request",
   "worker_result",

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const thinkingLevelSchema = z.enum(["off", "low", "medium", "high"]);
+const thinkingLevelSchema = z.enum(["off", "low", "medium", "high"]);
 
 export const modelConfigSchema = z.object({
   provider: z.string().min(1),

@@ -3,8 +3,6 @@ import {
   createWhatsAppRuntime,
   type Awaitable,
   type ChatRecord,
-  type ClientChatMessages,
-  type ContactRecord,
   type CredentialStore,
   type GroupRecord,
   type MessageRef,
@@ -47,7 +45,7 @@ export type Attachment = "detached" | "attaching" | "attached" | "detaching";
  * attached until something stops it. Collapsing them into one enum is what
  * makes a consumer claim a connection it does not have.
  */
-export interface WhatsAppSessionSnapshot {
+interface WhatsAppSessionSnapshot {
   readonly attachment: Attachment;
   /** WhatsApp's live connection status, or `null` before a session exists. */
   readonly status: Status | null;
@@ -58,14 +56,7 @@ export interface WhatsAppSessionSnapshot {
   readonly error: string | null;
   /** How far the full local-mirror history walk has got. */
   readonly historyBackfill: HistoryBackfillProgress;
-  /**
-   * Bumped by every committed client change.
-   *
-   * @remarks
-   * Message pages live per chat behind {@link WhatsAppSessionController.chatMessages}
-   * rather than in this snapshot. The counter lets consumers detect committed
-   * changes without copying every retained message into each snapshot.
-   */
+  /** Bumped by every committed client change. */
   readonly revision: number;
 }
 
@@ -138,15 +129,12 @@ export class WhatsAppSessionController {
     return this.#snapshot;
   };
 
+  // Main observes unexpected detachments through this public lifecycle seam.
+  // fallow-ignore-next-line unused-class-member
   subscribe = (listener: () => void): (() => void) => {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
   };
-
-  /** One chat's retained messages, or `null` while no Client is attached. */
-  chatMessages(chatId: string): ClientChatMessages | null {
-    return this.#client?.messages.get(chatId) ?? null;
-  }
 
   /**
    * Wait for the current full-mirror history pass to reach a terminal state.
@@ -158,11 +146,6 @@ export class WhatsAppSessionController {
   async waitForHistoryBackfill(signal?: AbortSignal): Promise<HistoryBackfillProgress> {
     if (!this.#client) throw new Error("not connected");
     return this.#historyBackfill.wait(signal);
-  }
-
-  /** The contact record owning a native address, for display names. */
-  resolveContact(nativeId: string): ContactRecord | undefined {
-    return this.#client?.contacts.resolve(nativeId);
   }
 
   /**

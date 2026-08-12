@@ -5,7 +5,7 @@ import { createSessionLogger } from "../../platform/logging";
 import type { WhatsAppSessionOptions } from "./controller";
 
 /** Where one account's credentials, mirror database, media bytes, and log live. */
-export interface DeploymentPaths {
+interface DeploymentPaths {
   readonly directory: string;
   readonly databaseUrl: string;
   readonly mediaDirectory: string;
@@ -13,7 +13,7 @@ export interface DeploymentPaths {
   readonly logFile: string;
 }
 
-export function deploymentPaths(directory = "./data"): DeploymentPaths {
+function deploymentPaths(directory = "./data"): DeploymentPaths {
   const root = resolve(directory);
   return {
     directory: root,

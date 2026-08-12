@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AmbientDatabaseConnection } from "./database";
 import { tasks, taskUpdates } from "./schema";
 
-export const taskStatusSchema = z.enum(["queued", "running", "succeeded", "failed", "cancelled"]);
+const taskStatusSchema = z.enum(["queued", "running", "succeeded", "failed", "cancelled"]);
 export type TaskStatus = z.infer<typeof taskStatusSchema>;
 
 export interface Task {
