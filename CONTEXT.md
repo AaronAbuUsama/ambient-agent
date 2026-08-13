@@ -85,6 +85,13 @@ _Avoid_: grant (capability grants are a different thing), manifest, policy
 file, chat.yaml / binding file (retired 2026-08-13; the chat id line inside
 the mandate is the binding)
 
+**Memory brief**:
+The mandate's statement of what a chat's memory is for. Carried to every
+digest of that chat; when present it is the prime coverage rule. Memory
+itself is default-on for every allowed chat — the brief shapes it, never
+enables it.
+_Avoid_: memory prompt, digestion focus
+
 **Speaker record**:
 The runtime mirror of the current valid mandate plus the activation
 watermark. Protocol plane; the claim gate reads it transactionally. Active

@@ -53,6 +53,8 @@ export interface MemoryOntologyClaim {
 
 export interface MemoryInput {
   readonly conversationId: string;
+  /** The mandate's memory brief for this chat, when one is authored. */
+  readonly brief?: string;
   readonly messages: readonly MemoryMessage[];
   readonly entities: readonly MemoryOntologyEntity[];
   readonly predicates: readonly MemoryOntologyPredicate[];
@@ -94,16 +96,41 @@ export interface MemoryProposal {
   readonly report: string;
 }
 
-export interface MemoryAgent {
-  readonly model: ModelConfig;
-  propose(input: MemoryInput, signal?: AbortSignal): Promise<MemoryProposal>;
+/**
+ * The host-owned tools a Memory Agent run receives. `proposeFacts` validates
+ * AND applies the proposal in one call — an invalid proposal throws, the error
+ * returns to the model as a tool failure, and the agent may correct itself
+ * within the same bounded run. The host owns every write.
+ */
+export interface MemoryTools {
+  proposeFacts(proposal: MemoryProposal, toolCallId: string): Promise<AppliedMemorySummary>;
 }
 
-/** What one claimed job carries into a run. */
-export interface MemoryJobClaim {
-  readonly jobId: string;
+export interface MemoryResult {
+  /** The private terminal report — the agent's closing summary. */
+  readonly report: string;
+}
+
+export interface MemoryAgent {
+  readonly model: ModelConfig;
+  run(input: MemoryInput, tools: MemoryTools, signal?: AbortSignal): Promise<MemoryResult>;
+}
+
+/** What one claimed digest window carries into a run. */
+export interface MemoryWindowClaim {
   readonly conversationId: string;
+  /** The agent run the claim opened; terminal transitions close it. */
+  readonly runId: string;
   readonly input: MemoryInput;
+  /** The window's last message; completion advances the watermark here. */
+  readonly digestedThrough: { readonly at: string; readonly id: string };
+  /**
+   * Deterministic idempotency key for this window's ontology patch: the same
+   * undigested window always derives the same key, so a crashed attempt that
+   * applied its patch is recovered instead of digested twice — even by a
+   * later re-claim.
+   */
+  readonly patchId: string;
 }
 
 /** A summary of what one applied proposal changed, retained in the run result. */
@@ -123,32 +150,44 @@ export interface AppliedMemorySummary {
 }
 
 /**
- * The one authoritative mutation path for durable memory jobs. Completion
- * finishes the memory agent run, terminalizes the job, and writes the durable
- * evaluation signal in a single transaction; an expired lease reopens an
- * abandoned job.
+ * The one authoritative mutation path for durable memory work. Memory is
+ * default-on for every chat with a speaker record (any mode): a chat is due
+ * when its undigested backlog reaches a full window, or when any backlog has
+ * gone quiet — both derived from retained observations against the per-chat
+ * watermark, never from process timers. Claiming opens the agent run and the
+ * lease in one transaction; completion advances the watermark, finishes the
+ * run, and writes the durable evaluation signal in one transaction; failure
+ * counts an attempt, and a chat whose window keeps failing is parked rather
+ * than left to spend money forever. An expired lease makes the chat claimable
+ * again; the deterministic window patch key recovers an applied-but-unfinished
+ * attempt.
  */
-export interface MemoryJobStore {
-  create(input: {
-    readonly conversationId: string;
-    readonly observationIds: readonly string[];
-  }): Promise<{ readonly jobId: string }>;
+export interface MemoryWorkStore {
   claimNext(input: {
     readonly leaseOwner: string;
     readonly leaseMs: number;
+    readonly model: ModelConfig;
+    readonly promptVersion: string;
+    /** Full-window size; a backlog this large is due immediately. */
+    readonly window: number;
+    /** Backlog younger than this stays coalescing; older backlog is due. */
+    readonly quietMs: number;
+    /** Consecutive failed windows after which a chat is parked. */
+    readonly maximumAttempts: number;
     readonly now?: string;
-  }): Promise<MemoryJobClaim | undefined>;
+  }): Promise<MemoryWindowClaim | undefined>;
   complete(input: {
-    readonly jobId: string;
+    readonly conversationId: string;
     readonly leaseOwner: string;
     readonly runId: string;
+    readonly digestedThrough: { readonly at: string; readonly id: string };
     readonly result: AppliedMemorySummary;
     readonly completedAt?: string;
   }): Promise<void>;
   fail(input: {
-    readonly jobId: string;
+    readonly conversationId: string;
     readonly leaseOwner: string;
-    readonly runId?: string;
+    readonly runId: string;
     readonly error: string;
     readonly completedAt?: string;
   }): Promise<void>;

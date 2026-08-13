@@ -84,10 +84,9 @@ export async function createAppResources(
     });
     const memoryService = config.models.roles.memory
       ? createMemoryService({
-          jobs: database.repositories.memoryJobs,
+          work: database.repositories.memoryWork,
           agent: createPiMemoryAgent(models.forRole("memory")),
           ontology: database.repositories.memory,
-          runs: database.repositories.runs,
           // Issue-centric coverage on dense windows legitimately exceeds the
           // old 50; still bounded.
           maximumClaimsPerJob: 80,
