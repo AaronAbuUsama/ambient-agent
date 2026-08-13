@@ -9,6 +9,7 @@ import { createPiMemoryAgent } from "../memory/pi-agent";
 import { createMemoryService } from "../memory/service";
 import { scanMandates } from "../home/mandates";
 import { skillsForChat } from "../home/skills";
+import { createMandateWatcher } from "../home/watcher";
 import { createModelRuntime, type ModelRuntime } from "../models/runtime";
 import { createWhatsAppAcceptedSourceConsumer } from "../whatsapp/message-ingestion";
 import { createWhatsAppService, type WhatsAppService } from "../whatsapp/service";
@@ -68,15 +69,22 @@ export async function createAppResources(
     // The mandate files are the control (ADR 0002): active records mirror the
     // set of valid chat folders. Broken chats are simply absent — brokenness
     // is recomputed loudly by `ambient doctor`, never stored.
-    const mandates = scanMandates(config.home);
-    await database.repositories.speakers.sync(
-      mandates.active.map((mandate) => ({
-        conversationId: mandate.chatId,
-        mode: mandate.mode,
-        ...(mandate.instructions === undefined ? {} : { instructions: mandate.instructions }),
-        ...(mandate.memoryBrief === undefined ? {} : { memoryBrief: mandate.memoryBrief }),
-      })),
-    );
+    const resyncMandates = async () => {
+      const mandates = scanMandates(config.home);
+      await database.repositories.speakers.sync(
+        mandates.active.map((mandate) => ({
+          conversationId: mandate.chatId,
+          mode: mandate.mode,
+          ...(mandate.instructions === undefined ? {} : { instructions: mandate.instructions }),
+          ...(mandate.memoryBrief === undefined ? {} : { memoryBrief: mandate.memoryBrief }),
+        })),
+      );
+    };
+    await resyncMandates();
+    // The watcher is a wake hint, never the authority: an edited mandate
+    // takes effect without a restart, and the startup reconcile above stays
+    // the truth after any missed event.
+    const policyWatcher = createMandateWatcher(config.home, resyncMandates);
     const models = createModelRuntime(config.models);
     const evaluations = createEvaluationService({
       work: database.repositories.evaluationWork,
@@ -146,6 +154,7 @@ export async function createAppResources(
       whatsapp,
       evaluations,
       models,
+      policyWatcher,
       ...(memoryService ? { memoryService } : {}),
       ...(conversation ? { conversation } : {}),
     };
