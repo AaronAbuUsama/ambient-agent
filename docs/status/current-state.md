@@ -678,9 +678,41 @@ Requested by the master during replanning ("what primitives do we have?").
   granted skills (later: eager-append instructions while skills are few and
   short; adopt progressive disclosure with a load tool if they multiply).
 
+## Where things stand (wrap-up, 2026-08-13)
+
+**Have:** the memory rebuild on the speaker's pattern (above), green on
+every deterministic gate and better than v2 against the master's
+hand-labelled answer key (20/22 vs 17/22) on the rig. The eval machinery
+survived unchanged as the yardstick. Wayfinding abandoned; vocabulary
+reset to the master's terms.
+
+**Don't have:** production ship (still v2's memory); a live end-to-end
+keep-up run (real message → quiet → digested has deterministic tests
+only); a verdict on the one window that breached the judged faithfulness
+floor (3 of 9 claims flagged, unreviewed); a judge that knows the chat's
+brief (it scores generic extraction craft, not the chat's mandate); any
+measurement of the judge's own reliability; worker/root evals (those
+kinds don't exist yet); live retention of media and own messages.
+
+**Next, in order:**
+
+1. Review the three flagged claims against their cited messages —
+   overreach or judge pedantry — then production wipe-and-re-read under
+   the full gate.
+2. One live keep-up proof: a real message into the test bed, digested
+   through the running system.
+3. Brief-aware judge: pass the chat's memory brief into the judged case
+   as its rubric — chat-scoped evals with one field and one prompt line.
+4. The master's re-cut/replanning session, with named seams: per-chat
+   answer-key file in the chat folder (build at the second real bed),
+   worker evals with the worker, the per-role eval seam formalized at the
+   third agent kind, judge-vs-answer-key calibration, the visibility
+   layer as a `wiki/` projection.
+
 ## Likely next slice
 
-Workers v1 — the customer-feedback journey: a bounded Worker files a
+Selected at the master's re-cut session. Workers v1 remains the strongest
+candidate — the customer-feedback journey: a bounded Worker files a
 GitHub issue from validated Bug Reports evidence, its durable result
 returns to the originating conversation's Inbox, and the speaker decides
 how to report it. Product context from the master (2026-08-12): a previous
