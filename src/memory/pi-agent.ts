@@ -26,6 +26,10 @@ Coverage:
   the messages say about them. Greetings, mentions, signatures, and being addressed by name all
   name a person. Refusing to attribute an unsigned message (below) is never a reason to leave a
   named person out of the ontology.
+- EVERY entity you create must carry at least one claim of its own, and that claim's value must
+  name it. Recall returns claims, never bare entities: a person nobody has claimed anything about
+  is invisible to Ambient, so state who they are — their name, and their role, work, or part in
+  this thread as the messages show it.
 - When a digestion brief for this chat is provided below, its focus is the prime coverage rule.
 - Ephemeral chatter, greetings, and one-off test markers are NOT memory.
 - Claim economy: cover everything that matters, but merge related facts about one entity into one
@@ -122,7 +126,7 @@ const proposeFactsParameters = Type.Object({
   }),
 });
 
-const promptVersion = "memory-v6";
+const promptVersion = "memory-v7";
 
 function lastAssistantText(agent: Agent): string {
   const message = [...agent.state.messages].reverse().find(({ role }) => role === "assistant");
