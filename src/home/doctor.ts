@@ -5,6 +5,7 @@ import { z } from "zod";
 import { loadAppConfig, type AppConfig } from "../app/config";
 import { ambientHome } from "./init";
 import { scanMandates } from "./mandates";
+import { scanAllSkills } from "./skills";
 
 export interface DoctorCheck {
   readonly name: string;
@@ -91,6 +92,21 @@ export async function runDoctor(
   });
   for (const chat of scan.broken) {
     checks.push({ name: `chat ${chat.slug}`, ok: false, detail: chat.problem });
+  }
+
+  const skillScan = scanAllSkills(config.home);
+  const homeSkills = skillScan.skills.filter(({ scope }) => scope === "home").length;
+  const chatSkills = skillScan.skills.length - homeSkills;
+  checks.push({
+    name: "skills",
+    ok: true,
+    detail:
+      skillScan.skills.length === 0
+        ? "none — drop SKILL.md folders into skills/ or a chat's skills/"
+        : `${homeSkills} home, ${chatSkills} chat-scoped`,
+  });
+  for (const skill of skillScan.broken) {
+    checks.push({ name: `skill ${skill.folder}`, ok: false, detail: skill.problem });
   }
 
   const databasePath = config.database.url.replace(/^file:/, "");

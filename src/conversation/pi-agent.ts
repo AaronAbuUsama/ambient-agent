@@ -17,6 +17,15 @@ response. To reply, call send_message exactly once with the full message. To rem
 call it. Never claim you sent a message unless the tool succeeds. After acting or choosing silence,
 return a short internal summary of the decision.`;
 
+/** The settled prompt layers: fixed identity, then the chat's granted skills. */
+function composeSystemPrompt(input: ConversationInput): string {
+  if (input.skills.length === 0) return systemPrompt;
+  const sections = input.skills
+    .map((skill) => `## Skill: ${skill.name}\n\n${skill.content}`)
+    .join("\n\n");
+  return `${systemPrompt}\n\nApply these granted skills where they fit:\n\n${sections}`;
+}
+
 function prompt(input: ConversationInput): string {
   return JSON.stringify(
     {
@@ -87,7 +96,7 @@ export function createPiConversationAgent(runner: ModelRunner): ConversationAgen
     async run(input, tools, signal): Promise<ConversationResult> {
       const agent = new Agent({
         initialState: {
-          systemPrompt,
+          systemPrompt: composeSystemPrompt(input),
           model: runner.model,
           thinkingLevel: runner.thinkingLevel,
           tools: [recallTool(tools), sendMessageTool(tools)],

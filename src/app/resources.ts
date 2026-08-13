@@ -8,6 +8,7 @@ import type { MemoryService } from "../memory/contract";
 import { createPiMemoryAgent } from "../memory/pi-agent";
 import { createMemoryService } from "../memory/service";
 import { scanMandates } from "../home/mandates";
+import { skillsForChat } from "../home/skills";
 import { createModelRuntime, type ModelRuntime } from "../models/runtime";
 import { createWhatsAppAcceptedSourceConsumer } from "../whatsapp/message-ingestion";
 import { createWhatsAppService, type WhatsAppService } from "../whatsapp/service";
@@ -119,6 +120,20 @@ export async function createAppResources(
       conversation = createConversationService({
         scheduling: config.conversation.scheduling,
         instructions: config.conversation.instructions,
+        // Skills are read fresh from the home per run: the chat's own skills
+        // shadow home skills by name; broken skills are skipped (doctor is
+        // the loud surface).
+        skills: (conversationId) => {
+          const slug = scanMandates(config.home).active.find(
+            (mandate) => mandate.chatId === conversationId,
+          )?.slug;
+          return Promise.resolve(
+            skillsForChat(config.home, slug).skills.map(({ name, content }) => ({
+              name,
+              content,
+            })),
+          );
+        },
         work: database.repositories.conversationWork,
         recall: database.repositories.memory,
         agent: createPiConversationAgent(runner),

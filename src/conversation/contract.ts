@@ -174,10 +174,17 @@ export interface ConversationMessage {
   readonly fromAgent: boolean;
 }
 
+/** One granted skill's text, ready for the speaker's prompt. */
+export interface ConversationSkill {
+  readonly name: string;
+  readonly content: string;
+}
+
 export interface ConversationInput {
   readonly conversationId: string;
   readonly newMessages: readonly ConversationMessage[];
   readonly instructions: string;
+  readonly skills: readonly ConversationSkill[];
 }
 
 export interface ConversationResult {
