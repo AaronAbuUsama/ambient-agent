@@ -17,7 +17,8 @@
     "proof:conversation-replay": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/conversation-replay.ts",
     "proof:memory-digest": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/memory-digest.ts",
     "ambient": "tsx src/cli.ts",
-    "proof:home-live": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/home-live.ts"
+    "proof:home-live": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/home-live.ts",
+    "proof:memory-keepup": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/memory-keepup.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.84.1",

@@ -149,6 +149,8 @@ export async function createAppResources(
           // Issue-centric coverage on dense windows legitimately exceeds the
           // old 50; still bounded.
           maximumClaimsPerJob: 80,
+          narrateDigest: (conversationId, claims) =>
+            log.memoryDigested(label(conversationId), claims),
         })
       : undefined;
     if (config.conversation.enabled) {

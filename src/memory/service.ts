@@ -60,6 +60,11 @@ export interface MemoryServiceOptions {
   readonly leaseOwner?: string;
   readonly leaseMs?: number;
   readonly pollMs?: number;
+  /**
+   * Narrates a completed window to the daemon's voice. The service knows the
+   * conversation id; rendering it as a chat slug belongs to composition.
+   */
+  readonly narrateDigest?: (conversationId: string, claims: number) => void;
 }
 
 class ProposalValidationError extends Error {}
@@ -114,6 +119,20 @@ function validate(input: MemoryInput, proposal: MemoryProposal, maximumClaims: n
       if (!batchIds.has(evidenceId)) {
         throw new ProposalValidationError(`claim ${index} cites evidence outside the batch`);
       }
+    }
+    // A claim value is durable content that recall reads back. A run-local
+    // symbol the adapter could not resolve would dangle forever, and a raw
+    // subscriber number or WhatsApp id in recall text is the same poison the
+    // identity ban exists for — "Participant 4477…" is not a person's name.
+    const valueText = JSON.stringify(claim.value) ?? "";
+    if (
+      /@(?:g\.us|s\.whatsapp\.net|lid|broadcast)/.test(valueText) ||
+      /\d{7,}/.test(valueText) ||
+      (typeof claim.value === "string" && /^[EPC]\d+$|^m\d+$/.test(claim.value))
+    ) {
+      throw new ProposalValidationError(
+        `claim ${index} value must name people and things in words, not ids or symbols`,
+      );
     }
     if (claim.supersedes) {
       const existing = knownClaims.get(claim.supersedes.claimId);
@@ -399,6 +418,7 @@ export function createMemoryService(options: MemoryServiceOptions): MemoryServic
         digestedThrough: claim.digestedThrough,
         result: summary,
       });
+      options.narrateDigest?.(claim.conversationId, summary.claims.length);
       return { outcome: "done", runId: claim.runId };
     } catch (error) {
       await options.work

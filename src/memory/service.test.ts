@@ -340,6 +340,56 @@ test("a proposal citing evidence outside the batch fails the window without touc
   });
 });
 
+test("a claim value carrying a raw WhatsApp id or a bare symbol fails the window", async () => {
+  await withDatabase(async (database) => {
+    await allow(database, "group-1");
+    await retainHistory(database, "1", "a@s.whatsapp.net", "the widget bug again");
+
+    const claimWith = (value: unknown, evidenceId: string) => ({
+      ...goodProposal,
+      entities: [goodProposal.entities[0]!],
+      claims: [
+        {
+          entity: "e1",
+          predicate: "p1",
+          value,
+          confidence: "high" as const,
+          evidenceObservationIds: [evidenceId],
+        },
+      ],
+    });
+
+    const idPoisoner = service(
+      database,
+      agentWith(async () => claimWith("reported by a@s.whatsapp.net", "observation-1")),
+    );
+    expect((await idPoisoner.runOnce()).outcome).toBe("failed");
+
+    await allow(database, "group-3");
+    await retainHistory(database, "3", "a@s.whatsapp.net", "one more", "group-3");
+    const numberPoisoner = service(
+      database,
+      agentWith(async () => claimWith("Participant 447700900123", "observation-3")),
+    );
+    expect((await numberPoisoner.runOnce()).outcome).toBe("failed");
+
+    await allow(database, "group-2");
+    await retainHistory(database, "2", "a@s.whatsapp.net", "another report", "group-2");
+    const symbolPoisoner = service(
+      database,
+      agentWith(async () => claimWith("E34", "observation-2")),
+    );
+    expect((await symbolPoisoner.runOnce()).outcome).toBe("failed");
+    expect(
+      await database.repositories.memory.recall({
+        nativeIds: ["a@s.whatsapp.net"],
+        query: "",
+        limit: 10,
+      }),
+    ).toEqual([]);
+  });
+});
+
 test("a restated fact reinforces and a changed fact supersedes — never a duplicate claim", async () => {
   await withDatabase(async (database) => {
     await allow(database, "group-1");
