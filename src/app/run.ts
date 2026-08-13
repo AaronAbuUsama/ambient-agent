@@ -1,9 +1,19 @@
+import { join } from "node:path";
+import { createOperationalLogger } from "../platform/logging";
 import { createAmbient } from "./ambient";
 import type { AppConfig } from "./config";
+import { createOperationalLog } from "./operational-log";
 
 /** The daemon process loop shared by `pnpm start` and bare `ambient`. */
 export async function runAmbientProcess(config: AppConfig): Promise<void> {
-  const ambient = await createAmbient(config);
+  // The operational voice is never quieter than info — that is its whole
+  // purpose — but follows configuration into debug. The session logger keeps
+  // its own (warn-default) level.
+  const level = config.logging.level === "debug" ? "debug" : "info";
+  const log = createOperationalLog(
+    createOperationalLogger(join(config.home, "state", "logs", "ambient.log"), level),
+  );
+  const ambient = await createAmbient(config, { log });
 
   const signal = new Promise<NodeJS.Signals>((resolve) => {
     process.once("SIGINT", resolve);
@@ -12,7 +22,7 @@ export async function runAmbientProcess(config: AppConfig): Promise<void> {
 
   try {
     await ambient.start();
-    console.info(`Ambient connected WhatsApp account "${config.whatsapp.accountId}"`);
+    log.daemonStarted(config.whatsapp.accountId);
 
     const outcome = await Promise.race([
       signal.then((received) => ({ kind: "signal" as const, received })),
@@ -21,7 +31,7 @@ export async function runAmbientProcess(config: AppConfig): Promise<void> {
     if (outcome.kind === "ambient") {
       if (outcome.exit.kind === "failed") throw outcome.exit.error;
     } else {
-      console.info(`Received ${outcome.received}; stopping Ambient`);
+      log.stopping(outcome.received);
     }
   } finally {
     await ambient.stop();

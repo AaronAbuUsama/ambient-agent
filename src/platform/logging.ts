@@ -1,4 +1,5 @@
 import pino, { type Logger } from "pino";
+import pretty from "pino-pretty";
 
 /**
  * Fields the session log censors.
@@ -60,4 +61,22 @@ export function createSessionLogger(file: string, level = "warn"): Logger {
     },
     pino.destination({ dest: file, mkdir: true, sync: true }),
   );
+}
+
+/**
+ * The operational logger the daemon narrates through: pretty lines on a
+ * terminal, ndjson always appended to the file (the future TUI tails it).
+ * Level comes from configuration; redaction matches the session logger.
+ */
+export function createOperationalLogger(file: string, level = "info"): Logger {
+  const streams: pino.StreamEntry[] = [
+    { level: level as pino.Level, stream: pino.destination({ dest: file, mkdir: true }) },
+  ];
+  if (process.stdout.isTTY) {
+    streams.push({
+      level: level as pino.Level,
+      stream: pretty({ colorize: true, translateTime: "HH:MM:ss", ignore: "pid,hostname" }),
+    });
+  }
+  return pino({ level, redact: { paths: redactedPaths } }, pino.multistream(streams));
 }

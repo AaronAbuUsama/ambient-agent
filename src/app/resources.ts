@@ -15,6 +15,7 @@ import { createWhatsAppAcceptedSourceConsumer } from "../whatsapp/message-ingest
 import { createWhatsAppService, type WhatsAppService } from "../whatsapp/service";
 import type { AppConfig } from "./config";
 import type { AmbientLifecycleDependencies } from "./lifecycle";
+import { silentOperationalLog, type OperationalLog } from "./operational-log";
 
 export interface AppResources extends AmbientLifecycleDependencies {
   readonly database: AmbientDatabase;
@@ -32,6 +33,8 @@ export interface AcceptedMessage {
 }
 
 export interface AppResourceOptions {
+  /** The daemon's voice; silent by default (tests, proofs that capture their own evidence). */
+  readonly log?: OperationalLog;
   readonly onAcceptedMessage?: (input: AcceptedMessage) => void;
   /**
    * Proof-only safety override that STRENGTHENS the final outbound guard: the
@@ -47,11 +50,18 @@ export async function createAppResources(
 ): Promise<AppResources> {
   const database = await openAmbientDatabase(config.database.url);
   try {
+    const log = options.log ?? silentOperationalLog;
+    // The voice speaks in slugs — the product's own safe labels — falling
+    // back to a shortened id for chats without a folder.
+    const chatLabels = new Map<string, string>();
+    const label = (conversationId: string) =>
+      chatLabels.get(conversationId) ?? `${conversationId.slice(0, 10)}…`;
     let conversation: ConversationService | undefined;
     const acceptedSource = createWhatsAppAcceptedSourceConsumer(
       config.whatsapp.accountId,
       database.repositories.messageIngestion,
       (result) => {
+        log.messageReceived(label(result.conversationId));
         options.onAcceptedMessage?.({
           observationId: result.observationId,
           conversationId: result.conversationId,
@@ -69,6 +79,7 @@ export async function createAppResources(
     // The mandate files are the control (ADR 0002): active records mirror the
     // set of valid chat folders. Broken chats are simply absent — brokenness
     // is recomputed loudly by `ambient doctor`, never stored.
+    let lastMandateSummary = "";
     const resyncMandates = async () => {
       const mandates = scanMandates(config.home);
       await database.repositories.speakers.sync(
@@ -79,6 +90,18 @@ export async function createAppResources(
           ...(mandate.memoryBrief === undefined ? {} : { memoryBrief: mandate.memoryBrief }),
         })),
       );
+      chatLabels.clear();
+      for (const mandate of mandates.active) chatLabels.set(mandate.chatId, mandate.slug);
+      const summary =
+        [
+          ...mandates.active.map((mandate) => `${mandate.slug}(${mandate.mode})`),
+          ...mandates.broken.map((chat) => `${chat.slug}(BROKEN)`),
+        ].join(" ") || "none";
+      if (summary !== lastMandateSummary) {
+        lastMandateSummary = summary;
+        log.mandatesChanged(summary);
+        for (const chat of mandates.broken) log.chatBroken(chat.slug, chat.problem);
+      }
     };
     await resyncMandates();
     // The watcher is a wake hint, never the authority: an edited mandate
@@ -145,7 +168,16 @@ export async function createAppResources(
         work: database.repositories.conversationWork,
         recall: database.repositories.memory,
         agent: createPiConversationAgent(runner),
-        sender: whatsapp.conversationSender(outboundGuard),
+        sender: (() => {
+          const sender = whatsapp.conversationSender(outboundGuard);
+          return {
+            async sendText(message: Parameters<typeof sender.sendText>[0]) {
+              const result = await sender.sendText(message);
+              log.replySent(label(message.conversationId));
+              return result;
+            },
+          };
+        })(),
       });
     }
 
