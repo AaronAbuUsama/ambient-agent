@@ -116,7 +116,22 @@ speaker answer; break the mandate, observe fail-closed inactivity + doctor
 non-zero with the exact error; the existing golden conversation proof
 passes on the new composition.
 
-## Active slice: Identity & Voice (cut 2026-08-13, ordered by the master)
+## Completed slice: Identity & Voice (2026-08-13)
+
+**Proof (green 2026-08-13, `proof:home-live` exit 0).** Deterministic:
+117/117, check clean (log vocabulary levels, identity healer merges, alias
+resolution in activate). Live, full journey against the running daemon with
+production stopped (the rig subject and production share one WhatsApp
+account — mutual exclusion now documented in the proof and the rig notes):
+every phase green through ONE canonical-form mandate while traffic ran on
+the lid form; the skill marker reached live output; and the daemon narrated
+its own run — message received, reply sent, mandates, loud breakage — all
+asserted from its stdout. Also landed: libsignal's raw console (which
+printed private key material) muzzled at the daemon edge; upstream fix
+belongs in whatsappd. The master's home: master-lid scar removed, the
+startup healer folds historical lid rows on next start.
+
+## The Identity & Voice brief as cut (2026-08-13, ordered by the master)
 
 Two defects the first real master-DM test exposed. Both must land before
 the memory ship gate. Build order: Part B first (its output makes Part A's
@@ -216,9 +231,9 @@ are post-MVP.
 stop, never committed in advance):
 
 1. **Done (2026-08-13):** Home v1 — proof gate passed (record above).
-   **Active: Identity & Voice** (above) — the first real master-DM test
-   exposed the pn/lid identity split and the daemon's silence; both fixed
-   before anything else moves.
+   **Done (2026-08-13): Identity & Voice** — canonical identity and the
+   operational log, proof green. **Active: none** — the memory ship gate is
+   next, in a fresh context window.
 2. **Likely next:** the memory ship gate — review the three flagged
    claims, production wipe-and-re-read under the full gate, one live
    keep-up proof (wrap-up items 1–2 below). **Done =** a recorded verdict
