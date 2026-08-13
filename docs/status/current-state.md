@@ -205,6 +205,137 @@ an alias lookup on the mirror read model (`whatsapp/mirror.ts`).
 human; the live master-DM loop answers on a fresh message; migration script
 run; 100% suite green; ledger updated.
 
+## Memory ship gate — attempted, NOT shipped (2026-08-13)
+
+The three flagged claims are answered and the defects they exposed are
+fixed. Production was deliberately **not** wiped: the gate is red.
+
+### The verdict on the three flagged claims: extraction overreach
+
+Not judge pedantry, and worse than the earlier entry supposed. Two of the
+three were `reported_by: "E34"` — and `E34` is a **run-local symbol**. The
+adapter shows the model compact ids (m1/E1/P1/C1) so it never transcribes a
+uuid; the model referenced an entity inside a claim VALUE, and the symbol
+passed through the tool boundary into the durable ontology, where it dangles
+forever. Eight such claims were retained. Both claims also attributed a
+report to a person their cited messages never name. The third
+("default range 3 miles" for The Call App) cited one terse message that
+alone names neither the app nor Masjids — real under-citation.
+
+Fixed at the boundary that owns each defect:
+
+- the adapter translates entity symbols appearing in claim values back to
+  canonical names, where it already translates every other id;
+- the host rejects any claim value carrying a symbol, a raw WhatsApp id, or
+  a 7+ digit subscriber number — "Participant 4477…" is not a person's
+  name, and recall reads these values back (real numbers were landing in
+  claim text);
+- the prompt: attribution only where the claim's OWN citations show the
+  author; cite the neighbours that give a terse message its subject; claim
+  values stay flat facts.
+
+### What the gate then exposed, in order
+
+Each fix uncovered the next defect. All are recorded because each was real:
+
+1. **Judge pedantry, measured.** With values now flat, the judge began
+   flagging `latest_status: "Open."` — demanding a citation literally say
+   "open" about an unresolved bug — and flagged a `related_repository`
+   claim whose citation contains the literal repo URL. Five of seven flags
+   in one window were this. Status by convention is the ontology's default;
+   a fact inside a cited message is supported by it. Both are now stated to
+   the judge (`memory-judge-v3`). This is the ledger's own "no measurement
+   of the judge's reliability" gap arriving as a number.
+2. **Coverage collapse from an over-blunt rule.** Told not to invent
+   authors, the extractor stopped extracting people: 1 person entity
+   against v3's 7. Refusing to attribute an unsigned message was never a
+   reason to leave a NAMED person out (`memory-v6`).
+3. **Entities invisible to recall.** 5 of 7 person entities carried ZERO
+   claims — memory knew Zeeshan Habib and Ehson existed and could recall
+   nothing about them, because recall returns claims, not bare entities.
+   Every entity now owes at least one claim naming it (`memory-v7`).
+4. **Over-correction, reverted.** `memory-v8` told the extractor to skip
+   the retired bot's test traffic; it took real content with it (claims
+   126→72, golden 20→18). Reverted to v7 — the honest record of a change
+   that measured worse.
+
+The digest proof now measures **every** gate before failing on any of them.
+A run costs ten minutes and real tokens, and the old fail-fast receipt hid
+golden coverage behind the first judged shortfall — defect 2 above was
+found only because faithfulness passed and the receipt kept going.
+
+### Model substitution (material to every number below)
+
+Every gemini credential in the vibe pool is in cooldown
+(`RESOURCE_EXHAUSTED`, "all credentials cooling down"), so the memory and
+evaluator roles moved to **`gpt-5.6-terra`** (the master's call; the first
+substitution, `gpt-5.4`, was merely the first pool model proven to
+tool-call). The 20/22 baseline was set by gemini with a gemini judge, so
+these numbers are **not** a continuation of that series: both the extractor
+and the yardstick changed.
+
+### Where memory-v7 on gpt-5.6-terra actually lands
+
+Two full re-reads of the 261-message corpus, 8 windows each:
+
+| Gate                       | Bar      | Run A                  | Run B (re-roll) |
+| -------------------------- | -------- | ---------------------- | --------------- |
+| per-window faithfulness    | ≥ 0.7    | **0.412** (one window) | 0.80 — all pass |
+| mean faithfulness          | ≥ 0.85   | 0.881                  | 0.890           |
+| mean completeness          | ≥ 0.7    | 0.795                  | **0.838**       |
+| golden coverage            | ≥ 20/22  | **20/22**              | 19/22           |
+| contract metrics           | all pass | pass                   | pass            |
+| identity links to chat ids | 0        | 0                      | 0               |
+
+Neither run cleared every gate at once, and the two runs fail different
+gates. Run A's floor breach was one window of the retired bug-filing
+agent's proof traffic; the re-roll (the master's sanctioned lever) cleared
+it, and golden moved 20→19. Golden varies ±1 run to run, so a 20/22 bar
+set from one gemini run is at the edge of this extractor's noise, not
+clearly above or below it.
+
+**Not shipped.** Production still holds v2's memory, untouched. Wiping
+proven memory on a red gate — with a substituted extractor AND a
+substituted judge — is the one irreversible mistake available here. Both
+databases are backed up (`.proof-private/backups/*pre-v4-*`).
+
+### Memory keeps up, live and proven (`proof:memory-keepup`, green)
+
+The gate's third item passed on its own terms and does not depend on the
+digest gate. A real WhatsApp message arrived while the daemon was running
+and the daemon digested it **by itself** — no proof stepping, no human:
+
+```text
+mandates: bug-reports(listening) keepup(listening)
+→ keepup: message received
+~ keepup: memory digested (2 claims)
+```
+
+Receipt all green, including `stayedSilent`: listening mode remembers
+without ever speaking. The retained claims are the right two — the issue
+("build 02a54f crashes on Android when opening the settings page") and the
+repository routing ("ambient-agent is the repository against which … is
+being filed") — which is exactly the evidence shape Workers v1 needs.
+
+The proof drives the real daemon (bare `ambient` on the rig home) and
+asserts through its voice, so it needed `memoryDigested` in the operational
+log — memory was previously silent, invisible to an operator watching a
+default-on subsystem. Two hazards it exposed and now handles: two folders
+claiming one chat id make BOTH inert (the rig still carried home-live's
+mandate for that chat, which would have silenced this proof and blamed the
+digest loop), and libsignal prints private key buffers from any process
+running a real account, so the proof muzzles it as the daemon does.
+
+**The master's decision, with the evidence above:** the gate's own terms
+are now the open question, not the extraction. Either (a) hold the bar and
+re-run when the gemini pool recovers, so the yardstick matches the one that
+set it; (b) re-cut the golden bar as a band (say ≥19) on the honest ground
+that a pattern-matched coverage count over a stochastic extractor is not a
+sharp threshold; or (c) keep the bar and accept re-rolls until one run
+clears every gate — which is a lottery, not a proof. Recommendation: (a),
+with (b) as the standing fix, because a gate that only passes on a re-roll
+is not measuring what it claims to.
+
 ## The MVP and the road (reset 2026-08-13, with the master)
 
 **The MVP.** Ambient on one machine, run from `~/.ambient`: speakers active
@@ -217,8 +348,11 @@ are post-MVP.
 **Inventory — what exists vs what the MVP still needs:**
 
 - speaker agent: shipped, live-proven;
-- memory agent: rebuilt on the speaker's pattern (below), brief-aware,
-  keep-up wiring in place, 20/22 golden — only the ship gate remains;
+- memory agent: rebuilt on the speaker's pattern (below), brief-aware, and
+  now **live-proven keeping up** (a real message digested by the running
+  daemon). Catch-up is NOT shipped to production: the ship gate is red on
+  golden coverage and the gemini yardstick is unavailable — see the memory
+  ship gate record above, which needs the master's decision;
 - evals: shipping signal + judged gates held as the yardstick through the
   rebuild;
 - home + ops CLI: decided (ADR 0001/0002), not built — the active slice;
@@ -234,12 +368,13 @@ stop, never committed in advance):
    **Done (2026-08-13): Identity & Voice** — canonical identity and the
    operational log, proof green. **Active: none** — the memory ship gate is
    next, in a fresh context window.
-2. **Likely next:** the memory ship gate — review the three flagged
-   claims, production wipe-and-re-read under the full gate, one live
-   keep-up proof (wrap-up items 1–2 below). **Done =** a recorded verdict
-   on the three claims; the production wipe-and-re-read passes the full
-   judged gate; one real message digested through the running system with
-   retained evidence; this ledger flips memory to shipped.
+2. **Attempted, still open:** the memory ship gate. Done: the recorded
+   verdict on the three claims (extraction overreach) and the four defects
+   it exposed, fixed; one real message digested through the running system
+   with retained evidence. NOT done: the production wipe-and-re-read — the
+   gate is red and the yardstick model is cooling down. The remaining
+   decision is the gate's own terms, not the extraction; see the record
+   above.
 3. **Themes, MVP-ordered but uncommitted:** Workers v1 (queued brief
    below) — **done =** the delegation loop proven end to end (durable
    assignment → worker run → durable result → originating inbox → speaker
@@ -554,11 +689,9 @@ attempt (the judge flagged 3 of that window's 9 claims as not fully
 supported; all cite real batch messages, so the dispute is wording, not
 fabrication). Production ship deliberately withheld pending that review.
 
-**Ship status.** Not shipped to production. The floor breach is one
-window's wording dispute against a ground truth the extraction otherwise
-beats; the master decides whether to review the three flagged claims,
-re-roll the window, or adjust the floor before the production
-wipe-and-re-read.
+**Ship status.** Superseded by the memory ship gate below (2026-08-13), which
+answered the three flagged claims and rebuilt the extractor around what they
+exposed.
 
 **Open questions.** Live retention gaps (media and Ambient's own messages
 are not retained live — the mapper keeps inbound text only); abandoned
@@ -934,24 +1067,26 @@ hand-labelled answer key (20/22 vs 17/22) on the rig. The eval machinery
 survived unchanged as the yardstick. Wayfinding abandoned; vocabulary
 reset to the master's terms.
 
-**Don't have:** production ship (still v2's memory); a live end-to-end
-keep-up run (real message → quiet → digested has deterministic tests
-only); a verdict on the one window that breached the judged faithfulness
-floor (3 of 9 claims flagged, unreviewed); a judge that knows the chat's
-brief (it scores generic extraction craft, not the chat's mandate); any
-measurement of the judge's own reliability; worker/root evals (those
-kinds don't exist yet); live retention of media and own messages.
+**Don't have:** production ship (still v2's memory); a judge that knows the
+chat's brief (it scores generic extraction craft, not the chat's mandate);
+worker/root evals (those kinds don't exist yet); live retention of media
+and own messages.
+
+_Struck through by the memory ship gate record above (2026-08-13): the live
+keep-up run now exists and is green; the flagged-claims verdict is
+recorded; and the judge's reliability is no longer unmeasured — two of its
+blind spots were characterized from its own verdicts and fixed._
 
 **Next (items 1–2 are the "memory ship gate" likely-next slice; item 4
 happened as the 2026-08-13 reset above):**
 
-1. Review the three flagged claims against their cited messages —
-   overreach or judge pedantry — then production wipe-and-re-read under
-   the full gate.
-2. One live keep-up proof: a real message into the test bed, digested
-   through the running system.
+1. ~~Review the three flagged claims~~ — done, verdict recorded above.
+   The production wipe-and-re-read remains, blocked on the gate decision.
+2. ~~One live keep-up proof~~ — done and green (`proof:memory-keepup`).
 3. Brief-aware judge: pass the chat's memory brief into the judged case
    as its rubric — chat-scoped evals with one field and one prompt line.
+   Now better motivated: this session showed the judge scoring generic
+   craft and mis-flagging the ontology's own conventions.
 4. The master's re-cut/replanning session, with named seams: per-chat
    answer-key file in the chat folder (build at the second real bed),
    worker evals with the worker, the per-role eval seam formalized at the
@@ -990,6 +1125,22 @@ whole loop autonomously; testing never requires the operator.
 
 Accepted, durable, and owned here rather than in commit messages:
 
+- **The proof roles are pinned off the pool that set the baseline** —
+  `ambient.config.json` and the rig home now name `gpt-5.6-terra` for
+  memory and evaluator because every gemini credential is cooling down.
+  Move them back when the pool recovers, or the golden number keeps
+  measuring two changes at once.
+- **A claim-less entity is still representable** — the host accepts a
+  proposal that creates an entity with no claim of its own, and recall
+  returns claims, so such an entity is invisible to Ambient. `memory-v7`
+  fixes this by instruction only. The host invariant (every entity created
+  in a proposal owes a claim in the same proposal) is the real fix; it was
+  deliberately not added mid-gate because a new rejection path can loop the
+  model and fail a ten-minute window.
+- **The golden gate matches claim TEXT, not knowledge** — a fact Ambient
+  holds but words differently scores zero, which is how a 20/22 bar sits
+  inside a ±1 run-to-run band. Calibration belongs with the per-chat
+  answer-key seam already named for the master's re-cut.
 - **Repository bag** — `AmbientRepositories` is now consumed only inside
   `src/app/` (resources and the proof harness) but remains a bag rather than
   explicit surfaces; `runs.start` has no production caller until a Memory or

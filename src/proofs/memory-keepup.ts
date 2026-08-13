@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadAppConfig } from "../app/config";
+import { muzzleLibsignalConsole } from "../platform/logging";
 import { createWhatsAppPeer } from "../whatsapp/peer";
 import { RIG_PRIVATE, rigAllowlist } from "./rig";
 
@@ -24,6 +25,11 @@ import { RIG_PRIVATE, rigAllowlist } from "./rig";
  * Listening mode is the point: memory is default-on presence, so nothing is
  * ever sent back. The receipt carries statuses, counts, and booleans only.
  */
+
+// The peer runs libsignal in THIS process, and libsignal prints session state —
+// including private key buffers — straight to the console. The daemon muzzles
+// it at its own edge; a proof that drives a real account must do the same.
+muzzleLibsignalConsole();
 
 const HOME = `${RIG_PRIVATE}/android-home`;
 const slug = "keepup";
