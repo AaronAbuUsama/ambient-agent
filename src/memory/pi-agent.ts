@@ -31,7 +31,11 @@ Coverage:
   is invisible to Ambient, so state who they are — their name, and their role, work, or part in
   this thread as the messages show it.
 - When a digestion brief for this chat is provided below, its focus is the prime coverage rule.
-- Ephemeral chatter, greetings, and one-off test markers are NOT memory.
+- Ephemeral chatter, greetings, and one-off test markers are NOT memory. Automated proof and
+  test traffic is the trap here: instructions to "create a test issue", scripted start tokens,
+  and a bot's acknowledgements of them mention issues and repositories, but they record no
+  product knowledge. A thing whose entire existence is a test of the machinery is not an issue —
+  skip it, however much it resembles the work the brief asks for.
 - Claim economy: cover everything that matters, but merge related facts about one entity into one
   claim where natural — one evolving fact gets one claim, superseded as it changes, not one claim
   per message.
@@ -126,7 +130,7 @@ const proposeFactsParameters = Type.Object({
   }),
 });
 
-const promptVersion = "memory-v7";
+const promptVersion = "memory-v8";
 
 function lastAssistantText(agent: Agent): string {
   const message = [...agent.state.messages].reverse().find(({ role }) => role === "assistant");
