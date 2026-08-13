@@ -38,16 +38,30 @@ through home config + mandate-synced records + the single guarded send
 path → reply delivered and token-verified on the peer's mirror, both
 evaluation cases succeeded.
 
+**Real-life acceptance (`proof:home-live`, green 2026-08-13).** The full
+journey against the RUNNING daemon (bare `ambient` as a child process, the
+master's peer profile sending real messages, mandate files edited live, no
+restarts): no mandate → silence; mandate written (watcher) → listening
+silence; flipped responding with a chat-scoped skill → reply delivered
+with the live token echoed AND the skill's marker present — a SKILL.md
+changed a real WhatsApp reply; the pre-activation backlog stayed
+unanswered (activation starts from now, proven live); mandate broken live
+→ silence; fixed live → replies again, token-verified. This run exposed
+and fixed a real production bug the stepped harness could never see:
+drizzle-orm/libsql opens a fresh connection per transaction (ignoring its
+config), so overlapping daemon writes died as instant `SQLITE_BUSY` and a
+transient lock detached the WhatsApp channel. Fix: transactions queue
+in-process at the one authoritative database open, ambient.db is WAL, and
+the accepted-source wake path retries busy blips instead of detaching.
+
 **Review notes.** `seed` died into `sync` (one mutation path; the proof
 harness composes via `current()`+`sync`); loopback and
 `conversation.speakers`/`outboundMode` config are deleted; the skills
 loader is our own ~100-line SKILL.md parser (no pi types outside the
 agent adapter). Deviation: the session log still lands at
 `state/whatsapp.log` (not `state/logs/ambient.log`); app events go to
-stdout — file logging joins the TUI slice. A live marker-skill variant of
-the loop (skill file → observable reply content) is available when wanted;
-skills are proven deterministic-and-prompt-level plus the loop's token
-echo. Next slice selected at the review stop with the master.
+stdout — file logging joins the TUI slice. Next slice selected at the
+review stop with the master.
 
 ## The Home v1 brief as cut (2026-08-13, grilled with the master)
 
