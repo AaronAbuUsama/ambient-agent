@@ -4,6 +4,7 @@ import { createClient } from "@libsql/client";
 import { z } from "zod";
 import { loadAppConfig, type AppConfig } from "../app/config";
 import { ambientHome } from "./init";
+import { scanMandates } from "./mandates";
 
 export interface DoctorCheck {
   readonly name: string;
@@ -77,6 +78,19 @@ export async function runDoctor(
             detail: `set one of ${provider.credential.env.join(", ")}`,
           },
     );
+  }
+
+  const scan = scanMandates(config.home);
+  checks.push({
+    name: "chats",
+    ok: true,
+    detail:
+      scan.active.length === 0
+        ? "none active — `ambient activate` grants the first mandate"
+        : scan.active.map((mandate) => `${mandate.slug} (${mandate.mode})`).join(", "),
+  });
+  for (const chat of scan.broken) {
+    checks.push({ name: `chat ${chat.slug}`, ok: false, detail: chat.problem });
   }
 
   const databasePath = config.database.url.replace(/^file:/, "");

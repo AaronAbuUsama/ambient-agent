@@ -29,7 +29,7 @@ async function withDatabase(work: (database: AmbientDatabase) => Promise<void>):
 
 /** Memory is default-on for any chat with a speaker record; listening is enough. */
 function allow(database: AmbientDatabase, conversationId: string): Promise<void> {
-  return database.repositories.speakers.seed([{ conversationId, mode: "listening" }]);
+  return database.repositories.speakers.sync([{ conversationId, mode: "listening" }]);
 }
 
 async function retainHistory(
@@ -599,7 +599,7 @@ test("memory silence completes the window with an empty digest", async () => {
 
 test("the mandate's memory brief reaches the agent with every window", async () => {
   await withDatabase(async (database) => {
-    await database.repositories.speakers.seed([
+    await database.repositories.speakers.sync([
       {
         conversationId: "group-1",
         mode: "listening",

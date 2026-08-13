@@ -27,19 +27,6 @@ const configurationDocumentSchema = z
           .string()
           .min(1)
           .default("Respond naturally and helpfully when a response is useful."),
-        // The operator's speaker seed: upsert-listed durable records; chats
-        // this list does not name are never touched by configuration.
-        // Retired by the mandate projector later in this slice (ADR 0002).
-        speakers: z
-          .array(
-            z.object({
-              conversationId: z.string().min(1),
-              mode: z.enum(["listening", "responding"]).default("responding"),
-              instructions: z.string().min(1).optional(),
-              attendFrom: z.iso.datetime().optional(),
-            }),
-          )
-          .default([]),
         scheduling: z
           .object({
             debounceMs: z.number().int().positive().default(750),
@@ -62,6 +49,8 @@ type ConfigurationDocument = z.infer<typeof configurationDocumentSchema>;
 
 /** The document shape with every deployment override and default resolved. */
 export type AppConfig = {
+  /** The Ambient home this deployment runs from; chat mandates live under it. */
+  readonly home: string;
   readonly database: { readonly url: string };
   readonly whatsapp: {
     readonly accountId: string;
@@ -103,6 +92,7 @@ export function loadAppConfig(environment: NodeJS.ProcessEnv = process.env): App
   const dataDirectory =
     environment.WHATSAPP_DATA_DIR ?? document.whatsapp.dataDirectory ?? join(home, "state");
   return {
+    home,
     database: {
       url:
         environment.AMBIENT_DATABASE_URL ??

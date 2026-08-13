@@ -68,7 +68,7 @@ async function terminalRun(
   database: AmbientDatabase,
   outcome: { readonly kind: "reply" } | { readonly kind: "silence" } | { readonly kind: "fail" },
 ): Promise<string> {
-  await database.repositories.speakers.seed([
+  await database.repositories.speakers.sync([
     { conversationId: "chat-1", mode: "responding", attendFrom: "2026-08-11T00:00:00.000Z" },
   ]);
   await retainMessage(database);
@@ -249,7 +249,7 @@ test("an expired evaluation lease makes the subject claimable again", async () =
 
 test("expired conversation leases also signal evaluation", async () => {
   await withDatabase(async (database) => {
-    await database.repositories.speakers.seed([
+    await database.repositories.speakers.sync([
       { conversationId: "chat-1", mode: "responding", attendFrom: "2026-08-11T00:00:00.000Z" },
     ]);
     await retainMessage(database);

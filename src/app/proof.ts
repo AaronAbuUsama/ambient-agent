@@ -190,7 +190,9 @@ export async function createAmbientProofHarness(
       // A bounded run requires an active responding speaker; the proof
       // activates one for exactly this conversation, attending only messages
       // accepted since the harness was created.
-      await repositories.speakers.seed([
+      const mandates = await repositories.speakers.current();
+      await repositories.speakers.sync([
+        ...mandates.filter((mandate) => mandate.conversationId !== conversationId),
         { conversationId, mode: "responding", attendFrom: harnessCreatedAt },
       ]);
       await repositories.conversationWork.notify(
@@ -234,7 +236,9 @@ export async function createAmbientProofHarness(
       ];
       // Memory is default-on for allowed chats: presence, not a job, is what
       // makes the backlog digestible. Listening keeps the chat silent.
-      await repositories.speakers.seed([
+      const mandates = await repositories.speakers.current();
+      await repositories.speakers.sync([
+        ...mandates.filter((mandate) => mandate.conversationId !== conversationId),
         {
           conversationId,
           mode: "listening",

@@ -7,6 +7,7 @@ import { createEvaluationService } from "../evals/service";
 import type { MemoryService } from "../memory/contract";
 import { createPiMemoryAgent } from "../memory/pi-agent";
 import { createMemoryService } from "../memory/service";
+import { scanMandates } from "../home/mandates";
 import { createModelRuntime, type ModelRuntime } from "../models/runtime";
 import { createWhatsAppAcceptedSourceConsumer } from "../whatsapp/message-ingestion";
 import { createWhatsAppService, type WhatsAppService } from "../whatsapp/service";
@@ -63,7 +64,18 @@ export async function createAppResources(
       logLevel: config.logging.level,
       acceptedSource,
     });
-    await database.repositories.speakers.seed(config.conversation.speakers);
+    // The mandate files are the control (ADR 0002): active records mirror the
+    // set of valid chat folders. Broken chats are simply absent — brokenness
+    // is recomputed loudly by `ambient doctor`, never stored.
+    const mandates = scanMandates(config.home);
+    await database.repositories.speakers.sync(
+      mandates.active.map((mandate) => ({
+        conversationId: mandate.chatId,
+        mode: mandate.mode,
+        ...(mandate.instructions === undefined ? {} : { instructions: mandate.instructions }),
+        ...(mandate.memoryBrief === undefined ? {} : { memoryBrief: mandate.memoryBrief }),
+      })),
+    );
     const models = createModelRuntime(config.models);
     const evaluations = createEvaluationService({
       work: database.repositories.evaluationWork,

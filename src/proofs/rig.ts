@@ -30,6 +30,9 @@ export function rigConfig(base: AppConfig): AppConfig {
   const hasQwenKey = Boolean(process.env.QWEN_API_KEY ?? process.env.DASHSCOPE_API_KEY);
   return {
     ...base,
+    // The rig gets its own home: mandates under it drive the rig database,
+    // and the real ~/.ambient never leaks into a proof run.
+    home: `${RIG_PRIVATE}/android-home`,
     database: { url: `file:${RIG_PRIVATE}/android/ambient.db` },
     whatsapp: { ...base.whatsapp, accountId: "android", dataDirectory: `${RIG_PRIVATE}/android` },
     models: hasQwenKey
