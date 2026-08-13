@@ -1,9 +1,112 @@
 # Ambient Current State
 
-Status date: 2026-08-12.
+Status date: 2026-08-13.
 
 This is the rolling rescue and delivery ledger. It records the current truth,
 not a distant phase plan.
+
+## Home wayfinding stopped (2026-08-13)
+
+The ~/.ambient home wayfinding (map #1) was stopped by the master as
+over-engineered sprawl: parallel tickets invented machinery for consumers
+that do not exist, and simple questions grew fog instead of answers. What
+locked before the stop stands: ADR 0001 (home layout, amended), ADR 0002
+(mandate file: one file, fail-closed, config by convention), CONTEXT.md
+vocabulary (active chat, broken chat, mode as speaking rights, watermark
+never authored), and the research findings (fs-watch, agent-home prior art,
+mcp.json, git-home — findings now in `docs/research/`). Everything else
+was parked, then folded into the MVP reset below (2026-08-13).
+
+**Correction to this ledger:** Memory v2 is a working implementation proven
+against one golden bed. It is not product-validated canon; treat its
+protocol shapes as provisional until real product slices exercise them.
+
+## Active slice: Home v1 (cut 2026-08-13, grilled with the master)
+
+**Goal.** Ambient runs fresh from `~/.ambient` — no legacy, no old layout.
+Mandates as files drive the live speakers, skills load by convention, and
+one CLI is the whole operator surface. Single package until we outgrow it.
+
+**In:**
+
+- The home tree per ADR 0001 (amended): `config.yaml` (everything in the
+  home — the only config location; `AMBIENT_CONFIG` override remains for
+  the proof rig), `skills/`, `chats/<slug>/mandate.yaml`, `state/`
+  (db, whatsappd territory, `logs/ambient.log` ndjson).
+- Mandate projector per ADR 0002: strict schema `{chatId, mode default
+listening, instructions, memoryBrief}` (`memoryBrief` stored now,
+  consumed in the memory slice); fail-closed; active records mirror the
+  set of valid folders (reconcile by scan); directory watcher as wake hint
+  plus startup reconcile. `conversation.speakers` stanzas deleted;
+  `conversation.enabled` dropped (no valid mandates = inert);
+  `outboundMode` and the send allowlist guard unchanged.
+- Skills, fundamental: package + home `skills/` + chat `skills/`,
+  chat wins by name, eager-append into the speaker prompt (fixed identity,
+  then mandate instructions, then skills); broken skill = loud in doctor,
+  skipped in runs.
+- CLI pass 1 — the **ops surface**, agent-friendly, JSON mode (commander +
+  yaml, in-package): `ambient init` (idempotent: create the tree, seed
+  `config.yaml`; non-interactive), `ambient doctor --json` (full readout —
+  home, config, credentials, state, whatsapp auth, chats incl. exact
+  mandate errors, skills; non-zero exit when broken), `ambient activate
+--chat <name|id>` (destination match → mandate write). These operations
+  are one module with two callers: the CLI now, the Root's tools at
+  Root v1 — the human-friendly CLI (interactive onboarding, pairing UX,
+  prompts) is a later pass built on top. Bare `ambient` = init-if-needed,
+  then start the daemon and tail the logs. The deployment reuses the
+  already-authenticated whatsappd state; pairing UX belongs to the human
+  pass. No `start`, no `chats` command.
+- The master chat: recorded in `config.yaml` only — the admin seat the
+  Root occupies at Root v1. No mandate, no speaker; doctor shows it. The
+  CLI/files are the operator stopgap until the Root configures the system
+  from that chat.
+
+**Out (named):** the human CLI pass (interactive onboarding, QR pairing
+walkthrough, chat picker, @inquirer prompts) and the OpenTUI dashboard
+(that slice opens with the workspace split); the Root and master-chat
+occupant; mcp.json; git-backed home; packaging/npx; wiki.
+
+**Proof gate (deterministic):** in the rig home — activate a chat, observe
+listening (claims gated); flip its mandate to `responding`, observe the
+speaker answer; break the mandate, observe fail-closed inactivity + doctor
+non-zero with the exact error; the existing golden conversation proof
+passes on the new composition.
+
+## The MVP and the road (reset 2026-08-13, with the master)
+
+**The MVP.** Ambient on one machine, run from `~/.ambient`: speakers active
+per mandates; memory default-on, caught up and keeping up live; one real
+Worker journey (Bug Reports evidence → GitHub issue in the right
+repository); and the Root in the master chat operating the system through
+the same operations the CLI exposes. The human-friendly CLI and the TUI
+are post-MVP.
+
+**Inventory — what exists vs what the MVP still needs:**
+
+- speaker agent: shipped, live-proven;
+- memory agent: rebuilt on the speaker's pattern (below), brief-aware,
+  keep-up wiring in place, 20/22 golden — only the ship gate remains;
+- evals: shipping signal + judged gates held as the yardstick through the
+  rebuild;
+- home + ops CLI: decided (ADR 0001/0002), not built — the active slice;
+- worker: not built; the journey and the bar are already named (queued
+  brief below);
+- root: not built; comes **last** — it operates everything else through
+  the ops surface, so that surface and the other kinds must exist first.
+
+**Order** (one active slice at a time; the next is selected at each review
+stop, never committed in advance):
+
+1. **Active:** Home v1 (above).
+2. **Likely next:** the memory ship gate — review the three flagged
+   claims, production wipe-and-re-read under the full gate, one live
+   keep-up proof (wrap-up items 1–2 below).
+3. **Themes, MVP-ordered but uncommitted:** Workers v1 (queued brief
+   below); Root v1 (the master chat gets its occupant; its tools are the
+   ops surface). Post-MVP themes: the human CLI pass and OpenTUI
+   dashboard (opens with the workspace split), brief-aware judge,
+   packaging/npx, git-backed home, wiki projection, derived-maps
+   regeneration, dormant `skills`/`run_skills` table deletion.
 
 ## Product direction
 
@@ -232,13 +335,88 @@ controller; the lifecycle consumes `start`/`stop`/`waitForFailure`; the
 outbound destination guard and loopback policy live behind the facade with
 the proof override still strengthening the final guard; all gates pass.
 
-## Active slice
+## Completed slice: memory on the speaker's pattern (2026-08-13)
 
-None. Memory v2 completed 2026-08-12 (below): the golden-first rebuild the
-Memory v1 post-slice review demanded, shipped into production. Workers v1
-is next; its brief lands at the next planning stop. Memory's repo-routing
-claims (repository URLs, the master's GitHub identity, per-repo purpose)
-are now real and evidence-backed — the input Workers v1 needs.
+Selected by the master mid-session after stopping the live-memory grill:
+"producer" and "job" were repudiated as product concepts, the wayfinding
+process was abandoned, and the direction reset to the simplest system — the
+memory agent as the speaker's peer. V2's extraction-quality work (the
+golden-first method, attribution recovery, host validation, versioned facts)
+is preserved; v2's bespoke machinery is deleted.
+
+**Product question.** Does memory behave as presence, not plumbing:
+default-on for every allowed chat, catching up on the retained past and
+keeping up with live traffic, through the same agent pattern the speaker
+runs — no jobs, no producer, nothing a human must trigger?
+
+**Owner.** `memory/` owns the agent (now on pi's Agent with a
+`propose_facts` tool) and the service loop; `database/memory-work.ts` owns
+the one durable transition; `whatsapp/message-payload.ts` owns the
+retained-payload schema every reader now shares (was four copies).
+
+**Durable protocol.**
+
+1. Retained records: the per-chat `memory_schedule` row — digested-through
+   watermark, fenced lease, attempt count — plus the agent run.
+2. Owning service: the memory work store. Due-ness derives from retained
+   observations against the watermark: a full window (40) is due
+   immediately, any smaller backlog is due once quiet for 5 minutes —
+   data-derived, never a process timer.
+3. Consumer: the memory service drain, already in the production lifecycle.
+4. Idempotency: claiming opens the lease and the agent run in one
+   transaction; the window's deterministic patch key
+   (`patch:window:<first-observation-id>`) means even a re-claimed crashed
+   attempt recovers instead of digesting twice.
+5. Retry/recovery: lease expiry reopens the chat; a failed window re-derives
+   identically and re-runs; three consecutive failures park the chat.
+6. Evidence: the run (input, result, and now tool calls), the ontology
+   patch, and the evaluation signal riding the terminal transition.
+
+**The agent, on the pattern.** `MemoryAgent.run(input, tools, signal)` — the
+contract AGENTS.md always prescribed. `propose_facts` validates AND applies
+at the tool boundary; a rejected proposal returns to the model in-loop
+(capped at 3); never proposing is memory silence, an empty digest. The
+one-shot JSON-scraping call is gone. Prompt: a general analyst base plus the
+mandate's per-chat memory brief (`conversation_speakers.memory_brief`,
+seeded like instructions); the Bug Reports issue-centric focus is now that
+chat's brief, not the prompt. promptVersion `memory-v3`.
+
+**Evals.** Untouched by design — the master's yardstick decision: same two
+cases, same signal, same golden grading; the evidence assembler merely
+stopped expecting a `jobId`. The digest proof now drives the production
+path: seed a listening speaker, drain the memory service window by window.
+
+**Proof.** Deterministic: `vp check` clean (68 files); `vp test` 89/89
+across 15 files (new: default-on gating including unlisted chats never
+digesting, quiet coalescing, ordered windows, park-after-three, memory
+silence, brief flow, crash-recovered windows); `drizzle-kit check` clean
+(migrations: drop `memory_jobs`, create `memory_schedule`, add
+`memory_brief`). Live (rig, 2026-08-13, gemini pool, wipe-and-re-read per
+the master's decision; pre-wipe backup in `.proof-private/backups/`): the
+rebuilt agent re-derived the Bug Reports memory from source through the
+production path — 8 windows, contract metrics perfect on every window
+(grounding 1.0, zero banned identity links), **golden coverage 20/22 — the
+best yet** (v2 shipped 17/22; newly met labels include previously-unmet
+ones; only the prayer-times root-cause phrasing and the "vital" preference
+remain), 40 issue / 7 person / 4 repository / 1 product / 4 organization
+entities, 180 claims, 168 recalled. Judged: completeness mean 0.86 (gate
+0.7); faithfulness mean 0.93 BUT one window scored 0.67 — below the 0.7
+per-window floor, so the strict judged gate did not pass on the first
+attempt (the judge flagged 3 of that window's 9 claims as not fully
+supported; all cite real batch messages, so the dispute is wording, not
+fabrication). Production ship deliberately withheld pending that review.
+
+**Ship status.** Not shipped to production. The floor breach is one
+window's wording dispute against a ground truth the extraction otherwise
+beats; the master decides whether to review the three flagged claims,
+re-roll the window, or adjust the floor before the production
+wipe-and-re-read.
+
+**Open questions.** Live retention gaps (media and Ambient's own messages
+are not retained live — the mapper keeps inbound text only); abandoned
+`running` runs are never terminalized (preexisting); the memory dials
+(window 40 / quiet 5m / poll 15s) are service defaults, promoted to
+configuration when tuning becomes real.
 
 ## Completed slice: Memory v2 — golden-first rebuild (2026-08-12)
 
@@ -600,9 +778,42 @@ Requested by the master during replanning ("what primitives do we have?").
   granted skills (later: eager-append instructions while skills are few and
   short; adopt progressive disclosure with a load tool if they multiply).
 
-## Likely next slice
+## Where things stand (wrap-up, 2026-08-13)
 
-Workers v1 — the customer-feedback journey: a bounded Worker files a
+**Have:** the memory rebuild on the speaker's pattern (above), green on
+every deterministic gate and better than v2 against the master's
+hand-labelled answer key (20/22 vs 17/22) on the rig. The eval machinery
+survived unchanged as the yardstick. Wayfinding abandoned; vocabulary
+reset to the master's terms.
+
+**Don't have:** production ship (still v2's memory); a live end-to-end
+keep-up run (real message → quiet → digested has deterministic tests
+only); a verdict on the one window that breached the judged faithfulness
+floor (3 of 9 claims flagged, unreviewed); a judge that knows the chat's
+brief (it scores generic extraction craft, not the chat's mandate); any
+measurement of the judge's own reliability; worker/root evals (those
+kinds don't exist yet); live retention of media and own messages.
+
+**Next (items 1–2 are the "memory ship gate" likely-next slice; item 4
+happened as the 2026-08-13 reset above):**
+
+1. Review the three flagged claims against their cited messages —
+   overreach or judge pedantry — then production wipe-and-re-read under
+   the full gate.
+2. One live keep-up proof: a real message into the test bed, digested
+   through the running system.
+3. Brief-aware judge: pass the chat's memory brief into the judged case
+   as its rubric — chat-scoped evals with one field and one prompt line.
+4. The master's re-cut/replanning session, with named seams: per-chat
+   answer-key file in the chat folder (build at the second real bed),
+   worker evals with the worker, the per-role eval seam formalized at the
+   third agent kind, judge-vs-answer-key calibration, the visibility
+   layer as a `wiki/` projection.
+
+## Workers v1 — queued candidate brief
+
+Queued as an MVP theme at the 2026-08-13 reset (selected properly at a
+review stop). The customer-feedback journey: a bounded Worker files a
 GitHub issue from validated Bug Reports evidence, its durable result
 returns to the originating conversation's Inbox, and the speaker decides
 how to report it. Product context from the master (2026-08-12): a previous
@@ -630,14 +841,6 @@ whole loop autonomously; testing never requires the operator.
 ## Known debt
 
 Accepted, durable, and owned here rather than in commit messages:
-
-- **Memory prompt embeds one chat's focus** — the `memory-v2` analyst prompt
-  hard-codes the Bug Reports group's shape (issues as the unit of memory,
-  GitHub filing). The general machinery (grounding, dedup invariant,
-  supersession, windowing, golden-first method) is chat-independent; when a
-  second memory bed arrives, split the base prompt from a per-chat digestion
-  brief carried the same way speakers carry per-chat instructions. Do not
-  build the brief machinery before that second real use.
 
 - **Repository bag** — `AmbientRepositories` is now consumed only inside
   `src/app/` (resources and the proof harness) but remains a bag rather than

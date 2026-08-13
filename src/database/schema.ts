@@ -257,6 +257,7 @@ export const conversationSpeakers = sqliteTable(
     conversationId: text("conversation_id").primaryKey(),
     mode: text({ enum: ["listening", "responding"] }).notNull(),
     instructions: text(),
+    memoryBrief: text("memory_brief"),
     attendFrom: text("attend_from").notNull(),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
@@ -310,35 +311,30 @@ export const conversationRunItems = sqliteTable(
   ],
 );
 
-export const memoryJobs = sqliteTable(
-  "memory_jobs",
+export const memorySchedule = sqliteTable(
+  "memory_schedule",
   {
-    id: text().primaryKey(),
-    conversationId: text("conversation_id").notNull(),
-    status: text({ enum: ["pending", "done", "failed"] }).notNull(),
-    input: text("input_json", { mode: "json" }).notNull().$type<unknown>(),
-    runId: text("run_id").references(() => agentRuns.id),
-    error: text(),
+    conversationId: text("conversation_id").primaryKey(),
+    digestedThroughAt: text("digested_through_at"),
+    digestedThroughId: text("digested_through_id"),
+    attempts: integer().notNull().default(0),
     leaseOwner: text("lease_owner"),
     leaseUntil: text("lease_until"),
-    createdAt: text("created_at").notNull(),
-    completedAt: text("completed_at"),
+    activeRunId: text("active_run_id").references(() => agentRuns.id),
+    updatedAt: text("updated_at").notNull(),
   },
   (table) => [
-    check("memory_jobs_status", sql`${table.status} IN ('pending', 'done', 'failed')`),
     check(
-      "memory_jobs_terminal",
-      sql`(${table.status} = 'pending' AND ${table.completedAt} IS NULL)
-        OR (${table.status} IN ('done', 'failed') AND ${table.completedAt} IS NOT NULL)`,
+      "memory_schedule_lease",
+      sql`(${table.leaseOwner} IS NULL AND ${table.leaseUntil} IS NULL AND ${table.activeRunId} IS NULL)
+        OR (${table.leaseOwner} IS NOT NULL AND ${table.leaseUntil} IS NOT NULL AND ${table.activeRunId} IS NOT NULL)`,
     ),
     check(
-      "memory_jobs_lease",
-      sql`(${table.leaseOwner} IS NULL AND ${table.leaseUntil} IS NULL)
-        OR (${table.leaseOwner} IS NOT NULL AND ${table.leaseUntil} IS NOT NULL)`,
+      "memory_schedule_watermark",
+      sql`(${table.digestedThroughAt} IS NULL AND ${table.digestedThroughId} IS NULL)
+        OR (${table.digestedThroughAt} IS NOT NULL AND ${table.digestedThroughId} IS NOT NULL)`,
     ),
-    index("memory_jobs_pending")
-      .on(table.createdAt, table.id)
-      .where(sql`${table.status} = 'pending'`),
+    check("memory_schedule_attempts", sql`${table.attempts} >= 0`),
   ],
 );
 

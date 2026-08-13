@@ -30,6 +30,7 @@ const configurationDocumentSchema = z
               mode: z.enum(["listening", "responding"]).default("responding"),
               instructions: z.string().min(1).optional(),
               attendFrom: z.iso.datetime().optional(),
+              memoryBrief: z.string().min(1).optional(),
             }),
           )
           .default([]),

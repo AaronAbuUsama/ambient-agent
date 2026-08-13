@@ -55,40 +55,54 @@ _Avoid_: data directory, internal files
 The Conversation Agent presence in one chat. All speakers are instances of the
 same agent with different per-chat grants.
 
-**Allowed chat**:
-A chat with a durable speaker record. No record = not allowed; every accepted
-message is still observed and retained.
+**Active chat**:
+A chat whose folder holds a valid mandate. No folder = nothing exists
+Ambient-side (whatsappd still mirrors every accepted message). Folder =
+active: memory on by default, a speaker present, mode deciding speech.
+_Avoid_: allowed chat (renamed 2026-08-13)
+
+**Broken chat**:
+A chat folder whose mandate is missing, unparseable, or invalid — or whose
+chat id is claimed by another folder. Broken = inactive until a human fixes
+the files; loud in logs and the CLI, never worked around.
+_Avoid_: keep-last-good (rejected 2026-08-13)
 
 **Mode**:
-A speaker's stance in its chat: `listening` (memory only, silent) or
-`responding`; `proactive` is reserved.
+A speaker's speaking rights in its chat, and nothing else: `listening`
+(silent; the default) or `responding`; `proactive` is reserved.
 
 **Activation point**:
-The watermark before which a speaker never answers; messages earlier than it
-are retained but not addressed.
+The machine-stamped moment a chat (re)activates or flips to `responding`.
+The speaker answers messages from that moment forward; earlier messages are
+memory's territory. Never authored.
 
 **Mandate**:
-The authored grant for one chat: mode, instructions, memory brief,
-capabilities. Policy plane; written by the master or the Root. The speaker
-record is its validated projection plus runtime watermark.
+The authored grant for one chat, one file (`mandate.yaml`): chat id, mode,
+instructions, memory brief. Policy plane; created by the CLI, edited by the
+Root only through a validating tool. The minimum mandate is the chat id
+alone — active, listening, defaults.
 _Avoid_: grant (capability grants are a different thing), manifest, policy
-file
+file, chat.yaml / binding file (retired 2026-08-13; the chat id line inside
+the mandate is the binding)
+
+**Memory brief**:
+The mandate's statement of what a chat's memory is for. Carried to every
+digest of that chat; when present it is the prime coverage rule. Memory
+itself is default-on for every allowed chat — the brief shapes it, never
+enables it.
+_Avoid_: memory prompt, digestion focus
 
 **Speaker record**:
-The runtime projection of a mandate plus the activation watermark. Protocol
-plane; the claim gate reads it transactionally. Not the grant itself.
+The runtime mirror of the current valid mandate plus the activation
+watermark. Protocol plane; the claim gate reads it transactionally. Active
+records mirror exactly the set of valid folders — a stale or remembered
+grant is never left running.
 _Avoid_: Conversation mandate (retired 2026-08-12)
-
-**Binding file**:
-The per-chat file (`chat.yaml`) that binds a folder's slug to its real chat
-id. Identity, written once when the folder is created; a broken mandate can
-never touch it.
-_Avoid_: chat config
 
 **Chat slug**:
 The human label naming a chat folder: kebab-case `a-z0-9-`, at most 64
 characters — the same rule skill names follow. A slug is never an identity:
-code, logs, and durable records key on the chat id; the folder's binding file
-maps slug to id; renaming a folder changes nothing durable. One chat id is
-bound by at most one folder.
+code, logs, and durable records key on the chat id; the mandate's chat id
+line maps folder to id; renaming a folder changes nothing durable. One chat
+id is bound by at most one folder — two claimants make both chats broken.
 _Avoid_: chat id as a folder name (ids contain `@`, dots, and phone numbers)

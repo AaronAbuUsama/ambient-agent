@@ -18,10 +18,9 @@ reacting to the walking-skeleton prototype
   skills/             home-scoped skills (SKILL.md dirs only — the loader
                       treats stray root .md prose as a broken skill)
   chats/<slug>/
-    chat.yaml         binding file: slug -> real chat id. Identity;
-                      write-once at folder creation.
-    mandate.yaml      the mandate: mode, instructions, memory brief,
-                      capabilities. Policy; living; Root-authorable.
+    mandate.yaml      the whole grant, one file: chatId, mode, instructions,
+                      memory brief. Policy; living; CLI-created;
+                      Root-authorable via tool only (ADR 0002).
     skills/           chat-scoped skills (shadow home skills by name)
     wiki/             derived per-chat projection; regenerable; safe to
                       delete. Shape undecided (named seam).
@@ -54,10 +53,12 @@ regenerable files (per-chat `wiki/`).
   restart-class operator config. The temperature boundary should be a file
   boundary, and the conventional `mcp.json` name keeps ecosystem stanzas
   copy-pasteable.
-- One file per chat (chat id inside `mandate.yaml`) — rejected: identity and
-  policy have different writers and lifecycles, and the prototype's bad-file
-  path stayed simple only because a broken mandate cannot orphan the
-  binding.
+- One file per chat (chat id inside `mandate.yaml`) — originally rejected
+  because under keep-last-good a broken mandate could orphan the binding
+  that keyed the kept row. **Superseded by ADR 0002 (2026-08-13)**:
+  fail-closed keeps no row, so the split protects nothing; one
+  `mandate.yaml` with `chatId` inside is the layout, and `chat.yaml` is
+  retired.
 
 ## Consequences
 

@@ -185,7 +185,7 @@ Granted Conversation delegation
   -> Conversation Agent
 
 Observations + task evidence
-  -> Episode or Memory Job
+  -> Episode or due digest window (per-chat watermark)
   -> Memory Agent
   -> evidence-backed ontology patch
   -> later Root, Conversation, or Worker recall

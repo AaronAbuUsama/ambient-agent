@@ -21,6 +21,7 @@ export function createConversationSpeakerStore(
               conversationId: entry.conversationId,
               mode: entry.mode,
               instructions: entry.instructions ?? null,
+              memoryBrief: entry.memoryBrief ?? null,
               attendFrom: entry.attendFrom ?? now,
               createdAt: now,
               updatedAt: now,
@@ -30,6 +31,7 @@ export function createConversationSpeakerStore(
               set: {
                 mode: entry.mode,
                 instructions: entry.instructions ?? null,
+                memoryBrief: entry.memoryBrief ?? null,
                 updatedAt: now,
                 // Preserved on re-seed; advances only on a (re)activation into
                 // "responding" or when the entry pins it explicitly.

@@ -7,10 +7,10 @@ import type {
   RunEvidence,
 } from "../evals/contract";
 import type { AmbientDatabaseConnection } from "./database";
+import { retainedMessagePayloadSchema } from "../whatsapp/message-payload";
 import { agentRuns, evaluationPending, observations, toolCalls } from "./schema";
 
 const memoryRunInputSchema = z.object({
-  jobId: z.string().min(1),
   conversationId: z.string().min(1),
   observationIds: z.array(z.string().min(1)),
 });
@@ -46,21 +46,6 @@ const runInputSchema = z.object({
 const messagePayloadSchema = z.looseObject({
   sender: z.looseObject({ id: z.string().min(1) }),
   text: z.string(),
-});
-
-/** Historical group rows may lack sender and text; media carries a caption. */
-const memoryMessagePayloadSchema = z.looseObject({
-  sender: z.looseObject({ id: z.string().min(1) }).optional(),
-  fromMe: z.boolean().optional(),
-  kind: z.string().optional(),
-  text: z.string().optional(),
-  media: z.looseObject({ caption: z.string().optional() }).optional(),
-  context: z
-    .looseObject({
-      mentions: z.array(z.string().min(1)).optional(),
-      quoted: z.looseObject({ from: z.string().min(1) }).optional(),
-    })
-    .optional(),
 });
 
 const sendInputSchema = z.looseObject({ text: z.string() });
@@ -103,14 +88,14 @@ export function createEvaluationWorkStore(
     const senders = new Set<string>();
     const windowMessages: MemoryRunEvidence["windowMessages"][number][] = [];
     for (const row of rows) {
-      const parsed = memoryMessagePayloadSchema.safeParse(row.payload);
+      const parsed = retainedMessagePayloadSchema.safeParse(row.payload);
       if (!parsed.success) continue;
       const payload = parsed.data;
       if (payload.sender) senders.add(payload.sender.id);
       for (const mention of payload.context?.mentions ?? []) senders.add(mention);
       // Quoted replies name the quoted message's author — the same recovered
       // identity the memory service treats as linkable.
-      if (payload.context?.quoted) senders.add(payload.context.quoted.from);
+      if (payload.context?.quoted?.from) senders.add(payload.context.quoted.from);
       windowMessages.push({
         ...(payload.sender ? { senderId: payload.sender.id } : {}),
         fromMe: payload.fromMe ?? false,
@@ -134,7 +119,7 @@ export function createEvaluationWorkStore(
         evidenceObservationIds: claim.evidenceObservationIds,
         evidenceTexts: cited.flatMap((row) => {
           if (!row) return [];
-          const parsed = memoryMessagePayloadSchema.safeParse(row.payload);
+          const parsed = retainedMessagePayloadSchema.safeParse(row.payload);
           if (!parsed.success) return [];
           return [parsed.data.text ?? parsed.data.media?.caption ?? ""];
         }),
