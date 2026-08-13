@@ -38,3 +38,4 @@ artifacts
 
 # Real-account proof profiles: credentials, mirrors, allowlist — never committed
 .proof-private/
+.proof-private

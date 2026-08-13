@@ -21,7 +21,35 @@ was parked, then folded into the MVP reset below (2026-08-13).
 against one golden bed. It is not product-validated canon; treat its
 protocol shapes as provisional until real product slices exercise them.
 
-## Active slice: Home v1 (cut 2026-08-13, grilled with the master)
+## Completed slice: Home v1 (2026-08-13)
+
+**Proof (gate passed 2026-08-13).** Deterministic: 111/111 tests, check
+clean; mandate scan fail-closed (missing/torn/invalid/duplicate = broken),
+mirror sync semantics, watermark ratchet, skills chat-wins fold, prompt
+composition all covered. Live on the machine: `ambient init` created the
+real home; the cutover moved `./data` into `state/`; `activate "Tst"`
+resolved the mirror and wrote a mandate; a broken `mode:` produced the
+exact zod error in doctor and recovered on fix. Live on the rig: bare
+`ambient` ran the daemon against the rig home (connected account
+"android", startup sync mirrored the rig mandate, clean SIGTERM);
+`proof:conversation-replay` green on the new composition;
+`proof:whatsapp-live-loop` end to end — real peer message → speaker
+through home config + mandate-synced records + the single guarded send
+path → reply delivered and token-verified on the peer's mirror, both
+evaluation cases succeeded.
+
+**Review notes.** `seed` died into `sync` (one mutation path; the proof
+harness composes via `current()`+`sync`); loopback and
+`conversation.speakers`/`outboundMode` config are deleted; the skills
+loader is our own ~100-line SKILL.md parser (no pi types outside the
+agent adapter). Deviation: the session log still lands at
+`state/whatsapp.log` (not `state/logs/ambient.log`); app events go to
+stdout — file logging joins the TUI slice. A live marker-skill variant of
+the loop (skill file → observable reply content) is available when wanted;
+skills are proven deterministic-and-prompt-level plus the loop's token
+echo. Next slice selected at the review stop with the master.
+
+## The Home v1 brief as cut (2026-08-13, grilled with the master)
 
 **Goal.** Ambient runs fresh from `~/.ambient` — no legacy, no old layout.
 Mandates as files drive the live speakers, skills load by convention, and
@@ -97,11 +125,8 @@ are post-MVP.
 **Order** (one active slice at a time; the next is selected at each review
 stop, never committed in advance):
 
-1. **Active:** Home v1 (above). **Done =** its proof gate: activate →
-   listening, mandate flip → responding, broken file → fail-closed +
-   doctor non-zero with the exact error, golden conversation proof green
-   on the new composition; `vp check`/`vp test` clean; the config speaker
-   stanzas are gone from the schema.
+1. **Done (2026-08-13):** Home v1 — proof gate passed (record above).
+   **Active: none** — the next slice is selected at the review stop.
 2. **Likely next:** the memory ship gate — review the three flagged
    claims, production wipe-and-re-read under the full gate, one live
    keep-up proof (wrap-up items 1–2 below). **Done =** a recorded verdict
