@@ -143,7 +143,7 @@ const memoryVerdictSchema = z.object({
   missedFacts: z.string(),
 });
 
-const memoryJudgePromptVersion = "memory-judge-v3";
+const memoryJudgePromptVersion = "memory-judge-v4";
 
 /** Judges one Memory run's applied claims with the evaluator-role model. */
 export function createPiMemoryJudge(runner: ModelRunner, runs: JudgeRunStore): MemoryJudge {
@@ -152,7 +152,8 @@ export function createPiMemoryJudge(runner: ModelRunner, runs: JudgeRunStore): M
       const subject = {
         windowMessages: evidence.windowMessages.map((message, index) => ({
           index,
-          from: message.senderId ?? (message.fromMe ? "agent-side" : "unknown"),
+          from:
+            message.senderName ?? message.senderId ?? (message.fromMe ? "agent-side" : "unknown"),
           ...(message.attachment === undefined ? {} : { attachment: message.attachment }),
           text: message.text,
         })),

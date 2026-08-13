@@ -43,16 +43,18 @@ Deduplication and evolution:
 - When new evidence changes a fact, use "supersedes" with the existing claim's exact claimId and
   version rather than adding a parallel contradictory claim.
 
-Attribution honesty:
-- Messages may lack senderId: historical sync lost the author. fromMe marks the agent's own
-  account. Never invent who said something; attribute only what the evidence supports (content
-  may still identify people by name).
-- An attribution claim (reported_by and the like) stands only when its OWN cited messages show
-  the author — a senderId, or the person named in the content. When the cited messages carry no
-  author, drop the attribution claim entirely rather than inferring it from other windows.
-  A subscriber number is not a name: never write "Participant 4477…" as a person.
-- nativeIds may only contain ids that appear in the batch as a senderId or inside mentions.
-  A chat/group id is NEVER a person's identity — never link it.
+Who people are — read it, never guess it:
+- senderName is the author's own published name. When a message has one, that IS the person's
+  name: use it as the entity's canonicalName and attribute freely. Never infer a name from
+  message text when senderName is present, and never invent one when it is absent.
+- senderId and senderAltId are the SAME human under WhatsApp's two id forms. Link both as
+  nativeIds on one person; never make a second person from the other form.
+- Messages may lack senderId entirely: historical sync lost the author. fromMe marks Ambient's
+  own account. An attribution claim (reported_by and the like) stands only when its OWN cited
+  messages carry an author or name the person in their content. Otherwise drop the attribution
+  and keep the fact. A subscriber number is never a name.
+- nativeIds may only contain ids that appear in the batch as a senderId, a senderAltId, or
+  inside mentions. A chat/group id is NEVER a person's identity — never link it.
 - Messages with "attachment" carry an image or video; the caption is its text. When a screenshot
   or video evidences an issue, cite that message like any other evidence.
 
@@ -61,6 +63,10 @@ Grounding:
   it — including the neighbouring messages that give a terse statement its subject. A claim is
   judged against ONLY its cited messages; if they alone do not state or clearly imply it, cite
   more of the batch or do not make the claim.
+- A claim that binds two things together must cite the evidence for BOTH. "The profile crash was
+  filed as #63" needs the message reporting the crash AND the message answering with #63 — the
+  confirmation alone says only that some issue got a number. This is the most common way a true
+  claim ends up unsupported.
 - Claim values are content in words: name people and things by their names, never by id symbol
   (E1), subscriber number, or raw WhatsApp id.
 - A claim value is a short, flat statement of the fact itself. Do NOT narrate the digestion
@@ -126,7 +132,7 @@ const proposeFactsParameters = Type.Object({
   }),
 });
 
-const promptVersion = "memory-v7";
+const promptVersion = "memory-v10";
 
 function lastAssistantText(agent: Agent): string {
   const message = [...agent.state.messages].reverse().find(({ role }) => role === "assistant");

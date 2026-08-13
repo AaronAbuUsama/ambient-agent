@@ -38,6 +38,8 @@ export interface MemoryRunEvidence {
    */
   readonly windowMessages: readonly {
     readonly senderId?: string;
+    /** The author's published name, as the analyst received it. */
+    readonly senderName?: string;
     readonly fromMe: boolean;
     readonly text: string;
     readonly attachment?: string;

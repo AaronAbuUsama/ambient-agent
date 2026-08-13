@@ -19,6 +19,19 @@ import type { ModelConfig } from "../models/contract";
 export interface MemoryMessage {
   readonly observationId: string;
   readonly senderId?: string;
+  /**
+   * The name the sender publishes for themselves, retained with the message.
+   * Ambient knows it already — the analyst must never infer a person's name
+   * from message text when this is present, and never invent one when it is
+   * absent.
+   */
+  readonly senderName?: string;
+  /**
+   * The sender's other native id. WhatsApp gives one human a phone form and a
+   * lid form; both name the same person, so both are linkable identities and
+   * neither may become a second person.
+   */
+  readonly senderAltId?: string;
   readonly fromMe: boolean;
   readonly sentAt: string;
   readonly text: string;

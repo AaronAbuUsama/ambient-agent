@@ -71,11 +71,13 @@ class ProposalValidationError extends Error {}
 
 function validate(input: MemoryInput, proposal: MemoryProposal, maximumClaims: number): void {
   const batchIds = new Set(input.messages.map(({ observationId }) => observationId));
-  // Linkable identities: real senders plus real mentioned ids. A chat/group id
-  // is never a person; linking one poisons every recall through it.
+  // Linkable identities: real senders, their other native id form, and real
+  // mentioned ids. A chat/group id is never a person; linking one poisons
+  // every recall through it.
   const batchSenders = new Set(
     input.messages.flatMap((message) => [
       ...(message.senderId === undefined ? [] : [message.senderId]),
+      ...(message.senderAltId === undefined ? [] : [message.senderAltId]),
       ...(message.mentions ?? []),
     ]),
   );

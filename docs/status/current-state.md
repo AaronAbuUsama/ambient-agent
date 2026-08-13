@@ -264,6 +264,41 @@ A run costs ten minutes and real tokens, and the old fail-fast receipt hid
 golden coverage behind the first judged shortfall — defect 2 above was
 found only because faithfulness passed and the receipt kept going.
 
+### The actual root cause: Ambient knew who these people were
+
+Found by the master's question ("we have whatsappd — should we not be
+passing the names, the jid/lid address book, all of that in?"). The answer
+was better than pre-processing and better than a lookup tool: **the data was
+already on the retained message, and the code dropped it.**
+
+Measured on production observations:
+
+| On the retained payload            | Present                       | Reached the analyst |
+| ---------------------------------- | ----------------------------- | ------------------- |
+| `sender.id`                        | 107 of 296 messages           | yes                 |
+| `sender.alt` (the other id form)   | 107 — every authored message  | **no**              |
+| `pushName` (the author's own name) | 45 messages, 5 distinct names | **no**              |
+
+`database/memory-work.ts` mapped the payload into the analyst's input and
+read `sender.id` only. So the analyst was told an id and asked to work out
+who that was — which is why it wrote `"Participant 4477…"` as a person,
+invented person entities, and left five of them with no claims. Five real
+names sat unread in the same rows, and two of the golden labels it could
+not hit are people's names.
+
+The fix is a pass-through, not machinery: `senderName` and `senderAltId`
+now reach the analyst, both id forms are linkable so one human cannot
+become two people, and `whatsapp/message-payload.ts` owns the
+linkable-identity rule in one place. Evaluation had its own copy of that
+rule and did not know about the second id form — so when memory linked
+both forms correctly, `identity_scope` failed the window. Exactly the
+parallel-representation defect the engineering guide forbids, found by the
+gate. Prompt version `memory-v9`.
+
+**The lesson, recorded because it cost five prompt versions:** v4–v8 used
+prompt text to compensate for data the host was withholding. What Ambient
+already knows, it must never ask a model to infer.
+
 ### Model substitution (material to every number below)
 
 Every gemini credential in the vibe pool is in cooldown
@@ -326,15 +361,17 @@ mandate for that chat, which would have silenced this proof and blamed the
 digest loop), and libsignal prints private key buffers from any process
 running a real account, so the proof muzzles it as the daemon does.
 
-**The master's decision, with the evidence above:** the gate's own terms
-are now the open question, not the extraction. Either (a) hold the bar and
-re-run when the gemini pool recovers, so the yardstick matches the one that
-set it; (b) re-cut the golden bar as a band (say ≥19) on the honest ground
-that a pattern-matched coverage count over a stochastic extractor is not a
-sharp threshold; or (c) keep the bar and accept re-rolls until one run
-clears every gate — which is a lottery, not a proof. Recommendation: (a),
-with (b) as the standing fix, because a gate that only passes on a re-roll
-is not measuring what it claims to.
+**Recommendation withdrawn (corrected by the master, same session).** This
+record first recommended holding the bar until the gemini pool recovered, so
+the yardstick would match the one that set it. That was wrong on its
+premise. Gemini was never a standard — it was a free model that happened to
+be there, and it is not the model Ambient intends to run. A number produced
+by a throwaway model is not a bar to defend.
+
+**The bar is re-baselined on the model we intend to run.** Golden 20/22 is
+retired as a target. `gpt-5.6-terra` with the identity fix below sets the
+new baseline, and the answer key itself needs the per-chat rework named in
+the canon before any count deserves to gate a ship.
 
 ## The MVP and the road (reset 2026-08-13, with the master)
 

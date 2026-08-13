@@ -78,6 +78,12 @@ async function buildInput(
     return {
       observationId: row.id,
       ...(senderId === undefined ? {} : { senderId }),
+      // Ambient already knows who this is: the sender publishes a name and
+      // carries a second native id. Both were retained at ingestion and both
+      // were being dropped here, which left the analyst inferring identity
+      // from message text — the source of every attribution defect.
+      ...(payload.pushName === undefined ? {} : { senderName: payload.pushName }),
+      ...(payload.sender?.alt === undefined ? {} : { senderAltId: payload.sender.alt }),
       fromMe: payload.fromMe ?? false,
       sentAt: row.occurredAt,
       text: payload.text ?? payload.media?.caption ?? "",
