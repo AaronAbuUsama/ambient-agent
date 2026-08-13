@@ -21,7 +21,49 @@ was parked, then folded into the MVP reset below (2026-08-13).
 against one golden bed. It is not product-validated canon; treat its
 protocol shapes as provisional until real product slices exercise them.
 
-## Active slice: Home v1 (cut 2026-08-13, grilled with the master)
+## Completed slice: Home v1 (2026-08-13)
+
+**Proof (gate passed 2026-08-13).** Deterministic: 111/111 tests, check
+clean; mandate scan fail-closed (missing/torn/invalid/duplicate = broken),
+mirror sync semantics, watermark ratchet, skills chat-wins fold, prompt
+composition all covered. Live on the machine: `ambient init` created the
+real home; the cutover moved `./data` into `state/`; `activate "Tst"`
+resolved the mirror and wrote a mandate; a broken `mode:` produced the
+exact zod error in doctor and recovered on fix. Live on the rig: bare
+`ambient` ran the daemon against the rig home (connected account
+"android", startup sync mirrored the rig mandate, clean SIGTERM);
+`proof:conversation-replay` green on the new composition;
+`proof:whatsapp-live-loop` end to end — real peer message → speaker
+through home config + mandate-synced records + the single guarded send
+path → reply delivered and token-verified on the peer's mirror, both
+evaluation cases succeeded.
+
+**Real-life acceptance (`proof:home-live`, green 2026-08-13).** The full
+journey against the RUNNING daemon (bare `ambient` as a child process, the
+master's peer profile sending real messages, mandate files edited live, no
+restarts): no mandate → silence; mandate written (watcher) → listening
+silence; flipped responding with a chat-scoped skill → reply delivered
+with the live token echoed AND the skill's marker present — a SKILL.md
+changed a real WhatsApp reply; the pre-activation backlog stayed
+unanswered (activation starts from now, proven live); mandate broken live
+→ silence; fixed live → replies again, token-verified. This run exposed
+and fixed a real production bug the stepped harness could never see:
+drizzle-orm/libsql opens a fresh connection per transaction (ignoring its
+config), so overlapping daemon writes died as instant `SQLITE_BUSY` and a
+transient lock detached the WhatsApp channel. Fix: transactions queue
+in-process at the one authoritative database open, ambient.db is WAL, and
+the accepted-source wake path retries busy blips instead of detaching.
+
+**Review notes.** `seed` died into `sync` (one mutation path; the proof
+harness composes via `current()`+`sync`); loopback and
+`conversation.speakers`/`outboundMode` config are deleted; the skills
+loader is our own ~100-line SKILL.md parser (no pi types outside the
+agent adapter). Deviation: the session log still lands at
+`state/whatsapp.log` (not `state/logs/ambient.log`); app events go to
+stdout — file logging joins the TUI slice. Next slice selected at the
+review stop with the master.
+
+## The Home v1 brief as cut (2026-08-13, grilled with the master)
 
 **Goal.** Ambient runs fresh from `~/.ambient` — no legacy, no old layout.
 Mandates as files drive the live speakers, skills load by convention, and
@@ -56,8 +98,10 @@ listening, instructions, memoryBrief}` (`memoryBrief` stored now,
   then start the daemon and tail the logs. The deployment reuses the
   already-authenticated whatsappd state; pairing UX belongs to the human
   pass. No `start`, no `chats` command.
-- The master chat: recorded in `config.yaml` only — the admin seat the
-  Root occupies at Root v1. No mandate, no speaker; doctor shows it. The
+- The master chat: `master.chatId` in `config.yaml` marks the admin seat
+  the Root occupies at Root v1 — but master-ness is metadata, not a ban
+  (clarified by the master 2026-08-13): the same chat may carry an ordinary
+  mandate and speak as an ordinary speaker today. Doctor shows both. The
   CLI/files are the operator stopgap until the Root configures the system
   from that chat.
 
@@ -71,6 +115,95 @@ listening (claims gated); flip its mandate to `responding`, observe the
 speaker answer; break the mandate, observe fail-closed inactivity + doctor
 non-zero with the exact error; the existing golden conversation proof
 passes on the new composition.
+
+## Completed slice: Identity & Voice (2026-08-13)
+
+**Proof (green 2026-08-13, `proof:home-live` exit 0).** Deterministic:
+117/117, check clean (log vocabulary levels, identity healer merges, alias
+resolution in activate). Live, full journey against the running daemon with
+production stopped (the rig subject and production share one WhatsApp
+account — mutual exclusion now documented in the proof and the rig notes):
+every phase green through ONE canonical-form mandate while traffic ran on
+the lid form; the skill marker reached live output; and the daemon narrated
+its own run — message received, reply sent, mandates, loud breakage — all
+asserted from its stdout. Also landed: libsignal's raw console (which
+printed private key material) muzzled at the daemon edge; upstream fix
+belongs in whatsappd. The master's home: master-lid scar removed, the
+startup healer folds historical lid rows on next start.
+
+## The Identity & Voice brief as cut (2026-08-13, ordered by the master)
+
+Two defects the first real master-DM test exposed. Both must land before
+the memory ship gate. Build order: Part B first (its output makes Part A's
+live validation legible).
+
+### Part B — the operational log (build first)
+
+**Product question.** Can the operator watch the daemon work — message in,
+reply out, mandate changes, breakage — in decent, levelled, domain-formatted
+lines, without free-form prints ever creeping into the code?
+
+**Design.**
+
+- **Engine** (`src/platform/logging.ts`, grows one function): pino — already
+  a dependency, the proper library — level from `config.logging.level`, two
+  sinks: pretty console when stdout is a TTY (pino-pretty), ndjson always to
+  `state/logs/ambient.log` (the future TUI tails this). Reuse the existing
+  redaction path list.
+- **Vocabulary** (`src/app/operational-log.ts`, new): the ONLY birthplace of
+  log lines — a closed, typed event set; free-form logging has no API:
+
+  ```ts
+  interface OperationalLog {
+    daemonStarted(account: string): void; // info
+    messageReceived(chat: string): void; // info  "→ master: message received"
+    replySent(chat: string): void; // info  "← master: reply sent"
+    runFailed(chat: string, error: string): void; // error
+    mandatesChanged(active: string, broken: string): void; // info
+    chatBroken(slug: string, problem: string): void; // warn  "✗ tst: mode — expected …"
+    memoryDigested(chat: string, claims: number): void; // debug
+  }
+  ```
+
+  Chats always render as slugs (never raw ids). Adding an event = one
+  deliberate edit here, formatted once, levelled once.
+
+- **Injection**: created in the composition root; handed to resources and
+  services through their existing options as this narrow port; default is
+  silent (tests unchanged). Touch points: ingestion callback, sender wrap,
+  mandate resync, memory service completion, lifecycle start/stop.
+- **Proof**: unit tests on formatting and level routing; live smoke — a
+  daemon run visibly narrates one message → reply cycle.
+
+### Part A — canonical chat identity (the pn/lid fix)
+
+**Product question.** One human DM = ONE conversation everywhere — records,
+watermarks, memory — regardless of which WhatsApp identity form the traffic
+uses. Groups are unaffected (single id form).
+
+**Design: canonicalize at ingestion.** whatsappd's mirror already maintains
+the mapping (`wa_contact_aliases`: native_id → contact_id, 135 rows on this
+account, lid → pn verified live). The whatsapp module resolves every inbound
+conversation id to its canonical form (the alias table's `contact_id`, else
+the raw id) BEFORE anything durable is written — ambient.db only ever sees
+canonical ids. The observation mapper / accepted-source path owns it, fed by
+an alias lookup on the mirror read model (`whatsapp/mirror.ts`).
+
+- `activate` resolves any input (number, pn, lid) to canonical and writes
+  one mandate; the projector is untouched.
+- Alias unknown at first contact: the raw id IS canonical until whatsappd
+  learns the mapping (contacts sync makes this brief); accept it.
+- **Migration** (one bounded script at the rung): rewrite existing lid-form
+  conversation ids to canonical across `observations`, `conversation_inbox`,
+  `conversation_speakers`, `conversation_schedule`, memory tables; then
+  delete the `master-lid/` scar folder — `master/` covers the DM.
+- **Proof**: unit — mapper canonicalizes with alias present, passes through
+  without; live — a fresh lid-form message retains under the pn id and is
+  answered through the single `master/` mandate; doctor shows one entry.
+
+**Done =** the daemon narrates its work at the chosen level; one folder per
+human; the live master-DM loop answers on a fresh message; migration script
+run; 100% suite green; ledger updated.
 
 ## The MVP and the road (reset 2026-08-13, with the master)
 
@@ -97,13 +230,28 @@ are post-MVP.
 **Order** (one active slice at a time; the next is selected at each review
 stop, never committed in advance):
 
-1. **Active:** Home v1 (above).
+1. **Done (2026-08-13):** Home v1 — proof gate passed (record above).
+   **Done (2026-08-13): Identity & Voice** — canonical identity and the
+   operational log, proof green. **Active: none** — the memory ship gate is
+   next, in a fresh context window.
 2. **Likely next:** the memory ship gate — review the three flagged
    claims, production wipe-and-re-read under the full gate, one live
-   keep-up proof (wrap-up items 1–2 below).
+   keep-up proof (wrap-up items 1–2 below). **Done =** a recorded verdict
+   on the three claims; the production wipe-and-re-read passes the full
+   judged gate; one real message digested through the running system with
+   retained evidence; this ledger flips memory to shipped.
 3. **Themes, MVP-ordered but uncommitted:** Workers v1 (queued brief
-   below); Root v1 (the master chat gets its occupant; its tools are the
-   ops surface). Post-MVP themes: the human CLI pass and OpenTUI
+   below) — **done =** the delegation loop proven end to end (durable
+   assignment → worker run → durable result → originating inbox → speaker
+   reports it), the six-question protocol answered, crash/retry
+   deterministic tests, one live filing into the right repository with
+   retained evidence, `worker-*` eval cases. Root v1 (the master chat
+   gets its occupant; its tools are the ops surface) — **done =** a
+   master-chat message causes the Root to operate the system through the
+   ops tools (activate a chat, revise a mandate via the validating write
+   path) with durable evidence per operation and no raw file writes: the
+   journey "activate the gym group" happens entirely from WhatsApp. That
+   is the MVP. Post-MVP themes: the human CLI pass and OpenTUI
    dashboard (opens with the workspace split), brief-aware judge,
    packaging/npx, git-backed home, wiki projection, derived-maps
    regeneration, dormant `skills`/`run_skills` table deletion.
@@ -862,6 +1010,13 @@ Accepted, durable, and owned here rather than in commit messages:
   `subscribe` seam on the session controller have no consumer outside the
   WhatsApp module since the facade landed; the Memory slice either adopts them
   onto the facade or deletes them.
+- **DM identity forms** — a WhatsApp DM has two chat ids (phone-number form
+  and `@lid` privacy form) and inbound traffic may use either; `ambient
+activate <number>` covers only the pn form, so the first real master-DM
+  test got silence until the lid form was activated separately (2026-08-13).
+  Fix at the next touch: activate resolves both forms via the mirror
+  (device-list/contacts know the mapping) and writes one mandate per form —
+  or the record gate learns id aliasing.
 - **libsignal stdout noise** — live runs print session-establishment output
   (including key buffers) directly from the libsignal dependency, bypassing
   the session logger; capture live-run output to private files only.

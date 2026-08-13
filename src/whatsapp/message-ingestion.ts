@@ -23,6 +23,11 @@ export function createWhatsAppAcceptedSourceConsumer(
   accountId: string,
   repository: MessageIngestionRepository,
   onAcceptedMessage?: (result: MessageIngestionResult) => void,
+  // Canonical chat identity (ADR 0002 follow-up): every retained conversation
+  // id is resolved through the account's alias map BEFORE anything durable is
+  // written, so one human DM is one conversation everywhere downstream. The
+  // payload keeps the wire-form chat id as channel evidence.
+  canonicalize: (chatId: string) => Promise<string> | string = (chatId) => chatId,
 ): WhatsAppAcceptedSourceConsumer {
   let source: WhatsAppDataStore | undefined;
   let active = false;
@@ -46,10 +51,17 @@ export function createWhatsAppAcceptedSourceConsumer(
 
       for (const batch of batches) {
         if (!active) return;
+        const mapped = state === "active" ? observationsFromBatch(accountId, batch) : [];
+        const observations = await Promise.all(
+          mapped.map(async (observation) => ({
+            ...observation,
+            conversationId: await canonicalize(observation.conversationId),
+          })),
+        );
         const results = await repository.retainBatch({
           accountId,
           seq: batch.seq,
-          observations: state === "active" ? observationsFromBatch(accountId, batch) : [],
+          observations,
         });
         afterSeq = batch.seq;
         for (const result of results) {

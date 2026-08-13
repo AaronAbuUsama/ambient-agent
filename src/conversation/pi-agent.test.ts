@@ -25,6 +25,7 @@ function fauxRunner(faux: ReturnType<typeof fauxProvider>, maxOutputTokens = 102
 const input = {
   conversationId: "chat-1",
   instructions: "Be concise.",
+  skills: [],
   newMessages: [
     {
       observationId: "observation-1",
@@ -121,4 +122,37 @@ test("Pi Conversation forwards output limits and propagates provider errors", as
     }),
   ).rejects.toThrow("provider unavailable");
   expect(maxTokens).toBe(321);
+});
+
+test("granted skills are appended to the system prompt, none means the base prompt", async () => {
+  const faux = fauxProvider();
+  const prompts: string[] = [];
+  const respond = (context: { systemPrompt?: string }) => {
+    prompts.push(context.systemPrompt ?? "");
+    return fauxAssistantMessage([fauxText("noted")], { stopReason: "stop" });
+  };
+  faux.setResponses([respond, respond]);
+  const agent = createPiConversationAgent(fauxRunner(faux));
+  const tools = {
+    async sendMessage() {
+      return { operationId: "op-1" };
+    },
+    async recall() {
+      return { claims: [] };
+    },
+  };
+
+  await agent.run(
+    {
+      ...input,
+      skills: [{ name: "triage", content: "End every reply with the marker AMB-1." }],
+    },
+    tools,
+  );
+  await agent.run(input, tools);
+
+  expect(prompts[0]).toContain("You are Ambient's Conversation Agent.");
+  expect(prompts[0]).toContain("## Skill: triage");
+  expect(prompts[0]).toContain("End every reply with the marker AMB-1.");
+  expect(prompts[1]).not.toContain("## Skill:");
 });

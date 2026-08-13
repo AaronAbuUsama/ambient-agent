@@ -35,12 +35,12 @@ export interface ConversationWorkItem {
  * backlog. The operator seeds these records from configuration today; a Root
  * slice later becomes their author without changing any consumer.
  */
-export interface ConversationSpeakerSeedEntry {
+export interface SpeakerMandateEntry {
   readonly conversationId: string;
   readonly mode: "listening" | "responding";
   /** Per-chat standard-prompt override; the global configuration string is the fallback. */
   readonly instructions?: string;
-  /** Explicit activation watermark, e.g. "attend from an hour ago". Defaults to the seed time. */
+  /** Explicit activation watermark for tests; production never authors it (ADR 0002). */
   readonly attendFrom?: string;
   /** The mandate's memory brief: what this chat's memory is FOR, carried to every digest. */
   readonly memoryBrief?: string;
@@ -48,12 +48,15 @@ export interface ConversationSpeakerSeedEntry {
 
 export interface ConversationSpeakerStore {
   /**
-   * Upsert exactly the listed records; rows not named are never touched, so a
-   * future Root author and the configuration seed can coexist. On re-seed,
-   * `attendFrom` is preserved; it advances only when a record turns
-   * `responding` again or the entry sets it explicitly.
+   * The one authoritative mutation path (ADR 0002): active records mirror
+   * exactly the listed mandates. Listed chats are upserted; unlisted rows are
+   * removed. `attendFrom` is machine-stamped — preserved across re-syncs, it
+   * advances only when a record flips to `responding` (activation always
+   * starts from now).
    */
-  seed(entries: readonly ConversationSpeakerSeedEntry[]): Promise<void>;
+  sync(entries: readonly SpeakerMandateEntry[]): Promise<void>;
+  /** The current record set, so a caller can compose a sync without dropping rows (proof harness). */
+  current(): Promise<readonly SpeakerMandateEntry[]>;
   /** The production outbound guard: a destination is sendable only with an active responding speaker. */
   isResponding(conversationId: string): Promise<boolean>;
 }
@@ -171,10 +174,17 @@ export interface ConversationMessage {
   readonly fromAgent: boolean;
 }
 
+/** One granted skill's text, ready for the speaker's prompt. */
+export interface ConversationSkill {
+  readonly name: string;
+  readonly content: string;
+}
+
 export interface ConversationInput {
   readonly conversationId: string;
   readonly newMessages: readonly ConversationMessage[];
   readonly instructions: string;
+  readonly skills: readonly ConversationSkill[];
 }
 
 export interface ConversationResult {

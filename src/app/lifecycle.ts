@@ -26,6 +26,11 @@ export interface AmbientLifecycleDependencies {
     start(): Promise<void>;
     stop(): Promise<void>;
   };
+  /** The policy-plane wake hint: mandate edits take effect without a restart. */
+  readonly policyWatcher?: {
+    start(): Promise<void>;
+    stop(): Promise<void>;
+  };
   /** Memory digests durable jobs; it does not depend on channel health. */
   readonly memoryService?: {
     start(): Promise<void>;
@@ -45,6 +50,7 @@ export function createAmbientLifecycle({
   whatsapp,
   conversation,
   evaluations,
+  policyWatcher,
   memoryService,
 }: AmbientLifecycleDependencies): Ambient {
   const exit = Promise.withResolvers<AmbientExit>();
@@ -56,6 +62,7 @@ export function createAmbientLifecycle({
     start() {
       if (stopping) return Promise.reject(new Error("Ambient has stopped"));
       starting ??= (async () => {
+        await policyWatcher?.start();
         await evaluations?.start();
         await memoryService?.start();
         await whatsapp.start();
@@ -91,6 +98,11 @@ export function createAmbientLifecycle({
         }
         try {
           await evaluations?.stop();
+        } catch (error) {
+          cleanupError ??= error;
+        }
+        try {
+          await policyWatcher?.stop();
         } catch (error) {
           cleanupError ??= error;
         }

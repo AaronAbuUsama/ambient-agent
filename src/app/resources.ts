@@ -7,11 +7,16 @@ import { createEvaluationService } from "../evals/service";
 import type { MemoryService } from "../memory/contract";
 import { createPiMemoryAgent } from "../memory/pi-agent";
 import { createMemoryService } from "../memory/service";
+import { scanMandates } from "../home/mandates";
+import { skillsForChat } from "../home/skills";
+import { createMandateWatcher } from "../home/watcher";
 import { createModelRuntime, type ModelRuntime } from "../models/runtime";
 import { createWhatsAppAcceptedSourceConsumer } from "../whatsapp/message-ingestion";
+import { createAliasResolver } from "../whatsapp/mirror";
 import { createWhatsAppService, type WhatsAppService } from "../whatsapp/service";
 import type { AppConfig } from "./config";
 import type { AmbientLifecycleDependencies } from "./lifecycle";
+import { silentOperationalLog, type OperationalLog } from "./operational-log";
 
 export interface AppResources extends AmbientLifecycleDependencies {
   readonly database: AmbientDatabase;
@@ -29,6 +34,8 @@ export interface AcceptedMessage {
 }
 
 export interface AppResourceOptions {
+  /** The daemon's voice; silent by default (tests, proofs that capture their own evidence). */
+  readonly log?: OperationalLog;
   readonly onAcceptedMessage?: (input: AcceptedMessage) => void;
   /**
    * Proof-only safety override that STRENGTHENS the final outbound guard: the
@@ -44,17 +51,30 @@ export async function createAppResources(
 ): Promise<AppResources> {
   const database = await openAmbientDatabase(config.database.url);
   try {
+    const log = options.log ?? silentOperationalLog;
+    // The voice speaks in slugs — the product's own safe labels — falling
+    // back to a shortened id for chats without a folder.
+    const chatLabels = new Map<string, string>();
+    const label = (conversationId: string) =>
+      chatLabels.get(conversationId) ?? `${conversationId.slice(0, 10)}…`;
     let conversation: ConversationService | undefined;
+    // One human, one conversation: every id entering the durable stores is
+    // resolved through the account's alias map, and rows retained before an
+    // alias was known are healed at startup (idempotent).
+    const aliases = createAliasResolver(config.whatsapp.dataDirectory, config.whatsapp.accountId);
+    await database.repositories.identity.canonicalize(await aliases.snapshot());
     const acceptedSource = createWhatsAppAcceptedSourceConsumer(
       config.whatsapp.accountId,
       database.repositories.messageIngestion,
       (result) => {
+        log.messageReceived(label(result.conversationId));
         options.onAcceptedMessage?.({
           observationId: result.observationId,
           conversationId: result.conversationId,
         });
         void conversation?.wake(result.conversationId).catch(() => {});
       },
+      (chatId) => aliases.resolve(chatId),
     );
     const whatsapp = createWhatsAppService({
       accountId: config.whatsapp.accountId,
@@ -63,7 +83,46 @@ export async function createAppResources(
       logLevel: config.logging.level,
       acceptedSource,
     });
-    await database.repositories.speakers.seed(config.conversation.speakers);
+    // The mandate files are the control (ADR 0002): active records mirror the
+    // set of valid chat folders. Broken chats are simply absent — brokenness
+    // is recomputed loudly by `ambient doctor`, never stored.
+    let lastMandateSummary = "";
+    const resyncMandates = async () => {
+      const mandates = scanMandates(config.home);
+      // Mandate ids are canonicalized too, so a hand-written lid-form file
+      // still governs the one true conversation.
+      const canonical = await Promise.all(
+        mandates.active.map(async (mandate) => ({
+          ...mandate,
+          chatId: await aliases.resolve(mandate.chatId),
+        })),
+      );
+      await database.repositories.speakers.sync(
+        canonical.map((mandate) => ({
+          conversationId: mandate.chatId,
+          mode: mandate.mode,
+          ...(mandate.instructions === undefined ? {} : { instructions: mandate.instructions }),
+          ...(mandate.memoryBrief === undefined ? {} : { memoryBrief: mandate.memoryBrief }),
+        })),
+      );
+      chatLabels.clear();
+      for (const mandate of canonical) chatLabels.set(mandate.chatId, mandate.slug);
+      const summary =
+        [
+          ...mandates.active.map((mandate) => `${mandate.slug}(${mandate.mode})`),
+          ...mandates.broken.map((chat) => `${chat.slug}(BROKEN)`),
+        ].join(" ") || "none";
+      if (summary !== lastMandateSummary) {
+        lastMandateSummary = summary;
+        log.mandatesChanged(summary);
+        for (const chat of mandates.broken) log.chatBroken(chat.slug, chat.problem);
+      }
+    };
+    await resyncMandates();
+    // The watcher is a wake hint, never the authority: an edited mandate
+    // takes effect without a restart, and the startup reconcile above stays
+    // the truth after any missed event.
+    const policyWatcher = createMandateWatcher(config.home, resyncMandates);
     const models = createModelRuntime(config.models);
     const evaluations = createEvaluationService({
       work: database.repositories.evaluationWork,
@@ -100,20 +159,40 @@ export async function createAppResources(
       const proofGuard = options.authorizeOutbound;
       const speakerGuard = (conversationId: string) =>
         database.repositories.speakers.isResponding(conversationId);
-      const outboundGuard =
-        config.conversation.outboundMode === "conversation"
-          ? proofGuard
-            ? async (conversationId: string) =>
-                (await speakerGuard(conversationId)) && proofGuard(conversationId)
-            : speakerGuard
-          : proofGuard;
+      const outboundGuard = proofGuard
+        ? async (conversationId: string) =>
+            (await speakerGuard(conversationId)) && proofGuard(conversationId)
+        : speakerGuard;
       conversation = createConversationService({
         scheduling: config.conversation.scheduling,
         instructions: config.conversation.instructions,
+        // Skills are read fresh from the home per run: the chat's own skills
+        // shadow home skills by name; broken skills are skipped (doctor is
+        // the loud surface).
+        skills: (conversationId) => {
+          // Run ids are canonical; the label map (kept fresh by resync) is
+          // the canonical-id → slug view of the same mandates.
+          const slug = chatLabels.get(conversationId);
+          return Promise.resolve(
+            skillsForChat(config.home, slug).skills.map(({ name, content }) => ({
+              name,
+              content,
+            })),
+          );
+        },
         work: database.repositories.conversationWork,
         recall: database.repositories.memory,
         agent: createPiConversationAgent(runner),
-        sender: whatsapp.conversationSender(config.conversation.outboundMode, outboundGuard),
+        sender: (() => {
+          const sender = whatsapp.conversationSender(outboundGuard);
+          return {
+            async sendText(message: Parameters<typeof sender.sendText>[0]) {
+              const result = await sender.sendText(message);
+              log.replySent(label(message.conversationId));
+              return result;
+            },
+          };
+        })(),
       });
     }
 
@@ -122,6 +201,7 @@ export async function createAppResources(
       whatsapp,
       evaluations,
       models,
+      policyWatcher,
       ...(memoryService ? { memoryService } : {}),
       ...(conversation ? { conversation } : {}),
     };

@@ -71,7 +71,7 @@ async function retainMessage(
 }
 
 async function allow(database: AmbientDatabase, instructions?: string): Promise<void> {
-  await database.repositories.speakers.seed([
+  await database.repositories.speakers.sync([
     {
       conversationId: "chat-1",
       mode: "responding",

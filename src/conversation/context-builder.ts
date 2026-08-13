@@ -3,6 +3,7 @@ import type {
   ConversationClaim,
   ConversationInput,
   ConversationMessage,
+  ConversationSkill,
   ConversationWorkStore,
 } from "./contract";
 
@@ -13,6 +14,8 @@ export interface ConversationContextBuilder {
 export function createConversationContextBuilder(
   evidence: Pick<ConversationWorkStore, "observations">,
   instructions: string,
+  skills: (conversationId: string) => Promise<readonly ConversationSkill[]> = () =>
+    Promise.resolve([]),
 ): ConversationContextBuilder {
   return {
     async build(claim) {
@@ -48,6 +51,7 @@ export function createConversationContextBuilder(
         conversationId: claim.conversationId,
         newMessages,
         instructions: claim.instructions ?? instructions,
+        skills: await skills(claim.conversationId),
       };
     },
   };

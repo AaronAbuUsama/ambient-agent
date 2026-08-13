@@ -1,0 +1,69 @@
+# Ambient deployment configuration — documented example.
+#
+# The live document is `~/.ambient/config.yaml` (created by `ambient init`).
+# It is restart-class and operator-owned: edits apply on the next start.
+# Secrets NEVER live in this file — credential entries name environment
+# variables and the runtime reads them from the environment.
+#
+# Overrides: AMBIENT_HOME moves the home; AMBIENT_CONFIG points at an
+# explicit document (the proof rig pins the repo's ambient.config.json).
+
+# The WhatsApp account identity Ambient runs as. One deployment, one account.
+account: main
+
+# The master's direct chat — the admin seat the Root Agent occupies at
+# Root v1. A DM chat id is the phone number plus @s.whatsapp.net.
+master:
+  chatId: "15551234567@s.whatsapp.net"
+
+# Model providers: executable endpoints Ambient may call.
+# `credential: none` means the endpoint needs no key (e.g. a local proxy).
+# Otherwise `credential.env` lists environment variables tried in order.
+providers:
+  vibe:
+    adapter: openai-compatible
+    baseUrl: http://127.0.0.1:8317/v1
+    credential: none
+    models:
+      gemini-3.6-flash-high: {}
+  # qwen:
+  #   adapter: openai-compatible
+  #   baseUrl: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+  #   credential: { env: [QWEN_API_KEY, DASHSCOPE_API_KEY] }
+  #   models:
+  #     qwen3.6-flash: { contextWindow: 262144, maxTokens: 65536, reasoning: true }
+
+# Role selections: which provider and model each agent kind runs on.
+# Roles: conversation (speakers), memory, evaluator, worker.
+roles:
+  conversation:
+    provider: vibe
+    model: gemini-3.6-flash-high
+    thinking: off
+    maxOutputTokens: 4096
+  memory:
+    provider: vibe
+    model: gemini-3.6-flash-high
+    thinking: off
+    maxOutputTokens: 8192
+  evaluator:
+    provider: vibe
+    model: gemini-3.6-flash-high
+    thinking: off
+    maxOutputTokens: 2048
+
+# The conversation service.
+# `enabled` is the global kill switch: false = no speaker ever runs.
+# Per-chat control is the mandate (chats/<slug>/mandate.yaml) — being
+# retired into mandates entirely as the Home v1 slice completes.
+conversation:
+  enabled: false
+
+# Optional sections with sensible defaults:
+#
+# whatsapp:
+#   historyBackfillLimit: 100     # cap history import (multiple of 25)
+# database:
+#   url: file:/custom/path.db     # default: <home>/state/ambient.db
+# logging:
+#   level: warn                   # pino level for the runtime log

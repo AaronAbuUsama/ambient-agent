@@ -116,7 +116,7 @@ test("an attached account follows committed accepted-source changes", async () =
   expect(stops).toBe(1);
 });
 
-test("loopback sends resolve the linked account and use durable operations", async () => {
+test("sends use durable idempotent operations", async () => {
   const driver = createTestWhatsAppSession({
     identity: {
       jid: "15551234567:12@s.whatsapp.net",
@@ -124,22 +124,21 @@ test("loopback sends resolve the linked account and use durable operations", asy
     },
   });
   const session = new WhatsAppSessionController({
-    accountId: "loopback-send",
+    accountId: "durable-send",
     createBackend: () => memoryBackend(),
     openSession: () => driver.session,
   });
 
   try {
     await session.attach();
-    const loopback = session.loopbackAddress();
-    expect(loopback).toBe("15551234567@s.whatsapp.net");
-    const operation = await session.sendText(loopback!, "Loopback only", "proof:loopback:1");
+    const target = "15551234567@s.whatsapp.net";
+    const operation = await session.sendText(target, "Durable only", "proof:send:1");
     expect(operation.input).toMatchObject({
       type: "send",
-      chatId: loopback,
-      content: { text: "Loopback only" },
+      chatId: target,
+      content: { text: "Durable only" },
     });
-    expect(operation.idempotencyKey).toBe("proof:loopback:1");
+    expect(operation.idempotencyKey).toBe("proof:send:1");
   } finally {
     await session.dispose();
   }

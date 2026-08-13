@@ -8,7 +8,10 @@ import { createAppResources } from "./resources";
  * Opens every durable resource and hides concrete infrastructure behind the
  * Ambient lifecycle facade.
  */
-export async function createAmbient(config: AppConfig): Promise<Ambient> {
-  const resources = await createAppResources(config);
+export async function createAmbient(
+  config: AppConfig,
+  options: { readonly log?: import("./operational-log").OperationalLog } = {},
+): Promise<Ambient> {
+  const resources = await createAppResources(config, options);
   return createAmbientLifecycle(resources);
 }

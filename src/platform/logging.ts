@@ -1,4 +1,5 @@
 import pino, { type Logger } from "pino";
+import pretty from "pino-pretty";
 
 /**
  * Fields the session log censors.
@@ -60,4 +61,48 @@ export function createSessionLogger(file: string, level = "warn"): Logger {
     },
     pino.destination({ dest: file, mkdir: true, sync: true }),
   );
+}
+
+/**
+ * Silence libsignal's raw console output at the daemon edge. The library
+ * inside whatsappd prints session-establishment state — INCLUDING private
+ * key buffers — directly through console.log, bypassing every logger. Until
+ * whatsappd pins a silent build (the upstream fix), the daemon drops those
+ * specific shapes and nothing else.
+ */
+export function muzzleLibsignalConsole(): void {
+  const noisyText =
+    /^(Closing (open )?session|Decrypted message with closed session|Session error|Duplicate message)/;
+  const isNoisy = (first: unknown): boolean =>
+    (typeof first === "string" && noisyText.test(first)) ||
+    (typeof first === "object" &&
+      first !== null &&
+      ("_chains" in first || "currentRatchet" in first));
+  for (const method of ["log", "info", "warn"] as const) {
+    const original = console[method].bind(console);
+    console[method] = (...parameters: unknown[]) => {
+      if (isNoisy(parameters[0])) return;
+      original(...parameters);
+    };
+  }
+}
+
+/**
+ * The operational logger the daemon narrates through: pretty lines on a
+ * terminal, ndjson always appended to the file (the future TUI tails it).
+ * Level comes from configuration; redaction matches the session logger.
+ */
+export function createOperationalLogger(file: string, level = "info"): Logger {
+  const streams: pino.StreamEntry[] = [
+    { level: level as pino.Level, stream: pino.destination({ dest: file, mkdir: true }) },
+    // The daemon always narrates to stdout: pretty lines on a terminal,
+    // ndjson when piped (supervisors, proofs).
+    {
+      level: level as pino.Level,
+      stream: process.stdout.isTTY
+        ? pretty({ colorize: true, translateTime: "HH:MM:ss", ignore: "pid,hostname" })
+        : pino.destination(1),
+    },
+  ];
+  return pino({ level, redact: { paths: redactedPaths } }, pino.multistream(streams));
 }

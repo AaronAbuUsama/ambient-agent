@@ -4,6 +4,7 @@ import type {
   ConversationClaim,
   ConversationRecall,
   ConversationSchedulingConfig,
+  ConversationSkill,
   ConversationWorkStore,
   ScopedMessageSender,
 } from "./contract";
@@ -24,6 +25,8 @@ export interface ConversationServiceOptions {
   readonly agentId?: string;
   readonly promptVersion?: string;
   readonly instructions?: string;
+  /** The chat's granted skills, read fresh at run assembly (the files are the control). */
+  readonly skills?: (conversationId: string) => Promise<readonly ConversationSkill[]>;
   readonly scheduling: ConversationSchedulingConfig;
   readonly work: ConversationWorkStore;
   readonly recall: ConversationRecall;
@@ -41,6 +44,7 @@ export function createConversationService(
   const contextBuilder: ConversationContextBuilder = createConversationContextBuilder(
     options.work,
     options.instructions ?? "Respond naturally and helpfully when a response is useful.",
+    options.skills,
   );
   let active = false;
   let activeRunAbort: AbortController | undefined;

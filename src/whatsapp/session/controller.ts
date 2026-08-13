@@ -245,14 +245,6 @@ export class WhatsAppSessionController {
     });
   }
 
-  /** The linked account's own chat address, suitable for a send-only loopback proof. */
-  loopbackAddress(): string | undefined {
-    const identity = this.#session?.identity?.();
-    if (!identity) return undefined;
-    if (identity.phoneE164) return `${identity.phoneE164.replace(/^\+/, "")}@s.whatsapp.net`;
-    return identity.jid.replace(/:\d+@/, "@");
-  }
-
   /** Send a text message through the account's durable idempotent operation queue. */
   async sendText(
     chatId: string,
@@ -336,11 +328,17 @@ export class WhatsAppSessionController {
     }
   }
 
-  #wakeAcceptedSource(): void {
+  #wakeAcceptedSource(attempt = 0): void {
     const acceptedSource = this.#options.acceptedSource;
     if (!acceptedSource) return;
     void acceptedSource.wake().catch((error: unknown) => {
       if (this.#attachment === "detached" || this.#attachment === "detaching") return;
+      // A transient storage lock is not channel death: the cursor is durable,
+      // so re-waking shortly loses nothing. Only persistent failure detaches.
+      if (attempt < 3 && messageOf(error).includes("SQLITE_BUSY")) {
+        setTimeout(() => this.#wakeAcceptedSource(attempt + 1), 500 * (attempt + 1));
+        return;
+      }
       this.#error = messageOf(error);
       this.#invalidate();
       void this.detach();

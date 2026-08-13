@@ -53,7 +53,7 @@ async function allow(
   conversationId = "chat-1",
   attendFrom = "2026-08-11T00:00:00.000Z",
 ): Promise<void> {
-  await database.repositories.speakers.seed([{ conversationId, mode: "responding", attendFrom }]);
+  await database.repositories.speakers.sync([{ conversationId, mode: "responding", attendFrom }]);
 }
 
 function claimInput(
@@ -302,7 +302,7 @@ test("chats without a responding speaker are retained but never scheduled or cla
       await work.claimNext(claimInput("scheduler-1", "2026-08-11T10:00:05.000Z")),
     ).toBeUndefined();
 
-    await database.repositories.speakers.seed([
+    await database.repositories.speakers.sync([
       { conversationId: "chat-1", mode: "listening", attendFrom: "2026-08-11T00:00:00.000Z" },
     ]);
     await work.notify("chat-1", scheduling);
@@ -367,7 +367,7 @@ test("a silenced speaker clears its stale window at the next claim", async () =>
     await work.notify("chat-1", scheduling);
     expect(await work.nextWakeAt()).toBe("2026-08-11T10:00:01.000Z");
 
-    await database.repositories.speakers.seed([{ conversationId: "chat-1", mode: "listening" }]);
+    await database.repositories.speakers.sync([{ conversationId: "chat-1", mode: "listening" }]);
     expect(
       await work.claimNext(claimInput("scheduler-1", "2026-08-11T10:00:01.000Z")),
     ).toBeUndefined();
@@ -375,27 +375,30 @@ test("a silenced speaker clears its stale window at the next claim", async () =>
   });
 });
 
-test("seeding is upsert-listed and preserves activation on re-seed", async () => {
+test("sync mirrors the mandate set and preserves activation across re-syncs", async () => {
   await withDatabase(async (database) => {
     const speakers = database.repositories.speakers;
     const work = database.repositories.conversationWork;
-    await allow(database, "chat-1", "2026-08-11T00:00:00.000Z");
-    await allow(database, "chat-2", "2026-08-11T00:00:00.000Z");
+    await speakers.sync([
+      { conversationId: "chat-1", mode: "responding", attendFrom: "2026-08-11T00:00:00.000Z" },
+      { conversationId: "chat-2", mode: "responding", attendFrom: "2026-08-11T00:00:00.000Z" },
+    ]);
 
-    // Re-seed without attendFrom (a restart): the watermark is preserved, so
-    // an item older than the re-seed time is still claimable.
-    await speakers.seed([{ conversationId: "chat-1", mode: "responding" }]);
+    // Re-sync without attendFrom (a restart): the watermark is preserved, so
+    // an item older than the re-sync time is still claimable.
+    await speakers.sync([
+      { conversationId: "chat-1", mode: "responding" },
+      { conversationId: "chat-2", mode: "responding" },
+    ]);
     await enqueue(database, "1", "2026-08-11T10:00:00.000Z");
     await work.notify("chat-1", scheduling);
     const claim = await work.claimNext(claimInput("scheduler-1", "2026-08-11T10:00:01.000Z"));
     expect(claim?.items.map(({ id }) => id)).toEqual(["inbox-1"]);
 
-    // Rows the seed does not name are never touched: chat-2 still claims.
-    await enqueue(database, "2", "2026-08-11T10:00:00.000Z", "chat-2");
-    await work.notify("chat-2", scheduling);
-    expect(
-      (await work.claimNext(claimInput("scheduler-1", "2026-08-11T10:00:01.000Z")))?.conversationId,
-    ).toBe("chat-2");
+    // Mirror semantics: a chat whose mandate disappears loses its record.
+    await speakers.sync([{ conversationId: "chat-1", mode: "responding" }]);
+    expect(await speakers.isResponding("chat-1")).toBe(true);
+    expect(await speakers.isResponding("chat-2")).toBe(false);
   });
 });
 
@@ -403,14 +406,14 @@ test("turning a listening speaker responding re-activates from the flip, not the
   await withDatabase(async (database) => {
     const speakers = database.repositories.speakers;
     const work = database.repositories.conversationWork;
-    await speakers.seed([
+    await speakers.sync([
       { conversationId: "chat-1", mode: "listening", attendFrom: "2026-08-11T00:00:00.000Z" },
     ]);
     await enqueue(database, "1", "2026-08-11T10:00:00.000Z");
 
     // Flip to responding without an explicit watermark: attendFrom advances to
     // the flip time, so the listening-era backlog is never claimed.
-    await speakers.seed([{ conversationId: "chat-1", mode: "responding" }]);
+    await speakers.sync([{ conversationId: "chat-1", mode: "responding" }]);
     await work.notify("chat-1", scheduling);
     expect(await work.nextWakeAt()).toBeUndefined();
     expect((await database.repositories.inbox.pending("chat-1")).map(({ id }) => id)).toEqual([
