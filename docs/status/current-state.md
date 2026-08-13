@@ -294,11 +294,26 @@ across 15 files (new: default-on gating including unlisted chats never
 digesting, quiet coalescing, ordered windows, park-after-three, memory
 silence, brief flow, crash-recovered windows); `drizzle-kit check` clean
 (migrations: drop `memory_jobs`, create `memory_schedule`, add
-`memory_brief`). **Not yet run:** the live golden digest
-(`proof:memory-digest`) — it needs the private rig profiles and a model
-pool, and per the master's wipe-and-re-read decision the derived ontology is
-reset first so the v3 agent re-derives memory from source and is graded
-against the golden reference. That reset + rerun is this slice's ship gate.
+`memory_brief`). Live (rig, 2026-08-13, gemini pool, wipe-and-re-read per
+the master's decision; pre-wipe backup in `.proof-private/backups/`): the
+rebuilt agent re-derived the Bug Reports memory from source through the
+production path — 8 windows, contract metrics perfect on every window
+(grounding 1.0, zero banned identity links), **golden coverage 20/22 — the
+best yet** (v2 shipped 17/22; newly met labels include previously-unmet
+ones; only the prayer-times root-cause phrasing and the "vital" preference
+remain), 40 issue / 7 person / 4 repository / 1 product / 4 organization
+entities, 180 claims, 168 recalled. Judged: completeness mean 0.86 (gate
+0.7); faithfulness mean 0.93 BUT one window scored 0.67 — below the 0.7
+per-window floor, so the strict judged gate did not pass on the first
+attempt (the judge flagged 3 of that window's 9 claims as not fully
+supported; all cite real batch messages, so the dispute is wording, not
+fabrication). Production ship deliberately withheld pending that review.
+
+**Ship status.** Not shipped to production. The floor breach is one
+window's wording dispute against a ground truth the extraction otherwise
+beats; the master decides whether to review the three flagged claims,
+re-roll the window, or adjust the floor before the production
+wipe-and-re-read.
 
 **Open questions.** Live retention gaps (media and Ambient's own messages
 are not retained live — the mapper keeps inbound text only); abandoned
