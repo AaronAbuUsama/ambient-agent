@@ -245,14 +245,6 @@ export class WhatsAppSessionController {
     });
   }
 
-  /** The linked account's own chat address, suitable for a send-only loopback proof. */
-  loopbackAddress(): string | undefined {
-    const identity = this.#session?.identity?.();
-    if (!identity) return undefined;
-    if (identity.phoneE164) return `${identity.phoneE164.replace(/^\+/, "")}@s.whatsapp.net`;
-    return identity.jid.replace(/:\d+@/, "@");
-  }
-
   /** Send a text message through the account's durable idempotent operation queue. */
   async sendText(
     chatId: string,

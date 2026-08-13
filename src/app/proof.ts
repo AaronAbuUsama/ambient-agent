@@ -130,7 +130,6 @@ export async function createAmbientProofHarness(
     conversation: {
       ...config.conversation,
       enabled: conversational,
-      outboundMode: conversational ? "conversation" : config.conversation.outboundMode,
       instructions: safety.instructions ?? config.conversation.instructions,
     },
   };

@@ -33,7 +33,6 @@ export interface WhatsAppService {
    * strengthens the final guard and is refused when it does not match.
    */
   conversationSender(
-    mode: "loopback" | "conversation",
     authorize?: (conversationId: string) => boolean | Promise<boolean>,
   ): ScopedMessageSender;
   /** Chats the authenticated account can see, for proof-side target matching. */
@@ -64,15 +63,15 @@ export function createWhatsAppService(options: WhatsAppServiceOptions): WhatsApp
       return controller.dispose();
     },
 
-    conversationSender(mode, authorize) {
+    conversationSender(authorize) {
       return {
         async sendText({ conversationId, text, idempotencyKey }) {
-          const target = mode === "loopback" ? controller.loopbackAddress() : conversationId;
-          if (!target) throw new Error("WhatsApp loopback address is not available");
-          if (authorize && !(await authorize(target))) {
-            throw new Error(`outbound destination "${target}" is not authorized for this run`);
+          if (authorize && !(await authorize(conversationId))) {
+            throw new Error(
+              `outbound destination "${conversationId}" is not authorized for this run`,
+            );
           }
-          const operation = await controller.sendText(target, text, idempotencyKey);
+          const operation = await controller.sendText(conversationId, text, idempotencyKey);
           return { operationId: operation.id };
         },
       };

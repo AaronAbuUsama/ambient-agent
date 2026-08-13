@@ -46,7 +46,6 @@ test("the committed rig document supplies the deployment defaults", () => {
     maximumItemsPerRun: 50,
   });
   expect(config.conversation.enabled).toBe(false);
-  expect(config.conversation.outboundMode).toBe("loopback");
   expect(config.conversation.speakers).toEqual([]);
   expect(config.models.roles.conversation).toEqual({
     provider: "qwen",
@@ -101,7 +100,6 @@ test("a configuration document owns every structured section", async () => {
       whatsapp: { dataDirectory: "/var/ambient", historyBackfillLimit: 75 },
       conversation: {
         enabled: true,
-        outboundMode: "conversation",
         instructions: "Be concise.",
         speakers: [
           { conversationId: "1203@g.us", instructions: "You are in the test group." },
@@ -132,7 +130,6 @@ test("a configuration document owns every structured section", async () => {
       expect(config.master).toEqual({ chatId: "9715@s.whatsapp.net" });
       expect(config.conversation).toMatchObject({
         enabled: true,
-        outboundMode: "conversation",
         instructions: "Be concise.",
       });
       expect(config.conversation.speakers).toEqual([
@@ -205,7 +202,7 @@ test.each([
     }),
     "maximumWaitMs must be at least debounceMs",
   ],
-  [JSON.stringify({ conversation: { outboundMode: "disabled" }, ...models }), undefined],
+  [JSON.stringify({ conversation: { enabled: "yes" }, ...models }), undefined],
   [JSON.stringify({ conversation: { speakers: [{ conversationId: "" }] }, ...models }), undefined],
   [
     JSON.stringify({

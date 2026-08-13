@@ -23,7 +23,6 @@ const configurationDocumentSchema = z
     conversation: z
       .object({
         enabled: z.boolean().default(false),
-        outboundMode: z.enum(["loopback", "conversation"]).default("loopback"),
         instructions: z
           .string()
           .min(1)

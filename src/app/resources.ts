@@ -100,20 +100,17 @@ export async function createAppResources(
       const proofGuard = options.authorizeOutbound;
       const speakerGuard = (conversationId: string) =>
         database.repositories.speakers.isResponding(conversationId);
-      const outboundGuard =
-        config.conversation.outboundMode === "conversation"
-          ? proofGuard
-            ? async (conversationId: string) =>
-                (await speakerGuard(conversationId)) && proofGuard(conversationId)
-            : speakerGuard
-          : proofGuard;
+      const outboundGuard = proofGuard
+        ? async (conversationId: string) =>
+            (await speakerGuard(conversationId)) && proofGuard(conversationId)
+        : speakerGuard;
       conversation = createConversationService({
         scheduling: config.conversation.scheduling,
         instructions: config.conversation.instructions,
         work: database.repositories.conversationWork,
         recall: database.repositories.memory,
         agent: createPiConversationAgent(runner),
-        sender: whatsapp.conversationSender(config.conversation.outboundMode, outboundGuard),
+        sender: whatsapp.conversationSender(outboundGuard),
       });
     }
 
