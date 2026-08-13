@@ -106,3 +106,25 @@ code, logs, and durable records key on the chat id; the mandate's chat id
 line maps folder to id; renaming a folder changes nothing durable. One chat
 id is bound by at most one folder — two claimants make both chats broken.
 _Avoid_: chat id as a folder name (ids contain `@`, dots, and phone numbers)
+
+### Identity
+
+**Native id**:
+A WhatsApp id for one party — a person or a chat. WhatsApp gives one human
+TWO forms, a phone form and a lid form, and both name the same person: they
+link to one entity, and neither may become a second person. A chat or group
+id is never a person's identity.
+_Avoid_: jid/lid as separate concepts, phone number as identity
+
+**Published name**:
+The name a sender publishes for themselves, retained with every message they
+send. Ambient reads it; Ambient never infers a person's name from message
+text when it is present, and never invents one when it is absent.
+_Avoid_: pushname (wire spelling), display name, contact name
+
+**Linkable identity**:
+A native id a message proves belongs to a real person: its author, the
+author's other form, whoever it mentions, and the author of a quoted
+message. One rule, owned in one place — memory validates proposals against
+it and evaluation scores against the same rule.
+_Avoid_: sender id (narrower — it excludes mentions and the second form)

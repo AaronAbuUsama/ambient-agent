@@ -78,6 +78,7 @@ async function digestInto(
       outcome: digest.outcome,
       windows: digest.windows,
       runs: digest.runIds.length,
+      retried: digest.retried,
       batchSize: digest.batchSize,
       senders: digest.senders.length,
     };

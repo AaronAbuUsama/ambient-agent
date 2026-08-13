@@ -1178,6 +1178,12 @@ Accepted, durable, and owned here rather than in commit messages:
   holds but words differently scores zero, which is how a 20/22 bar sits
   inside a ±1 run-to-run band. Calibration belongs with the per-chat
   answer-key seam already named for the master's re-cut.
+- **One transient provider error ends a whole catch-up run** — a 408 stream
+  disconnect failed a window, and the digest proof stopped there. The chat
+  itself recovers correctly (the window re-derives identically and the
+  watermark holds, so re-running resumes), but a catch-up over hundreds of
+  messages should absorb a blip rather than surface it as a failed gate.
+  The durable machinery is right; nothing retries inside one pass.
 - **Repository bag** — `AmbientRepositories` is now consumed only inside
   `src/app/` (resources and the proof harness) but remains a bag rather than
   explicit surfaces; `runs.start` has no production caller until a Memory or

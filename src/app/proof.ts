@@ -70,6 +70,8 @@ export interface AmbientProofHarness {
     readonly outcome: "done" | "failed";
     readonly runIds: readonly string[];
     readonly windows: number;
+    /** Windows that failed and were re-derived — a blip absorbed, not hidden. */
+    readonly retried: number;
     readonly batchSize: number;
     readonly senders: readonly string[];
   }>;
@@ -247,17 +249,36 @@ export async function createAmbientProofHarness(
       ]);
       const runIds: string[] = [];
       let windows = 0;
+      let retried = 0;
       for (;;) {
         const { outcome, runId } = await memoryService.runOnce();
         if (outcome === "idle") break;
         windows += 1;
-        if (runId !== undefined) runIds.push(runId);
+        // Only completed windows carry gradable evidence; a failed window's
+        // work is done again under a new run id.
+        if (runId !== undefined && outcome === "done") runIds.push(runId);
         if (outcome !== "done") {
-          return { outcome: "failed", runIds, windows, batchSize: batch.length, senders };
+          // A failed window is not terminal by design: the watermark did not
+          // move, so the same window re-derives identically on the next claim.
+          // Catching up over hundreds of messages must survive a provider
+          // blip; only a window that keeps failing ends the drain, and the
+          // chat's own park-after-three still bounds it.
+          retried += 1;
+          if (retried > 3) {
+            return {
+              outcome: "failed",
+              runIds,
+              windows,
+              retried,
+              batchSize: batch.length,
+              senders,
+            };
+          }
+          continue;
         }
         if (windows > 1000) throw new Error("memory digest did not converge");
       }
-      return { outcome: "done", runIds, windows, batchSize: batch.length, senders };
+      return { outcome: "done", runIds, windows, retried, batchSize: batch.length, senders };
     },
 
     recallFor(nativeIds, query = "") {
