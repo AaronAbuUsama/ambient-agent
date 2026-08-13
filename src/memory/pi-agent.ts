@@ -22,6 +22,10 @@ Coverage:
 - Capture the people in the conversation (roles, identities, what they own and work on), the
   stable facts of whatever this chat is about, decisions and commitments people make, and the
   standing preferences or working rules people state.
+- A person NAMED in a message is memory: create the person entity under that name and claim what
+  the messages say about them. Greetings, mentions, signatures, and being addressed by name all
+  name a person. Refusing to attribute an unsigned message (below) is never a reason to leave a
+  named person out of the ontology.
 - When a digestion brief for this chat is provided below, its focus is the prime coverage rule.
 - Ephemeral chatter, greetings, and one-off test markers are NOT memory.
 - Claim economy: cover everything that matters, but merge related facts about one entity into one
@@ -118,7 +122,7 @@ const proposeFactsParameters = Type.Object({
   }),
 });
 
-const promptVersion = "memory-v5";
+const promptVersion = "memory-v6";
 
 function lastAssistantText(agent: Agent): string {
   const message = [...agent.state.messages].reverse().find(({ role }) => role === "assistant");
