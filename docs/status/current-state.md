@@ -1,9 +1,56 @@
 # Ambient Current State
 
-Status date: 2026-08-12.
+Status date: 2026-08-13.
 
 This is the rolling rescue and delivery ledger. It records the current truth,
 not a distant phase plan.
+
+## Home wayfinding stopped (2026-08-13)
+
+The ~/.ambient home wayfinding (map #1) was stopped by the master as
+over-engineered sprawl: parallel tickets invented machinery for consumers
+that do not exist, and simple questions grew fog instead of answers. What
+locked before the stop stands: ADR 0001 (home layout, amended), ADR 0002
+(mandate file: one file, fail-closed, config by convention), CONTEXT.md
+vocabulary (active chat, broken chat, mode as speaking rights, watermark
+never authored), and the research findings (fs-watch, agent-home prior art,
+mcp.json, git-home). Everything else is a parked question, not a plan.
+
+**Correction to this ledger:** Memory v2 is a working implementation proven
+against one golden bed. It is not product-validated canon; treat its
+protocol shapes as provisional until real product slices exercise them.
+
+### Parked questions (re-litigate at the rescue remap, not as tickets)
+
+- **The next build rung.** Suspected: Home v1 — migrate `./data` into
+  `~/.ambient/state/`, mandates as files per ADR 0002, the minimal CLI
+  (create/activate chats, show brokenness), loadSkills wired. Litigate the
+  cut; the paused pre-pivot ladder is input, not precedent. Known debt to
+  sequence: message payload schema parsed in three places, repository bag,
+  orphaned controller surface, libsignal stdout noise.
+- **Live memory.** Memory is default-on per active chat: page back through
+  the whole history, then keep building forward as messages arrive. The
+  forward-building wiring on live traffic does not exist yet (only the
+  proof harness drove digestion). Build concern; "producer"/"job" are not
+  product concepts.
+- **Skills.** Two scopes plus package are settled (chat wins by name;
+  research doc). Remaining: confirm package < home < chat precedence, and
+  delete the dormant `skills`/`run_skills` tables. One small decision.
+- **Root authoring surface.** What the Root writes (create folder = activate
+  chat; mandates via the validating tool; skills; mcp.json) and which narrow
+  whatsappd admin capabilities that needs (discover chats, create groups).
+  Future slice.
+- **Master and Root.** The special chat as the direction channel; what the
+  Root sees across chats (seeing vs ingesting); attention/wake left as
+  named seams. Future slice.
+- **Git-backed home.** Whether v1 ships the home as a git repo
+  (writer-commits audit, per the research); where the privacy boundary sits
+  (plaintext chat ids; adding a remote is the phase change).
+- **Packaging boundary.** What `npx ambient` first-run creates vs what stays
+  dev-repo (proof rig, `.proof-private/`). Config-by-convention decides most
+  of it.
+- **Derived docs.** Regenerate `docs/maps/*.html` from post-stop canon;
+  archive superseded material. Mechanical, whenever.
 
 ## Product direction
 
