@@ -20,14 +20,60 @@ mcp.json, git-home). Everything else is a parked question, not a plan.
 against one golden bed. It is not product-validated canon; treat its
 protocol shapes as provisional until real product slices exercise them.
 
-### Parked questions (re-litigate at the rescue remap, not as tickets)
+## Active slice: Home v1 (cut 2026-08-13, grilled with the master)
 
-- **The next build rung.** Suspected: Home v1 — migrate `./data` into
-  `~/.ambient/state/`, mandates as files per ADR 0002, the minimal CLI
-  (create/activate chats, show brokenness), loadSkills wired. Litigate the
-  cut; the paused pre-pivot ladder is input, not precedent. Known debt to
-  sequence: message payload schema parsed in three places, repository bag,
-  orphaned controller surface, libsignal stdout noise.
+**Goal.** Ambient runs fresh from `~/.ambient` — no legacy, no old layout.
+Mandates as files drive the live speakers, skills load by convention, and
+one CLI is the whole operator surface. Single package until we outgrow it.
+
+**In:**
+
+- The home tree per ADR 0001 (amended): `config.yaml` (everything in the
+  home — the only config location; `AMBIENT_CONFIG` override remains for
+  the proof rig), `skills/`, `chats/<slug>/mandate.yaml`, `state/`
+  (db, whatsappd territory, `logs/ambient.log` ndjson).
+- Mandate projector per ADR 0002: strict schema `{chatId, mode default
+listening, instructions, memoryBrief}` (`memoryBrief` stored now,
+  consumed in the memory slice); fail-closed; active records mirror the
+  set of valid folders (reconcile by scan); directory watcher as wake hint
+  - startup reconcile. `conversation.speakers` stanzas deleted;
+    `conversation.enabled` dropped (no valid mandates = inert);
+    `outboundMode` and the send allowlist guard unchanged.
+- Skills, fundamental: package + home `skills/` + chat `skills/`,
+  chat wins by name, eager-append into the speaker prompt (fixed identity
+  - mandate instructions + skills); broken skill = loud in doctor, skipped
+    in runs.
+- CLI (commander + @inquirer/prompts + yaml, in-package): bare `ambient` =
+  init-if-needed, then start the daemon and tail the logs. Init is
+  onboarding: seed home → credential check → whatsappd pairing (QR) →
+  full backfill (everything ingested; choosing chats only decides where
+  Ambient is active) → record the master chat → choose the initial chat
+  set (all listening). `ambient doctor` = full readout (home, config,
+  credentials, state, whatsapp auth, chats incl. exact mandate errors,
+  skills), non-zero exit when broken. `ambient activate` = destination
+  picker → mandate. No `start`, no `chats` command.
+- The master chat: recorded in `config.yaml` only — the admin seat the
+  Root occupies at Root v1. No mandate, no speaker; doctor shows it. The
+  CLI/files are the operator stopgap until the Root configures the system
+  from that chat.
+
+**Out (named):** OpenTUI dashboard (its slice opens with the workspace
+split), live memory + `memoryBrief` consumption, the Root and master-chat
+occupant, mcp.json, git-backed home, packaging/npx, wiki.
+
+**Proof gate (deterministic):** in the rig home — activate a chat, observe
+listening (claims gated); flip its mandate to `responding`, observe the
+speaker answer; break the mandate, observe fail-closed inactivity + doctor
+non-zero with the exact error; the existing golden conversation proof
+passes on the new composition.
+
+**Likely next (lightly named, re-litigated at the stop):** Memory made
+real — generalize Memory v2 into the codebase's conventions, forward
+wiring on live traffic, `memoryBrief` consumed. Themes: TUI dashboard,
+Root v1, packaging.
+
+### Parked questions (re-litigate at slice stops, not as tickets)
+
 - **Live memory.** Memory is default-on per active chat: page back through
   the whole history, then keep building forward as messages arrive. The
   forward-building wiring on live traffic does not exist yet (only the
