@@ -309,7 +309,40 @@ tool-call). The 20/22 baseline was set by gemini with a gemini judge, so
 these numbers are **not** a continuation of that series: both the extractor
 and the yardstick changed.
 
-### Where memory-v7 on gpt-5.6-terra actually lands
+### Where it landed: memory-v10 + memory-judge-v4 on gpt-5.6-terra
+
+The identity fix changed the picture. Best run, full 261-message re-read:
+
+| Gate                            | Bar      | Result                          |
+| ------------------------------- | -------- | ------------------------------- |
+| golden coverage                 | ≥ 20/22  | **20/22 — met**                 |
+| mean completeness               | ≥ 0.7    | **0.849**                       |
+| mean faithfulness               | ≥ 0.85   | **0.878**                       |
+| contract metrics (every window) | all pass | pass                            |
+| identity links to a chat id     | 0        | 0                               |
+| per-window faithfulness         | ≥ 0.7    | **0.571 on one window of nine** |
+
+Also: 7 people, 46 issues, 5 repositories, and **3 cross-form identity
+links** — one human under both WhatsApp id forms resolving to one person,
+which earlier runs never achieved (0–1). One window failed on a provider
+stream error and was absorbed by the re-derive (`retried: 1`).
+
+**The one breach is the judge being wrong, and this is now measured.** Its
+three flags in that window are each near-verbatim in their own citations —
+including "inside the M25 it returns the London timetable, outside it is
+Aladhan lat/long, Masjid timetables override", flagged against three cited
+messages that say exactly that. Earlier it flagged `latest_status: "Open."`
+for not being literally stated, and a repository claim whose citation holds
+the repo URL.
+
+So the instrument that gates the ship has a demonstrated, unmeasured error
+rate, and the per-window floor turns one such verdict into a failed run. The
+floor should be replaced by a calibrated measure — judge against the chat's
+answer key — which is the seam the canon now names. Tuning the judge until
+it agrees is not calibration; it is gaming the gate, and this session stopped
+short of it deliberately.
+
+### Where memory-v7 on gpt-5.6-terra landed before the identity fix
 
 Two full re-reads of the 261-message corpus, 8 windows each:
 
@@ -329,10 +362,15 @@ it, and golden moved 20→19. Golden varies ±1 run to run, so a 20/22 bar
 set from one gemini run is at the edge of this extractor's noise, not
 clearly above or below it.
 
-**Not shipped.** Production still holds v2's memory, untouched. Wiping
-proven memory on a red gate — with a substituted extractor AND a
-substituted judge — is the one irreversible mistake available here. Both
-databases are backed up (`.proof-private/backups/*pre-v4-*`).
+**Not shipped.** Production still holds v2's memory, untouched. The ship was
+authorized against four gates together, and the per-window floor is not
+green, so the authorization does not hold — however strong the other three
+look. Both databases are backed up (`.proof-private/backups/*pre-v4-*`).
+
+**The decision the master owns:** ship on the three gates that pass plus a
+reviewed floor breach, or fix the floor first by calibrating the judge
+against a per-chat answer key. The code is ready either way; the wipe is one
+command against a backed-up database.
 
 ### Memory keeps up, live and proven (`proof:memory-keepup`, green)
 
