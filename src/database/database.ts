@@ -17,6 +17,7 @@ import { createConversationSpeakerStore } from "./conversation-speakers";
 import { createConversationWorkStore } from "./conversation-work";
 import { createEvaluationRepository, type EvaluationRepository } from "./evaluations";
 import { createEvaluationWorkStore } from "./evaluation-work";
+import { createIdentityStore, type IdentityStore } from "./identity";
 import { createMemoryRepository, type MemoryRepository } from "./memory";
 import { createMemoryWorkStore } from "./memory-work";
 import {
@@ -28,6 +29,7 @@ import { createRunRepository, type RunRepository } from "./runs";
 import { createTaskRepository, type TaskRepository } from "./tasks";
 
 export interface AmbientRepositories {
+  readonly identity: IdentityStore;
   readonly observations: ObservationRepository;
   readonly messageIngestion: MessageIngestionRepository;
   readonly inbox: ConversationInboxRepository;
@@ -58,6 +60,7 @@ async function prepareLocalDirectory(url: string): Promise<void> {
 function repositories(database: AmbientDatabaseConnection): AmbientRepositories {
   const evaluations = createEvaluationRepository(database);
   return {
+    identity: createIdentityStore(database),
     observations: createObservationRepository(database),
     messageIngestion: createMessageIngestionRepository(database),
     inbox: createConversationInboxRepository(database),

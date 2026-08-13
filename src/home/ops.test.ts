@@ -41,6 +41,12 @@ async function withHome(work: (home: string, env: NodeJS.ProcessEnv) => Promise<
         args: [account ?? "", chatId ?? "", data ?? ""],
       });
     }
+    await mirror.execute(
+      "CREATE TABLE wa_contact_aliases (account_id TEXT, native_id TEXT, contact_id TEXT, PRIMARY KEY (account_id, native_id))",
+    );
+    await mirror.execute(
+      "INSERT INTO wa_contact_aliases VALUES ('main', '555@lid', '447700900123@s.whatsapp.net')",
+    );
     mirror.close();
     await work(home, { AMBIENT_HOME: home });
   } finally {
@@ -96,6 +102,13 @@ test("activate resolves phone numbers, exact ids, and reports the unknown", asyn
     expect(byNumber).toEqual({ kind: "activated", slug: "447700900123", mode: "listening" });
     const mandate = await readFile(join(home, "chats", "447700900123", "mandate.yaml"), "utf8");
     expect(mandate).toContain("chatId: 447700900123@s.whatsapp.net");
+
+    // One human, one conversation: the lid identity form resolves to the SAME
+    // canonical chat the phone number already activated.
+    expect(await activateChat(env, "555@lid", "listening")).toEqual({
+      kind: "already-active",
+      slug: "447700900123",
+    });
 
     expect(await activateChat(env, "no such chat", "listening")).toEqual({
       kind: "not-found",

@@ -71,12 +71,14 @@ export function createSessionLogger(file: string, level = "warn"): Logger {
 export function createOperationalLogger(file: string, level = "info"): Logger {
   const streams: pino.StreamEntry[] = [
     { level: level as pino.Level, stream: pino.destination({ dest: file, mkdir: true }) },
-  ];
-  if (process.stdout.isTTY) {
-    streams.push({
+    // The daemon always narrates to stdout: pretty lines on a terminal,
+    // ndjson when piped (supervisors, proofs).
+    {
       level: level as pino.Level,
-      stream: pretty({ colorize: true, translateTime: "HH:MM:ss", ignore: "pid,hostname" }),
-    });
-  }
+      stream: process.stdout.isTTY
+        ? pretty({ colorize: true, translateTime: "HH:MM:ss", ignore: "pid,hostname" })
+        : pino.destination(1),
+    },
+  ];
   return pino({ level, redact: { paths: redactedPaths } }, pino.multistream(streams));
 }

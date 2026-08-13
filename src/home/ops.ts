@@ -3,7 +3,7 @@ import { join } from "node:path";
 import YAML from "yaml";
 import { loadAppConfig } from "../app/config";
 import { openAmbientDatabase } from "../database/database";
-import { findMirrorChats } from "../whatsapp/mirror";
+import { createAliasResolver, findMirrorChats } from "../whatsapp/mirror";
 import { ambientHome } from "./init";
 import { scanMandates } from "./mandates";
 
@@ -66,6 +66,13 @@ export async function activateChat(
     chatId = match.chatId;
     label = match.subject;
   }
+
+  // One human, one conversation: any identity form (number, pn jid, lid)
+  // lands on the canonical id before a mandate is written.
+  chatId = await createAliasResolver(
+    config.whatsapp.dataDirectory,
+    config.whatsapp.accountId,
+  ).resolve(chatId);
 
   const scan = scanMandates(config.home);
   const existing = scan.active.find((mandate) => mandate.chatId === chatId);

@@ -12,6 +12,7 @@ import { skillsForChat } from "../home/skills";
 import { createMandateWatcher } from "../home/watcher";
 import { createModelRuntime, type ModelRuntime } from "../models/runtime";
 import { createWhatsAppAcceptedSourceConsumer } from "../whatsapp/message-ingestion";
+import { createAliasResolver } from "../whatsapp/mirror";
 import { createWhatsAppService, type WhatsAppService } from "../whatsapp/service";
 import type { AppConfig } from "./config";
 import type { AmbientLifecycleDependencies } from "./lifecycle";
@@ -57,6 +58,11 @@ export async function createAppResources(
     const label = (conversationId: string) =>
       chatLabels.get(conversationId) ?? `${conversationId.slice(0, 10)}…`;
     let conversation: ConversationService | undefined;
+    // One human, one conversation: every id entering the durable stores is
+    // resolved through the account's alias map, and rows retained before an
+    // alias was known are healed at startup (idempotent).
+    const aliases = createAliasResolver(config.whatsapp.dataDirectory, config.whatsapp.accountId);
+    await database.repositories.identity.canonicalize(await aliases.snapshot());
     const acceptedSource = createWhatsAppAcceptedSourceConsumer(
       config.whatsapp.accountId,
       database.repositories.messageIngestion,
@@ -68,6 +74,7 @@ export async function createAppResources(
         });
         void conversation?.wake(result.conversationId).catch(() => {});
       },
+      (chatId) => aliases.resolve(chatId),
     );
     const whatsapp = createWhatsAppService({
       accountId: config.whatsapp.accountId,
@@ -82,8 +89,16 @@ export async function createAppResources(
     let lastMandateSummary = "";
     const resyncMandates = async () => {
       const mandates = scanMandates(config.home);
+      // Mandate ids are canonicalized too, so a hand-written lid-form file
+      // still governs the one true conversation.
+      const canonical = await Promise.all(
+        mandates.active.map(async (mandate) => ({
+          ...mandate,
+          chatId: await aliases.resolve(mandate.chatId),
+        })),
+      );
       await database.repositories.speakers.sync(
-        mandates.active.map((mandate) => ({
+        canonical.map((mandate) => ({
           conversationId: mandate.chatId,
           mode: mandate.mode,
           ...(mandate.instructions === undefined ? {} : { instructions: mandate.instructions }),
@@ -91,7 +106,7 @@ export async function createAppResources(
         })),
       );
       chatLabels.clear();
-      for (const mandate of mandates.active) chatLabels.set(mandate.chatId, mandate.slug);
+      for (const mandate of canonical) chatLabels.set(mandate.chatId, mandate.slug);
       const summary =
         [
           ...mandates.active.map((mandate) => `${mandate.slug}(${mandate.mode})`),
@@ -155,9 +170,9 @@ export async function createAppResources(
         // shadow home skills by name; broken skills are skipped (doctor is
         // the loud surface).
         skills: (conversationId) => {
-          const slug = scanMandates(config.home).active.find(
-            (mandate) => mandate.chatId === conversationId,
-          )?.slug;
+          // Run ids are canonical; the label map (kept fresh by resync) is
+          // the canonical-id → slug view of the same mandates.
+          const slug = chatLabels.get(conversationId);
           return Promise.resolve(
             skillsForChat(config.home, slug).skills.map(({ name, content }) => ({
               name,

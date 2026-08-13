@@ -46,6 +46,58 @@ export async function findMirrorChats(
   }
 }
 
+export interface AliasResolver {
+  /** Canonical id for any known identity form; unknown ids pass through. */
+  resolve(chatId: string): Promise<string>;
+  /** The full native → canonical map, for the startup identity healer. */
+  snapshot(): Promise<ReadonlyMap<string, string>>;
+}
+
+/**
+ * One human, one id: whatsappd's contact aliases map every identity form
+ * (phone-number jid, lid) to one canonical contact. Cached with a short TTL —
+ * the table grows slowly as contacts sync — and an absent mirror resolves
+ * everything to itself.
+ */
+export function createAliasResolver(
+  dataDirectory: string,
+  accountId: string,
+  timeToLiveMs = 60_000,
+): AliasResolver {
+  let cache: Map<string, string> | undefined;
+  let loadedAt = 0;
+  const load = async (): Promise<Map<string, string>> => {
+    if (cache && Date.now() - loadedAt < timeToLiveMs) return cache;
+    const path = mirrorPath(dataDirectory);
+    const next = new Map<string, string>();
+    if (existsSync(path)) {
+      const mirror = createClient({ url: `file:${path}` });
+      try {
+        const result = await mirror.execute({
+          sql: "SELECT native_id, contact_id FROM wa_contact_aliases WHERE account_id = ?",
+          args: [accountId],
+        });
+        for (const row of result.rows) {
+          if (typeof row.native_id === "string" && typeof row.contact_id === "string") {
+            next.set(row.native_id, row.contact_id);
+          }
+        }
+      } finally {
+        mirror.close();
+      }
+    }
+    cache = next;
+    loadedAt = Date.now();
+    return next;
+  };
+  return {
+    async resolve(chatId) {
+      return (await load()).get(chatId) ?? chatId;
+    },
+    snapshot: load,
+  };
+}
+
 /** Whether the account has credentials in the retained state. */
 export async function mirrorAuthState(
   dataDirectory: string,
