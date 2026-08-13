@@ -64,6 +64,30 @@ export function createSessionLogger(file: string, level = "warn"): Logger {
 }
 
 /**
+ * Silence libsignal's raw console output at the daemon edge. The library
+ * inside whatsappd prints session-establishment state — INCLUDING private
+ * key buffers — directly through console.log, bypassing every logger. Until
+ * whatsappd pins a silent build (the upstream fix), the daemon drops those
+ * specific shapes and nothing else.
+ */
+export function muzzleLibsignalConsole(): void {
+  const noisyText =
+    /^(Closing (open )?session|Decrypted message with closed session|Session error|Duplicate message)/;
+  const isNoisy = (first: unknown): boolean =>
+    (typeof first === "string" && noisyText.test(first)) ||
+    (typeof first === "object" &&
+      first !== null &&
+      ("_chains" in first || "currentRatchet" in first));
+  for (const method of ["log", "info", "warn"] as const) {
+    const original = console[method].bind(console);
+    console[method] = (...parameters: unknown[]) => {
+      if (isNoisy(parameters[0])) return;
+      original(...parameters);
+    };
+  }
+}
+
+/**
  * The operational logger the daemon narrates through: pretty lines on a
  * terminal, ndjson always appended to the file (the future TUI tails it).
  * Level comes from configuration; redaction matches the session logger.

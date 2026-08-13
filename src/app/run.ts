@@ -1,11 +1,12 @@
 import { join } from "node:path";
-import { createOperationalLogger } from "../platform/logging";
+import { createOperationalLogger, muzzleLibsignalConsole } from "../platform/logging";
 import { createAmbient } from "./ambient";
 import type { AppConfig } from "./config";
 import { createOperationalLog } from "./operational-log";
 
 /** The daemon process loop shared by `pnpm start` and bare `ambient`. */
 export async function runAmbientProcess(config: AppConfig): Promise<void> {
+  muzzleLibsignalConsole();
   // The operational voice is never quieter than info — that is its whole
   // purpose — but follows configuration into debug. The session logger keeps
   // its own (warn-default) level.
