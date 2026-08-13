@@ -14,7 +14,8 @@ locked before the stop stands: ADR 0001 (home layout, amended), ADR 0002
 (mandate file: one file, fail-closed, config by convention), CONTEXT.md
 vocabulary (active chat, broken chat, mode as speaking rights, watermark
 never authored), and the research findings (fs-watch, agent-home prior art,
-mcp.json, git-home). Everything else is a parked question, not a plan.
+mcp.json, git-home — findings now in `docs/research/`). Everything else
+was parked, then folded into the MVP reset below (2026-08-13).
 
 **Correction to this ledger:** Memory v2 is a working implementation proven
 against one golden bed. It is not product-validated canon; treat its
@@ -43,23 +44,27 @@ listening, instructions, memoryBrief}` (`memoryBrief` stored now,
   chat wins by name, eager-append into the speaker prompt (fixed identity,
   then mandate instructions, then skills); broken skill = loud in doctor,
   skipped in runs.
-- CLI (commander + @inquirer/prompts + yaml, in-package): bare `ambient` =
-  init-if-needed, then start the daemon and tail the logs. Init is
-  onboarding: seed home → credential check → whatsappd pairing (QR) →
-  full backfill (everything ingested; choosing chats only decides where
-  Ambient is active) → record the master chat → choose the initial chat
-  set (all listening). `ambient doctor` = full readout (home, config,
-  credentials, state, whatsapp auth, chats incl. exact mandate errors,
-  skills), non-zero exit when broken. `ambient activate` = destination
-  picker → mandate. No `start`, no `chats` command.
+- CLI pass 1 — the **ops surface**, agent-friendly, JSON mode (commander +
+  yaml, in-package): `ambient init` (idempotent: create the tree, seed
+  `config.yaml`; non-interactive), `ambient doctor --json` (full readout —
+  home, config, credentials, state, whatsapp auth, chats incl. exact
+  mandate errors, skills; non-zero exit when broken), `ambient activate
+--chat <name|id>` (destination match → mandate write). These operations
+  are one module with two callers: the CLI now, the Root's tools at
+  Root v1 — the human-friendly CLI (interactive onboarding, pairing UX,
+  prompts) is a later pass built on top. Bare `ambient` = init-if-needed,
+  then start the daemon and tail the logs. The deployment reuses the
+  already-authenticated whatsappd state; pairing UX belongs to the human
+  pass. No `start`, no `chats` command.
 - The master chat: recorded in `config.yaml` only — the admin seat the
   Root occupies at Root v1. No mandate, no speaker; doctor shows it. The
   CLI/files are the operator stopgap until the Root configures the system
   from that chat.
 
-**Out (named):** OpenTUI dashboard (its slice opens with the workspace
-split), live memory + `memoryBrief` consumption, the Root and master-chat
-occupant, mcp.json, git-backed home, packaging/npx, wiki.
+**Out (named):** the human CLI pass (interactive onboarding, QR pairing
+walkthrough, chat picker, @inquirer prompts) and the OpenTUI dashboard
+(that slice opens with the workspace split); the Root and master-chat
+occupant; mcp.json; git-backed home; packaging/npx; wiki.
 
 **Proof gate (deterministic):** in the rig home — activate a chat, observe
 listening (claims gated); flip its mandate to `responding`, observe the
@@ -67,36 +72,41 @@ speaker answer; break the mandate, observe fail-closed inactivity + doctor
 non-zero with the exact error; the existing golden conversation proof
 passes on the new composition.
 
-**Likely next (lightly named, re-litigated at the stop):** Memory made
-real — generalize Memory v2 into the codebase's conventions, forward
-wiring on live traffic, `memoryBrief` consumed. Themes: TUI dashboard,
-Root v1, packaging.
+## The MVP and the road (reset 2026-08-13, with the master)
 
-### Parked questions (re-litigate at slice stops, not as tickets)
+**The MVP.** Ambient on one machine, run from `~/.ambient`: speakers active
+per mandates; memory default-on, caught up and keeping up live; one real
+Worker journey (Bug Reports evidence → GitHub issue in the right
+repository); and the Root in the master chat operating the system through
+the same operations the CLI exposes. The human-friendly CLI and the TUI
+are post-MVP.
 
-- **Live memory.** Memory is default-on per active chat: page back through
-  the whole history, then keep building forward as messages arrive. The
-  forward-building wiring on live traffic does not exist yet (only the
-  proof harness drove digestion). Build concern; "producer"/"job" are not
-  product concepts.
-- **Skills.** Two scopes plus package are settled (chat wins by name;
-  research doc). Remaining: confirm package < home < chat precedence, and
-  delete the dormant `skills`/`run_skills` tables. One small decision.
-- **Root authoring surface.** What the Root writes (create folder = activate
-  chat; mandates via the validating tool; skills; mcp.json) and which narrow
-  whatsappd admin capabilities that needs (discover chats, create groups).
-  Future slice.
-- **Master and Root.** The special chat as the direction channel; what the
-  Root sees across chats (seeing vs ingesting); attention/wake left as
-  named seams. Future slice.
-- **Git-backed home.** Whether v1 ships the home as a git repo
-  (writer-commits audit, per the research); where the privacy boundary sits
-  (plaintext chat ids; adding a remote is the phase change).
-- **Packaging boundary.** What `npx ambient` first-run creates vs what stays
-  dev-repo (proof rig, `.proof-private/`). Config-by-convention decides most
-  of it.
-- **Derived docs.** Regenerate `docs/maps/*.html` from post-stop canon;
-  archive superseded material. Mechanical, whenever.
+**Inventory — what exists vs what the MVP still needs:**
+
+- speaker agent: shipped, live-proven;
+- memory agent: rebuilt on the speaker's pattern (below), brief-aware,
+  keep-up wiring in place, 20/22 golden — only the ship gate remains;
+- evals: shipping signal + judged gates held as the yardstick through the
+  rebuild;
+- home + ops CLI: decided (ADR 0001/0002), not built — the active slice;
+- worker: not built; the journey and the bar are already named (queued
+  brief below);
+- root: not built; comes **last** — it operates everything else through
+  the ops surface, so that surface and the other kinds must exist first.
+
+**Order** (one active slice at a time; the next is selected at each review
+stop, never committed in advance):
+
+1. **Active:** Home v1 (above).
+2. **Likely next:** the memory ship gate — review the three flagged
+   claims, production wipe-and-re-read under the full gate, one live
+   keep-up proof (wrap-up items 1–2 below).
+3. **Themes, MVP-ordered but uncommitted:** Workers v1 (queued brief
+   below); Root v1 (the master chat gets its occupant; its tools are the
+   ops surface). Post-MVP themes: the human CLI pass and OpenTUI
+   dashboard (opens with the workspace split), brief-aware judge,
+   packaging/npx, git-backed home, wiki projection, derived-maps
+   regeneration, dormant `skills`/`run_skills` table deletion.
 
 ## Product direction
 
@@ -324,12 +334,6 @@ ingestion or durable operation semantics.
 controller; the lifecycle consumes `start`/`stop`/`waitForFailure`; the
 outbound destination guard and loopback policy live behind the facade with
 the proof override still strengthening the final guard; all gates pass.
-
-## Active slice
-
-None. The memory rebuild onto the speaker's pattern completed 2026-08-13
-(below) pending its live golden gate. Workers v1 remains the likely next
-slice after that gate lands.
 
 ## Completed slice: memory on the speaker's pattern (2026-08-13)
 
@@ -787,7 +791,8 @@ brief (it scores generic extraction craft, not the chat's mandate); any
 measurement of the judge's own reliability; worker/root evals (those
 kinds don't exist yet); live retention of media and own messages.
 
-**Next, in order:**
+**Next (items 1–2 are the "memory ship gate" likely-next slice; item 4
+happened as the 2026-08-13 reset above):**
 
 1. Review the three flagged claims against their cited messages —
    overreach or judge pedantry — then production wipe-and-re-read under
@@ -802,10 +807,10 @@ kinds don't exist yet); live retention of media and own messages.
    third agent kind, judge-vs-answer-key calibration, the visibility
    layer as a `wiki/` projection.
 
-## Likely next slice
+## Workers v1 — queued candidate brief
 
-Selected at the master's re-cut session. Workers v1 remains the strongest
-candidate — the customer-feedback journey: a bounded Worker files a
+Queued as an MVP theme at the 2026-08-13 reset (selected properly at a
+review stop). The customer-feedback journey: a bounded Worker files a
 GitHub issue from validated Bug Reports evidence, its durable result
 returns to the originating conversation's Inbox, and the speaker decides
 how to report it. Product context from the master (2026-08-12): a previous
