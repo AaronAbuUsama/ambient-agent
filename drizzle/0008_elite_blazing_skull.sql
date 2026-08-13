@@ -1,0 +1,1 @@
+ALTER TABLE `conversation_speakers` ADD `memory_brief` text;

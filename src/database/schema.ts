@@ -257,6 +257,7 @@ export const conversationSpeakers = sqliteTable(
     conversationId: text("conversation_id").primaryKey(),
     mode: text({ enum: ["listening", "responding"] }).notNull(),
     instructions: text(),
+    memoryBrief: text("memory_brief"),
     attendFrom: text("attend_from").notNull(),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),

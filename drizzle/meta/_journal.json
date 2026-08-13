@@ -57,6 +57,13 @@
       "when": 1786607497071,
       "tag": "0007_majestic_centennial",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1786608040472,
+      "tag": "0008_elite_blazing_skull",
+      "breakpoints": true
     }
   ]
 }

@@ -42,6 +42,8 @@ export interface ConversationSpeakerSeedEntry {
   readonly instructions?: string;
   /** Explicit activation watermark, e.g. "attend from an hour ago". Defaults to the seed time. */
   readonly attendFrom?: string;
+  /** The mandate's memory brief: what this chat's memory is FOR, carried to every digest. */
+  readonly memoryBrief?: string;
 }
 
 export interface ConversationSpeakerStore {

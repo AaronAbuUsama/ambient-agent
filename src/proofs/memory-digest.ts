@@ -12,11 +12,25 @@ import { RIG_PRIVATE, rigConfig } from "./rig";
  * shipped into the production database. No WhatsApp connection is opened and
  * nothing can be sent. The receipt carries statuses, counts, and scores only.
  */
+/**
+ * The test bed's digestion brief: what this chat's memory is FOR. The private
+ * testbed file may override it; this default is the mandate text the golden
+ * reference was labelled against.
+ */
+const defaultBrief = `This is a working thread where people report bugs, request features, and file
+GitHub issues. Issues are the unit of memory: EVERY distinct bug, feature request, or question
+becomes ONE "issue" entity with claims for what it is, which platform, its latest status (open,
+filed as owner/repo#n, fixed, disputed), and who reported or owns it. An issue mentioned once is
+still memory; missing an issue is worse than a modestly-worded claim. Also capture repositories
+(URL, purpose, which issues went there), people's GitHub usernames, the product's stable facts,
+and how people want issues filed or reviewed.`;
+
 const testbedSchema = z.object({
   memoryTestbed: z.object({
     chats: z.array(z.string().min(1)).min(1),
     mirror: z.string().min(1).default("file:data/whatsapp.db"),
     mirrorAccountId: z.string().min(1).default("main"),
+    memoryBrief: z.string().min(1).default(defaultBrief),
   }),
 });
 
@@ -59,7 +73,7 @@ async function digestInto(
     });
     section["import"] = imported;
 
-    const digest = await harness.requestMemoryDigest(chatId);
+    const digest = await harness.requestMemoryDigest(chatId, { brief: testbed.memoryBrief });
     section["digest"] = {
       outcome: digest.outcome,
       windows: digest.windows,

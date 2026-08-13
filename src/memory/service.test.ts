@@ -596,3 +596,27 @@ test("memory silence completes the window with an empty digest", async () => {
     ).toEqual([]);
   });
 });
+
+test("the mandate's memory brief reaches the agent with every window", async () => {
+  await withDatabase(async (database) => {
+    await database.repositories.speakers.seed([
+      {
+        conversationId: "group-1",
+        mode: "listening",
+        memoryBrief: "Issues are the unit of memory.",
+      },
+    ]);
+    await retainHistory(database, "1", "a@s.whatsapp.net", "the button crashes");
+
+    const briefs: (string | undefined)[] = [];
+    const runner = service(
+      database,
+      agentWith(async (input) => {
+        briefs.push(input.brief);
+        return { entities: [], predicates: [], claims: [], report: "noted" };
+      }),
+    );
+    expect((await runner.runOnce()).outcome).toBe("done");
+    expect(briefs).toEqual(["Issues are the unit of memory."]);
+  });
+});

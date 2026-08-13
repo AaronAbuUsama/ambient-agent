@@ -53,6 +53,8 @@ export interface MemoryOntologyClaim {
 
 export interface MemoryInput {
   readonly conversationId: string;
+  /** The mandate's memory brief for this chat, when one is authored. */
+  readonly brief?: string;
   readonly messages: readonly MemoryMessage[];
   readonly entities: readonly MemoryOntologyEntity[];
   readonly predicates: readonly MemoryOntologyPredicate[];

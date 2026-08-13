@@ -298,6 +298,7 @@ export function createMemoryWorkStore(database: AmbientDatabaseConnection): Memo
         const candidates = await transaction
           .select({
             conversationId: conversationSpeakers.conversationId,
+            memoryBrief: conversationSpeakers.memoryBrief,
             digestedThroughAt: memorySchedule.digestedThroughAt,
             digestedThroughId: memorySchedule.digestedThroughId,
           })
@@ -316,6 +317,7 @@ export function createMemoryWorkStore(database: AmbientDatabaseConnection): Memo
         let due:
           | {
               readonly conversationId: string;
+              readonly memoryBrief: string | null;
               readonly oldest: string;
               readonly where: ReturnType<typeof and>;
             }
@@ -352,6 +354,7 @@ export function createMemoryWorkStore(database: AmbientDatabaseConnection): Memo
           if (!due || stats.oldest < due.oldest) {
             due = {
               conversationId: candidate.conversationId,
+              memoryBrief: candidate.memoryBrief,
               oldest: stats.oldest,
               where: backlogWhere,
             };
@@ -409,7 +412,10 @@ export function createMemoryWorkStore(database: AmbientDatabaseConnection): Memo
         return {
           conversationId: due.conversationId,
           runId,
-          input: await buildInput(transaction, due.conversationId, windowRows),
+          input: {
+            ...(await buildInput(transaction, due.conversationId, windowRows)),
+            ...(due.memoryBrief === null ? {} : { brief: due.memoryBrief }),
+          },
           digestedThrough: { at: last.occurredAt, id: last.id },
           patchId: `patch:window:${first.id}`,
         } satisfies MemoryWindowClaim;

@@ -4,12 +4,11 @@ import { assistantText } from "../models/assistant-text";
 import type { ModelRunner } from "../models/runtime";
 import type { MemoryAgent, MemoryInput, MemoryProposal, MemoryTools } from "./contract";
 
-const systemPrompt = `You are Ambient's Memory Analyst.
+const basePrompt = `You are Ambient's Memory Analyst.
 
 You receive one bounded batch of retained WhatsApp messages from exactly one conversation, plus the
 current ontology view (entities, predicates, current claims). Extract durable, evidence-backed
-knowledge into the ontology. This conversation is a working thread: people report bugs, request
-features, file GitHub issues, and resolve problems over time.
+knowledge into the ontology.
 
 Call the propose_facts tool ONCE with everything worth remembering from this batch. If the tool
 rejects your proposal, correct the problem it names and call it again. If nothing in the batch is
@@ -19,25 +18,22 @@ one-paragraph report on what you learned and skipped.
 Ids: batch messages are m1..mN; existing entities E1..EN, predicates P1..PN, claims C1..CN. Copy
 them exactly; never invent ids outside these vocabularies.
 
-Coverage — the prime rule:
-- EVERY distinct bug, feature request, or question discussed becomes ONE "issue" entity with
-  claims for what it is, which platform, its latest status (open, filed as owner/repo#n, fixed,
-  disputed), and who reported or owns it. Do not skip small issues; an issue mentioned once is
-  still memory. Missing an issue is worse than a modestly-worded claim.
-- Also capture: people (role, GitHub username, what they own), repositories (URL, purpose, which
-  issues went there), the product and its stable facts, and standing preferences or working rules
-  people state (for example how issues should be filed or reviewed).
+Coverage:
+- Capture the people in the conversation (roles, identities, what they own and work on), the
+  stable facts of whatever this chat is about, decisions and commitments people make, and the
+  standing preferences or working rules people state.
+- When a digestion brief for this chat is provided below, its focus is the prime coverage rule.
 - Ephemeral chatter, greetings, and one-off test markers are NOT memory.
-- Claim economy: cover everything, but merge related facts about one entity into one claim where
-  natural — one issue gets one status claim (superseded as it evolves), not one claim per message.
+- Claim economy: cover everything that matters, but merge related facts about one entity into one
+  claim where natural — one evolving fact gets one claim, superseded as it changes, not one claim
+  per message.
 
 Deduplication and evolution:
-- Before creating an issue entity, check the ontology view: if an existing entity covers the same
-  underlying problem, reuse its id and evolve its claims instead of duplicating it. The same bug
-  reported twice on different days is ONE entity.
-- When new evidence changes a fact (a bug gets fixed, a status changes, a root cause is found),
-  use "supersedes" with the existing claim's exact claimId and version rather than adding a
-  parallel contradictory claim.
+- Before creating an entity, check the ontology view: if an existing entity covers the same
+  underlying thing, reuse its id and evolve its claims instead of duplicating it. The same thing
+  mentioned twice on different days is ONE entity.
+- When new evidence changes a fact, use "supersedes" with the existing claim's exact claimId and
+  version rather than adding a parallel contradictory claim.
 
 Attribution honesty:
 - Messages may lack senderId: historical sync lost the author. fromMe marks the agent's own
@@ -207,6 +203,9 @@ export function createPiMemoryAgent(runner: ModelRunner): MemoryAgent & {
     promptVersion,
     async run(input, tools, signal) {
       const { modelInput, desymbolize } = symbolize(input);
+      const systemPrompt = input.brief
+        ? `${basePrompt}\n\nDigestion brief for this chat — the prime coverage rule:\n${input.brief}`
+        : basePrompt;
       const agent = new Agent({
         initialState: {
           systemPrompt,

@@ -63,7 +63,10 @@ export interface AmbientProofHarness {
    * and drain the memory service window by window, so later windows see the
    * ontology earlier windows built.
    */
-  requestMemoryDigest(conversationId: string): Promise<{
+  requestMemoryDigest(
+    conversationId: string,
+    options?: { readonly brief?: string },
+  ): Promise<{
     readonly outcome: "done" | "failed";
     readonly runIds: readonly string[];
     readonly windows: number;
@@ -212,7 +215,7 @@ export async function createAmbientProofHarness(
       return importChatHistory({ ...options, sink: repositories.observations });
     },
 
-    async requestMemoryDigest(conversationId) {
+    async requestMemoryDigest(conversationId, { brief } = {}) {
       const memoryService = resources.memoryService;
       if (!memoryService) {
         throw new Error("this proof harness was composed without the memory role");
@@ -232,7 +235,13 @@ export async function createAmbientProofHarness(
       ];
       // Memory is default-on for allowed chats: presence, not a job, is what
       // makes the backlog digestible. Listening keeps the chat silent.
-      await repositories.speakers.seed([{ conversationId, mode: "listening" }]);
+      await repositories.speakers.seed([
+        {
+          conversationId,
+          mode: "listening",
+          ...(brief === undefined ? {} : { memoryBrief: brief }),
+        },
+      ]);
       const runIds: string[] = [];
       let windows = 0;
       for (;;) {
