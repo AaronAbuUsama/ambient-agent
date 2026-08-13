@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { createClient } from "@libsql/client";
 import { z } from "zod";
 import { loadAppConfig, type AppConfig } from "../app/config";
+import { mirrorAuthState } from "../whatsapp/mirror";
 import { ambientHome } from "./init";
 import { scanMandates } from "./mandates";
 import { scanAllSkills } from "./skills";
@@ -136,39 +137,25 @@ export async function runDoctor(
     }
   }
 
-  const whatsappPath = join(config.whatsapp.dataDirectory, "whatsapp.db");
-  if (!existsSync(whatsappPath)) {
-    checks.push({
-      name: "whatsapp",
-      ok: true,
-      detail: "no WhatsApp state yet — pairs at first start",
-    });
-  } else {
-    const mirror = createClient({ url: `file:${whatsappPath}` });
-    try {
-      const result = await mirror.execute({
-        sql: "SELECT count(*) AS n FROM wa_auth WHERE account = ? AND key = 'creds'",
-        args: [config.whatsapp.accountId],
-      });
-      const authenticated = Number(result.rows[0]?.n ?? 0) > 0;
-      checks.push(
-        authenticated
-          ? {
-              name: "whatsapp",
-              ok: true,
-              detail: `authenticated (account: ${config.whatsapp.accountId})`,
-            }
+  try {
+    const auth = await mirrorAuthState(config.whatsapp.dataDirectory, config.whatsapp.accountId);
+    checks.push(
+      auth === "authenticated"
+        ? {
+            name: "whatsapp",
+            ok: true,
+            detail: `authenticated (account: ${config.whatsapp.accountId})`,
+          }
+        : auth === "no-state"
+          ? { name: "whatsapp", ok: true, detail: "no WhatsApp state yet — pairs at first start" }
           : {
               name: "whatsapp",
               ok: false,
               detail: `state exists but account "${config.whatsapp.accountId}" has no credentials`,
             },
-      );
-    } catch (error) {
-      checks.push({ name: "whatsapp", ok: false, detail: describeError(error) });
-    } finally {
-      mirror.close();
-    }
+    );
+  } catch (error) {
+    checks.push({ name: "whatsapp", ok: false, detail: describeError(error) });
   }
 
   return { ok: checks.every((check) => check.ok), checks };

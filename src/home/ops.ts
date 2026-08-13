@@ -1,9 +1,9 @@
-import { createClient } from "@libsql/client";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import YAML from "yaml";
 import { loadAppConfig } from "../app/config";
 import { openAmbientDatabase } from "../database/database";
+import { findMirrorChats } from "../whatsapp/mirror";
 import { ambientHome } from "./init";
 import { scanMandates } from "./mandates";
 
@@ -52,32 +52,19 @@ export async function activateChat(
   let chatId = asChatId(query);
   let label = chatId === undefined ? query : (chatId.split("@")[0] ?? query);
   if (chatId === undefined) {
-    const mirror = createClient({
-      url: `file:${join(config.whatsapp.dataDirectory, "whatsapp.db")}`,
-    });
-    try {
-      const result = await mirror.execute({
-        sql: `SELECT chat_id, json_extract(data_json, '$.subject') AS subject
-              FROM wa_chats
-              WHERE account_id = ? AND lower(coalesce(json_extract(data_json, '$.subject'), '')) LIKE ?`,
-        args: [config.whatsapp.accountId, `%${query.toLowerCase()}%`],
-      });
-      const matches = result.rows.flatMap((row) =>
-        typeof row.chat_id === "string" && typeof row.subject === "string"
-          ? [{ chatId: row.chat_id, subject: row.subject }]
-          : [],
-      );
-      if (matches.length === 0) return { kind: "not-found", query };
-      if (matches.length > 1) {
-        return { kind: "ambiguous", candidates: matches.map(({ subject }) => subject) };
-      }
-      const match = matches[0];
-      if (!match) return { kind: "not-found", query };
-      chatId = match.chatId;
-      label = match.subject;
-    } finally {
-      mirror.close();
+    const matches = await findMirrorChats(
+      config.whatsapp.dataDirectory,
+      config.whatsapp.accountId,
+      query,
+    );
+    if (matches.length === 0) return { kind: "not-found", query };
+    if (matches.length > 1) {
+      return { kind: "ambiguous", candidates: matches.map(({ subject }) => subject) };
     }
+    const match = matches[0];
+    if (!match) return { kind: "not-found", query };
+    chatId = match.chatId;
+    label = match.subject;
   }
 
   const scan = scanMandates(config.home);
