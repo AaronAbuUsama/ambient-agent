@@ -3,72 +3,70 @@
     "enabled": false,
     "outboundMode": "loopback"
   },
-  "models": {
-    "providers": {
-      "qwen": {
-        "adapter": "openai-compatible",
-        "baseUrl": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-        "credential": {
-          "env": ["QWEN_API_KEY", "DASHSCOPE_API_KEY"]
-        },
-        "models": {
-          "qwen3.6-flash": {
-            "contextWindow": 262144,
-            "maxTokens": 65536,
-            "reasoning": true,
-            "supportsDeveloperRole": false,
-            "supportsReasoningEffort": false
-          }
-        }
+  "providers": {
+    "qwen": {
+      "adapter": "openai-compatible",
+      "baseUrl": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "credential": {
+        "env": ["QWEN_API_KEY", "DASHSCOPE_API_KEY"]
       },
-      "vibe": {
-        "adapter": "openai-compatible",
-        "baseUrl": "http://127.0.0.1:8317/v1",
-        "credential": "none",
-        "models": {
-          "claude-opus-4-6-thinking": {
-            "reasoning": true
-          },
-          "claude-sonnet-4-6": {},
-          "gemini-3-flash": {},
-          "gemini-3-flash-agent": {},
-          "gemini-3.1-flash-lite": {},
-          "gemini-3.1-pro-low": {},
-          "gemini-3.5-flash-extra-low": {},
-          "gemini-3.5-flash-low": {},
-          "gemini-3.6-flash-high": {},
-          "gemini-pro-agent": {},
-          "gpt-oss-120b-medium": {},
-          "codex-auto-review": {},
-          "gpt-5.3-codex-spark": {},
-          "gpt-5.4": {},
-          "gpt-5.4-mini": {},
-          "gpt-5.5": {},
-          "gpt-5.6-luna": {},
-          "gpt-5.6-sol": {},
-          "gpt-5.6-terra": {}
+      "models": {
+        "qwen3.6-flash": {
+          "contextWindow": 262144,
+          "maxTokens": 65536,
+          "reasoning": true,
+          "supportsDeveloperRole": false,
+          "supportsReasoningEffort": false
         }
       }
     },
-    "roles": {
-      "conversation": {
-        "provider": "qwen",
-        "model": "qwen3.6-flash",
-        "thinking": "off",
-        "maxOutputTokens": 4096
-      },
-      "evaluator": {
-        "provider": "vibe",
-        "model": "gemini-3.6-flash-high",
-        "thinking": "off",
-        "maxOutputTokens": 2048
-      },
-      "memory": {
-        "provider": "vibe",
-        "model": "gemini-3.6-flash-high",
-        "thinking": "off",
-        "maxOutputTokens": 8192
+    "vibe": {
+      "adapter": "openai-compatible",
+      "baseUrl": "http://127.0.0.1:8317/v1",
+      "credential": "none",
+      "models": {
+        "claude-opus-4-6-thinking": {
+          "reasoning": true
+        },
+        "claude-sonnet-4-6": {},
+        "gemini-3-flash": {},
+        "gemini-3-flash-agent": {},
+        "gemini-3.1-flash-lite": {},
+        "gemini-3.1-pro-low": {},
+        "gemini-3.5-flash-extra-low": {},
+        "gemini-3.5-flash-low": {},
+        "gemini-3.6-flash-high": {},
+        "gemini-pro-agent": {},
+        "gpt-oss-120b-medium": {},
+        "codex-auto-review": {},
+        "gpt-5.3-codex-spark": {},
+        "gpt-5.4": {},
+        "gpt-5.4-mini": {},
+        "gpt-5.5": {},
+        "gpt-5.6-luna": {},
+        "gpt-5.6-sol": {},
+        "gpt-5.6-terra": {}
       }
+    }
+  },
+  "roles": {
+    "conversation": {
+      "provider": "qwen",
+      "model": "qwen3.6-flash",
+      "thinking": "off",
+      "maxOutputTokens": 4096
+    },
+    "evaluator": {
+      "provider": "vibe",
+      "model": "gemini-3.6-flash-high",
+      "thinking": "off",
+      "maxOutputTokens": 2048
+    },
+    "memory": {
+      "provider": "vibe",
+      "model": "gemini-3.6-flash-high",
+      "thinking": "off",
+      "maxOutputTokens": 8192
     }
   }
 }

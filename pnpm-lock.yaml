@@ -231,6 +231,9 @@ importers:
       whatsappd:
         specifier: ^0.3.0
         version: 0.3.0(@libsql/client@0.15.15)(sharp@0.35.3(@types/node@24.13.3))
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
       zod:
         specifier: ^4.4.3
         version: 4.4.3

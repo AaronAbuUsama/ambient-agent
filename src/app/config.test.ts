@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadAppConfig } from "./config";
@@ -31,11 +31,14 @@ async function withConfigFile(
   }
 }
 
-test("the committed configuration document supplies the deployment defaults", () => {
-  const config = loadAppConfig({});
+test("the committed rig document supplies the deployment defaults", () => {
+  const config = loadAppConfig({
+    AMBIENT_CONFIG: "./ambient.config.json",
+    AMBIENT_HOME: "/tmp/ambient-test-home",
+  });
   expect(config.whatsapp.accountId).toBe("main");
   expect(config.whatsapp.historyBackfillLimit).toBeUndefined();
-  expect(config.database.url).toMatch(/\/data\/ambient\.db$/);
+  expect(config.database.url).toMatch(/ambient-test-home\/state\/ambient\.db$/);
   expect(config.conversation.scheduling).toEqual({
     debounceMs: 750,
     maximumWaitMs: 5_000,
@@ -57,13 +60,45 @@ test("the committed configuration document supplies the deployment defaults", ()
   });
   expect(config.models.roles.worker).toBeUndefined();
   expect(config.models.roles.evaluator).toMatchObject({ provider: "vibe" });
+  expect(config.master).toBeUndefined();
+});
+
+test("the home's config.yaml is the default document", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ambient-home-"));
+  try {
+    await writeFile(
+      join(home, "config.yaml"),
+      [
+        "account: main",
+        "master:",
+        '  chatId: "999@s.whatsapp.net"',
+        "providers:",
+        "  local:",
+        "    adapter: openai-compatible",
+        "    baseUrl: http://127.0.0.1:9999/v1",
+        "    credential: none",
+        "roles:",
+        "  conversation: { provider: local, model: test-model }",
+      ].join("\n"),
+    );
+    const config = loadAppConfig({ AMBIENT_HOME: home });
+    expect(config.whatsapp.accountId).toBe("main");
+    expect(config.whatsapp.dataDirectory).toBe(join(home, "state"));
+    expect(config.database.url).toBe(`file:${join(home, "state", "ambient.db")}`);
+    expect(config.master).toEqual({ chatId: "999@s.whatsapp.net" });
+    expect(config.models.roles.conversation?.model).toBe("test-model");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 test("a configuration document owns every structured section", async () => {
   await withConfigFile(
     JSON.stringify({
+      account: "second",
+      master: { chatId: "9715@s.whatsapp.net" },
       database: { url: "file:/tmp/custom.db" },
-      whatsapp: { accountId: "second", dataDirectory: "/var/ambient", historyBackfillLimit: 75 },
+      whatsapp: { dataDirectory: "/var/ambient", historyBackfillLimit: 75 },
       conversation: {
         enabled: true,
         outboundMode: "conversation",
@@ -84,7 +119,7 @@ test("a configuration document owns every structured section", async () => {
         },
       },
       logging: { level: "info" },
-      models,
+      ...models,
     }),
     async (path) => {
       const config = loadAppConfig({ AMBIENT_CONFIG: path });
@@ -94,6 +129,7 @@ test("a configuration document owns every structured section", async () => {
         dataDirectory: "/var/ambient",
         historyBackfillLimit: 75,
       });
+      expect(config.master).toEqual({ chatId: "9715@s.whatsapp.net" });
       expect(config.conversation).toMatchObject({
         enabled: true,
         outboundMode: "conversation",
@@ -125,7 +161,7 @@ test("a configuration document owns every structured section", async () => {
 
 test("deployment environment overrides win over the document", async () => {
   await withConfigFile(
-    JSON.stringify({ database: { url: "file:/tmp/document.db" }, models }),
+    JSON.stringify({ database: { url: "file:/tmp/document.db" }, ...models }),
     async (path) => {
       const config = loadAppConfig({
         AMBIENT_CONFIG: path,
@@ -146,33 +182,46 @@ test("an explicitly configured document path must exist", () => {
   );
 });
 
+test("a home without a config.yaml fails closed with the document path", async () => {
+  const home = await mkdtemp(join(tmpdir(), "ambient-home-"));
+  try {
+    await mkdir(join(home, "state"), { recursive: true });
+    expect(() => loadAppConfig({ AMBIENT_HOME: home })).toThrow(
+      `cannot read configuration file "${join(home, "config.yaml")}"`,
+    );
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test.each([
-  ["not json", "is not valid JSON"],
-  [JSON.stringify({ models: { providers: {} } }), undefined],
-  [JSON.stringify({ whatsapp: { historyBackfillLimit: 30 }, models }), undefined],
+  ["{", "is not valid YAML"],
+  [JSON.stringify({ providers: {} }), undefined],
+  [JSON.stringify({ whatsapp: { historyBackfillLimit: 30 }, ...models }), undefined],
   [
     JSON.stringify({
       conversation: { scheduling: { debounceMs: 1_000, maximumWaitMs: 500 } },
-      models,
+      ...models,
     }),
     "maximumWaitMs must be at least debounceMs",
   ],
-  [JSON.stringify({ conversation: { outboundMode: "disabled" }, models }), undefined],
-  [JSON.stringify({ conversation: { speakers: [{ conversationId: "" }] }, models }), undefined],
+  [JSON.stringify({ conversation: { outboundMode: "disabled" }, ...models }), undefined],
+  [JSON.stringify({ conversation: { speakers: [{ conversationId: "" }] }, ...models }), undefined],
   [
     JSON.stringify({
       conversation: { speakers: [{ conversationId: "1203@g.us", mode: "proactive" }] },
-      models,
+      ...models,
     }),
     undefined,
   ],
   [
     JSON.stringify({
       conversation: { speakers: [{ conversationId: "1203@g.us", attendFrom: "yesterday" }] },
-      models,
+      ...models,
     }),
     undefined,
   ],
+  [JSON.stringify({ master: { chatId: "" }, ...models }), undefined],
 ] as const)("invalid configuration documents fail closed (%#)", async (content, message) => {
   await withConfigFile(content, async (path) => {
     const load = () => loadAppConfig({ AMBIENT_CONFIG: path });
