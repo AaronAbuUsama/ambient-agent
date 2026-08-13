@@ -97,13 +97,29 @@ are post-MVP.
 **Order** (one active slice at a time; the next is selected at each review
 stop, never committed in advance):
 
-1. **Active:** Home v1 (above).
+1. **Active:** Home v1 (above). **Done =** its proof gate: activate →
+   listening, mandate flip → responding, broken file → fail-closed +
+   doctor non-zero with the exact error, golden conversation proof green
+   on the new composition; `vp check`/`vp test` clean; the config speaker
+   stanzas are gone from the schema.
 2. **Likely next:** the memory ship gate — review the three flagged
    claims, production wipe-and-re-read under the full gate, one live
-   keep-up proof (wrap-up items 1–2 below).
+   keep-up proof (wrap-up items 1–2 below). **Done =** a recorded verdict
+   on the three claims; the production wipe-and-re-read passes the full
+   judged gate; one real message digested through the running system with
+   retained evidence; this ledger flips memory to shipped.
 3. **Themes, MVP-ordered but uncommitted:** Workers v1 (queued brief
-   below); Root v1 (the master chat gets its occupant; its tools are the
-   ops surface). Post-MVP themes: the human CLI pass and OpenTUI
+   below) — **done =** the delegation loop proven end to end (durable
+   assignment → worker run → durable result → originating inbox → speaker
+   reports it), the six-question protocol answered, crash/retry
+   deterministic tests, one live filing into the right repository with
+   retained evidence, `worker-*` eval cases. Root v1 (the master chat
+   gets its occupant; its tools are the ops surface) — **done =** a
+   master-chat message causes the Root to operate the system through the
+   ops tools (activate a chat, revise a mandate via the validating write
+   path) with durable evidence per operation and no raw file writes: the
+   journey "activate the gym group" happens entirely from WhatsApp. That
+   is the MVP. Post-MVP themes: the human CLI pass and OpenTUI
    dashboard (opens with the workspace split), brief-aware judge,
    packaging/npx, git-backed home, wiki projection, derived-maps
    regeneration, dormant `skills`/`run_skills` table deletion.
