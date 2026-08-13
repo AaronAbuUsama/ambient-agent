@@ -24,7 +24,10 @@ program.action(async () => {
   try {
     await runAmbientProcess(loadAppConfig());
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(error instanceof Error ? (error.stack ?? error.message) : String(error));
+    if (error instanceof Error && error.cause instanceof Error) {
+      console.error(`caused by: ${error.cause.stack ?? error.cause.message}`);
+    }
     console.error("run `ambient doctor` for the full readout");
     process.exitCode = 1;
   }

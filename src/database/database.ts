@@ -76,8 +76,27 @@ export async function openAmbientDatabase(url: string): Promise<AmbientDatabase>
   await prepareLocalDirectory(url);
   const client = createClient({ url });
   const database = drizzle(client, { schema });
+  // drizzle-orm/libsql opens a FRESH connection per transaction (and ignores
+  // its config argument), so no busy-timeout pragma can reach one: the moment
+  // the daemon overlaps ingestion, claims, and mandate resync, two write
+  // transactions collide as instant SQLITE_BUSY. SQLite permits one writer
+  // anyway — queue our transactions here, where no call site can forget it.
+  const transaction = database.transaction.bind(database);
+  let tail: Promise<void> = Promise.resolve();
+  database.transaction = ((callback: never, config: never) => {
+    const run = tail.then(() => transaction(callback, config));
+    tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }) as typeof database.transaction;
   try {
     await database.run(sql`PRAGMA foreign_keys = ON`);
+    // WAL is persistent in the file, so drizzle's per-transaction connections
+    // inherit it: readers never block the writer, and a crash mid-write is
+    // recoverable.
+    await database.run(sql`PRAGMA journal_mode = WAL`);
     await migrate(database, {
       migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)),
     });

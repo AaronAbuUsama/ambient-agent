@@ -16,7 +16,8 @@
     "proof:whatsapp-live-loop": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/whatsapp-live-loop.ts",
     "proof:conversation-replay": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/conversation-replay.ts",
     "proof:memory-digest": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/memory-digest.ts",
-    "ambient": "tsx src/cli.ts"
+    "ambient": "tsx src/cli.ts",
+    "proof:home-live": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/home-live.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.84.1",

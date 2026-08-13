@@ -328,11 +328,17 @@ export class WhatsAppSessionController {
     }
   }
 
-  #wakeAcceptedSource(): void {
+  #wakeAcceptedSource(attempt = 0): void {
     const acceptedSource = this.#options.acceptedSource;
     if (!acceptedSource) return;
     void acceptedSource.wake().catch((error: unknown) => {
       if (this.#attachment === "detached" || this.#attachment === "detaching") return;
+      // A transient storage lock is not channel death: the cursor is durable,
+      // so re-waking shortly loses nothing. Only persistent failure detaches.
+      if (attempt < 3 && messageOf(error).includes("SQLITE_BUSY")) {
+        setTimeout(() => this.#wakeAcceptedSource(attempt + 1), 500 * (attempt + 1));
+        return;
+      }
       this.#error = messageOf(error);
       this.#invalidate();
       void this.detach();
