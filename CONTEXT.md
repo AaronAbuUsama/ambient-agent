@@ -92,14 +92,3 @@ code, logs, and durable records key on the chat id; the folder's binding file
 maps slug to id; renaming a folder changes nothing durable. One chat id is
 bound by at most one folder.
 _Avoid_: chat id as a folder name (ids contain `@`, dots, and phone numbers)
-
-### Memory
-
-**Digest window**:
-The bounded, ordered slice of one chat's retained messages that one memory
-job digests. Later windows see the ontology earlier windows built.
-
-**Digest cursor**:
-The per-chat watermark of what memory has digested. Distinct from the
-activation point: answering and remembering have different boundaries.
-_Avoid_: memory watermark, activation point (that one gates answering)

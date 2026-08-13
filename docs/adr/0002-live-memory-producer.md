@@ -1,5 +1,13 @@
 # The live-memory producer: allowed chats digest behind a per-chat cursor
 
+**Status: RETRACTED (2026-08-13).** The master repudiated this ADR's framing
+and vocabulary before validation ("producer" and "job" are not product
+concepts; the grill ran at protocol altitude instead of product altitude).
+Do not merge, cite, or build from this document. Kept only as a record of
+the retracted resolution on
+[ticket #15](https://github.com/AaronAbuUsama/ambient-agent/issues/15);
+re-litigation starts from the master's own model.
+
 Production runs a memory service that drains durable jobs, but nothing authors
 them — Memory v2's windows were proof-authored, so live traffic never enters
 memory. Decided on the home-litigation map
