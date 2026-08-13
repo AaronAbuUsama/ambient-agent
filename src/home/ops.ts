@@ -75,13 +75,47 @@ export async function activateChat(
   const folder = join(config.home, "chats", slug);
   if (existsSync(folder)) return { kind: "slug-taken", slug };
   mkdirSync(folder, { recursive: true });
-  // The minimum mandate is the chatId line alone (ADR 0002); mode is written
-  // only when it grants something beyond the listening default.
-  const mandate = mode === "listening" ? { chatId } : { chatId, mode };
-  writeFileSync(join(folder, "mandate.yaml"), YAML.stringify(mandate));
+  writeFileSync(
+    join(folder, "mandate.yaml"),
+    renderMandate({ chatId, mode, isMaster: chatId === config.master?.chatId }),
+  );
 
   await syncRecords(environment);
   return { kind: "activated", slug, mode };
+}
+
+/**
+ * The mandate the CLI writes: every field present — real when granted,
+ * commented when the default is active — so the file teaches its own
+ * vocabulary. The strict schema still fails loudly on unknown keys.
+ */
+export function renderMandate(options: {
+  readonly chatId: string;
+  readonly mode: "listening" | "responding";
+  readonly memoryBrief?: string | undefined;
+  readonly isMaster?: boolean;
+}): string {
+  const lines: string[] = [
+    "# The whole grant for this chat (ADR 0002). Commented fields are active",
+    "# defaults — uncomment to override. Unknown keys fail loudly.",
+  ];
+  if (options.isMaster === true) {
+    lines.push("# This is the master's direct line — the Root's seat at Root v1.");
+  }
+  lines.push(`chatId: ${options.chatId} # identity — written by the CLI`);
+  lines.push(
+    options.mode === "responding"
+      ? "mode: responding # remove to return to listening (memory only, silent)"
+      : "# mode: responding # default: listening — memory only, never speaks",
+  );
+  lines.push("# instructions: |", "#   Per-chat override of the standard speaker prompt.");
+  if (options.memoryBrief === undefined) {
+    lines.push("# memoryBrief: |", "#   What this chat's memory is FOR — its digestion focus.");
+  } else {
+    lines.push("memoryBrief: |");
+    for (const line of options.memoryBrief.split("\n")) lines.push(`  ${line}`);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 /** Re-derive the records from the mandate files — what startup does, on demand. */

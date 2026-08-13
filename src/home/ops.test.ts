@@ -53,7 +53,12 @@ test("activate by name writes the minimum mandate and syncs the record", async (
     const result = await activateChat(env, "bug rep", "listening");
     expect(result).toEqual({ kind: "activated", slug: "bug-reports", mode: "listening" });
     const mandate = await readFile(join(home, "chats", "bug-reports", "mandate.yaml"), "utf8");
-    expect(mandate).toBe("chatId: 111@g.us\n");
+    expect(mandate).toContain("chatId: 111@g.us");
+    // Every field is present: granted ones real, defaults as comments.
+    expect(mandate).toContain("# mode: responding");
+    expect(mandate).toContain("# instructions:");
+    expect(mandate).toContain("# memoryBrief:");
+    expect(mandate).not.toContain("master's direct line");
 
     const database = await openAmbientDatabase(`file:${join(home, "state", "ambient.db")}`);
     try {
@@ -90,7 +95,7 @@ test("activate resolves phone numbers, exact ids, and reports the unknown", asyn
     const byNumber = await activateChat(env, "+44 7700 900123", "listening");
     expect(byNumber).toEqual({ kind: "activated", slug: "447700900123", mode: "listening" });
     const mandate = await readFile(join(home, "chats", "447700900123", "mandate.yaml"), "utf8");
-    expect(mandate).toBe("chatId: 447700900123@s.whatsapp.net\n");
+    expect(mandate).toContain("chatId: 447700900123@s.whatsapp.net");
 
     expect(await activateChat(env, "no such chat", "listening")).toEqual({
       kind: "not-found",
@@ -103,6 +108,17 @@ test("activate resolves phone numbers, exact ids, and reports the unknown", asyn
       kind: "already-active",
       slug: "bug-reports",
     });
+  });
+});
+
+test("activating the master's chat marks the file as the Root's seat", async () => {
+  await withHome(async (home, env) => {
+    await writeFile(join(home, "config.yaml"), `master: { chatId: 111@g.us }\n${configYaml}`);
+    const result = await activateChat(env, "bug reports", "responding");
+    expect(result).toMatchObject({ kind: "activated" });
+    const mandate = await readFile(join(home, "chats", "bug-reports", "mandate.yaml"), "utf8");
+    expect(mandate).toContain("master's direct line");
+    expect(mandate).toContain("mode: responding # remove to return to listening");
   });
 });
 

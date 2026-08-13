@@ -98,8 +98,10 @@ listening, instructions, memoryBrief}` (`memoryBrief` stored now,
   then start the daemon and tail the logs. The deployment reuses the
   already-authenticated whatsappd state; pairing UX belongs to the human
   pass. No `start`, no `chats` command.
-- The master chat: recorded in `config.yaml` only — the admin seat the
-  Root occupies at Root v1. No mandate, no speaker; doctor shows it. The
+- The master chat: `master.chatId` in `config.yaml` marks the admin seat
+  the Root occupies at Root v1 — but master-ness is metadata, not a ban
+  (clarified by the master 2026-08-13): the same chat may carry an ordinary
+  mandate and speak as an ordinary speaker today. Doctor shows both. The
   CLI/files are the operator stopgap until the Root configures the system
   from that chat.
 

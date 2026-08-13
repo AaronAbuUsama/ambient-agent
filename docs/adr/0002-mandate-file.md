@@ -18,8 +18,29 @@ memoryBrief: |
   Track bug reports: status, owner, evidence.
 ```
 
-The minimum mandate — what activation writes — is the `chatId` line alone:
-active, `listening`, standard prompt, default memory.
+The minimum _valid_ mandate is the `chatId` line alone: active, `listening`,
+standard prompt, default memory. But what the CLI _writes_ is fuller by
+decree (the master, 2026-08-13): **every field present — granted fields
+real, defaults commented out** — so the file teaches its own vocabulary and
+an operator can edit without reading documentation:
+
+```yaml
+# The whole grant for this chat (ADR 0002). Commented fields are active
+# defaults — uncomment to override. Unknown keys fail loudly.
+chatId: 120363419724078455@g.us # identity — written by the CLI
+# mode: responding # default: listening — memory only, never speaks
+# instructions: |
+#   Per-chat override of the standard speaker prompt.
+# memoryBrief: |
+#   What this chat's memory is FOR — its digestion focus.
+```
+
+**The master's chat is a normal chat.** Master-ness is configuration
+metadata (`master.chatId` in `config.yaml`), not a property of the folder:
+the same chat may carry an ordinary mandate today and speak as an ordinary
+speaker. Root v1 replaces the _occupant_ of that conversation, not the
+folder. The CLI marks the file with a comment when it writes the master's
+mandate.
 
 ## The rules
 

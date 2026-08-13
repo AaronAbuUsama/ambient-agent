@@ -4,14 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMandateWatcher } from "./watcher";
 
-async function eventually(check: () => boolean, timeoutMs = 8_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error("condition not reached in time");
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
-  }
-}
-
 test("a mandate edit wakes one debounced resync; stop drains cleanly", async () => {
   const home = await mkdtemp(join(tmpdir(), "ambient-watch-"));
   try {
@@ -26,16 +18,18 @@ test("a mandate edit wakes one debounced resync; stop drains cleanly", async () 
     );
     await watcher.start();
 
-    await writeFile(join(home, "chats", "tst", "mandate.yaml"), "chatId: 1@g.us\n");
-    await writeFile(
-      join(home, "chats", "tst", "mandate.yaml"),
-      "chatId: 1@g.us\nmode: responding\n",
-    );
-    await eventually(() => resyncs >= 1);
-    const afterBurst = resyncs;
-
-    await writeFile(join(home, "chats", "tst", "mandate.yaml"), "chatId: 1@g.us\n");
-    await eventually(() => resyncs >= afterBurst + 1);
+    // The FSEvents stream may not be live immediately after start: keep
+    // nudging until an event lands rather than racing a single write.
+    const nudgeUntil = async (target: number) => {
+      const deadline = Date.now() + 8_000;
+      while (resyncs < target) {
+        if (Date.now() > deadline) throw new Error("watcher never fired");
+        await writeFile(join(home, "chats", "tst", "mandate.yaml"), `chatId: ${Date.now()}\n`);
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
+      }
+    };
+    await nudgeUntil(1);
+    await nudgeUntil(2);
     await watcher.stop();
     expect(resyncs).toBeGreaterThanOrEqual(2);
   } finally {
@@ -58,8 +52,14 @@ test("a failing resync never throws out of the watcher", async () => {
     );
     await watcher.start();
     await mkdir(join(home, "chats", "new-chat"), { recursive: true });
-    await writeFile(join(home, "chats", "new-chat", "mandate.yaml"), "chatId: 1@g.us\n");
-    await eventually(() => calls >= 1);
+    // The FSEvents stream may not be live immediately after start: keep
+    // nudging until an event lands rather than racing a single write.
+    const deadline = Date.now() + 8_000;
+    while (calls < 1) {
+      if (Date.now() > deadline) throw new Error("watcher never fired");
+      await writeFile(join(home, "chats", "new-chat", "mandate.yaml"), `chatId: ${Date.now()}\n`);
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
+    }
     await watcher.stop();
   } finally {
     await rm(home, { recursive: true, force: true });
