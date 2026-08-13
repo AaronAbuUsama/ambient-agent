@@ -117,15 +117,15 @@ async function digestInto(
     section["judgedCompleteness"] = completenessScores;
     const mean = (scores: readonly number[]) =>
       scores.length === 0 ? 1 : scores.reduce((sum, score) => sum + score, 0) / scores.length;
+    // Every gate is measured before any of them fails the run: a digest costs
+    // real minutes and real tokens, and a receipt that hides golden coverage
+    // behind the first judged shortfall wastes the evidence it just bought.
+    const breaches: string[] = [];
     if (faithfulnessScores.some((score) => score < 0.7)) {
-      throw new Error(`${label}: a window's judged faithfulness fell below the 0.7 floor`);
+      breaches.push("a window's judged faithfulness fell below the 0.7 floor");
     }
-    if (mean(faithfulnessScores) < 0.85) {
-      throw new Error(`${label}: aggregate judged faithfulness below 0.85`);
-    }
-    if (mean(completenessScores) < 0.7) {
-      throw new Error(`${label}: aggregate judged completeness below 0.7`);
-    }
+    if (mean(faithfulnessScores) < 0.85) breaches.push("aggregate judged faithfulness below 0.85");
+    if (mean(completenessScores) < 0.7) breaches.push("aggregate judged completeness below 0.7");
 
     // The golden gate: the ontology must carry the reference the operator
     // labeled, and must never link a chat id as an identity.
@@ -156,19 +156,21 @@ async function digestInto(
       golden.mustNotLinkSuffixes.some((suffix) => id.endsWith(suffix)),
     );
     if (poisoned.length > 0) {
-      throw new Error(`${label}: ${poisoned.length} identity links carry a banned suffix`);
+      breaches.push(`${poisoned.length} identity links carry a banned suffix`);
     }
     if ((summary.entitiesByKind["issue"] ?? 0) < golden.minimumIssueEntities) {
-      throw new Error(`${label}: issue entities below the golden minimum`);
+      breaches.push("issue entities below the golden minimum");
     }
     if ((summary.entitiesByKind["person"] ?? 0) < golden.minimumPersonEntities) {
-      throw new Error(`${label}: person entities below the golden minimum`);
+      breaches.push("person entities below the golden minimum");
     }
     if (found.length < golden.minimumFound) {
-      throw new Error(
-        `${label}: golden coverage ${found.length}/${golden.mustFind.length} below minimum ${golden.minimumFound}`,
+      breaches.push(
+        `golden coverage ${found.length}/${golden.mustFind.length} below minimum ${golden.minimumFound}`,
       );
     }
+    section["breaches"] = breaches;
+    if (breaches.length > 0) throw new Error(`${label}: ${breaches.join("; ")}`);
     return section;
   } finally {
     await harness.stop();
