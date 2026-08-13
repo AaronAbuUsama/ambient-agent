@@ -916,6 +916,13 @@ Accepted, durable, and owned here rather than in commit messages:
   `subscribe` seam on the session controller have no consumer outside the
   WhatsApp module since the facade landed; the Memory slice either adopts them
   onto the facade or deletes them.
+- **DM identity forms** — a WhatsApp DM has two chat ids (phone-number form
+  and `@lid` privacy form) and inbound traffic may use either; `ambient
+activate <number>` covers only the pn form, so the first real master-DM
+  test got silence until the lid form was activated separately (2026-08-13).
+  Fix at the next touch: activate resolves both forms via the mirror
+  (device-list/contacts know the mapping) and writes one mandate per form —
+  or the record gate learns id aliasing.
 - **libsignal stdout noise** — live runs print session-establishment output
   (including key buffers) directly from the libsignal dependency, bypassing
   the session logger; capture live-run output to private files only.
