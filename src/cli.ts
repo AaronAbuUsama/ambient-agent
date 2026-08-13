@@ -8,6 +8,28 @@ const program = new Command("ambient").description(
   "Ambient — one durable conversational entity over WhatsApp",
 );
 
+// Bare `ambient`: initialize the home if it does not exist, then run the
+// daemon in the foreground — stdout is the tail; ctrl-c stops it.
+program.action(async () => {
+  const home = ambientHome();
+  const created = initHome(home);
+  // First run means the config was just seeded — the operator has not
+  // authored it yet. Merely repairing missing tree pieces is not first run.
+  if (created.includes("config.yaml")) {
+    console.log(`initialized ${home} — edit config.yaml, then run \`ambient\` again`);
+    return;
+  }
+  const { loadAppConfig } = await import("./app/config");
+  const { runAmbientProcess } = await import("./app/run");
+  try {
+    await runAmbientProcess(loadAppConfig());
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    console.error("run `ambient doctor` for the full readout");
+    process.exitCode = 1;
+  }
+});
+
 program
   .command("init")
   .description("Create the Ambient home (idempotent)")
