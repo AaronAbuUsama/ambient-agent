@@ -94,9 +94,24 @@ export interface MemoryProposal {
   readonly report: string;
 }
 
+/**
+ * The host-owned tools a Memory Agent run receives. `proposeFacts` validates
+ * AND applies the proposal in one call — an invalid proposal throws, the error
+ * returns to the model as a tool failure, and the agent may correct itself
+ * within the same bounded run. The host owns every write.
+ */
+export interface MemoryTools {
+  proposeFacts(proposal: MemoryProposal, toolCallId: string): Promise<AppliedMemorySummary>;
+}
+
+export interface MemoryResult {
+  /** The private terminal report — the agent's closing summary. */
+  readonly report: string;
+}
+
 export interface MemoryAgent {
   readonly model: ModelConfig;
-  propose(input: MemoryInput, signal?: AbortSignal): Promise<MemoryProposal>;
+  run(input: MemoryInput, tools: MemoryTools, signal?: AbortSignal): Promise<MemoryResult>;
 }
 
 /** What one claimed job carries into a run. */

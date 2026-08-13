@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { openAmbientDatabase, type AmbientDatabase } from "../database/database";
 import { createEvaluationService } from "../evals/service";
 import type { MemoryRunEvidence } from "../evals/contract";
-import type { MemoryAgent, MemoryProposal } from "./contract";
+import type { MemoryAgent, MemoryInput, MemoryProposal } from "./contract";
 import { createMemoryService } from "./service";
 
 const model = {
@@ -79,8 +79,16 @@ const goodProposal: MemoryProposal = {
   report: "Two people identified.",
 };
 
-function agentWith(propose: MemoryAgent["propose"]): MemoryAgent {
-  return { model, propose };
+/** A test agent in the real shape: one run, one propose_facts tool call. */
+function agentWith(propose: (input: MemoryInput) => Promise<MemoryProposal>): MemoryAgent {
+  return {
+    model,
+    async run(input, tools) {
+      const proposal = await propose(input);
+      const applied = await tools.proposeFacts(proposal, "tool-call-1");
+      return { report: applied.report };
+    },
+  };
 }
 
 function service(database: AmbientDatabase, agent: MemoryAgent) {

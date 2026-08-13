@@ -8,6 +8,7 @@ import type {
   MemoryJobStore,
   MemoryProposal,
   MemoryService,
+  MemoryTools,
 } from "./contract";
 
 /** The ontology writer the service needs; satisfied by the memory repository. */
@@ -62,6 +63,8 @@ export interface MemoryServiceOptions {
   readonly ontology: MemoryOntologyWriter;
   readonly runs: MemoryRunStarter;
   readonly maximumClaimsPerJob?: number;
+  /** Rejected proposals allowed before the run is cut off. */
+  readonly maximumProposalAttempts?: number;
   readonly leaseOwner?: string;
   readonly leaseMs?: number;
   readonly pollMs?: number;
@@ -141,6 +144,7 @@ export function createMemoryService(options: MemoryServiceOptions): MemoryServic
   const leaseMs = options.leaseMs ?? 300_000;
   const pollMs = options.pollMs ?? 15_000;
   const maximumClaims = options.maximumClaimsPerJob ?? 50;
+  const maximumProposalAttempts = options.maximumProposalAttempts ?? 3;
   const promptVersion = options.agent.promptVersion ?? "memory-v1";
 
   const apply = async (
@@ -323,6 +327,48 @@ export function createMemoryService(options: MemoryServiceOptions): MemoryServic
     };
   };
 
+  /**
+   * One bounded agent run over one claimed batch. The propose_facts tool
+   * validates AND applies host-side: a rejected proposal returns to the model
+   * as a tool error it may correct in-loop; a model that cannot produce a
+   * valid proposal is cut off after a few attempts rather than left to spend
+   * the lease. An agent that never proposes chose silence — an empty digest.
+   */
+  const digest = async (claim: MemoryJobClaim, runId: string): Promise<AppliedMemorySummary> => {
+    let applied: AppliedMemorySummary | undefined;
+    let lastRejection: string | undefined;
+    let rejections = 0;
+    const controller = new AbortController();
+    const tools: MemoryTools = {
+      async proposeFacts(proposal) {
+        if (applied) {
+          throw new Error("propose_facts already applied a proposal in this run");
+        }
+        try {
+          applied = await apply(claim, proposal, runId);
+          return applied;
+        } catch (error) {
+          if (error instanceof ProposalValidationError) {
+            rejections += 1;
+            lastRejection = error.message;
+            if (rejections >= maximumProposalAttempts) controller.abort();
+          }
+          throw error;
+        }
+      },
+    };
+    const result = await options.agent.run(claim.input, tools, controller.signal);
+    if (applied) return applied;
+    if (lastRejection !== undefined) throw new ProposalValidationError(lastRejection);
+    return {
+      report: result.report,
+      entitiesCreated: 0,
+      linkedNativeIds: [],
+      claims: [],
+      patchStatus: "empty",
+    };
+  };
+
   const runOnce = async (
     at?: string,
   ): Promise<{ readonly outcome: "idle" | "done" | "failed"; readonly runId?: string }> => {
@@ -357,7 +403,7 @@ export function createMemoryService(options: MemoryServiceOptions): MemoryServic
               claims: [],
               patchStatus: "applied",
             } satisfies AppliedMemorySummary)
-          : await apply(claim, await options.agent.propose(claim.input), runId);
+          : await digest(claim, runId);
       await options.jobs.complete({ jobId: claim.jobId, leaseOwner, runId, result: summary });
       return { outcome: "done", runId };
     } catch (error) {
