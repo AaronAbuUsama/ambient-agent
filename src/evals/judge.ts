@@ -119,7 +119,11 @@ You receive the FULL window of WhatsApp messages a memory analyst digested, plus
 extracted with the exact messages each claim cited as evidence. Judge two things:
 
 1. Faithfulness: each claim strictly against ONLY its cited messages. A claim is supported only
-   when its cited messages actually state or clearly imply it.
+   when its cited messages actually state or clearly imply it. Two conventions are NOT overreach:
+   an issue whose cited messages report a problem with no recorded resolution has the status
+   "open" — that is the ontology's default, not an extra assertion; and a claim naming a
+   repository, issue number, or platform that appears inside a cited message (including in a URL)
+   is supported by it.
 2. Completeness: against the WHOLE window. Durable knowledge means: who the people are, every
    distinct bug or feature discussed (and its latest status when it evolved), repositories and
    filed issues, and standing preferences. Ephemeral chatter, test markers, and greetings do not
@@ -139,7 +143,7 @@ const memoryVerdictSchema = z.object({
   missedFacts: z.string(),
 });
 
-const memoryJudgePromptVersion = "memory-judge-v2";
+const memoryJudgePromptVersion = "memory-judge-v4";
 
 /** Judges one Memory run's applied claims with the evaluator-role model. */
 export function createPiMemoryJudge(runner: ModelRunner, runs: JudgeRunStore): MemoryJudge {
@@ -148,7 +152,8 @@ export function createPiMemoryJudge(runner: ModelRunner, runs: JudgeRunStore): M
       const subject = {
         windowMessages: evidence.windowMessages.map((message, index) => ({
           index,
-          from: message.senderId ?? (message.fromMe ? "agent-side" : "unknown"),
+          from:
+            message.senderName ?? message.senderId ?? (message.fromMe ? "agent-side" : "unknown"),
           ...(message.attachment === undefined ? {} : { attachment: message.attachment }),
           text: message.text,
         })),

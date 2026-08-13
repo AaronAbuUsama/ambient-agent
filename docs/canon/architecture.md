@@ -344,9 +344,20 @@ Host-owned invariants, enforced at the mutation path (not by prompt):
 - one current claim per (entity, predicate): a restated fact becomes a
   reinforcement, a changed fact becomes a supersession;
 - a chat or group id can never be linked as an identity;
-- linkable identities are only ids evidenced in the batch (senders,
-  mentions, and quoted-reply authors — historical group sync loses
-  authorship, and the import never fabricates it);
+- linkable identities are only ids evidenced in the batch, and
+  `whatsapp/message-payload.ts` owns that rule in ONE place
+  (`linkableIdentities`): the author, the author's other native id form,
+  mentions, and quoted-reply authors. Historical group sync loses
+  authorship, and the import never fabricates it. Memory validates
+  proposals against this rule and evaluation scores identity scope against
+  the same rule — when the two definitions drifted apart, memory linked
+  correctly and the gate called it a defect;
+- WhatsApp gives one human two native id forms (phone and lid). Both name
+  the same person: they link to ONE entity, and neither may become a
+  second person;
+- what Ambient already knows, it never asks the model to infer. The
+  sender's published name and second id form are retained at ingestion and
+  reach the analyst as data. Identity is a lookup, not a judgement;
 - `applyPatch` remains the only claim mutation path, idempotent per job;
 - the model never sees or copies real uuids — the adapter presents compact
   symbols and translates back.
@@ -392,6 +403,21 @@ computed from retained evidence, never from live state. The Conversation
 service performs no evaluation work, and evaluation failure must not change
 whether a WhatsApp effect or Agent Run succeeded.
 
+**Machinery and expectations are scoped differently.** `evals/` owns the
+machinery — cases, metrics, judges, the runner — and is chat-agnostic. What
+a _particular_ chat's memory should contain is not machinery: it is the
+chat's own answer key, and it belongs beside that chat's mandate in
+`chats/<slug>/`, authored by the master like every other grant. One private
+answer key for one blessed chat is a stopgap, and it is why the memory bar
+is a coverage count over one group rather than a property of the system.
+
+A judge scoring a chat must receive that chat's mandate. A memory judge
+that cannot see the brief can only score generic craft — it cannot ask the
+real question, which is whether the digest captured what this chat's memory
+is FOR. Two consequences follow, and both are gates on trusting a score: a
+judge's verdict is evidence, never authority, and the judge's own
+reliability must be measurable against the chat's answer key.
+
 ### Proofs and operations
 
 Proofs must use the same production composition and explicit safety policy.
@@ -408,6 +434,45 @@ WhatsApp controller, or independent model construction.
 The exact proof surface is deliberately deferred until the proof-composition
 rescue. It must be added as an explicit composition option or dedicated harness,
 not by widening the production `Ambient` facade.
+
+## Prompt composition
+
+No chat gets a hand-written prompt. Every agent kind assembles its system
+prompt from the same ordered layers, and a chat customizes by authoring a
+layer — never by owning a prompt of its own.
+
+```text
+identity      who Ambient is                     Ambient-wide, one home
+  + role craft    how this kind works            the role module, in package
+  + mandate       what THIS chat is for          chats/<slug>/mandate.yaml
+  + skills        granted know-how               package + home + chat
+```
+
+Ownership rules:
+
+- **Identity** is one text for the whole entity. Every agent kind receives
+  it. It must not be restated per role.
+- **Role craft** stays with its role module, in the package, next to the
+  tool contract it describes. It is coupled to the code that parses the
+  role's output — a rule about a tool's field is meaningless apart from
+  that tool and its host validation — so extracting it into a data file
+  invites the two to drift. This is deliberate, not an accident of history.
+- **The mandate** is the only per-chat prompt surface: the master authors
+  `instructions` for the speaker and the memory brief for memory. A chat
+  that authors nothing still works, on identity and role craft alone.
+- **Skills** are the overridable layer: a chat skill beats a home skill of
+  the same name, and a home skill beats a package skill.
+
+`promptVersion` must be derived from the assembled prompt, not hand-typed.
+Retained runs key their evidence on it and evaluation compares across it, so
+a hand-maintained string can silently disagree with the text that actually
+ran, and two chats whose briefs differ can claim the same version.
+
+Status: proven for the speaker (Home v1 — a chat `SKILL.md` changed a live
+reply). Memory currently receives role craft plus the brief only: it has no
+identity layer and loads no skills, which is a gap in this contract rather
+than a property of memory. Worker and Root adopt these layers when they
+first exist.
 
 ## Durable protocols
 

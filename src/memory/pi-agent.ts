@@ -22,6 +22,14 @@ Coverage:
 - Capture the people in the conversation (roles, identities, what they own and work on), the
   stable facts of whatever this chat is about, decisions and commitments people make, and the
   standing preferences or working rules people state.
+- A person NAMED in a message is memory: create the person entity under that name and claim what
+  the messages say about them. Greetings, mentions, signatures, and being addressed by name all
+  name a person. Refusing to attribute an unsigned message (below) is never a reason to leave a
+  named person out of the ontology.
+- EVERY entity you create must carry at least one claim of its own, and that claim's value must
+  name it. Recall returns claims, never bare entities: a person nobody has claimed anything about
+  is invisible to Ambient, so state who they are — their name, and their role, work, or part in
+  this thread as the messages show it.
 - When a digestion brief for this chat is provided below, its focus is the prime coverage rule.
 - Ephemeral chatter, greetings, and one-off test markers are NOT memory.
 - Claim economy: cover everything that matters, but merge related facts about one entity into one
@@ -35,18 +43,36 @@ Deduplication and evolution:
 - When new evidence changes a fact, use "supersedes" with the existing claim's exact claimId and
   version rather than adding a parallel contradictory claim.
 
-Attribution honesty:
-- Messages may lack senderId: historical sync lost the author. fromMe marks the agent's own
-  account. Never invent who said something; attribute only what the evidence supports (content
-  may still identify people by name).
-- nativeIds may only contain ids that appear in the batch as a senderId or inside mentions.
-  A chat/group id is NEVER a person's identity — never link it.
+Who people are — read it, never guess it:
+- senderName is the author's own published name. When a message has one, that IS the person's
+  name: use it as the entity's canonicalName and attribute freely. Never infer a name from
+  message text when senderName is present, and never invent one when it is absent.
+- senderId and senderAltId are the SAME human under WhatsApp's two id forms. Link both as
+  nativeIds on one person; never make a second person from the other form.
+- Messages may lack senderId entirely: historical sync lost the author. fromMe marks Ambient's
+  own account. An attribution claim (reported_by and the like) stands only when its OWN cited
+  messages carry an author or name the person in their content. Otherwise drop the attribution
+  and keep the fact. A subscriber number is never a name.
+- nativeIds may only contain ids that appear in the batch as a senderId, a senderAltId, or
+  inside mentions. A chat/group id is NEVER a person's identity — never link it.
 - Messages with "attachment" carry an image or video; the caption is its text. When a screenshot
   or video evidences an issue, cite that message like any other evidence.
 
 Grounding:
 - Every claim MUST cite evidenceObservationIds copied exactly from the batch messages that support
-  it. A claim you cannot ground in specific messages must not be made.
+  it — including the neighbouring messages that give a terse statement its subject. A claim is
+  judged against ONLY its cited messages; if they alone do not state or clearly imply it, cite
+  more of the batch or do not make the claim.
+- A claim that binds two things together must cite the evidence for BOTH. "The profile crash was
+  filed as #63" needs the message reporting the crash AND the message answering with #63 — the
+  confirmation alone says only that some issue got a number. This is the most common way a true
+  claim ends up unsupported.
+- Claim values are content in words: name people and things by their names, never by id symbol
+  (E1), subscriber number, or raw WhatsApp id.
+- A claim value is a short, flat statement of the fact itself. Do NOT narrate the digestion
+  ("open or unfiled in this batch", "no decision recorded here"), do NOT reason inside the value
+  ("implying the fault is..."), and do NOT assert a status no cited message states — an issue
+  nobody has resolved is simply "open".
 - confidence: "confirmed" only for facts stated directly by the person about themselves; "high" for
   clear repeated evidence; "medium" for single clear statements; "low" for inference.`;
 
@@ -106,7 +132,7 @@ const proposeFactsParameters = Type.Object({
   }),
 });
 
-const promptVersion = "memory-v3";
+const promptVersion = "memory-v10";
 
 function lastAssistantText(agent: Agent): string {
   const message = [...agent.state.messages].reverse().find(({ role }) => role === "assistant");
@@ -144,23 +170,39 @@ function symbolize(input: MemoryInput) {
     })),
   };
 
-  const desymbolize = (proposal: Static<typeof proposeFactsParameters>): MemoryProposal => ({
-    ...proposal,
-    claims: proposal.claims.map((claim) => ({
-      ...claim,
-      entity: realFor(entitySymbol, claim.entity),
-      predicate: realFor(predicateSymbol, claim.predicate),
-      evidenceObservationIds: claim.evidenceObservationIds.map((id) => realFor(messageSymbol, id)),
-      ...(claim.supersedes === undefined
-        ? {}
-        : {
-            supersedes: {
-              ...claim.supersedes,
-              claimId: realFor(claimSymbol, claim.supersedes.claimId),
-            },
-          }),
-    })),
-  });
+  const entityName = new Map(input.entities.map((e, i) => [`E${i + 1}`, e.canonicalName]));
+
+  const desymbolize = (proposal: Static<typeof proposeFactsParameters>): MemoryProposal => {
+    // The model may reference an entity inside a claim VALUE ("reported_by":
+    // "E3" or a ref it proposed this call). Symbols are run-local, so a stored
+    // symbol dangles forever — translate bare symbol values to the entity's
+    // canonical name at the same boundary that translates every other id.
+    const proposedName = new Map(proposal.entities.map((e) => [e.ref, e.canonicalName]));
+    const contentValue = (value: unknown): unknown =>
+      typeof value === "string"
+        ? (entityName.get(value) ?? proposedName.get(value) ?? value)
+        : value;
+    return {
+      ...proposal,
+      claims: proposal.claims.map((claim) => ({
+        ...claim,
+        entity: realFor(entitySymbol, claim.entity),
+        predicate: realFor(predicateSymbol, claim.predicate),
+        value: contentValue(claim.value),
+        evidenceObservationIds: claim.evidenceObservationIds.map((id) =>
+          realFor(messageSymbol, id),
+        ),
+        ...(claim.supersedes === undefined
+          ? {}
+          : {
+              supersedes: {
+                ...claim.supersedes,
+                claimId: realFor(claimSymbol, claim.supersedes.claimId),
+              },
+            }),
+      })),
+    };
+  };
 
   return { modelInput, desymbolize };
 }

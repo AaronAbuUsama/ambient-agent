@@ -340,6 +340,122 @@ test("a proposal citing evidence outside the batch fails the window without touc
   });
 });
 
+test("the sender's own name and second id form reach the analyst and link as one person", async () => {
+  await withDatabase(async (database) => {
+    await allow(database, "group-1");
+    await database.repositories.observations.retain({
+      id: "observation-1",
+      source: "whatsapp",
+      accountId: "main",
+      nativeId: "native-1",
+      conversationId: "group-1",
+      occurredAt: "2026-07-15T10:01:00.000Z",
+      kind: "message",
+      payload: {
+        version: 1,
+        messageId: "m-1",
+        chatId: "group-1",
+        // One human, both id forms, publishing their own name.
+        sender: { id: "a@s.whatsapp.net", mode: "pn", alt: "a@lid" },
+        pushName: "Ada Lovelace",
+        fromMe: false,
+        timestamp: 1752573600000,
+        text: "the compass page needs work",
+      },
+    });
+
+    let seen: MemoryInput | undefined;
+    const runner = service(
+      database,
+      agentWith(async (input) => {
+        seen = input;
+        return {
+          // The alt form is linkable: the analyst may bind both to ONE person.
+          entities: [
+            {
+              ref: "e1",
+              kind: "person",
+              canonicalName: "Ada Lovelace",
+              nativeIds: ["a@s.whatsapp.net", "a@lid"],
+            },
+          ],
+          predicates: [{ ref: "p1", name: "works_on", description: "what they work on" }],
+          claims: [
+            {
+              entity: "e1",
+              predicate: "p1",
+              value: "Ada Lovelace works on the compass page",
+              confidence: "high" as const,
+              evidenceObservationIds: ["observation-1"],
+            },
+          ],
+          report: "One person identified by their own published name.",
+        };
+      }),
+    );
+    expect((await runner.runOnce()).outcome).toBe("done");
+    expect(seen?.messages[0]?.senderName).toBe("Ada Lovelace");
+    expect(seen?.messages[0]?.senderAltId).toBe("a@lid");
+
+    // Recall through EITHER id form returns the one person's claim.
+    for (const nativeId of ["a@s.whatsapp.net", "a@lid"]) {
+      expect(
+        await database.repositories.memory.recall({ nativeIds: [nativeId], query: "", limit: 10 }),
+      ).toHaveLength(1);
+    }
+  });
+});
+
+test("a claim value carrying a raw WhatsApp id or a bare symbol fails the window", async () => {
+  await withDatabase(async (database) => {
+    await allow(database, "group-1");
+    await retainHistory(database, "1", "a@s.whatsapp.net", "the widget bug again");
+
+    const claimWith = (value: unknown, evidenceId: string) => ({
+      ...goodProposal,
+      entities: [goodProposal.entities[0]!],
+      claims: [
+        {
+          entity: "e1",
+          predicate: "p1",
+          value,
+          confidence: "high" as const,
+          evidenceObservationIds: [evidenceId],
+        },
+      ],
+    });
+
+    const idPoisoner = service(
+      database,
+      agentWith(async () => claimWith("reported by a@s.whatsapp.net", "observation-1")),
+    );
+    expect((await idPoisoner.runOnce()).outcome).toBe("failed");
+
+    await allow(database, "group-3");
+    await retainHistory(database, "3", "a@s.whatsapp.net", "one more", "group-3");
+    const numberPoisoner = service(
+      database,
+      agentWith(async () => claimWith("Participant 447700900123", "observation-3")),
+    );
+    expect((await numberPoisoner.runOnce()).outcome).toBe("failed");
+
+    await allow(database, "group-2");
+    await retainHistory(database, "2", "a@s.whatsapp.net", "another report", "group-2");
+    const symbolPoisoner = service(
+      database,
+      agentWith(async () => claimWith("E34", "observation-2")),
+    );
+    expect((await symbolPoisoner.runOnce()).outcome).toBe("failed");
+    expect(
+      await database.repositories.memory.recall({
+        nativeIds: ["a@s.whatsapp.net"],
+        query: "",
+        limit: 10,
+      }),
+    ).toEqual([]);
+  });
+});
+
 test("a restated fact reinforces and a changed fact supersedes — never a duplicate claim", async () => {
   await withDatabase(async (database) => {
     await allow(database, "group-1");

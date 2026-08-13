@@ -7,7 +7,7 @@ import type {
   RunEvidence,
 } from "../evals/contract";
 import type { AmbientDatabaseConnection } from "./database";
-import { retainedMessagePayloadSchema } from "../whatsapp/message-payload";
+import { linkableIdentities, retainedMessagePayloadSchema } from "../whatsapp/message-payload";
 import { agentRuns, evaluationPending, observations, toolCalls } from "./schema";
 
 const memoryRunInputSchema = z.object({
@@ -91,13 +91,15 @@ export function createEvaluationWorkStore(
       const parsed = retainedMessagePayloadSchema.safeParse(row.payload);
       if (!parsed.success) continue;
       const payload = parsed.data;
-      if (payload.sender) senders.add(payload.sender.id);
-      for (const mention of payload.context?.mentions ?? []) senders.add(mention);
-      // Quoted replies name the quoted message's author — the same recovered
-      // identity the memory service treats as linkable.
-      if (payload.context?.quoted?.from) senders.add(payload.context.quoted.from);
+      // One rule, one home: the payload module decides what a linkable
+      // identity is, so evaluation can never score memory against a narrower
+      // definition than memory applied.
+      for (const identity of linkableIdentities(payload)) senders.add(identity);
       windowMessages.push({
         ...(payload.sender ? { senderId: payload.sender.id } : {}),
+        // The judge must see the evidence the analyst saw. Without the
+        // author's published name, a correct attribution reads as invented.
+        ...(payload.pushName ? { senderName: payload.pushName } : {}),
         fromMe: payload.fromMe ?? false,
         text: payload.text ?? payload.media?.caption ?? "",
         ...(payload.kind !== undefined && payload.kind !== "text"
