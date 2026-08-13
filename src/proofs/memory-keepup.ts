@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadAppConfig } from "../app/config";
 import { createWhatsAppPeer } from "../whatsapp/peer";
@@ -86,6 +86,28 @@ const peer = createWhatsAppPeer({
   logLevel: base.logging.level,
 });
 
+/**
+ * Two folders claiming one chat id make BOTH inert — the projector fails
+ * closed and reports each as broken. A previous proof's mandate for this same
+ * peer chat would therefore silence this one, so clear the claimants first.
+ */
+function clearClaimants(chatId: string): void {
+  const chats = join(HOME, "chats");
+  for (const folder of readdirSync(chats, { withFileTypes: true })) {
+    if (!folder.isDirectory()) continue;
+    const path = join(chats, folder.name, "mandate.yaml");
+    const mandate = (() => {
+      try {
+        return readFileSync(path, "utf8");
+      } catch {
+        return "";
+      }
+    })();
+    if (mandate.includes(chatId))
+      rmSync(join(chats, folder.name), { recursive: true, force: true });
+  }
+}
+
 const receipt: Record<string, unknown> = {};
 const { child, connected } = startDaemon();
 try {
@@ -99,6 +121,7 @@ try {
   const canonicalForm =
     allowlist.peerChats.find((chatId) => chatId.endsWith("@s.whatsapp.net")) ??
     allowlist.peerChats[0]!;
+  clearClaimants(canonicalForm);
   mkdirSync(join(HOME, "chats", slug), { recursive: true });
   writeFileSync(
     join(HOME, "chats", slug, "mandate.yaml"),
