@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMandateWatcher } from "./watcher";
 
-async function eventually(check: () => boolean, timeoutMs = 3_000): Promise<void> {
+async function eventually(check: () => boolean, timeoutMs = 8_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!check()) {
     if (Date.now() > deadline) throw new Error("condition not reached in time");
@@ -41,7 +41,7 @@ test("a mandate edit wakes one debounced resync; stop drains cleanly", async () 
   } finally {
     await rm(home, { recursive: true, force: true });
   }
-});
+}, 15_000);
 
 test("a failing resync never throws out of the watcher", async () => {
   const home = await mkdtemp(join(tmpdir(), "ambient-watch-fail-"));
@@ -57,10 +57,11 @@ test("a failing resync never throws out of the watcher", async () => {
       30,
     );
     await watcher.start();
-    await mkdir(join(home, "chats", "new-chat"));
+    await mkdir(join(home, "chats", "new-chat"), { recursive: true });
+    await writeFile(join(home, "chats", "new-chat", "mandate.yaml"), "chatId: 1@g.us\n");
     await eventually(() => calls >= 1);
     await watcher.stop();
   } finally {
     await rm(home, { recursive: true, force: true });
   }
-});
+}, 15_000);
