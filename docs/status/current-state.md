@@ -36,13 +36,13 @@ one CLI is the whole operator surface. Single package until we outgrow it.
 listening, instructions, memoryBrief}` (`memoryBrief` stored now,
   consumed in the memory slice); fail-closed; active records mirror the
   set of valid folders (reconcile by scan); directory watcher as wake hint
-  - startup reconcile. `conversation.speakers` stanzas deleted;
-    `conversation.enabled` dropped (no valid mandates = inert);
-    `outboundMode` and the send allowlist guard unchanged.
+  plus startup reconcile. `conversation.speakers` stanzas deleted;
+  `conversation.enabled` dropped (no valid mandates = inert);
+  `outboundMode` and the send allowlist guard unchanged.
 - Skills, fundamental: package + home `skills/` + chat `skills/`,
-  chat wins by name, eager-append into the speaker prompt (fixed identity
-  - mandate instructions + skills); broken skill = loud in doctor, skipped
-    in runs.
+  chat wins by name, eager-append into the speaker prompt (fixed identity,
+  then mandate instructions, then skills); broken skill = loud in doctor,
+  skipped in runs.
 - CLI (commander + @inquirer/prompts + yaml, in-package): bare `ambient` =
   init-if-needed, then start the daemon and tail the logs. Init is
   onboarding: seed home → credential check → whatsappd pairing (QR) →
