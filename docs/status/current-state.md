@@ -116,6 +116,80 @@ speaker answer; break the mandate, observe fail-closed inactivity + doctor
 non-zero with the exact error; the existing golden conversation proof
 passes on the new composition.
 
+## Active slice: Identity & Voice (cut 2026-08-13, ordered by the master)
+
+Two defects the first real master-DM test exposed. Both must land before
+the memory ship gate. Build order: Part B first (its output makes Part A's
+live validation legible).
+
+### Part B — the operational log (build first)
+
+**Product question.** Can the operator watch the daemon work — message in,
+reply out, mandate changes, breakage — in decent, levelled, domain-formatted
+lines, without free-form prints ever creeping into the code?
+
+**Design.**
+
+- **Engine** (`src/platform/logging.ts`, grows one function): pino — already
+  a dependency, the proper library — level from `config.logging.level`, two
+  sinks: pretty console when stdout is a TTY (pino-pretty), ndjson always to
+  `state/logs/ambient.log` (the future TUI tails this). Reuse the existing
+  redaction path list.
+- **Vocabulary** (`src/app/operational-log.ts`, new): the ONLY birthplace of
+  log lines — a closed, typed event set; free-form logging has no API:
+
+  ```ts
+  interface OperationalLog {
+    daemonStarted(account: string): void; // info
+    messageReceived(chat: string): void; // info  "→ master: message received"
+    replySent(chat: string): void; // info  "← master: reply sent"
+    runFailed(chat: string, error: string): void; // error
+    mandatesChanged(active: string, broken: string): void; // info
+    chatBroken(slug: string, problem: string): void; // warn  "✗ tst: mode — expected …"
+    memoryDigested(chat: string, claims: number): void; // debug
+  }
+  ```
+
+  Chats always render as slugs (never raw ids). Adding an event = one
+  deliberate edit here, formatted once, levelled once.
+
+- **Injection**: created in the composition root; handed to resources and
+  services through their existing options as this narrow port; default is
+  silent (tests unchanged). Touch points: ingestion callback, sender wrap,
+  mandate resync, memory service completion, lifecycle start/stop.
+- **Proof**: unit tests on formatting and level routing; live smoke — a
+  daemon run visibly narrates one message → reply cycle.
+
+### Part A — canonical chat identity (the pn/lid fix)
+
+**Product question.** One human DM = ONE conversation everywhere — records,
+watermarks, memory — regardless of which WhatsApp identity form the traffic
+uses. Groups are unaffected (single id form).
+
+**Design: canonicalize at ingestion.** whatsappd's mirror already maintains
+the mapping (`wa_contact_aliases`: native_id → contact_id, 135 rows on this
+account, lid → pn verified live). The whatsapp module resolves every inbound
+conversation id to its canonical form (the alias table's `contact_id`, else
+the raw id) BEFORE anything durable is written — ambient.db only ever sees
+canonical ids. The observation mapper / accepted-source path owns it, fed by
+an alias lookup on the mirror read model (`whatsapp/mirror.ts`).
+
+- `activate` resolves any input (number, pn, lid) to canonical and writes
+  one mandate; the projector is untouched.
+- Alias unknown at first contact: the raw id IS canonical until whatsappd
+  learns the mapping (contacts sync makes this brief); accept it.
+- **Migration** (one bounded script at the rung): rewrite existing lid-form
+  conversation ids to canonical across `observations`, `conversation_inbox`,
+  `conversation_speakers`, `conversation_schedule`, memory tables; then
+  delete the `master-lid/` scar folder — `master/` covers the DM.
+- **Proof**: unit — mapper canonicalizes with alias present, passes through
+  without; live — a fresh lid-form message retains under the pn id and is
+  answered through the single `master/` mandate; doctor shows one entry.
+
+**Done =** the daemon narrates its work at the chosen level; one folder per
+human; the live master-DM loop answers on a fresh message; migration script
+run; 100% suite green; ledger updated.
+
 ## The MVP and the road (reset 2026-08-13, with the master)
 
 **The MVP.** Ambient on one machine, run from `~/.ambient`: speakers active
@@ -142,7 +216,9 @@ are post-MVP.
 stop, never committed in advance):
 
 1. **Done (2026-08-13):** Home v1 — proof gate passed (record above).
-   **Active: none** — the next slice is selected at the review stop.
+   **Active: Identity & Voice** (above) — the first real master-DM test
+   exposed the pn/lid identity split and the daemon's silence; both fixed
+   before anything else moves.
 2. **Likely next:** the memory ship gate — review the three flagged
    claims, production wipe-and-re-read under the full gate, one live
    keep-up proof (wrap-up items 1–2 below). **Done =** a recorded verdict
