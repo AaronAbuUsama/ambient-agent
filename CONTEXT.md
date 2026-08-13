@@ -74,6 +74,13 @@ record is its validated projection plus runtime watermark.
 _Avoid_: grant (capability grants are a different thing), manifest, policy
 file
 
+**Memory brief**:
+The mandate's statement of what a chat's memory is for. Carried to every
+digest of that chat; when present it is the prime coverage rule. Memory
+itself is default-on for every allowed chat — the brief shapes it, never
+enables it.
+_Avoid_: memory prompt, digestion focus
+
 **Speaker record**:
 The runtime projection of a mandate plus the activation watermark. Protocol
 plane; the claim gate reads it transactionally. Not the grant itself.

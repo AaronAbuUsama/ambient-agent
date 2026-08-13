@@ -234,11 +234,77 @@ the proof override still strengthening the final guard; all gates pass.
 
 ## Active slice
 
-None. Memory v2 completed 2026-08-12 (below): the golden-first rebuild the
-Memory v1 post-slice review demanded, shipped into production. Workers v1
-is next; its brief lands at the next planning stop. Memory's repo-routing
-claims (repository URLs, the master's GitHub identity, per-repo purpose)
-are now real and evidence-backed — the input Workers v1 needs.
+None. The memory rebuild onto the speaker's pattern completed 2026-08-13
+(below) pending its live golden gate. Workers v1 remains the likely next
+slice after that gate lands.
+
+## Completed slice: memory on the speaker's pattern (2026-08-13)
+
+Selected by the master mid-session after stopping the live-memory grill:
+"producer" and "job" were repudiated as product concepts, the wayfinding
+process was abandoned, and the direction reset to the simplest system — the
+memory agent as the speaker's peer. V2's extraction-quality work (the
+golden-first method, attribution recovery, host validation, versioned facts)
+is preserved; v2's bespoke machinery is deleted.
+
+**Product question.** Does memory behave as presence, not plumbing:
+default-on for every allowed chat, catching up on the retained past and
+keeping up with live traffic, through the same agent pattern the speaker
+runs — no jobs, no producer, nothing a human must trigger?
+
+**Owner.** `memory/` owns the agent (now on pi's Agent with a
+`propose_facts` tool) and the service loop; `database/memory-work.ts` owns
+the one durable transition; `whatsapp/message-payload.ts` owns the
+retained-payload schema every reader now shares (was four copies).
+
+**Durable protocol.**
+
+1. Retained records: the per-chat `memory_schedule` row — digested-through
+   watermark, fenced lease, attempt count — plus the agent run.
+2. Owning service: the memory work store. Due-ness derives from retained
+   observations against the watermark: a full window (40) is due
+   immediately, any smaller backlog is due once quiet for 5 minutes —
+   data-derived, never a process timer.
+3. Consumer: the memory service drain, already in the production lifecycle.
+4. Idempotency: claiming opens the lease and the agent run in one
+   transaction; the window's deterministic patch key
+   (`patch:window:<first-observation-id>`) means even a re-claimed crashed
+   attempt recovers instead of digesting twice.
+5. Retry/recovery: lease expiry reopens the chat; a failed window re-derives
+   identically and re-runs; three consecutive failures park the chat.
+6. Evidence: the run (input, result, and now tool calls), the ontology
+   patch, and the evaluation signal riding the terminal transition.
+
+**The agent, on the pattern.** `MemoryAgent.run(input, tools, signal)` — the
+contract AGENTS.md always prescribed. `propose_facts` validates AND applies
+at the tool boundary; a rejected proposal returns to the model in-loop
+(capped at 3); never proposing is memory silence, an empty digest. The
+one-shot JSON-scraping call is gone. Prompt: a general analyst base plus the
+mandate's per-chat memory brief (`conversation_speakers.memory_brief`,
+seeded like instructions); the Bug Reports issue-centric focus is now that
+chat's brief, not the prompt. promptVersion `memory-v3`.
+
+**Evals.** Untouched by design — the master's yardstick decision: same two
+cases, same signal, same golden grading; the evidence assembler merely
+stopped expecting a `jobId`. The digest proof now drives the production
+path: seed a listening speaker, drain the memory service window by window.
+
+**Proof.** Deterministic: `vp check` clean (68 files); `vp test` 89/89
+across 15 files (new: default-on gating including unlisted chats never
+digesting, quiet coalescing, ordered windows, park-after-three, memory
+silence, brief flow, crash-recovered windows); `drizzle-kit check` clean
+(migrations: drop `memory_jobs`, create `memory_schedule`, add
+`memory_brief`). **Not yet run:** the live golden digest
+(`proof:memory-digest`) — it needs the private rig profiles and a model
+pool, and per the master's wipe-and-re-read decision the derived ontology is
+reset first so the v3 agent re-derives memory from source and is graded
+against the golden reference. That reset + rerun is this slice's ship gate.
+
+**Open questions.** Live retention gaps (media and Ambient's own messages
+are not retained live — the mapper keeps inbound text only); abandoned
+`running` runs are never terminalized (preexisting); the memory dials
+(window 40 / quiet 5m / poll 15s) are service defaults, promoted to
+configuration when tuning becomes real.
 
 ## Completed slice: Memory v2 — golden-first rebuild (2026-08-12)
 
@@ -627,14 +693,6 @@ whole loop autonomously; testing never requires the operator.
 ## Known debt
 
 Accepted, durable, and owned here rather than in commit messages:
-
-- **Memory prompt embeds one chat's focus** — the `memory-v2` analyst prompt
-  hard-codes the Bug Reports group's shape (issues as the unit of memory,
-  GitHub filing). The general machinery (grounding, dedup invariant,
-  supersession, windowing, golden-first method) is chat-independent; when a
-  second memory bed arrives, split the base prompt from a per-chat digestion
-  brief carried the same way speakers carry per-chat instructions. Do not
-  build the brief machinery before that second real use.
 
 - **Repository bag** — `AmbientRepositories` is now consumed only inside
   `src/app/` (resources and the proof harness) but remains a bag rather than
