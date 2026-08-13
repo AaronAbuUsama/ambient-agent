@@ -1168,19 +1168,95 @@ happened as the 2026-08-13 reset above):**
    third agent kind, judge-vs-answer-key calibration, the visibility
    layer as a `wiki/` projection.
 
-## Workers v1 — queued candidate brief
+## Active slice: Workers v1 — the bug-filing journey (cut 2026-08-13)
 
-Queued as an MVP theme at the 2026-08-13 reset (selected properly at a
-review stop). The customer-feedback journey: a bounded Worker files a
-GitHub issue from validated Bug Reports evidence, its durable result
-returns to the originating conversation's Inbox, and the speaker decides
-how to report it. Product context from the master (2026-08-12): a previous
-bug-filing agent lived in this group and was retired for being poor — the
-bar is real usefulness, and filing must target the **right repository**,
-so repo routing is part of the worker's design, not an afterthought.
-GitHub credentials are already available on this machine; the proof
-targets a scratch repository. Worker runs ship with `worker-*` evaluation
-cases per the standing rule.
+Selected by the master after the memory ship gate, with the memory work
+merged. Product context (2026-08-12): a previous bug-filing agent lived in
+this group and was retired for being poor — the bar is real usefulness, and
+filing must target the **right repository**, so repo routing is part of the
+worker's design, not an afterthought.
+
+**Product question.** Can a Conversation Agent delegate one bounded
+objective to a Worker, have that Worker produce a real external effect —
+a GitHub issue in the correct repository — and have the durable result
+return to the originating chat so the speaker reports it, with the whole
+handoff surviving restart, retry, and duplication?
+
+**The concrete journey.** A bug is reported in an active chat. The speaker
+recognizes work it should not do itself and creates a bounded assignment
+carrying the objective and the target repository. The Worker runs with one
+scoped capability, files the issue, and its result becomes an Inbox item in
+the originating chat. The speaker reads it and tells the humans the issue
+number. No human triggers anything.
+
+**Owner.** `worker/` owns the Worker role contract, prompt, and result;
+`github/` owns the `gh` adapter and hides the CLI entirely;
+`database/assignment-work.ts` owns the one durable transition;
+`conversation/` gains one tool to open an assignment.
+
+### The six protocol questions
+
+1. **Retained record.** `tasks` — already in the schema and dormant since it
+   was written: conversation, requesting run, objective, instructions,
+   worker profile, status, fenced lease, result summary. `task_updates`
+   records status history, `task_artifacts` the issue URL, and
+   `task_worker_attempts` links each Worker run. No new table.
+2. **Owning service.** The assignment work store: queued → claimed under a
+   fenced lease → succeeded or failed, in the same shape the Conversation
+   and memory work stores already use.
+3. **Consumer.** A Worker service drain in the production lifecycle,
+   alongside Conversation and memory. The result is claimed by the
+   originating chat's Inbox — `inbox.enqueue` finally gets the
+   `task_update` producer the ledger has been holding it for.
+4. **Idempotency.** GitHub has no idempotency key, so the effect carries
+   its own: the issue body embeds `Ambient-Task: <taskId>`, and filing
+   searches for that marker before creating. A retried attempt finds the
+   issue it already filed and adopts it instead of filing a duplicate. The
+   retired bot's duplicate filings are in this group's history; this is the
+   guard against repeating them.
+5. **Retry and recovery.** Lease expiry reopens the assignment exactly as
+   Conversation and memory reopen theirs; the marker search makes the
+   retry safe. Repeated failure parks the assignment rather than spending
+   forever.
+6. **Evidence.** The Worker run (input, tool calls, result), the
+   `task_artifacts` row holding the issue URL, and the issue itself — the
+   external effect is proven by the retained URL, never by the model
+   saying so.
+
+### Destination selection stays outside model control
+
+The repository is chosen when the assignment is created and recorded on it.
+The Worker's capability is bound to that one repository for that one run, so
+a model cannot file into an arbitrary repo — the same invariant that stops a
+speaker sending to an arbitrary chat. Routing evidence comes from memory,
+which already holds repositories in `owner/name` form with which issues went
+where; the group genuinely routes to more than one repo, so this is a real
+decision rather than a constant.
+
+### The bar, defined before the code
+
+The golden-first method that worked for memory: a hand-made answer key of
+real bugs from this group's history with the issues a careful human would
+file for them — title, body, and target repository — written BEFORE the
+worker. "It filed something" is not the bar; the previous agent cleared
+that and was still retired.
+
+**In:** one one-off specialist Worker, not a reusable definition; one
+`file_issue` capability over `gh`; the assignment record and its service;
+the result returning to the originating Inbox; `worker-*` eval cases; a
+live proof filing into a scratch repository.
+
+**Out (named):** Worker definitions and instances (Root's territory); MCP
+capabilities; multi-step or long-running workers; worker-created workers;
+issue updates, comments, and closing.
+
+**Proof gate.** Deterministic: assignment lifecycle, lease expiry recovery,
+the duplicate guard (a retried attempt adopts its own issue rather than
+filing twice), the result reaching the originating Inbox, and a Worker
+never filing outside its assigned repository. Live on the rig: a real
+message in the test group produces a real issue in
+`AaronAbuUsama/ambient-worker-sandbox`, and the speaker reports the number
+back into the chat.
 
 ## Live test rig
 
