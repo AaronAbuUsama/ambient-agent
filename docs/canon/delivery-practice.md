@@ -56,7 +56,7 @@ Evidence or proof
 Do not create decision records for private helpers, naming choices, or other
 easily reversible implementation details.
 
-If decision records become necessary, place them under `docs/decisions/` and
+If decision records become necessary, place them under `docs/adr/` and
 number them sequentially. Do not create that directory before the first real
 decision earns it.
 

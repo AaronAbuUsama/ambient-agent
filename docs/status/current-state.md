@@ -582,8 +582,11 @@ now purely an operator config flip (seed the real group id,
 Requested by the master during replanning ("what primitives do we have?").
 
 - `pi-agent-core` (the only Pi layer Ambient depends on, with `pi-ai`) has
-  no prompt layering and no skill concept: `AgentState.systemPrompt` is one
-  plain string Ambient assembles; tools are explicit `AgentTool`s.
+  no prompt layering: `AgentState.systemPrompt` is one plain string Ambient
+  assembles; tools are explicit `AgentTool`s. It DOES ship skill loading
+  (verified against the installed 0.84.1, `dist/harness/skills.d.ts`):
+  `loadSkills(env, dirs)` with recursive SKILL.md discovery and
+  `loadSourcedSkills` with per-directory provenance tags.
 - `pi-coding-agent` (present in the store, not a project dependency)
   implements the Agent Skills standard (agentskills.io): SKILL.md packages,
   names + descriptions always in the system prompt, full instructions loaded

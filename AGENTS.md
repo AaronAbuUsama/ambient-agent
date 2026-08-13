@@ -481,6 +481,23 @@ Stop and seek or perform a redesign before proceeding when:
 - an abstraction increases the number of concepts without hiding complexity;
 - the implementation is correct but cannot be explained simply.
 
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on `AaronAbuUsama/ambient-agent` (`gh` CLI). See
+`docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary — label strings equal the five canonical role names. See
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` at the root, ADRs in `docs/adr/`. See
+`docs/agents/domain.md`.
+
 <!--VITE PLUS START-->
 
 # Using Vite+, the Unified Toolchain for the Web
