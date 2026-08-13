@@ -2,6 +2,7 @@ import { z } from "zod";
 import { createConversationContextBuilder } from "../conversation/context-builder";
 import type { RecalledMemory } from "../conversation/contract";
 import { importChatHistory, type HistoryImportResult } from "../whatsapp/history-import";
+import { retainedMessagePayloadSchema } from "../whatsapp/message-payload";
 import { createPiConversationAgent } from "../conversation/pi-agent";
 import type { WhatsAppDestination } from "../whatsapp/service";
 import type { AppConfig } from "./config";
@@ -57,17 +58,15 @@ export interface AmbientProofHarness {
     readonly limit?: number;
   }): Promise<HistoryImportResult>;
   /**
-   * Digest one conversation's retained history as sequential windowed memory
-   * jobs, so later windows see the ontology earlier windows built (the
-   * dedup/supersession pressure a single giant batch cannot exert).
+   * Digest one conversation's retained backlog through the production memory
+   * path: seed a listening speaker (memory is default-on for allowed chats)
+   * and drain the memory service window by window, so later windows see the
+   * ontology earlier windows built.
    */
-  requestMemoryDigest(
-    conversationId: string,
-    options?: { readonly limit?: number; readonly window?: number },
-  ): Promise<{
+  requestMemoryDigest(conversationId: string): Promise<{
     readonly outcome: "done" | "failed";
     readonly runIds: readonly string[];
-    readonly jobs: number;
+    readonly windows: number;
     readonly batchSize: number;
     readonly senders: readonly string[];
   }>;
@@ -213,41 +212,40 @@ export async function createAmbientProofHarness(
       return importChatHistory({ ...options, sink: repositories.observations });
     },
 
-    async requestMemoryDigest(conversationId, { limit = 1000, window = 40 } = {}) {
+    async requestMemoryDigest(conversationId) {
       const memoryService = resources.memoryService;
       if (!memoryService) {
         throw new Error("this proof harness was composed without the memory role");
       }
       const batch = await repositories.observations.forConversation(conversationId, {
         kind: "message",
-        limit,
+        limit: 10_000,
       });
       if (batch.length === 0) throw new Error("no retained observations to digest");
-      const senderSchema = z.looseObject({ sender: z.looseObject({ id: z.string().min(1) }) });
       const senders = [
         ...new Set(
           batch.flatMap(({ payload }) => {
-            const parsed = senderSchema.safeParse(payload);
-            return parsed.success ? [parsed.data.sender.id] : [];
+            const parsed = retainedMessagePayloadSchema.safeParse(payload);
+            return parsed.success && parsed.data.sender ? [parsed.data.sender.id] : [];
           }),
         ),
       ];
+      // Memory is default-on for allowed chats: presence, not a job, is what
+      // makes the backlog digestible. Listening keeps the chat silent.
+      await repositories.speakers.seed([{ conversationId, mode: "listening" }]);
       const runIds: string[] = [];
-      let jobs = 0;
-      for (let start = 0; start < batch.length; start += window) {
-        const chunk = batch.slice(start, start + window);
-        await repositories.memoryJobs.create({
-          conversationId,
-          observationIds: chunk.map(({ id }) => id),
-        });
-        jobs += 1;
+      let windows = 0;
+      for (;;) {
         const { outcome, runId } = await memoryService.runOnce();
+        if (outcome === "idle") break;
+        windows += 1;
         if (runId !== undefined) runIds.push(runId);
         if (outcome !== "done") {
-          return { outcome: "failed", runIds, jobs, batchSize: batch.length, senders };
+          return { outcome: "failed", runIds, windows, batchSize: batch.length, senders };
         }
+        if (windows > 1000) throw new Error("memory digest did not converge");
       }
-      return { outcome: "done", runIds, jobs, batchSize: batch.length, senders };
+      return { outcome: "done", runIds, windows, batchSize: batch.length, senders };
     },
 
     recallFor(nativeIds, query = "") {

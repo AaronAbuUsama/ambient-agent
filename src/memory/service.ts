@@ -1,14 +1,13 @@
-import type { ModelConfig } from "../models/contract";
 import { messageOf } from "../platform/errors";
 import type {
   AppliedMemorySummary,
   MemoryAgent,
   MemoryInput,
-  MemoryJobClaim,
-  MemoryJobStore,
   MemoryProposal,
   MemoryService,
   MemoryTools,
+  MemoryWindowClaim,
+  MemoryWorkStore,
 } from "./contract";
 
 /** The ontology writer the service needs; satisfied by the memory repository. */
@@ -45,26 +44,19 @@ export interface MemoryOntologyWriter {
   getPatch(id: string): Promise<{ readonly status: string } | undefined>;
 }
 
-/** Run creation port; terminal transitions are owned by the job store. */
-export interface MemoryRunStarter {
-  start(input: {
-    readonly agentId: string;
-    readonly role: "memory";
-    readonly conversationId?: string;
-    readonly model: ModelConfig;
-    readonly promptVersion: string;
-    readonly input: unknown;
-  }): Promise<{ readonly id: string }>;
-}
-
 export interface MemoryServiceOptions {
-  readonly jobs: MemoryJobStore;
+  readonly work: MemoryWorkStore;
   readonly agent: MemoryAgent & { readonly promptVersion?: string };
   readonly ontology: MemoryOntologyWriter;
-  readonly runs: MemoryRunStarter;
   readonly maximumClaimsPerJob?: number;
   /** Rejected proposals allowed before the run is cut off. */
   readonly maximumProposalAttempts?: number;
+  /** Full-window size; a backlog this large is due immediately. */
+  readonly window?: number;
+  /** Backlog younger than this keeps coalescing; older backlog is due. */
+  readonly quietMs?: number;
+  /** Consecutive failed windows after which a chat is parked. */
+  readonly maximumAttempts?: number;
   readonly leaseOwner?: string;
   readonly leaseMs?: number;
   readonly pollMs?: number;
@@ -145,12 +137,14 @@ export function createMemoryService(options: MemoryServiceOptions): MemoryServic
   const pollMs = options.pollMs ?? 15_000;
   const maximumClaims = options.maximumClaimsPerJob ?? 50;
   const maximumProposalAttempts = options.maximumProposalAttempts ?? 3;
+  const window = options.window ?? 40;
+  const quietMs = options.quietMs ?? 300_000;
+  const maximumAttempts = options.maximumAttempts ?? 3;
   const promptVersion = options.agent.promptVersion ?? "memory-v1";
 
   const apply = async (
-    claim: MemoryJobClaim,
+    claim: MemoryWindowClaim,
     proposal: MemoryProposal,
-    runId: string,
   ): Promise<AppliedMemorySummary> => {
     validate(claim.input, proposal, maximumClaims);
 
@@ -311,9 +305,9 @@ export function createMemoryService(options: MemoryServiceOptions): MemoryServic
 
     if (operations.length > 0) {
       await options.ontology.applyPatch({
-        id: `patch:${claim.jobId}`,
-        runId,
-        source: { jobId: claim.jobId, conversationId: claim.conversationId },
+        id: claim.patchId,
+        runId: claim.runId,
+        source: { conversationId: claim.conversationId, window: claim.patchId },
         operations,
       });
     }
@@ -334,7 +328,7 @@ export function createMemoryService(options: MemoryServiceOptions): MemoryServic
    * valid proposal is cut off after a few attempts rather than left to spend
    * the lease. An agent that never proposes chose silence — an empty digest.
    */
-  const digest = async (claim: MemoryJobClaim, runId: string): Promise<AppliedMemorySummary> => {
+  const digest = async (claim: MemoryWindowClaim): Promise<AppliedMemorySummary> => {
     let applied: AppliedMemorySummary | undefined;
     let lastRejection: string | undefined;
     let rejections = 0;
@@ -345,7 +339,7 @@ export function createMemoryService(options: MemoryServiceOptions): MemoryServic
           throw new Error("propose_facts already applied a proposal in this run");
         }
         try {
-          applied = await apply(claim, proposal, runId);
+          applied = await apply(claim, proposal);
           return applied;
         } catch (error) {
           if (error instanceof ProposalValidationError) {
@@ -372,45 +366,50 @@ export function createMemoryService(options: MemoryServiceOptions): MemoryServic
   const runOnce = async (
     at?: string,
   ): Promise<{ readonly outcome: "idle" | "done" | "failed"; readonly runId?: string }> => {
-    const claim = await options.jobs.claimNext({
+    const claim = await options.work.claimNext({
       leaseOwner,
       leaseMs,
+      model: options.agent.model,
+      promptVersion,
+      window,
+      quietMs,
+      maximumAttempts,
       ...(at === undefined ? {} : { now: at }),
     });
     if (!claim) return { outcome: "idle" };
-    const { id: runId } = await options.runs.start({
-      agentId: "memory-analyst",
-      role: "memory",
-      conversationId: claim.conversationId,
-      model: options.agent.model,
-      promptVersion,
-      input: {
-        jobId: claim.jobId,
-        conversationId: claim.conversationId,
-        observationIds: claim.input.messages.map(({ observationId }) => observationId),
-      },
-    });
     try {
-      // Crash recovery: a previous attempt may have applied the patch and died
-      // before completing; never digest the same job onto the ontology twice.
-      const previous = await options.ontology.getPatch(`patch:${claim.jobId}`);
+      // Crash recovery: a previous attempt may have applied this window's
+      // patch and died before completing; the deterministic window key means
+      // even a later re-claim recovers instead of digesting twice.
+      const previous = await options.ontology.getPatch(claim.patchId);
       const summary =
         previous?.status === "applied"
           ? ({
-              report: "Recovered: this job's patch was already applied by a previous attempt.",
+              report: "Recovered: this window's patch was already applied by a previous attempt.",
               entitiesCreated: 0,
               linkedNativeIds: [],
               claims: [],
               patchStatus: "applied",
             } satisfies AppliedMemorySummary)
-          : await digest(claim, runId);
-      await options.jobs.complete({ jobId: claim.jobId, leaseOwner, runId, result: summary });
-      return { outcome: "done", runId };
+          : await digest(claim);
+      await options.work.complete({
+        conversationId: claim.conversationId,
+        leaseOwner,
+        runId: claim.runId,
+        digestedThrough: claim.digestedThrough,
+        result: summary,
+      });
+      return { outcome: "done", runId: claim.runId };
     } catch (error) {
-      await options.jobs
-        .fail({ jobId: claim.jobId, leaseOwner, runId, error: messageOf(error) })
+      await options.work
+        .fail({
+          conversationId: claim.conversationId,
+          leaseOwner,
+          runId: claim.runId,
+          error: messageOf(error),
+        })
         .catch(() => {});
-      return { outcome: "failed", runId };
+      return { outcome: "failed", runId: claim.runId };
     }
   };
 

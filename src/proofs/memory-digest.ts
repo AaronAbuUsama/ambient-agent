@@ -62,7 +62,7 @@ async function digestInto(
     const digest = await harness.requestMemoryDigest(chatId);
     section["digest"] = {
       outcome: digest.outcome,
-      jobs: digest.jobs,
+      windows: digest.windows,
       runs: digest.runIds.length,
       batchSize: digest.batchSize,
       senders: digest.senders.length,
