@@ -1,4 +1,5 @@
 import { openAmbientDatabase, type AmbientDatabase } from "../database/database";
+import type { GhCommand } from "../github/issues";
 import { createPiConversationAgent } from "../conversation/pi-agent";
 import { createConversationService, type ConversationService } from "../conversation/service";
 import type { EvaluationService } from "../evals/contract";
@@ -49,6 +50,12 @@ export interface AppResourceOptions {
    * Production passes nothing and keeps the unmodified guard.
    */
   readonly authorizeOutbound?: (conversationId: string) => boolean;
+  /**
+   * Proof-only `gh` override for the worker toolbox: a rehearsal that
+   * provides one CANNOT reach real GitHub. Production passes nothing and
+   * uses the real CLI.
+   */
+  readonly gh?: GhCommand;
 }
 
 export async function createAppResources(
@@ -98,7 +105,7 @@ export async function createAppResources(
     // themselves. Both are read fresh at every resync, so a revoked grant or
     // an edited definition governs the next claim without a restart.
     const grantsByChat = new Map<string, Readonly<Record<string, AgentGrant>>>();
-    const toolbox = createWorkerToolbox();
+    const toolbox = createWorkerToolbox(options.gh ? { gh: options.gh } : {});
     const agentDefinitions = new Map<string, AgentDefinition>();
     let lastAgentSummary = "";
     const resyncMandates = async () => {

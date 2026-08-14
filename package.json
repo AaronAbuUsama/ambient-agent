@@ -18,7 +18,8 @@
     "proof:memory-digest": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/memory-digest.ts",
     "ambient": "tsx src/cli.ts",
     "proof:home-live": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/home-live.ts",
-    "proof:memory-keepup": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/memory-keepup.ts"
+    "proof:memory-keepup": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/memory-keepup.ts",
+    "proof:worker-delegation": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/worker-delegation.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.84.1",
