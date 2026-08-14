@@ -1411,6 +1411,54 @@ database, daemon stopped for the duration and restarted after:
 Production now recalls the identity-aware v10 ontology where its speaker
 runs.
 
+## Next slice: Workers v1.5 — the craft (brief, cut 2026-08-14)
+
+The machine files issues reliably; this slice makes it file GOOD ones and
+prepares the real Bug Reports group. Decisions settled with the master:
+
+1. **Structured outcomes, derived from evidence.** A worker result becomes
+   done/declined at the host: succeeded + retained receipt →
+   `{outcome: "done", issue: {number, url}}` (facts from the receipt, so
+   the model cannot claim false success); succeeded without a receipt →
+   `{outcome: "declined", reason}` — the worker answering its CALLER, a
+   first-class result, never a failure. `failed` stays infrastructure.
+   Delegation is already non-blocking with the assignment id as the job id.
+2. **Skills split by ownership.** The definition owns issue CRAFT
+   (structure, invent-nothing, the decline standard). The chat owns
+   PURPOSE: mandate instructions (what this group is, who the people are,
+   when to delegate) plus a `bug-intake` skill (the intake bar; RECALL
+   FIRST, ask second — memory usually knows the person, the issue, and its
+   status). Memory owns who/what/state — the rebuilt ontology already
+   carries 46 issues, 8 people, 5 repositories.
+3. **Routing is never guessed.** The `gh` auth reaches every repository
+   the master owns, so the definition ceiling is the hard boundary, and
+   within it: when memory's routing evidence does not settle the repo, the
+   speaker ASKS the chat — never picks.
+4. **Progressive disclosure.** Skills render as name + description (Pi's
+   own convention — `formatSkillsForSystemPrompt` renders name,
+   description, location and tells the model to read on demand); agents
+   get one narrow `read_skill(name)` tool validated against the chat's
+   granted set. No filesystem access; full-body injection retired.
+5. **Backfill = dry run = answer key.** Walk the ontology + history and
+   produce a review document: per issue — believed status, the issue the
+   worker would file, or "needs clarification". The master's corrections
+   become the hand-made answer key and the `worker-*` eval cases. The
+   speaker's first act in the group is the conversational twin: post its
+   understanding, let the reporter correct it, file only what survives.
+6. **Media/vision directive.** The models already in use (gpt-5.6-terra,
+   -luna via vibe) have vision. Memory digestion should ingest retained
+   images (screenshots ARE bug content) and know a picture from a video;
+   video needs frame handling — its own design questions. Sequenced after
+   go-live; named, not dropped.
+
+**Go-live sequence:** craft increment → backfill dry run + review → the
+master's three calls (merge PR #25; sandbox-first or straight to real
+repos; the repo ceiling list) → mandate flips to responding with grant +
+skills → opener + approved backfill → steady state.
+
+**Stacking:** this slice's work rides `workers-craft`, stacked on
+`workers-v1` (PR #25), per the master's direction.
+
 ## Live test rig
 
 Two linked proof profiles copied (checksums verified) from the whatsappd
