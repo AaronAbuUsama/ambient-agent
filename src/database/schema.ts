@@ -224,6 +224,35 @@ export const taskArtifacts = sqliteTable(
   (table) => [check("task_artifacts_kind", sql`${table.kind} IN ('text', 'file', 'url', 'json')`)],
 );
 
+/**
+ * What one piece of media shows, written once and read by every role.
+ *
+ * Keyed by the media store's content hash, so the same image forwarded into
+ * ten chats is interpreted once and never again. A row is evidence: it records
+ * the model that produced it, and `failed` is retained too so a blob that
+ * cannot be read is not retried forever.
+ */
+export const mediaDescriptions = sqliteTable(
+  "media_descriptions",
+  {
+    ref: text().primaryKey(),
+    status: text({ enum: ["described", "failed"] }).notNull(),
+    mimetype: text(),
+    description: text(),
+    failureReason: text("failure_reason"),
+    model: text().notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    check("media_descriptions_status", sql`${table.status} IN ('described', 'failed')`),
+    check(
+      "media_descriptions_described_has_text",
+      sql`(${table.status} <> 'described') OR (${table.description} IS NOT NULL)`,
+    ),
+  ],
+);
+
 export const conversationInbox = sqliteTable(
   "conversation_inbox",
   {

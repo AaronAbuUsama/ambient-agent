@@ -20,6 +20,13 @@ const modelMetadataSchema = z.object({
   contextWindow: z.number().int().positive().default(131_072),
   maxTokens: z.number().int().positive().default(32_768),
   reasoning: z.boolean().default(false),
+  /**
+   * Whether the model can actually look at an image. Declared, not guessed:
+   * the harness silently swaps images for a placeholder when a model cannot
+   * take them, so an undeclared model must be treated as blind rather than
+   * allowed to appear to work.
+   */
+  vision: z.boolean().default(false),
   supportsDeveloperRole: z.boolean().optional(),
   supportsReasoningEffort: z.boolean().optional(),
 });

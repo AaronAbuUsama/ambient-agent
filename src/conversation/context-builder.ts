@@ -1,3 +1,4 @@
+import type { MediaDescription, MediaInterpreter } from "../media/contract";
 import { whatsAppLiveMessagePayloadSchema } from "../whatsapp/observation-mapper";
 import type {
   ConversationClaim,
@@ -20,6 +21,8 @@ export interface ConversationContextSources {
   readonly agents?: (conversationId: string) => Promise<readonly ConversationDelegate[]>;
   /** Dereference task_update inbox items to their assignments' outcomes. */
   readonly taskUpdates?: (taskIds: readonly string[]) => Promise<readonly ConversationTaskUpdate[]>;
+  /** Interpret this batch's media, so the speaker is told what a picture shows. */
+  readonly media?: MediaInterpreter;
 }
 
 export function createConversationContextBuilder(
@@ -66,6 +69,30 @@ export function createConversationContextBuilder(
         };
       });
 
+      // Interpret this batch's pictures before the speaker reads them. The
+      // description is retained, so a re-run of the same batch costs nothing.
+      const describable = newMessages
+        .map(({ attachment }) => attachment)
+        .filter((attachment) => attachment?.ref !== undefined)
+        .map((attachment) => ({
+          ref: attachment!.ref!,
+          ...(attachment!.mimetype === undefined ? {} : { mimetype: attachment!.mimetype }),
+        }));
+      const descriptions: ReadonlyMap<string, MediaDescription> =
+        sources.media && describable.length > 0
+          ? await sources.media.describe(describable)
+          : new Map();
+      const described = newMessages.map((message) => {
+        const found = message.attachment?.ref
+          ? descriptions.get(message.attachment.ref)
+          : undefined;
+        if (!message.attachment || found?.status !== "described") return message;
+        return {
+          ...message,
+          attachment: { ...message.attachment, description: found.description },
+        };
+      });
+
       const taskItems = claim.items.filter(({ kind }) => kind === "task_update");
       const taskUpdates =
         taskItems.length > 0 && sources.taskUpdates
@@ -74,7 +101,7 @@ export function createConversationContextBuilder(
 
       return {
         conversationId: claim.conversationId,
-        newMessages,
+        newMessages: described,
         instructions: claim.instructions ?? instructions,
         skills: (await sources.skills?.(claim.conversationId)) ?? [],
         agents: (await sources.agents?.(claim.conversationId)) ?? [],

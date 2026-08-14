@@ -17,6 +17,7 @@ function fauxRunner(faux: ReturnType<typeof fauxProvider>, maxOutputTokens = 102
     snapshot: { provider: "faux", model: model.id, thinking: "off", maxOutputTokens },
     model,
     thinkingLevel: "off",
+    vision: false,
     stream: (context, options) =>
       models.streamSimple(model, context, { ...options, maxTokens: maxOutputTokens }),
   };

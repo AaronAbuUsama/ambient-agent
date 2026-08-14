@@ -24,6 +24,8 @@ import {
   createMessageIngestionRepository,
   type MessageIngestionRepository,
 } from "./message-ingestion";
+import type { MediaDescriptionStore } from "../media/contract";
+import { createMediaDescriptionStore } from "./media";
 import { createObservationRepository, type ObservationRepository } from "./observations";
 import { createRunRepository, type RunRepository } from "./runs";
 import { createTaskRepository, type TaskRepository } from "./tasks";
@@ -37,6 +39,7 @@ export interface AmbientRepositories {
   readonly speakers: ConversationSpeakerStore;
   readonly memory: MemoryRepository;
   readonly memoryWork: MemoryWorkStore;
+  readonly mediaDescriptions: MediaDescriptionStore;
   readonly runs: RunRepository;
   readonly tasks: TaskRepository;
   readonly evaluations: EvaluationRepository;
@@ -70,6 +73,7 @@ function repositories(database: AmbientDatabaseConnection): AmbientRepositories 
     tasks: createTaskRepository(database),
     evaluations,
     evaluationWork: createEvaluationWorkStore(database),
+    mediaDescriptions: createMediaDescriptionStore(database),
     memory: createMemoryRepository(database),
     memoryWork: createMemoryWorkStore(database),
   };

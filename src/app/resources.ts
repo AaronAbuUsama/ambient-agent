@@ -20,6 +20,8 @@ import { createWorkerToolbox } from "../worker/tools";
 import { createWhatsAppAcceptedSourceConsumer } from "../whatsapp/message-ingestion";
 import { createAliasResolver } from "../whatsapp/mirror";
 import { createWhatsAppService, type WhatsAppService } from "../whatsapp/service";
+import { createMediaInterpreter } from "../media/interpreter";
+import { createMediaBytes } from "../whatsapp/media-bytes";
 import type { AppConfig } from "./config";
 import type { AmbientLifecycleDependencies } from "./lifecycle";
 import { silentOperationalLog, type OperationalLog } from "./operational-log";
@@ -162,6 +164,24 @@ export async function createAppResources(
     // the truth after any missed event.
     const policyWatcher = createMandateWatcher(config.home, resyncMandates);
     const models = createModelRuntime(config.models);
+
+    // Media interpretation rides the memory role's model: it is the role that
+    // already reads evidence. Absent when that model declares no vision — the
+    // interpreter refuses to construct rather than describe images it cannot
+    // see, so the capability is missing loudly instead of lying quietly.
+    const visionRunner = config.models.roles.memory ? models.forRole("memory") : undefined;
+    const mediaInterpreter =
+      visionRunner?.vision === true
+        ? createMediaInterpreter({
+            runner: visionRunner,
+            bytes: createMediaBytes({
+              accountId: config.whatsapp.accountId,
+              directory: config.whatsapp.dataDirectory,
+            }),
+            store: database.repositories.mediaDescriptions,
+          })
+        : undefined;
+
     const evaluations = createEvaluationService({
       work: database.repositories.evaluationWork,
       recorder: database.repositories.evaluations,
@@ -264,6 +284,9 @@ export async function createAppResources(
             }),
           );
         },
+        // Present only when a vision-capable model is configured: a picture the
+        // speaker cannot be told about is better left undescribed than guessed.
+        ...(mediaInterpreter ? { media: mediaInterpreter } : {}),
         taskUpdates: async (taskIds) => {
           const rows = await Promise.all(taskIds.map((id) => database.repositories.tasks.get(id)));
           return rows.flatMap((task) =>
