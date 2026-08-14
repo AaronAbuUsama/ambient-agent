@@ -1325,6 +1325,64 @@ listening. Live on the rig: a real message in the test group produces a
 real issue in `AaronAbuUsama/ambient-worker-sandbox`, and the speaker
 reports the number back into the chat.
 
+### The machine's proof gate: MET (2026-08-14)
+
+**Offline rehearsal** (`proof:worker-delegation`): production composition,
+synthetic home, live gpt-5.6-terra, fake `gh` that cannot reach GitHub.
+Verdict PASS on the first run: delegation with a claim-derived id and a
+host-bound target, one `gh create` pinned to the assigned repository with
+the `Ambient-Task` marker, the receipt retained at the tool boundary, the
+task update consumed by the next speaker run, and a revoked grant
+stripping the capability without a restart.
+
+**Live rig** (`proof:worker-live`, PASS on the seventh attempt): the REAL
+daemon, a real bug report from the peer account into the rig-only Tst
+group (membership verified against the allowlist before any responding
+mandate was authored). Receipt: every stage true; exactly ONE new issue
+(#8) in the sandbox, carrying the assignment marker; the speaker reported
+"#8" into the chat and the peer account observed it;
+`reportMatchesIssue: true`.
+
+**What the six failed attempts taught — each fixed with retained
+evidence:**
+
+1. The proof-runner's 10-minute kill stranded a mid-run chain; manual
+   cancellation of the stranded assignment then exposed that a retried
+   delegating run could ADOPT a terminal assignment and wait forever.
+   Fixed: adoption refuses anything not queued or running.
+2. A claim retried after a successful send re-composes different text
+   under its spent idempotency key and was refused forever — one poisoned
+   claim burned twenty model runs in four minutes (the conversation store
+   retries without a park). Fixed: the sender adopts the conflict — the
+   effect already happened with the text originally composed for that
+   claim (`adopted:<key>`).
+3. A transient throw between the worker's claim and its run start was
+   swallowed by the drain's silent catch: a ten-minute leased deadlock,
+   twice. Fixed: infrastructure throws report through the daemon's voice,
+   release the lease (with retries — the release itself once hit the same
+   contention), and the next poll retries.
+4. The thrower itself: libsql same-connection interleaving. Waking the
+   worker inside the delegate provider put its claim in the middle of the
+   delegating run's own evidence transactions — instant SQLITE_BUSY three
+   attempts running, once wedging the delegating run's open tool row.
+   Fixed twice over: `busy_timeout=1500` for plain statements meeting
+   transaction locks, and the worker claims from its poll, never from an
+   instant wake.
+
+**Known debt from the live gate:** the conversation work store retries a
+failing claim every ~11s with no park (measured: twenty runs burned);
+libsql same-connection interleaving is mitigated, not eliminated — the
+named upgrade path is a process-wide single-flight gate over the client;
+send-adoption means a recovered claim that already spoke can never say
+anything new (its later wording is dropped — correct for retries, worth
+revisiting when a claim legitimately speaks twice); gpt-5.6-terra
+occasionally hangs a call for minutes (vibe pool), covered by leases;
+libsignal session noise ("Bad MAC") floods the rig daemon's stderr.
+
+**Deferred, named:** the hand-made issue answer key from real Bug Reports
+history and `worker-*` eval cases — the quality bar for issue CONTENT.
+The machine is proven; the craft bar is its own step.
+
 ## Live test rig
 
 Two linked proof profiles copied (checksums verified) from the whatsappd
