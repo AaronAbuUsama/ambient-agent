@@ -1189,10 +1189,65 @@ scoped capability, files the issue, and its result becomes an Inbox item in
 the originating chat. The speaker reads it and tells the humans the issue
 number. No human triggers anything.
 
-**Owner.** `worker/` owns the Worker role contract, prompt, and result;
+**Owner.** `worker/` owns the Worker harness (role contract, generic
+runtime, tool registry); `home/` owns agent definition and grant scanning;
 `github/` owns the `gh` adapter and hides the CLI entirely;
-`database/assignment-work.ts` owns the one durable transition;
-`conversation/` gains one tool to open an assignment.
+`database/tasks.ts` owns the one durable transition; `conversation/` gains
+one tool to open an assignment.
+
+### Design revision (2026-08-14, brainstormed with the master)
+
+The original cut had a hardcoded bug-filing worker. The revision, reached
+with the master acting as the Root: **tools are code, agents are data.**
+
+- **Worker is the harness, not the brain.** The agent kinds differ in run
+  contract — what wakes them, their input, their terminal result, their
+  lifecycle owner — never in composition. All delegated-task agents are ONE
+  kind (bounded objective, terminal result, lease) with N definitions.
+  "GitHub filer" vs a future "code agent" is different YAML, not a new kind.
+- **Definitions on disk, global namespace.** `~/.ambient/agents/<name>/
+agent.yaml`: description (the advertisement), model role, instructions,
+  and a tools map whose per-tool config is validated by that tool's own
+  schema. Scanned fail-closed on the mandate pattern; broken definitions
+  are absent and loud in doctor, never half-loaded.
+- **Grants in mandates, local narrowing.** A chat's mandate lists which
+  agents its speaker may delegate to; a grant may narrow tool constraints,
+  and the effective constraint is definition ∩ grant. The grant IS the
+  disclosure boundary: granting an agent to a chat authorizes that chat's
+  content to flow to the agent's destinations.
+- **The registry is code.** Each tool is a module registering
+  `{configSchema, bind, describe}`. Binding happens per-run in host code;
+  the model's tool signature simply does not contain the destination axis
+  (`file_issue(title, body)` — no repo parameter exists in its world).
+- **Discovery without a protocol.** The speaker learns what it can
+  delegate the way it learns skills: rendered text — the definition's
+  description plus a capability line derived from `describe(config)` so
+  the advertisement cannot drift from the code. Enforcement never relies
+  on it: `delegate(agent, objective, target)` is validated against grants
+  at the tool boundary. A2A's agent-card idea as one paragraph, no
+  envelopes, no negotiation.
+- **Locked with the master:** speaker-direct delegation under grants
+  (canon-sanctioned; the retained assignments are exactly what a future
+  Root will supervise); global definitions + local grants; issues filed
+  under the master's personal `gh` auth accepted for v1 — machine identity
+  arrives with the VPS deployment; the assignment id derives from the
+  delegate tool call id, so a retried speaker run adopts its own
+  delegation instead of filing twice (the layer ABOVE the adapter's guard).
+- **Definition drift:** read at claim, re-validate at bind, and the run is
+  stamped with a content hash of the definition it actually executed
+  (promptVersion's content-derived pattern). No versioning machinery.
+- **Runaway delegation:** a bounded in-flight assignment count per chat,
+  checked at creation; beyond it, park.
+- **MCP posture.** Verified: MCP 2026-07-28 is stateless (protocol
+  sessions removed), so building servers is now cheap. Core effectful
+  tools stay native anyway, because the safety layer — grants, binding,
+  idempotency, receipts — is host policy that no transport replaces; a
+  generic GitHub MCP server exposes owner/repo to the model, the exact
+  forbidden axis. MCP arrives as an additional registry entry kind behind
+  the same `ToolEntry` interface when the first real consumer does: a
+  third-party capability we should not write, or process isolation for
+  the code agent. Definitions, grants, and the harness will not change
+  when it does.
 
 ### The six protocol questions
 
@@ -1208,12 +1263,16 @@ number. No human triggers anything.
    alongside Conversation and memory. The result is claimed by the
    originating chat's Inbox — `inbox.enqueue` finally gets the
    `task_update` producer the ledger has been holding it for.
-4. **Idempotency.** GitHub has no idempotency key, so the effect carries
-   its own: the issue body embeds `Ambient-Task: <taskId>`, and filing
-   searches for that marker before creating. A retried attempt finds the
-   issue it already filed and adopts it instead of filing a duplicate. The
-   retired bot's duplicate filings are in this group's history; this is the
-   guard against repeating them.
+4. **Idempotency.** Three layers. The assignment id derives from the
+   speaker's delegate tool call id, so a retried speaker run re-creates
+   the SAME assignment. The retained `task_artifacts` receipt is the
+   authority on whether the issue was already filed — checked by the host
+   before the adapter is called (GitHub's list endpoint lags 1–2s,
+   measured; it can never be the authority). Last, the issue body embeds
+   `Ambient-Task: <taskId>` and the adapter adopts a marker hit, covering
+   the crash window between filing and retaining the receipt. The retired
+   bot's duplicate filings are in this group's history; this is the guard
+   against repeating them.
 5. **Retry and recovery.** Lease expiry reopens the assignment exactly as
    Conversation and memory reopen theirs; the marker search makes the
    retry safe. Repeated failure parks the assignment rather than spending
@@ -1241,22 +1300,30 @@ file for them — title, body, and target repository — written BEFORE the
 worker. "It filed something" is not the bar; the previous agent cleared
 that and was still retired.
 
-**In:** one one-off specialist Worker, not a reusable definition; one
-`file_issue` capability over `gh`; the assignment record and its service;
-the result returning to the originating Inbox; `worker-*` eval cases; a
-live proof filing into a scratch repository.
+**In:** the agent definition scanner and mandate grants; the tool
+registry with one `github_issues` entry over `gh`; one hand-authored
+definition (the master acting as Root); the generic Worker runtime and
+its drain; the assignment record and its service; the result returning to
+the originating Inbox; `worker-*` eval cases; a live proof filing into a
+scratch repository.
 
-**Out (named):** Worker definitions and instances (Root's territory); MCP
-capabilities; multi-step or long-running workers; worker-created workers;
-issue updates, comments, and closing.
+**Out (named):** Root authoring definitions dynamically (the master
+hand-writes YAML, which is the same interface); durable Worker instances
+(the assignment + run IS the instance for one-shot work); MCP-backed
+registry entries (posture recorded above); chat-local definition
+shadowing; multi-step or long-running workers; worker-created workers;
+issue updates, comments, and closing; grant narrowing beyond what the
+first real second-chat consumer demands.
 
 **Proof gate.** Deterministic: assignment lifecycle, lease expiry recovery,
-the duplicate guard (a retried attempt adopts its own issue rather than
-filing twice), the result reaching the originating Inbox, and a Worker
-never filing outside its assigned repository. Live on the rig: a real
-message in the test group produces a real issue in
-`AaronAbuUsama/ambient-worker-sandbox`, and the speaker reports the number
-back into the chat.
+the duplicate guard at every layer (a retried speaker run re-creates the
+same assignment; a retried attempt adopts its own issue), the result
+reaching the originating Inbox, a Worker never filing outside its assigned
+repository, and the reporting behavior — the speaker reports a parked
+failure honestly and stays silent when the mandate has flipped to
+listening. Live on the rig: a real message in the test group produces a
+real issue in `AaronAbuUsama/ambient-worker-sandbox`, and the speaker
+reports the number back into the chat.
 
 ## Live test rig
 
