@@ -106,15 +106,21 @@ export function createWorkerService(options: WorkerServiceOptions): WorkerServic
       // and say so out loud.
       const reason = messageOf(error);
       report?.(claim.conversationId, claim.workerProfile, reason);
-      try {
-        await work.transition(claim.id, {
-          to: "failed",
-          leaseOwner,
-          resultSummary: `infrastructure: ${reason}`,
-        });
-        await work.transition(claim.id, { to: "queued" });
-      } catch {
-        // The lease may already be gone; expiry recovery requeues it.
+      // The release itself can hit the same transient contention that got us
+      // here (measured live: a swallowed release re-deadlocked the lease for
+      // its full duration) — retry briefly before conceding to lease expiry.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          await work.transition(claim.id, {
+            to: "failed",
+            leaseOwner,
+            resultSummary: `infrastructure: ${reason}`,
+          });
+          await work.transition(claim.id, { to: "queued" });
+          break;
+        } catch {
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
+        }
       }
       return { outcome: "failed", taskId: claim.id };
     }

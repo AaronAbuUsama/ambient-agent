@@ -100,6 +100,14 @@ export async function openAmbientDatabase(url: string): Promise<AmbientDatabase>
     // inherit it: readers never block the writer, and a crash mid-write is
     // recoverable.
     await database.run(sql`PRAGMA journal_mode = WAL`);
+    // The queue above serializes OUR transactions, but plain statements run
+    // on the main connection while a transaction holds the write lock on its
+    // own connection — with no timeout that is an instant SQLITE_BUSY
+    // (measured live: a worker's run insert failed 20ms after delegation,
+    // mid conversation-evidence transaction). Wait long enough to ride out a
+    // millisecond-scale evidence transaction, short enough that two durable
+    // schedulers racing one claim still resolve to one winner promptly.
+    await database.run(sql`PRAGMA busy_timeout = 1500`);
     await migrate(database, {
       migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)),
     });
