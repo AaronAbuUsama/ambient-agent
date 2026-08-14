@@ -1,3 +1,4 @@
+import { OperationIdempotencyConflictError } from "whatsappd";
 import type { ScopedMessageSender } from "../conversation/contract";
 import type { WhatsAppAcceptedSourceConsumer } from "./message-ingestion";
 import { WhatsAppSessionController } from "./session/controller";
@@ -71,8 +72,21 @@ export function createWhatsAppService(options: WhatsAppServiceOptions): WhatsApp
               `outbound destination "${conversationId}" is not authorized for this run`,
             );
           }
-          const operation = await controller.sendText(conversationId, text, idempotencyKey);
-          return { operationId: operation.id };
+          try {
+            const operation = await controller.sendText(conversationId, text, idempotencyKey);
+            return { operationId: operation.id };
+          } catch (error) {
+            // The durable queue already holds this claim's send: the effect
+            // happened, with the text originally composed for it. A retried
+            // claim re-composes different wording under the same key —
+            // adopting the original is the truth; failing forever on the
+            // rewording is not (measured live: one poisoned claim burned
+            // twenty model runs retrying against this conflict).
+            if (error instanceof OperationIdempotencyConflictError) {
+              return { operationId: `adopted:${error.idempotencyKey}` };
+            }
+            throw error;
+          }
         },
       };
     },
