@@ -86,6 +86,42 @@ test("two folders binding one chat id: no winner, both broken", async () => {
   });
 });
 
+test("agent grants: bare grant allows as-is, a grant may carry narrowing", async () => {
+  await withHome(async (home) => {
+    await chat(
+      home,
+      "tst",
+      [
+        "chatId: 2@g.us",
+        "mode: responding",
+        "agents:",
+        "  github-issues:",
+        "  code-agent:",
+        "    tools:",
+        "      github_issues:",
+        "        repositories:",
+        "          - owner/sandbox",
+      ].join("\n"),
+    );
+    const scan = scanMandates(home);
+    expect(scan.broken).toEqual([]);
+    expect(scan.active[0]?.agents).toEqual({
+      "github-issues": {},
+      "code-agent": { tools: { github_issues: { repositories: ["owner/sandbox"] } } },
+    });
+  });
+});
+
+test("agent grants fail closed: bad agent name, unknown grant key", async () => {
+  await withHome(async (home) => {
+    await chat(home, "bad-name", "chatId: 3@g.us\nagents:\n  Bad_Name:\n");
+    await chat(home, "bad-key", "chatId: 4@g.us\nagents:\n  fine:\n    repos: nope\n");
+    const scan = scanMandates(home);
+    expect(scan.active).toEqual([]);
+    expect(scan.broken.map(({ slug }) => slug).sort()).toEqual(["bad-key", "bad-name"]);
+  });
+});
+
 test("no chats directory means nothing active and nothing broken", async () => {
   const home = await mkdtemp(join(tmpdir(), "ambient-mandates-empty-"));
   try {
