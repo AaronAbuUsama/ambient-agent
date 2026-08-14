@@ -183,7 +183,7 @@ try {
       message.chatId === groupId &&
       !peerIds.has(message.senderId) &&
       /#\d+|issues\/\d+/.test(message.text),
-    240_000,
+    480_000,
   );
   const reported = /(?:#|issues\/)(\d+)/.exec(report.text)?.[1];
   receipt.reportedInChat = true;

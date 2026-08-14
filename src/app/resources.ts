@@ -328,7 +328,10 @@ export async function createAppResources(
             );
           }
           if (outcome === "created") log.delegated(label(conversationId), agent);
-          worker?.wake();
+          // Deliberately NOT waking the worker here: an instant claim lands
+          // inside the delegating run's own evidence transactions (measured
+          // live as SQLITE_BUSY collisions three attempts running). The
+          // drain's poll claims within seconds, outside the storm.
           return { taskId: task.id, outcome };
         },
         work: database.repositories.conversationWork,
