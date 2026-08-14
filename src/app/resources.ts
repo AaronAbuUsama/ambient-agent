@@ -316,7 +316,16 @@ export async function createAppResources(
             workerProfile: agent,
             ...(boundTarget === undefined ? {} : { target: boundTarget }),
           });
-          log.delegated(label(conversationId), agent);
+          // Adoption may only point at live work. A terminal assignment is
+          // history — a retried run must hear that, never resurrect it
+          // (measured live: a retry once adopted a cancelled assignment and
+          // waited forever for a worker that would never come).
+          if (outcome === "adopted" && task.status !== "queued" && task.status !== "running") {
+            throw new Error(
+              `this exact delegation already finished (${task.status}); nothing new was opened`,
+            );
+          }
+          if (outcome === "created") log.delegated(label(conversationId), agent);
           worker?.wake();
           return { taskId: task.id, outcome };
         },
