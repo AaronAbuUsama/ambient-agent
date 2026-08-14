@@ -1411,53 +1411,149 @@ database, daemon stopped for the duration and restarted after:
 Production now recalls the identity-aware v10 ontology where its speaker
 runs.
 
-## Next slice: Workers v1.5 — the craft (brief, cut 2026-08-14)
+## Active slice: Workers v1.5 — the craft (brief revised 2026-08-14)
 
-The machine files issues reliably; this slice makes it file GOOD ones and
-prepares the real Bug Reports group. Decisions settled with the master:
+Revised with the master after reading the real Bug Reports history end to end.
+The first cut assumed a generated backfill document; that assumption is
+withdrawn. What follows replaces it.
 
-1. **Structured outcomes, derived from evidence.** A worker result becomes
-   done/declined at the host: succeeded + retained receipt →
-   `{outcome: "done", issue: {number, url}}` (facts from the receipt, so
-   the model cannot claim false success); succeeded without a receipt →
-   `{outcome: "declined", reason}` — the worker answering its CALLER, a
-   first-class result, never a failure. `failed` stays infrastructure.
-   Delegation is already non-blocking with the assignment id as the job id.
-2. **Skills split by ownership.** The definition owns issue CRAFT
-   (structure, invent-nothing, the decline standard). The chat owns
-   PURPOSE: mandate instructions (what this group is, who the people are,
-   when to delegate) plus a `bug-intake` skill (the intake bar; RECALL
-   FIRST, ask second — memory usually knows the person, the issue, and its
-   status). Memory owns who/what/state — the rebuilt ontology already
-   carries 46 issues, 8 people, 5 repositories.
-3. **Routing is never guessed.** The `gh` auth reaches every repository
-   the master owns, so the definition ceiling is the hard boundary, and
-   within it: when memory's routing evidence does not settle the repo, the
-   speaker ASKS the chat — never picks.
-4. **Progressive disclosure.** Skills render as name + description (Pi's
-   own convention — `formatSkillsForSystemPrompt` renders name,
-   description, location and tells the model to read on demand); agents
-   get one narrow `read_skill(name)` tool validated against the chat's
-   granted set. No filesystem access; full-body injection retired.
-5. **Backfill = dry run = answer key.** Walk the ontology + history and
-   produce a review document: per issue — believed status, the issue the
-   worker would file, or "needs clarification". The master's corrections
-   become the hand-made answer key and the `worker-*` eval cases. The
-   speaker's first act in the group is the conversational twin: post its
-   understanding, let the reporter correct it, file only what survives.
-6. **Media/vision directive.** The models already in use (gpt-5.6-terra,
-   -luna via vibe) have vision. Memory digestion should ingest retained
-   images (screenshots ARE bug content) and know a picture from a video;
-   video needs frame handling — its own design questions. Sequenced after
-   go-live; named, not dropped.
+### What changed, and why
 
-**Go-live sequence:** craft increment → backfill dry run + review → the
-master's three calls (merge PR #25; sandbox-first or straight to real
-repos; the repo ceiling list) → mandate flips to responding with grant +
-skills → opener + approved backfill → steady state.
+Reading the group's 266 retained messages settled three things the earlier
+brief got wrong.
 
-**Stacking:** this slice's work rides `workers-craft`, stacked on
-`workers-v1` (PR #25), per the master's direction.
+**Backfill is a conversation, not machinery.** The memory agent already
+carries the group's world: 46 issue entities, 8 people, 5 repositories, 134
+evidence-cited claims, with status lineage (one issue carries _open_ →
+_filed as #132_ → _verified correct in a retest_). The master's instruction:
+"I could just speak to it and say, we're starting back up again, can you go
+back and check through all the issues." No triage document, no dry-run
+artifact. Ambient asks about what it is unsure of, in the chat, like a
+colleague. Whatever survives that conversation is what gets filed.
+
+**Issues are already nouns; the retrieval was never wired.** `recall`
+(`src/database/memory.ts:250`) filters claims to entities identity-linked to
+the conversation's participants, and `identity_links` only ever holds
+people — so all 46 issues are unreachable by the speaker's only memory tool.
+`recallForConversation` (`memory.ts:294`) reaches them and is called
+exclusively by the proof harness. This is a missing wire, not a missing
+model.
+
+**The real gap is feature compatibility, not comprehension.** Bug reports in
+this group are carried by screenshots and video: 14 images and 4 videos, 17
+of 18 captioned. The caption tells you a bug exists; the pixels _are_ the
+report. Five consecutive screenshots on 1 August compare Fajr times across
+five apps, and that comparison is invisible to Ambient today. Measured on
+production: a vision call on the screenshot captioned only "Fajr time
+android" returned Fajr 03:39, Sunrise 05:21, device time 03:30. An issue
+filed without the image is a worse issue than a human would write.
+
+### The gaps, precisely
+
+Retrieval — the agent cannot reach what it knows:
+
+- `recall` is scoped to identity-linked people; issues are invisible.
+- Nothing enumerates the ontology (`recall` is a `LIKE` match, `limit 10`).
+- Nothing searches conversation history at all; "go back through the thread"
+  is not expressible.
+- An agent has no way to hold an intention across runs, so anything it
+  decides to ask is forgotten by the next run.
+
+Media — retained but inert:
+
+- Live ingestion discards every non-text message
+  (`src/whatsapp/observation-mapper.ts:56`). Every screenshot in the group
+  survived only because a history import swept it up; one posted now is lost.
+- The retained-read schema types only the caption
+  (`src/whatsapp/message-payload.ts:25`), so the blob ref is invisible to
+  readers.
+- Nothing resolves a ref to bytes. `whatsappd` exposes `MediaStore.open`; the
+  store is constructed at `src/whatsapp/session/local-deployment.ts:60` and
+  no handle is kept.
+- `src/models/runtime.ts:82` pins `input: ["text"]`, and Pi _silently_
+  replaces images with a placeholder string — vision fails invisibly.
+- `file_issue` takes title and body only (`src/github/issues.ts:25`).
+
+Provisioning — production is not ready:
+
+- No `worker` role in `~/.ambient/config.yaml`; `forRole("worker")` throws.
+- No `~/.ambient/agents/` directory; the definition exists only in the rig.
+
+### Settled decisions
+
+1. **Backfill is conversational.** No triage document, no answer-key
+   artifact. The exchange with the reporter is the answer key.
+2. **Three retrieval tools**: conversation-scoped recall, ontology
+   enumeration by status, and history search over observations. A pull tool
+   the model chooses to call is correct; injection is not.
+3. **A to-do primitive**, not a triage queue — generalizable, so any agent
+   can hold its own intentions. Kept distinct from `tasks`, which means
+   Worker assignment: an agent's to-do is its intention, not a delegated
+   bounded objective.
+4. **Media: describe-once funnel plus on-demand `view_image`.** A
+   deterministic service resolves the ref, calls vision once, and retains the
+   description keyed by the content hash — so each unique image is described
+   exactly once, ever, and every role reads text. The description is
+   evidence, and evidence is retained before the next role runs.
+5. **Modality is explicit and fails loud.** Model metadata carries it; a role
+   needing vision refuses to start on a model without it. Silent degradation
+   is worse than a crash because a misconfiguration looks like success.
+6. **Attachments are first-class.** `file_issue` takes media refs, never
+   URLs; the host resolves, uploads, and rewrites the body as one operation.
+   Verified working: `POST uploads.github.com/user-attachments/assets` with a
+   `gh` token returns 201, and GitHub rewrites the embedded URL into a signed
+   asset — images and video both. The endpoint is undocumented, so a
+   release-asset fallback is required.
+7. **Attaching is not understanding.** Ambient can attach a video it cannot
+   watch. It says so and asks what it shows, rather than guessing — the
+   decline-with-a-reason path, with media as one more reason.
+
+### Order of work
+
+Each step makes the next testable.
+
+1. Retain live media; expose `ref`/`mimetype` to readers.
+2. Wire the three retrieval tools.
+3. Add the to-do primitive.
+4. Media description funnel and `view_image`; modality explicit.
+5. `file_issue` with attachments, plus fallback.
+6. Provision production: worker role, agent definition with the repo ceiling,
+   grant in the mandate.
+7. Prove it (below), then flip the mandate to responding.
+
+### Proof gate — three layers
+
+**Layer 1: deterministic.** Full `vp check` and `vp test`, plus the existing
+offline rehearsal (`proof:worker-delegation`) extended with a media case: a
+synthetic image through the funnel, into a filed issue, against a fake `gh`
+that cannot reach GitHub. Fails closed on a missing description.
+
+**Layer 2: read-only, against real production data.** Exercise the new
+retrieval tools against the production ontology — 46 issues, 263
+observations, 134 claims — with no sends and no writes. Asserts that the
+speaker asked "go through the issues" can enumerate all 46 with their latest
+status, search history, and reach the ones the old `recall` could not. This
+is the layer that proves the wire on real data rather than fixtures.
+
+**Layer 3: live rig, end to end.** The rig subject is the same WhatsApp
+account as production, so production stops first and is restored after. The
+peer account sends a screenshot with a caption into the Tst group. The chain
+under test: live retention → description funnel → speaker sees an image it
+can reason about → delegation → worker files a sandbox issue _with the image
+embedded_ → speaker reports the number back in chat. Verdict requires all
+five: exactly one new issue, the marker present, the attachment resolving to
+a signed asset, the description citing the observation, and the peer
+observing the report.
+
+Then the same chain once more with a video, where the expected outcome is
+the honest decline: attached, not interpreted, and a question asked.
+
+### Open
+
+The repo ceiling for the real definition. Evidence supports exactly three —
+`TheCallApp/ios-app`, `TheCallApp/android-app`, `TheCallApp/api`. Memory's
+other two repository entities are a rename artifact (`ios-design-system`
+redirects to `ios-app`) and an unresolved chat question ("API repo").
 
 ## Live test rig
 
