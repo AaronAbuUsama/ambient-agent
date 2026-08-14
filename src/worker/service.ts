@@ -1,3 +1,4 @@
+import type { IssueAttachment } from "../github/issues";
 import { messageOf } from "../platform/errors";
 import type { ModelConfig } from "../models/contract";
 import type {
@@ -32,6 +33,11 @@ export interface WorkerServiceOptions {
   readonly runs: WorkerRunRecorder;
   readonly agent: WorkerAgent;
   readonly compose: ComposeAssignment;
+  /**
+   * Resolve the assignment's attached refs to bytes. Absent in compositions
+   * with no media store, which simply file reports without pictures.
+   */
+  readonly attachments?: (refs: readonly string[]) => Promise<readonly IssueAttachment[]>;
   /**
    * The durable return: the result becomes an inbox item in the originating
    * chat (idempotent per task), so the speaker reports it. Called for
@@ -184,9 +190,14 @@ export function createWorkerService(options: WorkerServiceOptions): WorkerServic
     }
 
     try {
+      // Resolve the attached evidence to bytes here, at the last moment before
+      // the effect: a ref that no longer resolves must not stop the report from
+      // being filed, only from claiming a picture it does not carry.
+      const attachments = await options.attachments?.(claim.attachments ?? []);
       const tools = composed.bind({
         taskId: claim.id,
         target: claim.target,
+        ...(attachments?.length ? { attachments } : {}),
         retainReceipt: async (effect) => {
           await work.recordArtifact({ taskId: claim.id, ...effect });
         },

@@ -45,6 +45,7 @@ export interface ConversationServiceOptions {
     readonly agent: string;
     readonly objective: string;
     readonly target?: string | undefined;
+    readonly attachments?: readonly string[] | undefined;
     readonly idempotencyKey: string;
   }) => Promise<{ readonly taskId: string; readonly outcome: "created" | "adopted" }>;
   readonly scheduling: ConversationSchedulingConfig;
@@ -178,7 +179,12 @@ export function createConversationService(
               claim.runId,
               callId,
               "delegate",
-              { agent: request.agent, objective: request.objective, target: request.target },
+              {
+                agent: request.agent,
+                objective: request.objective,
+                target: request.target,
+                attachments: request.attachments,
+              },
               () =>
                 provider({
                   conversationId: claim.conversationId,
@@ -186,6 +192,7 @@ export function createConversationService(
                   agent: request.agent,
                   objective: request.objective,
                   target: request.target,
+                  attachments: request.attachments,
                   idempotencyKey: `conversation:${claim.items[0]!.id}:delegate`,
                 }),
               (opened) => opened,

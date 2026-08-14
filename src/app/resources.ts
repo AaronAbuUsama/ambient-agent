@@ -170,14 +170,15 @@ export async function createAppResources(
     // interpreter refuses to construct rather than describe images it cannot
     // see, so the capability is missing loudly instead of lying quietly.
     const visionRunner = config.models.roles.memory ? models.forRole("memory") : undefined;
+    const mediaBytes = createMediaBytes({
+      accountId: config.whatsapp.accountId,
+      directory: config.whatsapp.dataDirectory,
+    });
     const mediaInterpreter =
       visionRunner?.vision === true
         ? createMediaInterpreter({
             runner: visionRunner,
-            bytes: createMediaBytes({
-              accountId: config.whatsapp.accountId,
-              directory: config.whatsapp.dataDirectory,
-            }),
+            bytes: mediaBytes,
             store: database.repositories.mediaDescriptions,
           })
         : undefined;
@@ -226,6 +227,30 @@ export async function createAppResources(
             const grant = grantsByChat.get(conversationId)?.[workerProfile];
             if (!grant) return { problem: "not granted to this chat" };
             return toolbox.compose(definition, grant);
+          },
+          attachments: async (refs) => {
+            const resolved = await Promise.all(
+              refs.map(async (ref, index) => {
+                const bytes = await mediaBytes.read(ref);
+                if (!bytes) return [];
+                const description = (
+                  await database.repositories.mediaDescriptions.find([ref])
+                ).find((row) => row.status === "described");
+                const mimetype = description?.mimetype ?? "image/jpeg";
+                const extension = mimetype.split("/")[1] ?? "bin";
+                return [
+                  {
+                    filename: `evidence-${index + 1}.${extension}`,
+                    mimetype,
+                    bytes,
+                    ...(description?.status === "described"
+                      ? { caption: description.description.slice(0, 120) }
+                      : {}),
+                  },
+                ];
+              }),
+            );
+            return resolved.flat();
           },
           returnResult: async (conversationId, taskId) => {
             await database.repositories.inbox.enqueue({
@@ -310,6 +335,7 @@ export async function createAppResources(
           agent,
           objective,
           target,
+          attachments,
           idempotencyKey,
         }) => {
           const definition = agentDefinitions.get(agent);
@@ -328,6 +354,15 @@ export async function createAppResources(
           } else if (boundTarget !== undefined) {
             throw new Error(`"${agent}" takes no target`);
           }
+          // Evidence is scoped like a destination is: the speaker may attach
+          // only media its own conversation carries, so a ref it invented or
+          // read elsewhere cannot travel into an external effect.
+          const boundAttachments: string[] = [];
+          for (const ref of attachments ?? []) {
+            const carried = await database.repositories.memory.findMedia({ conversationId, ref });
+            if (!carried) throw new Error(`attachment "${ref}" is not part of this conversation`);
+            boundAttachments.push(ref);
+          }
           // ponytail: a flat in-flight cap; per-chat configuration when a
           // real chat needs a different budget.
           if ((await database.repositories.tasks.countActive(conversationId)) >= 3) {
@@ -342,6 +377,7 @@ export async function createAppResources(
             objective,
             workerProfile: agent,
             ...(boundTarget === undefined ? {} : { target: boundTarget }),
+            ...(boundAttachments.length > 0 ? { attachments: boundAttachments } : {}),
           });
           // Adoption may only point at live work. A terminal assignment is
           // history — a retried run must hear that, never resurrect it

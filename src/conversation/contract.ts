@@ -289,6 +289,8 @@ export interface ConversationAgentTools {
       readonly agent: string;
       readonly objective: string;
       readonly target?: string | undefined;
+      /** Attachment refs from this conversation to carry as evidence. */
+      readonly attachments?: readonly string[] | undefined;
     },
     callId: string,
   ): Promise<{ readonly taskId: string; readonly outcome: "created" | "adopted" }>;

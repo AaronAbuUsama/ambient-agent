@@ -113,6 +113,13 @@ const delegateParameters = Type.Object({
       description: "The destination to use when the agent lists more than one.",
     }),
   ),
+  attachments: Type.Optional(
+    Type.Array(Type.String({ minLength: 1 }), {
+      description:
+        "Attachment refs from this conversation to carry as evidence, such as the " +
+        "screenshot that shows the problem.",
+    }),
+  ),
 });
 
 function sendMessageTool(tools: ConversationAgentTools): AgentTool {
@@ -202,8 +209,8 @@ function delegateTool(tools: ConversationAgentTools): AgentTool {
     description: "Open one bounded background assignment for a granted agent.",
     parameters: delegateParameters,
     executionMode: "sequential",
-    async execute(toolCallId, { agent, objective, target }) {
-      const opened = await tools.delegate({ agent, objective, target }, toolCallId);
+    async execute(toolCallId, { agent, objective, target, attachments }) {
+      const opened = await tools.delegate({ agent, objective, target, attachments }, toolCallId);
       const verb = opened.outcome === "adopted" ? "already open as" : "opened as";
       return {
         content: [{ type: "text", text: `Assignment ${verb} task ${opened.taskId}.` }],

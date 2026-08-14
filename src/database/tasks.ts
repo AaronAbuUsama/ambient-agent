@@ -15,6 +15,8 @@ export interface Task {
   readonly workerProfile: string;
   /** The destination chosen at creation; never the model's to choose. */
   readonly target?: string;
+  /** Evidence the delegating speaker attached, validated against its chat. */
+  readonly attachments?: readonly string[];
   readonly status: TaskStatus;
   readonly leaseOwner?: string;
   readonly leaseUntil?: string;
@@ -33,6 +35,7 @@ export interface NewTask {
   readonly instructions?: string;
   readonly workerProfile: string;
   readonly target?: string;
+  readonly attachments?: readonly string[];
   readonly createdAt?: string;
 }
 
@@ -119,6 +122,7 @@ function decode(row: typeof tasks.$inferSelect): Task {
     instructions: row.instructions ?? undefined,
     workerProfile: row.workerProfile,
     target: row.target ?? undefined,
+    attachments: row.attachments ?? undefined,
     status: taskStatusSchema.parse(row.status),
     leaseOwner: row.leaseOwner ?? undefined,
     leaseUntil: row.leaseUntil ?? undefined,
@@ -151,6 +155,7 @@ export function createTaskRepository(database: AmbientDatabaseConnection): TaskR
             instructions: input.instructions,
             workerProfile: input.workerProfile,
             target: input.target,
+            attachments: input.attachments ?? null,
             status: "queued",
             createdAt,
             updatedAt: createdAt,

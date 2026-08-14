@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import { createGitHubIssues, type GhCommand } from "../github/issues";
+import { createGitHubIssues, type GhCommand, type IssueAttachment } from "../github/issues";
 import type { AgentDefinition, ToolConfigCheck } from "../home/agents";
 import type { AgentGrant } from "../home/mandates";
 
@@ -51,6 +51,12 @@ export interface AssignmentBinding {
   readonly taskId: string;
   /** The destination chosen at assignment creation, host-validated; omitted only when exactly one candidate exists. */
   readonly target?: string | undefined;
+  /**
+   * Evidence the delegating speaker attached, already resolved to bytes and
+   * validated against its conversation. The worker's model never names these:
+   * it reports the problem, and the report carries the picture that proves it.
+   */
+  readonly attachments?: readonly IssueAttachment[] | undefined;
   /**
    * Retain an external-effect receipt the moment the effect exists — at the
    * tool boundary, before the model even sees the result. The retained
@@ -135,17 +141,32 @@ const githubIssues: ToolEntry = {
     const tool: AgentTool<typeof fileIssueParameters> = {
       name: "file_issue",
       label: "File issue",
-      description: `File one GitHub issue in ${repository}. The repository is fixed for this assignment.`,
+      description:
+        `File one GitHub issue in ${repository}. The repository is fixed for this assignment.` +
+        (binding.attachments?.length
+          ? ` The report's ${binding.attachments.length} attachment(s) are embedded automatically.`
+          : ""),
       parameters: fileIssueParameters,
       executionMode: "sequential",
       async execute(_toolCallId, { title, body }) {
         if (used) throw new Error("file_issue can only be called once per assignment");
         used = true;
-        const filed = await issues.file({ key: binding.taskId, title, body });
+        const filed = await issues.file({
+          key: binding.taskId,
+          title,
+          body,
+          ...(binding.attachments?.length ? { attachments: binding.attachments } : {}),
+        });
         await binding.retainReceipt?.({ kind: "url", title: "issue", value: filed.url });
         const verb = filed.outcome === "adopted" ? "Adopted existing" : "Filed";
+        const evidence = filed.attached
+          ? `. ${filed.attached.embedded} attachment(s) embedded` +
+            (filed.attached.failed > 0 ? `, ${filed.attached.failed} could not be uploaded` : "")
+          : "";
         return {
-          content: [{ type: "text", text: `${verb} issue #${filed.number}: ${filed.url}` }],
+          content: [
+            { type: "text", text: `${verb} issue #${filed.number}: ${filed.url}${evidence}` },
+          ],
           details: filed,
         };
       },

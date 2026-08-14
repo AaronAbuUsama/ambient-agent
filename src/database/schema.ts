@@ -134,6 +134,12 @@ export const tasks = sqliteTable(
     workerProfile: text("worker_profile").notNull(),
     /** The destination chosen at creation (e.g. an owner/name repository); never the model's to choose. */
     target: text(),
+    /**
+     * Media refs the delegating speaker attached as evidence, validated against
+     * its own conversation at creation. The worker carries them into the effect
+     * it causes; it never chooses which evidence to reach for.
+     */
+    attachments: text({ mode: "json" }).$type<readonly string[]>(),
     status: text({
       enum: ["queued", "running", "succeeded", "failed", "cancelled"],
     }).notNull(),
