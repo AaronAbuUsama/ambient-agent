@@ -1383,6 +1383,34 @@ libsignal session noise ("Bad MAC") floods the rig daemon's stderr.
 history and `worker-*` eval cases — the quality bar for issue CONTENT.
 The machine is proven; the craft bar is its own step.
 
+## Production memory wipe-and-re-read: DONE (2026-08-14)
+
+Authorized by the master ("you can wipe anything — there's nothing in
+production yet"). Pre-wipe backup retained
+(`.proof-private/backups/ambient-prewipe-20260814T180052Z.db`; 232 claims,
+58 entities, 5 identity links — the old pre-identity-fix ontology). The
+wipe removed derived memory only; all 297 observations kept.
+
+Re-read on gpt-5.6-terra (memory-v10 + memory-judge-v4), production
+database, daemon stopped for the duration and restarted after:
+
+- 9 windows digested, 0 retried; 134 claims, 46 issue entities, 8 person
+  entities, 5 repositories, 3 cross-form identity links.
+- Golden coverage **20/22 — the bar** (missing the same two prayer-times
+  entries as the rig run).
+- Judged faithfulness mean 0.917; completeness mean 0.792. One window at
+  0.571 breaches the per-window floor — examined claim by claim, the SAME
+  instrument error the rig run measured: all three flagged claims are
+  near-verbatim in their own citations ("planned for next build" flagged
+  against "Will update ... in next build"; the verified-retest claim
+  against "All salah times are exactly same now ... Perfect. Now this is
+  correct? / Yes"; the M25/Aladhan routing claim against the developer
+  stating exactly that). The memory is right; the judge is wrong;
+  deliberately not tuned away — the judge's weakness is recorded debt.
+
+Production now recalls the identity-aware v10 ontology where its speaker
+runs.
+
 ## Live test rig
 
 Two linked proof profiles copied (checksums verified) from the whatsappd
