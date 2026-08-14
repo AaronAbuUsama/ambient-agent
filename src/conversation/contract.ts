@@ -178,6 +178,15 @@ export interface ConversationRecall {
     readonly query: string;
     readonly limit?: number;
   }): Promise<readonly RecalledMessage[]>;
+  /**
+   * One piece of media, but only if this conversation actually carries it.
+   * Scoping is the host's: a ref names a blob in a shared store, and the model
+   * must not be able to reach into another chat's evidence by naming one.
+   */
+  findMedia(input: {
+    readonly conversationId: string;
+    readonly ref: string;
+  }): Promise<{ readonly mimetype?: string; readonly caption?: string } | undefined>;
 }
 
 /** One retained message, as the speaker is shown it when searching the past. */
@@ -265,6 +274,11 @@ export interface ConversationAgentTools {
     query: string,
     callId: string,
   ): Promise<{ readonly messages: readonly RecalledMessage[] }>;
+  /** Look at one image from this conversation that has not been described yet. */
+  viewImage(
+    ref: string,
+    callId: string,
+  ): Promise<{ readonly description?: string; readonly unavailable?: string }>;
   /**
    * Open one bounded assignment for a granted agent. The host validates the
    * agent and target against the chat's grant and derives the assignment id

@@ -20,8 +20,10 @@ re-reads the retained messages themselves, captions included, when you need the 
 rather than a settled fact. Ask a person only for what neither can tell you.
 
 A message may carry an attachment. Its caption stands in as the text, and a description is present
-once the image has been interpreted. Never describe an image you were not given a description of,
-and never imply you watched a video: say plainly that you cannot see it and ask what it shows.
+once the image has been interpreted. For an older image that has none — one search_history turned
+up, say — call view_image with its ref to look at it. Never describe an image you have no
+description of, and never imply you watched a video: say plainly that you cannot see it and ask
+what it shows.
 
 Decide whether the user needs a response. To reply, call send_message exactly once with the full
 message. To remain silent, do not call it. Never claim you sent a message unless the tool succeeds.
@@ -87,6 +89,13 @@ const recallParameters = Type.Object({
 
 const searchHistoryParameters = Type.Object({
   query: Type.String({ minLength: 1, description: "Words to look for in past messages." }),
+});
+
+const viewImageParameters = Type.Object({
+  ref: Type.String({
+    minLength: 1,
+    description: "The attachment ref of an image in this conversation.",
+  }),
 });
 
 const delegateParameters = Type.Object({
@@ -162,6 +171,30 @@ function searchHistoryTool(tools: ConversationAgentTools): AgentTool {
   return tool;
 }
 
+function viewImageTool(tools: ConversationAgentTools): AgentTool {
+  const tool: AgentTool<typeof viewImageParameters> = {
+    name: "view_image",
+    label: "View image",
+    description:
+      "Look at one image from this conversation — use it when an attachment has no description.",
+    parameters: viewImageParameters,
+    async execute(toolCallId, { ref }) {
+      const result = await tools.viewImage(ref, toolCallId);
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              result.description ?? `Cannot view it: ${result.unavailable ?? "unknown reason"}.`,
+          },
+        ],
+        details: result,
+      };
+    },
+  };
+  return tool;
+}
+
 function delegateTool(tools: ConversationAgentTools): AgentTool {
   const tool: AgentTool<typeof delegateParameters> = {
     name: "delegate",
@@ -193,6 +226,7 @@ export function createPiConversationAgent(runner: ModelRunner): ConversationAgen
           tools: [
             recallTool(tools),
             searchHistoryTool(tools),
+            viewImageTool(tools),
             sendMessageTool(tools),
             ...((input.agents ?? []).length > 0 ? [delegateTool(tools)] : []),
           ],

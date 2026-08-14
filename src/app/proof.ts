@@ -374,6 +374,9 @@ export async function createAmbientProofHarness(
           const messages = await repositories.memory.searchHistory({ conversationId, query });
           return { messages };
         },
+        async viewImage() {
+          return { unavailable: "not available in this context" };
+        },
       });
       const decision = captured === undefined ? ("silence" as const) : ("reply" as const);
       const textLength = captured?.length ?? 0;

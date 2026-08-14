@@ -93,6 +93,11 @@ export interface MemoryRepository {
     readonly query: string;
     readonly limit?: number;
   }): Promise<readonly RecalledMessage[]>;
+  /** Media carried by one conversation, addressed by its store ref. */
+  findMedia(input: {
+    readonly conversationId: string;
+    readonly ref: string;
+  }): Promise<{ readonly mimetype?: string; readonly caption?: string } | undefined>;
   /** Shape counts for proof gates: entity kinds, identities, claim volume. */
   summary(): Promise<{
     readonly entitiesByKind: Readonly<Record<string, number>>;
@@ -409,6 +414,26 @@ export function createMemoryRepository(database: AmbientDatabaseConnection): Mem
             : {}),
         };
       });
+    },
+
+    async findMedia({ conversationId, ref }) {
+      const rows = await database
+        .select({ payload: observations.payload })
+        .from(observations)
+        .where(
+          and(eq(observations.conversationId, conversationId), eq(observations.kind, "message")),
+        )
+        .orderBy(desc(observations.occurredAt));
+
+      for (const row of rows) {
+        const parsed = retainedMessagePayloadSchema.parse(row.payload);
+        if (parsed.media?.ref !== ref) continue;
+        return {
+          ...(parsed.media.mimetype === undefined ? {} : { mimetype: parsed.media.mimetype }),
+          ...(parsed.media.caption === undefined ? {} : { caption: parsed.media.caption }),
+        };
+      }
+      return undefined;
     },
 
     async currentClaim({ entityId, predicateId }) {

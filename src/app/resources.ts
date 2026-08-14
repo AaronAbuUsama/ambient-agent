@@ -204,6 +204,7 @@ export async function createAppResources(
           work: database.repositories.memoryWork,
           agent: createPiMemoryAgent(models.forRole("memory")),
           ontology: database.repositories.memory,
+          ...(mediaInterpreter ? { media: mediaInterpreter } : {}),
           // Issue-centric coverage on dense windows legitimately exceeds the
           // old 50; still bounded.
           maximumClaimsPerJob: 80,
@@ -255,6 +256,7 @@ export async function createAppResources(
       conversation = createConversationService({
         scheduling: config.conversation.scheduling,
         instructions: config.conversation.instructions,
+        ...(mediaInterpreter ? { media: mediaInterpreter } : {}),
         // Skills are read fresh from the home per run: the chat's own skills
         // shadow home skills by name; broken skills are skipped (doctor is
         // the loud surface).

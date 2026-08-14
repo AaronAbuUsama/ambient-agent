@@ -1,3 +1,4 @@
+import type { MediaInterpreter } from "../media/contract";
 import { messageOf } from "../platform/errors";
 import type {
   ConversationAgent,
@@ -49,6 +50,8 @@ export interface ConversationServiceOptions {
   readonly scheduling: ConversationSchedulingConfig;
   readonly work: ConversationWorkStore;
   readonly recall: ConversationRecall;
+  /** Absent when no vision model is configured; view_image then declines. */
+  readonly media?: MediaInterpreter;
   readonly agent: ConversationAgent;
   readonly sender: ScopedMessageSender;
   readonly now?: () => Date;
@@ -208,6 +211,31 @@ export function createConversationService(
               (recalled) => ({ claims: recalled }),
             );
             return { claims };
+          },
+          async viewImage(ref, callId) {
+            if (abort.signal.aborted) throw abort.signal.reason;
+            return executeTool(
+              claim.runId,
+              callId,
+              "view_image",
+              { ref },
+              async () => {
+                if (!options.media) return { unavailable: "no vision model is configured" };
+                // Scope first: a ref names a blob in a store shared by every
+                // chat, so the host decides what this run may look at.
+                const carried = await options.recall.findMedia({
+                  conversationId: claim.conversationId,
+                  ref,
+                });
+                if (!carried) return { unavailable: "that media is not part of this conversation" };
+                const described = await options.media.describe([{ ref, ...carried }]);
+                const found = described.get(ref);
+                return found?.status === "described"
+                  ? { description: found.description }
+                  : { unavailable: found?.failureReason ?? "it could not be interpreted" };
+              },
+              (result) => result,
+            );
           },
           async searchHistory(query, callId) {
             if (abort.signal.aborted) throw abort.signal.reason;

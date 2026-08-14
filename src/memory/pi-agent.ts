@@ -57,6 +57,9 @@ Who people are — read it, never guess it:
   inside mentions. A chat/group id is NEVER a person's identity — never link it.
 - Messages with "attachment" carry an image or video; the caption is its text. When a screenshot
   or video evidences an issue, cite that message like any other evidence.
+- An attachment's "description" is what the picture was found to show, and is evidence you may
+  build claims on: times, labels, and error strings quoted there are as good as typed ones. With
+  no description nobody has looked — say only what the caption says, and never invent the content.
 
 Grounding:
 - Every claim MUST cite evidenceObservationIds copied exactly from the batch messages that support
