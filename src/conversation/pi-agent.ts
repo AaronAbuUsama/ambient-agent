@@ -17,21 +17,40 @@ response. To reply, call send_message exactly once with the full message. To rem
 call it. Never claim you sent a message unless the tool succeeds. After acting or choosing silence,
 return a short internal summary of the decision.`;
 
-/** The settled prompt layers: fixed identity, then the chat's granted skills. */
+/** The settled prompt layers: fixed identity, the chat's skills, its granted agents. */
 function composeSystemPrompt(input: ConversationInput): string {
-  if (input.skills.length === 0) return systemPrompt;
-  const sections = input.skills
-    .map((skill) => `## Skill: ${skill.name}\n\n${skill.content}`)
-    .join("\n\n");
-  return `${systemPrompt}\n\nApply these granted skills where they fit:\n\n${sections}`;
+  const sections: string[] = [systemPrompt];
+  if (input.skills.length > 0) {
+    const skills = input.skills
+      .map((skill) => `## Skill: ${skill.name}\n\n${skill.content}`)
+      .join("\n\n");
+    sections.push(`Apply these granted skills where they fit:\n\n${skills}`);
+  }
+  const agents = input.agents ?? [];
+  if (agents.length > 0) {
+    const list = agents
+      .map((agent) => `- ${agent.name}: ${agent.summary.split("\n").join(" — ")}`)
+      .join("\n");
+    sections.push(
+      `You can delegate bounded background tasks to these agents:\n${list}\n` +
+        `Call delegate with the agent's name, a complete self-contained objective, and — when the ` +
+        `agent lists more than one destination — the one target to use. The task runs after this ` +
+        `turn; its result arrives as a later task update. Delegate at most once per run, and tell ` +
+        `the chat what you set in motion. When a task update arrives in your input, report its ` +
+        `outcome concisely (numbers, links) — or its failure honestly.`,
+    );
+  }
+  return sections.join("\n\n");
 }
 
 function prompt(input: ConversationInput): string {
+  const taskUpdates = input.taskUpdates ?? [];
   return JSON.stringify(
     {
       conversationId: input.conversationId,
       instructions: input.instructions,
       newMessages: input.newMessages,
+      ...(taskUpdates.length > 0 ? { taskUpdates } : {}),
     },
     null,
     2,
@@ -50,6 +69,23 @@ const sendMessageParameters = Type.Object({
 
 const recallParameters = Type.Object({
   query: Type.String({ minLength: 1, description: "A concise memory search phrase." }),
+});
+
+const delegateParameters = Type.Object({
+  agent: Type.String({
+    minLength: 1,
+    description: "The name of a granted agent from your delegation list.",
+  }),
+  objective: Type.String({
+    minLength: 1,
+    description: "A complete, self-contained objective the agent can act on alone.",
+  }),
+  target: Type.Optional(
+    Type.String({
+      minLength: 1,
+      description: "The destination to use when the agent lists more than one.",
+    }),
+  ),
 });
 
 function sendMessageTool(tools: ConversationAgentTools): AgentTool {
@@ -90,6 +126,25 @@ function recallTool(tools: ConversationAgentTools): AgentTool {
   return tool;
 }
 
+function delegateTool(tools: ConversationAgentTools): AgentTool {
+  const tool: AgentTool<typeof delegateParameters> = {
+    name: "delegate",
+    label: "Delegate task",
+    description: "Open one bounded background assignment for a granted agent.",
+    parameters: delegateParameters,
+    executionMode: "sequential",
+    async execute(toolCallId, { agent, objective, target }) {
+      const opened = await tools.delegate({ agent, objective, target }, toolCallId);
+      const verb = opened.outcome === "adopted" ? "already open as" : "opened as";
+      return {
+        content: [{ type: "text", text: `Assignment ${verb} task ${opened.taskId}.` }],
+        details: opened,
+      };
+    },
+  };
+  return tool;
+}
+
 export function createPiConversationAgent(runner: ModelRunner): ConversationAgent {
   return {
     model: runner.snapshot,
@@ -99,7 +154,11 @@ export function createPiConversationAgent(runner: ModelRunner): ConversationAgen
           systemPrompt: composeSystemPrompt(input),
           model: runner.model,
           thinkingLevel: runner.thinkingLevel,
-          tools: [recallTool(tools), sendMessageTool(tools)],
+          tools: [
+            recallTool(tools),
+            sendMessageTool(tools),
+            ...((input.agents ?? []).length > 0 ? [delegateTool(tools)] : []),
+          ],
         },
         streamFn: (_model, context, streamOptions) => runner.stream(context, streamOptions),
         toolExecution: "sequential",

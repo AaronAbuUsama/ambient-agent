@@ -107,6 +107,48 @@ line maps folder to id; renaming a folder changes nothing durable. One chat
 id is bound by at most one folder — two claimants make both chats broken.
 _Avoid_: chat id as a folder name (ids contain `@`, dots, and phone numbers)
 
+### Agents and delegation
+
+**Agent definition**:
+A named composition on disk — `agents/<name>/agent.yaml`: description, a
+model role, instructions, and tools with per-tool constraints. Tools are
+code; agents are data. Definitions are global; access is granted per chat.
+Broken definitions are absent and loud, like broken chats.
+_Avoid_: worker type, agent class, profile (the `worker_profile` column
+stores a definition's name)
+
+**Worker**:
+The harness that runs any definition as one bounded objective with a
+terminal result under a fenced lease — a run contract, not a kind of brain.
+"GitHub filer" vs a future "code agent" is different YAML, not a new kind.
+
+**Grant**:
+A mandate's `agents:` entry — this chat's speaker may delegate to that
+definition, optionally narrowing its constraints. Effective constraint =
+definition ∩ grant; widening is an error. A grant is a disclosure
+decision: chat content may flow to the agent's destinations.
+_Avoid_: permission list, ACL
+
+**Assignment**:
+One durable delegated responsibility — a `tasks` row: objective, definition
+name, chosen target, lease, result. Created by the speaker's delegate tool
+(id derived from the run's claim, so a retried run adopts its own
+delegation), claimed by the worker drain, returned to the chat as a
+`task_update` inbox item — success or parked failure alike.
+_Avoid_: task (in prose; the table name stays `tasks`), job
+
+**Target**:
+An assignment's destination (for GitHub: `owner/name`), chosen at creation,
+recorded on the assignment, bound host-side. The model's tools carry no
+destination axis.
+
+**Receipt**:
+The retained `task_artifacts` row proving an external effect happened —
+recorded at the tool boundary the moment the effect exists. The receipt is
+the idempotency authority; the effect's embedded `Ambient-Task` marker
+covers only the crash window before the receipt.
+_Avoid_: asking the external system whether we already acted
+
 ### Identity
 
 **Native id**:

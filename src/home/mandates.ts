@@ -3,6 +3,27 @@ import { join } from "node:path";
 import YAML from "yaml";
 import { z } from "zod";
 
+const slugPattern = /^[a-z0-9-]{1,64}$/;
+
+/**
+ * One agent grant: this chat's speaker may delegate to the named agent. A
+ * bare grant (`github-issues:` alone) allows the definition as-is; a grant
+ * may also carry per-tool narrowing fragments — the effective constraint is
+ * definition ∩ grant, computed by the tool registry, never widened here.
+ * Granting an agent to a chat is a disclosure decision: it authorizes the
+ * chat's content to flow to that agent's destinations.
+ */
+const agentGrantSchema = z
+  .strictObject({
+    tools: z.record(z.string().min(1), z.unknown()).optional(),
+  })
+  .nullable()
+  .transform((grant) => grant ?? {});
+
+export interface AgentGrant {
+  readonly tools?: Readonly<Record<string, unknown>> | undefined;
+}
+
 /**
  * The mandate: the whole grant for one chat, one file (ADR 0002). Strict —
  * an unknown or misspelled key is a validation error, never silently ignored.
@@ -13,6 +34,7 @@ export const mandateSchema = z.strictObject({
   mode: z.enum(["listening", "responding"]).default("listening"),
   instructions: z.string().min(1).optional(),
   memoryBrief: z.string().min(1).optional(),
+  agents: z.record(z.string().regex(slugPattern), agentGrantSchema).optional(),
 });
 
 export interface ChatMandate {
@@ -21,6 +43,7 @@ export interface ChatMandate {
   readonly mode: "listening" | "responding";
   readonly instructions?: string | undefined;
   readonly memoryBrief?: string | undefined;
+  readonly agents?: Readonly<Record<string, AgentGrant>> | undefined;
 }
 
 export interface BrokenChat {
@@ -32,8 +55,6 @@ export interface MandateScan {
   readonly active: readonly ChatMandate[];
   readonly broken: readonly BrokenChat[];
 }
-
-const slugPattern = /^[a-z0-9-]{1,64}$/;
 
 /**
  * Read every chat folder and split it into active mandates and broken chats.

@@ -34,6 +34,7 @@ never edit it.
   config.yaml       deployment configuration (restart to apply)
   skills/           home-scoped skills (SKILL.md folders)
   chats/<slug>/     one folder per active chat; mandate.yaml is the grant
+  agents/<name>/    one folder per agent definition; agent.yaml composes tools
   state/            machine-owned: database, WhatsApp session, logs
 
 Activate a chat with \`ambient activate\`; check health with \`ambient doctor\`.
@@ -63,6 +64,7 @@ export function initHome(home: string): readonly string[] {
   };
   directory("chats");
   directory("skills");
+  directory("agents");
   directory(join("state", "logs"));
   seed("config.yaml", seedConfig);
   seed("README.md", seedReadme);

@@ -4,6 +4,7 @@ import type { RecalledMemory } from "../conversation/contract";
 import { importChatHistory, type HistoryImportResult } from "../whatsapp/history-import";
 import { retainedMessagePayloadSchema } from "../whatsapp/message-payload";
 import { createPiConversationAgent } from "../conversation/pi-agent";
+import type { GhCommand } from "../github/issues";
 import type { WhatsAppDestination } from "../whatsapp/service";
 import type { AppConfig } from "./config";
 import { createAppResources, type AcceptedMessage, type AppResources } from "./resources";
@@ -85,6 +86,35 @@ export interface AmbientProofHarness {
     readonly identityNativeIds: readonly string[];
     readonly claimCount: number;
   }>;
+  /**
+   * Retain one synthetic accepted message through the production ingestion
+   * path — rehearsal proofs only; a live proof receives real accepted input.
+   */
+  injectAccepted(input: {
+    readonly conversationId: string;
+    readonly senderId: string;
+    readonly senderName?: string;
+    readonly text: string;
+  }): Promise<{ readonly observationId: string; readonly inboxItemId: string }>;
+  /** Drive the worker drain until it claims and finishes one assignment. */
+  requestWorkerRun(
+    timeoutMs: number,
+  ): Promise<{ readonly outcome: "done" | "failed"; readonly taskId?: string }>;
+  /** Assignment evidence: statuses, profiles, targets, artifact titles — never content. */
+  assignments(conversationId: string): Promise<
+    readonly {
+      readonly id: string;
+      readonly status: string;
+      readonly workerProfile: string;
+      readonly target?: string;
+      readonly artifactTitles: readonly string[];
+      readonly resultSummaryLength: number;
+    }[]
+  >;
+  /** The inbox item kinds the latest run consumed, from its retained input snapshot. */
+  latestRunInboxKinds(conversationId: string): Promise<readonly string[]>;
+  /** Start the policy watcher so on-disk mandate and agent edits reach the running composition. */
+  watchPolicy(): Promise<void>;
   /** Replay the latest retained run offline: a live model call with a stubbed sender, no WhatsApp. */
   replayConversationRun(conversationId: string): Promise<{
     readonly decision: "reply" | "silence";
@@ -120,6 +150,11 @@ export interface ProofSafety {
   readonly authorizeDestination?: (conversationId: string) => boolean;
   /** Proof-scoped instructions override, applied inside the harness. */
   readonly instructions?: string;
+  /**
+   * Worker toolbox `gh` override: a rehearsal that provides one cannot reach
+   * real GitHub. Leaving it out keeps the real CLI (live proofs).
+   */
+  readonly gh?: GhCommand;
 }
 
 export async function createAmbientProofHarness(
@@ -154,6 +189,7 @@ export async function createAmbientProofHarness(
       for (const listener of listeners) listener(message);
     },
     authorizeOutbound: safety.authorizeDestination,
+    ...(safety.gh ? { gh: safety.gh } : {}),
   });
   const { repositories } = resources.database;
 
@@ -320,6 +356,9 @@ export async function createAmbientProofHarness(
           captured = text;
           return { operationId: `replay-${crypto.randomUUID()}` };
         },
+        async delegate() {
+          return Promise.reject(new Error("replay runs do not delegate"));
+        },
         async recall(query) {
           const claims = await repositories.memory.recall({
             nativeIds: [
@@ -347,6 +386,87 @@ export async function createAmbientProofHarness(
       });
       await repositories.evaluations.finish(evaluation.id, { status: "succeeded" });
       return { decision, textLength };
+    },
+
+    async injectAccepted({ conversationId, senderId, senderName, text }) {
+      const accountId = proofConfig.whatsapp.accountId;
+      const ingestion = repositories.messageIngestion;
+      if (!(await ingestion.cursor(accountId))) await ingestion.activate(accountId, 0);
+      const seq = ((await ingestion.cursor(accountId))?.afterSeq ?? 0) + 1;
+      const occurredAt = new Date().toISOString();
+      const nativeId = `rehearsal-${seq}`;
+      const [result] = await ingestion.retainBatch({
+        accountId,
+        seq,
+        observations: [
+          {
+            source: "whatsapp",
+            kind: "message",
+            accountId,
+            nativeId,
+            conversationId,
+            occurredAt,
+            payload: {
+              version: 1,
+              messageId: nativeId,
+              chatId: conversationId,
+              sender: { id: senderId, mode: "pn" },
+              fromMe: false,
+              timestamp: Math.floor(Date.parse(occurredAt) / 1000),
+              live: true,
+              isGroup: conversationId.endsWith("@g.us"),
+              ...(senderName === undefined ? {} : { pushName: senderName }),
+              text,
+            },
+          },
+        ],
+      });
+      if (!result) throw new Error("synthetic message was not retained");
+      return { observationId: result.observationId, inboxItemId: result.inboxItemId };
+    },
+
+    async requestWorkerRun(timeoutMs) {
+      const worker = resources.worker;
+      if (!worker) throw new Error("this proof harness was composed without the worker role");
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const result = await worker.runOnce();
+        if (result.outcome !== "idle") {
+          return {
+            outcome: result.outcome,
+            ...(result.taskId === undefined ? {} : { taskId: result.taskId }),
+          };
+        }
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
+      }
+      throw new Error(`no assignment became claimable within ${timeoutMs}ms`);
+    },
+
+    async assignments(conversationId) {
+      const rows = await repositories.tasks.listForConversation(conversationId);
+      return Promise.all(
+        rows.map(async (task) => ({
+          id: task.id,
+          status: task.status,
+          workerProfile: task.workerProfile,
+          ...(task.target === undefined ? {} : { target: task.target }),
+          artifactTitles: (await repositories.tasks.listArtifacts(task.id)).map(
+            ({ title }) => title,
+          ),
+          resultSummaryLength: task.resultSummary?.length ?? 0,
+        })),
+      );
+    },
+
+    async latestRunInboxKinds(conversationId) {
+      const run = await repositories.runs.latestRunForConversation(conversationId);
+      if (!run) return [];
+      const parsed = replayInputSchema.safeParse(run.input);
+      return parsed.success ? parsed.data.inboxItems.map(({ kind }) => kind) : [];
+    },
+
+    async watchPolicy() {
+      await resources.policyWatcher?.start();
     },
 
     evidence: {
@@ -384,6 +504,8 @@ export async function createAmbientProofHarness(
 
     async stop() {
       await resources.conversation?.stop().catch(() => {});
+      await resources.worker?.stop().catch(() => {});
+      await resources.policyWatcher?.stop().catch(() => {});
       await resources.whatsapp.stop().catch(() => {});
       await resources.database.close().catch(() => {});
     },

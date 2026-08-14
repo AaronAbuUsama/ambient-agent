@@ -36,6 +36,11 @@ export interface AmbientLifecycleDependencies {
     start(): Promise<void>;
     stop(): Promise<void>;
   };
+  /** Workers drain durable assignments; they do not depend on channel health. */
+  readonly worker?: {
+    start(): Promise<void>;
+    stop(): Promise<void>;
+  };
 }
 
 function asError(error: unknown): Error {
@@ -52,6 +57,7 @@ export function createAmbientLifecycle({
   evaluations,
   policyWatcher,
   memoryService,
+  worker,
 }: AmbientLifecycleDependencies): Ambient {
   const exit = Promise.withResolvers<AmbientExit>();
   let starting: Promise<void> | undefined;
@@ -65,6 +71,7 @@ export function createAmbientLifecycle({
         await policyWatcher?.start();
         await evaluations?.start();
         await memoryService?.start();
+        await worker?.start();
         await whatsapp.start();
         void whatsapp.waitForFailure().then(({ error }) => {
           if (stopping) return;
@@ -90,6 +97,11 @@ export function createAmbientLifecycle({
           await conversation?.stop();
         } catch (error) {
           cleanupError = error;
+        }
+        try {
+          await worker?.stop();
+        } catch (error) {
+          cleanupError ??= error;
         }
         try {
           await memoryService?.stop();

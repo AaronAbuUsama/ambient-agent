@@ -373,18 +373,55 @@ ontology or database access.
 
 ### Assignments and Workers
 
-The current `tasks` tables and repository are valuable prototype evidence for
-leases, retries, updates, and artifacts, but the product ontology now uses
-assignments rather than a peer Task Coordinator role.
+Workers v1 woke the dormant `tasks` machinery. The governing rule is:
+**tools are code, agents are data — and Worker is the harness, not the
+brain.**
 
-No generic assignment framework is authorized by this mapping cutover.
-`tasks.ts` remains dormant and internal until a product slice proves which
-parts become:
+The agent kinds differ in run contract (what wakes them, what they receive,
+how they complete), never in composition. All delegated-task agents are ONE
+kind — one bounded objective, one terminal result, under a fenced lease —
+with N _definitions_. A definition is data on disk:
 
-- durable assignments;
-- Worker attempts;
-- results and artifacts;
-- Conversation or Root attention handoffs.
+- `~/.ambient/agents/<name>/agent.yaml`: description (the advertisement),
+  a model ROLE name, instructions (the craft), and a tools map whose
+  per-tool configuration is validated by that tool's own schema. Scanned
+  fail-closed on the mandate pattern; broken definitions are absent and
+  loud, never half-loaded. `home/agents.ts` owns the scan.
+- A chat's mandate grants access: `agents:` lists which definitions that
+  chat's speaker may delegate to, optionally narrowing tool constraints.
+  The effective constraint is definition ∩ grant — a grant can narrow the
+  ceiling, never widen it. **The grant is the disclosure boundary**:
+  granting an agent to a chat authorizes that chat's content to flow to
+  the agent's destinations.
+
+`worker/tools.ts` is the toolbox: each tool a definition may compose is
+registered in code with its configuration schema, narrowing rule,
+code-derived description, and per-assignment binding. The model's tool
+signature never contains a destination axis (`file_issue(title, body)` has
+no repository parameter); destinations are chosen at assignment creation,
+recorded on the assignment (`tasks.target`), validated host-side, and
+bound per run — the same invariant that stops a speaker sending to an
+arbitrary chat.
+
+Discovery needs no protocol: granted agents render into the speaker's
+context as descriptions (authored) plus capability lines (derived from
+code, so they cannot drift). The advertisement is informative; the
+delegate tool's host-side validation is the authority.
+
+`database/tasks.ts` owns the one durable transition (queued → leased →
+terminal, fenced completion, adopt-on-create). `worker/service.ts` is the
+drain; `worker/pi-agent.ts` the Pi adapter. Idempotency is layered:
+assignment ids derive from the delegating run's claim (a retried run
+adopts its own delegation); the retained `task_artifacts` receipt is the
+authority on whether the external effect happened (recorded at the tool
+boundary, consulted before any model runs); the effect itself carries an
+`Ambient-Task: <taskId>` marker for the crash window before the receipt.
+
+MCP-backed tools arrive later as another registry entry behind the same
+interface, when a real consumer (a third-party capability, or process
+isolation for a code agent) exists. Root authoring definitions dynamically
+is that later slice's work; the master hand-writing YAML is the same
+interface.
 
 ### Evaluations
 
@@ -620,6 +657,30 @@ claim, lease, and terminal transitions; `applyPatch` for ontology mutation.
 History import retains evidence only — it never creates Inbox work and never
 wakes a speaker. Media messages are retained with their store refs and
 captions; bytes stay in the media store.
+
+### Worker delegation
+
+```text
+speaker's delegate tool (granted agent, objective, target)
+  -> host validates grant, target, in-flight cap
+  -> one durable assignment (id derived from the run's claim)
+  -> worker drain claims under a fenced lease
+  -> receipt check, then CURRENT definition ∩ grant composed and bound
+  -> Worker run causes the effect; receipt retained at the tool boundary
+  -> task_update enqueued in the originating chat's Inbox (idempotent)
+  -> assignment terminalizes under the lease fence
+  -> speaker's next run reports the outcome — success or parked failure
+```
+
+Owner: the delegate provider (composition root) for grant validation and
+assignment creation; `database/tasks.ts` for every assignment transition;
+the worker service for claim, composition, run evidence, receipts, return,
+retry, and park. A composition problem (revoked grant, broken definition,
+out-of-constraint target) parks immediately — it is deterministic, so
+retrying cannot fix it; model failures retry to the attempt cap. Recovery
+never asks the external system whether the effect happened: the retained
+receipt is the authority, and the effect's embedded marker covers only the
+crash window before the receipt exists.
 
 ### Evaluation
 

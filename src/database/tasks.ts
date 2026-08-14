@@ -1,7 +1,7 @@
-import { and, asc, desc, eq, lte } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, lte } from "drizzle-orm";
 import { z } from "zod";
 import type { AmbientDatabaseConnection } from "./database";
-import { tasks, taskUpdates } from "./schema";
+import { taskArtifacts, tasks, taskUpdates, taskWorkerAttempts } from "./schema";
 
 const taskStatusSchema = z.enum(["queued", "running", "succeeded", "failed", "cancelled"]);
 export type TaskStatus = z.infer<typeof taskStatusSchema>;
@@ -13,6 +13,8 @@ export interface Task {
   readonly objective: string;
   readonly instructions?: string;
   readonly workerProfile: string;
+  /** The destination chosen at creation; never the model's to choose. */
+  readonly target?: string;
   readonly status: TaskStatus;
   readonly leaseOwner?: string;
   readonly leaseUntil?: string;
@@ -30,13 +32,54 @@ export interface NewTask {
   readonly objective: string;
   readonly instructions?: string;
   readonly workerProfile: string;
+  readonly target?: string;
   readonly createdAt?: string;
 }
 
+export interface TaskArtifact {
+  readonly id: string;
+  readonly taskId: string;
+  readonly kind: "text" | "file" | "url" | "json";
+  readonly title: string;
+  readonly value: string;
+  readonly createdAt: string;
+}
+
 export interface TaskRepository {
-  create(input: NewTask): Promise<Task>;
+  /**
+   * Create the assignment, or adopt the one this id already created. The id
+   * derives from the delegating tool call, so a retried delegating run
+   * re-creates the SAME assignment instead of filing twice — the durable
+   * half of the double-delegation guard.
+   */
+  create(input: NewTask): Promise<{ task: Task; outcome: "created" | "adopted" }>;
   get(id: string): Promise<Task | undefined>;
   listForConversation(conversationId: string, limit?: number): Promise<readonly Task[]>;
+  /** Queued plus running — the delegation rate cap's input. */
+  countActive(conversationId: string): Promise<number>;
+  /**
+   * Retain one external-effect receipt, idempotently per (task, kind,
+   * title). The retained receipt is the authority on whether the effect
+   * happened — checked before any adapter is called again, because external
+   * systems (GitHub's list endpoint lags 1-2s, measured) can never be.
+   */
+  recordArtifact(input: {
+    readonly taskId: string;
+    readonly kind: TaskArtifact["kind"];
+    readonly title: string;
+    readonly value: string;
+    readonly createdAt?: string;
+  }): Promise<TaskArtifact>;
+  listArtifacts(taskId: string): Promise<readonly TaskArtifact[]>;
+  /**
+   * Link one Worker run to the assignment and number it. Idempotent per
+   * run id; the returned attempt number drives park-after-N.
+   */
+  recordAttempt(input: {
+    readonly taskId: string;
+    readonly runId: string;
+    readonly createdAt?: string;
+  }): Promise<{ attempt: number }>;
   claimNext(input: {
     readonly workerId: string;
     readonly now?: string;
@@ -75,6 +118,7 @@ function decode(row: typeof tasks.$inferSelect): Task {
     objective: row.objective,
     instructions: row.instructions ?? undefined,
     workerProfile: row.workerProfile,
+    target: row.target ?? undefined,
     status: taskStatusSchema.parse(row.status),
     leaseOwner: row.leaseOwner ?? undefined,
     leaseUntil: row.leaseUntil ?? undefined,
@@ -106,23 +150,99 @@ export function createTaskRepository(database: AmbientDatabaseConnection): TaskR
             objective: input.objective,
             instructions: input.instructions,
             workerProfile: input.workerProfile,
+            target: input.target,
             status: "queued",
             createdAt,
             updatedAt: createdAt,
           })
+          .onConflictDoNothing({ target: tasks.id })
           .returning();
-        if (!row) throw new Error(`task "${id}" was not inserted`);
+        if (!row) {
+          const [existing] = await transaction
+            .select()
+            .from(tasks)
+            .where(eq(tasks.id, id))
+            .limit(1);
+          if (!existing) throw new Error(`task "${id}" was not inserted`);
+          return { task: decode(existing), outcome: "adopted" as const };
+        }
         await transaction.insert(taskUpdates).values({
           id: crypto.randomUUID(),
           taskId: id,
           status: "queued",
           occurredAt: createdAt,
         });
-        return decode(row);
+        return { task: decode(row), outcome: "created" as const };
       });
     },
 
     get,
+
+    async countActive(conversationId) {
+      const [row] = await database
+        .select({ active: count() })
+        .from(tasks)
+        .where(
+          and(
+            eq(tasks.conversationId, conversationId),
+            inArray(tasks.status, ["queued", "running"]),
+          ),
+        );
+      return row?.active ?? 0;
+    },
+
+    recordArtifact({ taskId, kind, title, value, createdAt = new Date().toISOString() }) {
+      return database.transaction(async (transaction) => {
+        const [existing] = await transaction
+          .select()
+          .from(taskArtifacts)
+          .where(
+            and(
+              eq(taskArtifacts.taskId, taskId),
+              eq(taskArtifacts.kind, kind),
+              eq(taskArtifacts.title, title),
+            ),
+          )
+          .limit(1);
+        if (existing) return existing;
+        const [row] = await transaction
+          .insert(taskArtifacts)
+          .values({ id: crypto.randomUUID(), taskId, kind, title, value, createdAt })
+          .returning();
+        if (!row) throw new Error(`artifact for task "${taskId}" was not inserted`);
+        return row;
+      });
+    },
+
+    async listArtifacts(taskId) {
+      return database
+        .select()
+        .from(taskArtifacts)
+        .where(eq(taskArtifacts.taskId, taskId))
+        .orderBy(asc(taskArtifacts.createdAt), asc(taskArtifacts.id));
+    },
+
+    recordAttempt({ taskId, runId, createdAt = new Date().toISOString() }) {
+      return database.transaction(async (transaction) => {
+        const [existing] = await transaction
+          .select({ attempt: taskWorkerAttempts.attempt })
+          .from(taskWorkerAttempts)
+          .where(eq(taskWorkerAttempts.runId, runId))
+          .limit(1);
+        if (existing) return { attempt: existing.attempt };
+        const [latest] = await transaction
+          .select({ attempt: taskWorkerAttempts.attempt })
+          .from(taskWorkerAttempts)
+          .where(eq(taskWorkerAttempts.taskId, taskId))
+          .orderBy(desc(taskWorkerAttempts.attempt))
+          .limit(1);
+        const attempt = (latest?.attempt ?? 0) + 1;
+        await transaction
+          .insert(taskWorkerAttempts)
+          .values({ id: crypto.randomUUID(), taskId, runId, attempt, createdAt });
+        return { attempt };
+      });
+    },
 
     async listForConversation(conversationId, limit = 50) {
       const rows = await database

@@ -58,6 +58,9 @@ test("Pi Conversation calls the scoped send tool and returns an internal summary
       sends.push(text);
       return { operationId: "operation-1" };
     },
+    async delegate() {
+      return Promise.reject(new Error("delegate must not be called"));
+    },
     async recall(query) {
       recalls.push(query);
       return {
@@ -88,6 +91,9 @@ test("Pi Conversation can deliberately finish without sending", async () => {
     async sendMessage() {
       throw new Error("send_message must not be called");
     },
+    async delegate() {
+      return Promise.reject(new Error("delegate must not be called"));
+    },
     async recall() {
       return { claims: [] };
     },
@@ -116,6 +122,9 @@ test("Pi Conversation forwards output limits and propagates provider errors", as
       async sendMessage() {
         throw new Error("send_message must not be called");
       },
+      async delegate() {
+        return Promise.reject(new Error("delegate must not be called"));
+      },
       async recall() {
         return { claims: [] };
       },
@@ -137,6 +146,9 @@ test("granted skills are appended to the system prompt, none means the base prom
     async sendMessage() {
       return { operationId: "op-1" };
     },
+    async delegate() {
+      return Promise.reject(new Error("delegate must not be called")) as never;
+    },
     async recall() {
       return { claims: [] };
     },
@@ -155,4 +167,73 @@ test("granted skills are appended to the system prompt, none means the base prom
   expect(prompts[0]).toContain("## Skill: triage");
   expect(prompts[0]).toContain("End every reply with the marker AMB-1.");
   expect(prompts[1]).not.toContain("## Skill:");
+});
+
+test("granted agents render into the prompt and the delegate tool opens an assignment", async () => {
+  const faux = fauxProvider();
+  const prompts: { system: string; user: string }[] = [];
+  faux.setResponses([
+    (context: {
+      systemPrompt?: string;
+      messages?: readonly { role: string; content: unknown }[];
+    }) => {
+      prompts.push({
+        system: context.systemPrompt ?? "",
+        user: JSON.stringify(context.messages ?? []),
+      });
+      return fauxAssistantMessage(
+        [
+          fauxToolCall("delegate", {
+            agent: "github-issues",
+            objective: "File the crash from message-1",
+            target: "owner/sandbox",
+          }),
+        ],
+        { stopReason: "toolUse" },
+      );
+    },
+    fauxAssistantMessage([fauxText("Delegated the bug report.")]),
+  ]);
+  const delegations: unknown[] = [];
+  const agent = createPiConversationAgent(fauxRunner(faux));
+
+  const result = await agent.run(
+    {
+      ...input,
+      agents: [
+        { name: "github-issues", summary: "Files GitHub issues.\nfiles into: owner/sandbox" },
+      ],
+      taskUpdates: [
+        {
+          taskId: "task-0",
+          workerProfile: "github-issues",
+          status: "succeeded",
+          summary: "issue #4",
+        },
+      ],
+    },
+    {
+      async sendMessage() {
+        throw new Error("send_message must not be called");
+      },
+      async delegate(request) {
+        delegations.push(request);
+        return { taskId: "task-9", outcome: "created" };
+      },
+      async recall() {
+        return { claims: [] };
+      },
+    },
+  );
+
+  expect(delegations).toEqual([
+    { agent: "github-issues", objective: "File the crash from message-1", target: "owner/sandbox" },
+  ]);
+  expect(result).toEqual({ summary: "Delegated the bug report." });
+  // The advertisement is in the system prompt; the pending update in the user prompt.
+  expect(prompts[0]!.system).toContain(
+    "github-issues: Files GitHub issues. — files into: owner/sandbox",
+  );
+  expect(prompts[0]!.system).toContain("Delegate at most once per run");
+  expect(prompts[0]!.user).toContain("task-0");
 });

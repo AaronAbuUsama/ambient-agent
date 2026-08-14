@@ -1168,19 +1168,248 @@ happened as the 2026-08-13 reset above):**
    third agent kind, judge-vs-answer-key calibration, the visibility
    layer as a `wiki/` projection.
 
-## Workers v1 — queued candidate brief
+## Active slice: Workers v1 — the bug-filing journey (cut 2026-08-13)
 
-Queued as an MVP theme at the 2026-08-13 reset (selected properly at a
-review stop). The customer-feedback journey: a bounded Worker files a
-GitHub issue from validated Bug Reports evidence, its durable result
-returns to the originating conversation's Inbox, and the speaker decides
-how to report it. Product context from the master (2026-08-12): a previous
-bug-filing agent lived in this group and was retired for being poor — the
-bar is real usefulness, and filing must target the **right repository**,
-so repo routing is part of the worker's design, not an afterthought.
-GitHub credentials are already available on this machine; the proof
-targets a scratch repository. Worker runs ship with `worker-*` evaluation
-cases per the standing rule.
+Selected by the master after the memory ship gate, with the memory work
+merged. Product context (2026-08-12): a previous bug-filing agent lived in
+this group and was retired for being poor — the bar is real usefulness, and
+filing must target the **right repository**, so repo routing is part of the
+worker's design, not an afterthought.
+
+**Product question.** Can a Conversation Agent delegate one bounded
+objective to a Worker, have that Worker produce a real external effect —
+a GitHub issue in the correct repository — and have the durable result
+return to the originating chat so the speaker reports it, with the whole
+handoff surviving restart, retry, and duplication?
+
+**The concrete journey.** A bug is reported in an active chat. The speaker
+recognizes work it should not do itself and creates a bounded assignment
+carrying the objective and the target repository. The Worker runs with one
+scoped capability, files the issue, and its result becomes an Inbox item in
+the originating chat. The speaker reads it and tells the humans the issue
+number. No human triggers anything.
+
+**Owner.** `worker/` owns the Worker harness (role contract, generic
+runtime, tool registry); `home/` owns agent definition and grant scanning;
+`github/` owns the `gh` adapter and hides the CLI entirely;
+`database/tasks.ts` owns the one durable transition; `conversation/` gains
+one tool to open an assignment.
+
+### Design revision (2026-08-14, brainstormed with the master)
+
+The original cut had a hardcoded bug-filing worker. The revision, reached
+with the master acting as the Root: **tools are code, agents are data.**
+
+- **Worker is the harness, not the brain.** The agent kinds differ in run
+  contract — what wakes them, their input, their terminal result, their
+  lifecycle owner — never in composition. All delegated-task agents are ONE
+  kind (bounded objective, terminal result, lease) with N definitions.
+  "GitHub filer" vs a future "code agent" is different YAML, not a new kind.
+- **Definitions on disk, global namespace.** `~/.ambient/agents/<name>/
+agent.yaml`: description (the advertisement), model role, instructions,
+  and a tools map whose per-tool config is validated by that tool's own
+  schema. Scanned fail-closed on the mandate pattern; broken definitions
+  are absent and loud in doctor, never half-loaded.
+- **Grants in mandates, local narrowing.** A chat's mandate lists which
+  agents its speaker may delegate to; a grant may narrow tool constraints,
+  and the effective constraint is definition ∩ grant. The grant IS the
+  disclosure boundary: granting an agent to a chat authorizes that chat's
+  content to flow to the agent's destinations.
+- **The registry is code.** Each tool is a module registering
+  `{configSchema, bind, describe}`. Binding happens per-run in host code;
+  the model's tool signature simply does not contain the destination axis
+  (`file_issue(title, body)` — no repo parameter exists in its world).
+- **Discovery without a protocol.** The speaker learns what it can
+  delegate the way it learns skills: rendered text — the definition's
+  description plus a capability line derived from `describe(config)` so
+  the advertisement cannot drift from the code. Enforcement never relies
+  on it: `delegate(agent, objective, target)` is validated against grants
+  at the tool boundary. A2A's agent-card idea as one paragraph, no
+  envelopes, no negotiation.
+- **Locked with the master:** speaker-direct delegation under grants
+  (canon-sanctioned; the retained assignments are exactly what a future
+  Root will supervise); global definitions + local grants; issues filed
+  under the master's personal `gh` auth accepted for v1 — machine identity
+  arrives with the VPS deployment; the assignment id derives from the
+  delegate tool call id, so a retried speaker run adopts its own
+  delegation instead of filing twice (the layer ABOVE the adapter's guard).
+- **Definition drift:** read at claim, re-validate at bind, and the run is
+  stamped with a content hash of the definition it actually executed
+  (promptVersion's content-derived pattern). No versioning machinery.
+- **Runaway delegation:** a bounded in-flight assignment count per chat,
+  checked at creation; beyond it, park.
+- **MCP posture.** Verified: MCP 2026-07-28 is stateless (protocol
+  sessions removed), so building servers is now cheap. Core effectful
+  tools stay native anyway, because the safety layer — grants, binding,
+  idempotency, receipts — is host policy that no transport replaces; a
+  generic GitHub MCP server exposes owner/repo to the model, the exact
+  forbidden axis. MCP arrives as an additional registry entry kind behind
+  the same `ToolEntry` interface when the first real consumer does: a
+  third-party capability we should not write, or process isolation for
+  the code agent. Definitions, grants, and the harness will not change
+  when it does.
+
+### The six protocol questions
+
+1. **Retained record.** `tasks` — already in the schema and dormant since it
+   was written: conversation, requesting run, objective, instructions,
+   worker profile, status, fenced lease, result summary. `task_updates`
+   records status history, `task_artifacts` the issue URL, and
+   `task_worker_attempts` links each Worker run. No new table.
+2. **Owning service.** The assignment work store: queued → claimed under a
+   fenced lease → succeeded or failed, in the same shape the Conversation
+   and memory work stores already use.
+3. **Consumer.** A Worker service drain in the production lifecycle,
+   alongside Conversation and memory. The result is claimed by the
+   originating chat's Inbox — `inbox.enqueue` finally gets the
+   `task_update` producer the ledger has been holding it for.
+4. **Idempotency.** Three layers. The assignment id derives from the
+   speaker's delegate tool call id, so a retried speaker run re-creates
+   the SAME assignment. The retained `task_artifacts` receipt is the
+   authority on whether the issue was already filed — checked by the host
+   before the adapter is called (GitHub's list endpoint lags 1–2s,
+   measured; it can never be the authority). Last, the issue body embeds
+   `Ambient-Task: <taskId>` and the adapter adopts a marker hit, covering
+   the crash window between filing and retaining the receipt. The retired
+   bot's duplicate filings are in this group's history; this is the guard
+   against repeating them.
+5. **Retry and recovery.** Lease expiry reopens the assignment exactly as
+   Conversation and memory reopen theirs; the marker search makes the
+   retry safe. Repeated failure parks the assignment rather than spending
+   forever.
+6. **Evidence.** The Worker run (input, tool calls, result), the
+   `task_artifacts` row holding the issue URL, and the issue itself — the
+   external effect is proven by the retained URL, never by the model
+   saying so.
+
+### Destination selection stays outside model control
+
+The repository is chosen when the assignment is created and recorded on it.
+The Worker's capability is bound to that one repository for that one run, so
+a model cannot file into an arbitrary repo — the same invariant that stops a
+speaker sending to an arbitrary chat. Routing evidence comes from memory,
+which already holds repositories in `owner/name` form with which issues went
+where; the group genuinely routes to more than one repo, so this is a real
+decision rather than a constant.
+
+### The bar, defined before the code
+
+The golden-first method that worked for memory: a hand-made answer key of
+real bugs from this group's history with the issues a careful human would
+file for them — title, body, and target repository — written BEFORE the
+worker. "It filed something" is not the bar; the previous agent cleared
+that and was still retired.
+
+**In:** the agent definition scanner and mandate grants; the tool
+registry with one `github_issues` entry over `gh`; one hand-authored
+definition (the master acting as Root); the generic Worker runtime and
+its drain; the assignment record and its service; the result returning to
+the originating Inbox; `worker-*` eval cases; a live proof filing into a
+scratch repository.
+
+**Out (named):** Root authoring definitions dynamically (the master
+hand-writes YAML, which is the same interface); durable Worker instances
+(the assignment + run IS the instance for one-shot work); MCP-backed
+registry entries (posture recorded above); chat-local definition
+shadowing; multi-step or long-running workers; worker-created workers;
+issue updates, comments, and closing; grant narrowing beyond what the
+first real second-chat consumer demands.
+
+**Proof gate.** Deterministic: assignment lifecycle, lease expiry recovery,
+the duplicate guard at every layer (a retried speaker run re-creates the
+same assignment; a retried attempt adopts its own issue), the result
+reaching the originating Inbox, a Worker never filing outside its assigned
+repository, and the reporting behavior — the speaker reports a parked
+failure honestly and stays silent when the mandate has flipped to
+listening. Live on the rig: a real message in the test group produces a
+real issue in `AaronAbuUsama/ambient-worker-sandbox`, and the speaker
+reports the number back into the chat.
+
+### The machine's proof gate: MET (2026-08-14)
+
+**Offline rehearsal** (`proof:worker-delegation`): production composition,
+synthetic home, live gpt-5.6-terra, fake `gh` that cannot reach GitHub.
+Verdict PASS on the first run: delegation with a claim-derived id and a
+host-bound target, one `gh create` pinned to the assigned repository with
+the `Ambient-Task` marker, the receipt retained at the tool boundary, the
+task update consumed by the next speaker run, and a revoked grant
+stripping the capability without a restart.
+
+**Live rig** (`proof:worker-live`, PASS on the seventh attempt): the REAL
+daemon, a real bug report from the peer account into the rig-only Tst
+group (membership verified against the allowlist before any responding
+mandate was authored). Receipt: every stage true; exactly ONE new issue
+(#8) in the sandbox, carrying the assignment marker; the speaker reported
+"#8" into the chat and the peer account observed it;
+`reportMatchesIssue: true`.
+
+**What the six failed attempts taught — each fixed with retained
+evidence:**
+
+1. The proof-runner's 10-minute kill stranded a mid-run chain; manual
+   cancellation of the stranded assignment then exposed that a retried
+   delegating run could ADOPT a terminal assignment and wait forever.
+   Fixed: adoption refuses anything not queued or running.
+2. A claim retried after a successful send re-composes different text
+   under its spent idempotency key and was refused forever — one poisoned
+   claim burned twenty model runs in four minutes (the conversation store
+   retries without a park). Fixed: the sender adopts the conflict — the
+   effect already happened with the text originally composed for that
+   claim (`adopted:<key>`).
+3. A transient throw between the worker's claim and its run start was
+   swallowed by the drain's silent catch: a ten-minute leased deadlock,
+   twice. Fixed: infrastructure throws report through the daemon's voice,
+   release the lease (with retries — the release itself once hit the same
+   contention), and the next poll retries.
+4. The thrower itself: libsql same-connection interleaving. Waking the
+   worker inside the delegate provider put its claim in the middle of the
+   delegating run's own evidence transactions — instant SQLITE_BUSY three
+   attempts running, once wedging the delegating run's open tool row.
+   Fixed twice over: `busy_timeout=1500` for plain statements meeting
+   transaction locks, and the worker claims from its poll, never from an
+   instant wake.
+
+**Known debt from the live gate:** the conversation work store retries a
+failing claim every ~11s with no park (measured: twenty runs burned);
+libsql same-connection interleaving is mitigated, not eliminated — the
+named upgrade path is a process-wide single-flight gate over the client;
+send-adoption means a recovered claim that already spoke can never say
+anything new (its later wording is dropped — correct for retries, worth
+revisiting when a claim legitimately speaks twice); gpt-5.6-terra
+occasionally hangs a call for minutes (vibe pool), covered by leases;
+libsignal session noise ("Bad MAC") floods the rig daemon's stderr.
+
+**Deferred, named:** the hand-made issue answer key from real Bug Reports
+history and `worker-*` eval cases — the quality bar for issue CONTENT.
+The machine is proven; the craft bar is its own step.
+
+## Production memory wipe-and-re-read: DONE (2026-08-14)
+
+Authorized by the master ("you can wipe anything — there's nothing in
+production yet"). Pre-wipe backup retained
+(`.proof-private/backups/ambient-prewipe-20260814T180052Z.db`; 232 claims,
+58 entities, 5 identity links — the old pre-identity-fix ontology). The
+wipe removed derived memory only; all 297 observations kept.
+
+Re-read on gpt-5.6-terra (memory-v10 + memory-judge-v4), production
+database, daemon stopped for the duration and restarted after:
+
+- 9 windows digested, 0 retried; 134 claims, 46 issue entities, 8 person
+  entities, 5 repositories, 3 cross-form identity links.
+- Golden coverage **20/22 — the bar** (missing the same two prayer-times
+  entries as the rig run).
+- Judged faithfulness mean 0.917; completeness mean 0.792. One window at
+  0.571 breaches the per-window floor — examined claim by claim, the SAME
+  instrument error the rig run measured: all three flagged claims are
+  near-verbatim in their own citations ("planned for next build" flagged
+  against "Will update ... in next build"; the verified-retest claim
+  against "All salah times are exactly same now ... Perfect. Now this is
+  correct? / Yes"; the M25/Aladhan routing claim against the developer
+  stating exactly that). The memory is right; the judge is wrong;
+  deliberately not tuned away — the judge's weakness is recorded debt.
+
+Production now recalls the identity-aware v10 ontology where its speaker
+runs.
 
 ## Live test rig
 

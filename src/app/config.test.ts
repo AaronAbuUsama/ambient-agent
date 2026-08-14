@@ -56,7 +56,7 @@ test("the committed rig document supplies the deployment defaults", () => {
     adapter: "openai-compatible",
     credential: { env: ["QWEN_API_KEY", "DASHSCOPE_API_KEY"] },
   });
-  expect(config.models.roles.worker).toBeUndefined();
+  expect(config.models.roles.worker).toMatchObject({ provider: "vibe" });
   expect(config.models.roles.evaluator).toMatchObject({ provider: "vibe" });
   expect(config.master).toBeUndefined();
 });
