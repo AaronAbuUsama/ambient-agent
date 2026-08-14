@@ -170,8 +170,22 @@ export interface ConversationMessage {
   readonly whatsappMessageId: string;
   readonly senderId: string;
   readonly sentAt: string;
+  /** The caption stands in as text for a media message; empty when it had none. */
   readonly text: string;
+  readonly attachment?: ConversationAttachment;
   readonly fromAgent: boolean;
+}
+
+/**
+ * What the speaker is told about a media message. `description` is present once
+ * the media has been interpreted; `ref` addresses the bytes for a tool that can
+ * look at them. The bytes themselves never enter the prompt.
+ */
+export interface ConversationAttachment {
+  readonly kind: string;
+  readonly ref?: string;
+  readonly mimetype?: string;
+  readonly description?: string;
 }
 
 /** One granted skill's text, ready for the speaker's prompt. */

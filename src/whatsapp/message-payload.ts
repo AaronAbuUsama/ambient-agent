@@ -5,7 +5,8 @@ import { z } from "zod";
  * retention (live mapping and historical import). Deliberately loose: the
  * source evolves, retained rows are forever, and every reader must tolerate
  * both eras. Historical group rows may lack the sender entirely; media
- * carries its caption under `media`.
+ * carries its caption and, when WhatsApp stored the bytes, the `ref` that
+ * addresses them in the media store.
  *
  * This is the ONE schema for reading retained message payloads — memory,
  * evaluation evidence, and proofs all parse through it.
@@ -22,7 +23,14 @@ export const retainedMessagePayloadSchema = z.looseObject({
   fromMe: z.boolean().optional(),
   kind: z.string().optional(),
   text: z.string().optional(),
-  media: z.looseObject({ caption: z.string().optional() }).optional(),
+  media: z
+    .looseObject({
+      caption: z.string().optional(),
+      /** Absent when the bytes were never stored; there is then nothing to look at. */
+      ref: z.string().min(1).optional(),
+      mimetype: z.string().min(1).optional(),
+    })
+    .optional(),
   context: z
     .looseObject({
       mentions: z.array(z.string().min(1)).optional(),

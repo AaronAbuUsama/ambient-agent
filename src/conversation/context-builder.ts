@@ -1,4 +1,4 @@
-import { whatsAppTextMessagePayloadSchema } from "../whatsapp/observation-mapper";
+import { whatsAppLiveMessagePayloadSchema } from "../whatsapp/observation-mapper";
 import type {
   ConversationClaim,
   ConversationDelegate,
@@ -46,13 +46,22 @@ export function createConversationContextBuilder(
         ) {
           throw new Error(`conversation inbox observation "${item.referenceId}" is not a message`);
         }
-        const payload = whatsAppTextMessagePayloadSchema.parse(observation.payload);
+        const payload = whatsAppLiveMessagePayloadSchema.parse(observation.payload);
+        const attachment =
+          "media" in payload
+            ? {
+                kind: payload.kind,
+                ...(payload.media.ref ? { ref: payload.media.ref } : {}),
+                ...(payload.media.mimetype ? { mimetype: payload.media.mimetype } : {}),
+              }
+            : undefined;
         return {
           observationId: observation.id,
           whatsappMessageId: payload.messageId,
           senderId: payload.sender.id,
           sentAt: observation.occurredAt,
-          text: payload.text,
+          text: payload.text ?? ("media" in payload ? (payload.media.caption ?? "") : ""),
+          ...(attachment ? { attachment } : {}),
           fromAgent: false,
         };
       });

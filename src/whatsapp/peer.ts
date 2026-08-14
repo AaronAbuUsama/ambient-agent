@@ -1,5 +1,5 @@
 import type { WhatsAppDataStore } from "whatsappd";
-import { mapLiveWhatsAppMessage, whatsAppTextMessagePayloadSchema } from "./observation-mapper";
+import { mapLiveWhatsAppMessage, whatsAppLiveMessagePayloadSchema } from "./observation-mapper";
 import { WhatsAppSessionController } from "./session/controller";
 import { localDeployment } from "./session/local-deployment";
 
@@ -54,11 +54,11 @@ export function createWhatsAppPeer(options: {
             if (event.type !== "message") continue;
             const observation = mapLiveWhatsAppMessage(options.accountId, event.message);
             if (!observation) continue;
-            const payload = whatsAppTextMessagePayloadSchema.parse(observation.payload);
+            const payload = whatsAppLiveMessagePayloadSchema.parse(observation.payload);
             received.push({
               chatId: payload.chatId,
               senderId: payload.sender.id,
-              text: payload.text,
+              text: payload.text ?? ("media" in payload ? (payload.media.caption ?? "") : ""),
             });
             delivered = true;
           }
