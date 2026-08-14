@@ -132,6 +132,8 @@ export const tasks = sqliteTable(
     objective: text().notNull(),
     instructions: text(),
     workerProfile: text("worker_profile").notNull(),
+    /** The destination chosen at creation (e.g. an owner/name repository); never the model's to choose. */
+    target: text(),
     status: text({
       enum: ["queued", "running", "succeeded", "failed", "cancelled"],
     }).notNull(),

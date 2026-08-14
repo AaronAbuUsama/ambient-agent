@@ -66,6 +66,12 @@
       "model": "gpt-5.6-terra",
       "thinking": "off",
       "maxOutputTokens": 8192
+    },
+    "worker": {
+      "provider": "vibe",
+      "model": "gpt-5.6-terra",
+      "thinking": "off",
+      "maxOutputTokens": 8192
     }
   }
 }

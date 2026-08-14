@@ -24,6 +24,10 @@ test("every event renders its domain line at its level", () => {
   log.memoryDigested("bug-reports", 12);
   log.mandatesChanged("master(responding) tst(listening)");
   log.chatBroken("tst", "mode — expected listening|responding");
+  log.agentsChanged("github-issues");
+  log.agentBroken("github-issues", "unknown tool");
+  log.delegated("tst", "github-issues");
+  log.workerFinished("tst", "github-issues", "succeeded");
   log.runFailed("master", "provider unavailable");
   log.stopping("SIGINT");
 
@@ -34,9 +38,13 @@ test("every event renders its domain line at its level", () => {
     "~ bug-reports: memory digested (12 claims)",
     "mandates: master(responding) tst(listening)",
     "✗ chat tst: mode — expected listening|responding",
+    "agents: github-issues",
+    "✗ agent github-issues: unknown tool",
+    "⇢ tst: delegated to github-issues",
+    "⇠ tst: worker github-issues succeeded",
     "✗ master: run failed — provider unavailable",
     "stopping (SIGINT)",
   ]);
   // info=30, warn=40, error=50: breakage is loud, flow is info.
-  expect(lines.map(({ level }) => level)).toEqual([30, 30, 30, 30, 30, 40, 50, 30]);
+  expect(lines.map(({ level }) => level)).toEqual([30, 30, 30, 30, 30, 40, 30, 40, 30, 30, 50, 30]);
 });

@@ -51,6 +51,17 @@ export interface AssignmentBinding {
   readonly taskId: string;
   /** The destination chosen at assignment creation, host-validated; omitted only when exactly one candidate exists. */
   readonly target?: string | undefined;
+  /**
+   * Retain an external-effect receipt the moment the effect exists — at the
+   * tool boundary, before the model even sees the result. The retained
+   * receipt is the authority a retry consults, so the crash window between
+   * effect and receipt stays as small as the code can make it.
+   */
+  readonly retainReceipt?: (receipt: {
+    readonly kind: "text" | "file" | "url" | "json";
+    readonly title: string;
+    readonly value: string;
+  }) => Promise<void>;
 }
 
 /**
@@ -131,6 +142,7 @@ const githubIssues: ToolEntry = {
         if (used) throw new Error("file_issue can only be called once per assignment");
         used = true;
         const filed = await issues.file({ key: binding.taskId, title, body });
+        await binding.retainReceipt?.({ kind: "url", title: "issue", value: filed.url });
         const verb = filed.outcome === "adopted" ? "Adopted existing" : "Filed";
         return {
           content: [{ type: "text", text: `${verb} issue #${filed.number}: ${filed.url}` }],

@@ -7,10 +7,15 @@ import { createEvaluationService } from "../evals/service";
 import type { MemoryService } from "../memory/contract";
 import { createPiMemoryAgent } from "../memory/pi-agent";
 import { createMemoryService } from "../memory/service";
-import { scanMandates } from "../home/mandates";
+import { scanAgents, type AgentDefinition } from "../home/agents";
+import { scanMandates, type AgentGrant } from "../home/mandates";
 import { skillsForChat } from "../home/skills";
 import { createMandateWatcher } from "../home/watcher";
 import { createModelRuntime, type ModelRuntime } from "../models/runtime";
+import type { WorkerService } from "../worker/contract";
+import { createPiWorkerAgent } from "../worker/pi-agent";
+import { createWorkerService } from "../worker/service";
+import { createWorkerToolbox } from "../worker/tools";
 import { createWhatsAppAcceptedSourceConsumer } from "../whatsapp/message-ingestion";
 import { createAliasResolver } from "../whatsapp/mirror";
 import { createWhatsAppService, type WhatsAppService } from "../whatsapp/service";
@@ -24,6 +29,7 @@ export interface AppResources extends AmbientLifecycleDependencies {
   readonly conversation?: ConversationService;
   readonly evaluations: EvaluationService;
   readonly memoryService?: MemoryService;
+  readonly worker?: WorkerService;
   /** The startup-resolved model runtime, for app-internal consumers like the proof harness. */
   readonly models: ModelRuntime;
 }
@@ -87,6 +93,14 @@ export async function createAppResources(
     // set of valid chat folders. Broken chats are simply absent — brokenness
     // is recomputed loudly by `ambient doctor`, never stored.
     let lastMandateSummary = "";
+    // Delegation policy, refreshed with the mandates: which agents each chat
+    // may use (the grant is the disclosure boundary), and the definitions
+    // themselves. Both are read fresh at every resync, so a revoked grant or
+    // an edited definition governs the next claim without a restart.
+    const grantsByChat = new Map<string, Readonly<Record<string, AgentGrant>>>();
+    const toolbox = createWorkerToolbox();
+    const agentDefinitions = new Map<string, AgentDefinition>();
+    let lastAgentSummary = "";
     const resyncMandates = async () => {
       const mandates = scanMandates(config.home);
       // Mandate ids are canonicalized too, so a hand-written lid-form file
@@ -106,7 +120,11 @@ export async function createAppResources(
         })),
       );
       chatLabels.clear();
-      for (const mandate of canonical) chatLabels.set(mandate.chatId, mandate.slug);
+      grantsByChat.clear();
+      for (const mandate of canonical) {
+        chatLabels.set(mandate.chatId, mandate.slug);
+        if (mandate.agents) grantsByChat.set(mandate.chatId, mandate.agents);
+      }
       const summary =
         [
           ...mandates.active.map((mandate) => `${mandate.slug}(${mandate.mode})`),
@@ -116,6 +134,19 @@ export async function createAppResources(
         lastMandateSummary = summary;
         log.mandatesChanged(summary);
         for (const chat of mandates.broken) log.chatBroken(chat.slug, chat.problem);
+      }
+      const agents = scanAgents(config.home, toolbox.check);
+      agentDefinitions.clear();
+      for (const agent of agents.agents) agentDefinitions.set(agent.name, agent);
+      const agentSummary =
+        [
+          ...agents.agents.map(({ name }) => name),
+          ...agents.broken.map(({ name }) => `${name}(BROKEN)`),
+        ].join(" ") || "none";
+      if (agentSummary !== lastAgentSummary) {
+        lastAgentSummary = agentSummary;
+        log.agentsChanged(agentSummary);
+        for (const agent of agents.broken) log.agentBroken(agent.name, agent.problem);
       }
     };
     await resyncMandates();
@@ -151,6 +182,33 @@ export async function createAppResources(
           maximumClaimsPerJob: 80,
           narrateDigest: (conversationId, claims) =>
             log.memoryDigested(label(conversationId), claims),
+        })
+      : undefined;
+    // The Worker harness: any agent definition runs under it. Composition
+    // resolves the CURRENT definition and the originating chat's CURRENT
+    // grant at claim time — revocation and edits stop the next run.
+    const worker = config.models.roles.worker
+      ? createWorkerService({
+          work: database.repositories.tasks,
+          runs: database.repositories.runs,
+          agent: createPiWorkerAgent(models.forRole("worker")),
+          compose: (workerProfile, conversationId) => {
+            const definition = agentDefinitions.get(workerProfile);
+            if (!definition) return { problem: `no agent named "${workerProfile}"` };
+            const grant = grantsByChat.get(conversationId)?.[workerProfile];
+            if (!grant) return { problem: "not granted to this chat" };
+            return toolbox.compose(definition, grant);
+          },
+          returnResult: async (conversationId, taskId) => {
+            await database.repositories.inbox.enqueue({
+              conversationId,
+              kind: "task_update",
+              referenceId: taskId,
+            });
+            void conversation?.wake(conversationId).catch(() => {});
+          },
+          narrate: (conversationId, workerProfile, outcome) =>
+            log.workerFinished(label(conversationId), workerProfile, outcome),
         })
       : undefined;
     if (config.conversation.enabled) {
@@ -205,6 +263,7 @@ export async function createAppResources(
       models,
       policyWatcher,
       ...(memoryService ? { memoryService } : {}),
+      ...(worker ? { worker } : {}),
       ...(conversation ? { conversation } : {}),
     };
   } catch (error) {

@@ -13,6 +13,8 @@ export interface Task {
   readonly objective: string;
   readonly instructions?: string;
   readonly workerProfile: string;
+  /** The destination chosen at creation; never the model's to choose. */
+  readonly target?: string;
   readonly status: TaskStatus;
   readonly leaseOwner?: string;
   readonly leaseUntil?: string;
@@ -30,6 +32,7 @@ export interface NewTask {
   readonly objective: string;
   readonly instructions?: string;
   readonly workerProfile: string;
+  readonly target?: string;
   readonly createdAt?: string;
 }
 
@@ -115,6 +118,7 @@ function decode(row: typeof tasks.$inferSelect): Task {
     objective: row.objective,
     instructions: row.instructions ?? undefined,
     workerProfile: row.workerProfile,
+    target: row.target ?? undefined,
     status: taskStatusSchema.parse(row.status),
     leaseOwner: row.leaseOwner ?? undefined,
     leaseUntil: row.leaseUntil ?? undefined,
@@ -146,6 +150,7 @@ export function createTaskRepository(database: AmbientDatabaseConnection): TaskR
             objective: input.objective,
             instructions: input.instructions,
             workerProfile: input.workerProfile,
+            target: input.target,
             status: "queued",
             createdAt,
             updatedAt: createdAt,
