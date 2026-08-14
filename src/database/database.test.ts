@@ -142,7 +142,7 @@ test("task leases are single-flight and invalid transitions are rejected", async
       promptVersion: "worker-v1",
       input: {},
     });
-    const task = await repositories.tasks.create({
+    const { task, outcome } = await repositories.tasks.create({
       id: "task-1",
       conversationId: "chat-1",
       requestedByRunId: requestRun.id,
@@ -150,6 +150,21 @@ test("task leases are single-flight and invalid transitions are rejected", async
       workerProfile: "default",
       createdAt: "2026-08-11T10:00:00.000Z",
     });
+    expect(outcome).toBe("created");
+
+    // The id derives from the delegating tool call: re-creating is adoption,
+    // never a second assignment.
+    const again = await repositories.tasks.create({
+      id: "task-1",
+      conversationId: "chat-1",
+      requestedByRunId: requestRun.id,
+      objective: "Prepare the report",
+      workerProfile: "default",
+      createdAt: "2026-08-11T10:00:30.000Z",
+    });
+    expect(again.outcome).toBe("adopted");
+    expect(again.task.createdAt).toBe(task.createdAt);
+    expect(await repositories.tasks.countActive("chat-1")).toBe(1);
 
     const claimed = await repositories.tasks.claimNext({
       workerId: "worker-1",
@@ -218,6 +233,72 @@ test("task leases are single-flight and invalid transitions are rejected", async
       resultSummary: "report ready",
     });
     expect(succeeded.status).toBe("succeeded");
+    expect(await repositories.tasks.countActive("chat-1")).toBe(0);
+  });
+});
+
+test("artifacts are idempotent receipts and attempts number worker runs", async () => {
+  await withDatabase(async ({ repositories }) => {
+    const requestRun = await repositories.runs.start({
+      id: "request-run",
+      agentId: "worker-main",
+      role: "worker",
+      conversationId: "chat-1",
+      model,
+      promptVersion: "worker-v1",
+      input: {},
+    });
+    const { task } = await repositories.tasks.create({
+      id: "task-2",
+      conversationId: "chat-1",
+      requestedByRunId: requestRun.id,
+      objective: "File the crash report",
+      workerProfile: "github-issues",
+      createdAt: "2026-08-11T11:00:00.000Z",
+    });
+
+    const receipt = await repositories.tasks.recordArtifact({
+      taskId: task.id,
+      kind: "url",
+      title: "issue",
+      value: "https://github.com/owner/sandbox/issues/7",
+      createdAt: "2026-08-11T11:01:00.000Z",
+    });
+    // Retaining the same receipt twice is one receipt — the authority stays
+    // single even when the writer retries.
+    const retained = await repositories.tasks.recordArtifact({
+      taskId: task.id,
+      kind: "url",
+      title: "issue",
+      value: "https://github.com/owner/sandbox/issues/7",
+      createdAt: "2026-08-11T11:02:00.000Z",
+    });
+    expect(retained.id).toBe(receipt.id);
+    expect(await repositories.tasks.listArtifacts(task.id)).toHaveLength(1);
+
+    const workerRun = async (id: string) =>
+      repositories.runs.start({
+        id,
+        agentId: "worker",
+        role: "worker",
+        conversationId: "chat-1",
+        taskId: task.id,
+        model,
+        promptVersion: "worker-v1",
+        input: {},
+      });
+    await workerRun("worker-run-1");
+    await workerRun("worker-run-2");
+    expect(
+      await repositories.tasks.recordAttempt({ taskId: task.id, runId: "worker-run-1" }),
+    ).toEqual({ attempt: 1 });
+    expect(
+      await repositories.tasks.recordAttempt({ taskId: task.id, runId: "worker-run-2" }),
+    ).toEqual({ attempt: 2 });
+    // Idempotent per run: recording the same run again keeps its number.
+    expect(
+      await repositories.tasks.recordAttempt({ taskId: task.id, runId: "worker-run-1" }),
+    ).toEqual({ attempt: 1 });
   });
 });
 
