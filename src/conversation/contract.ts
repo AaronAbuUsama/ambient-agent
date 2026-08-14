@@ -159,10 +159,34 @@ export interface ScopedMessageSender {
 }
 
 export interface ConversationRecall {
+  /**
+   * What Ambient knows that bears on this conversation: claims about the people
+   * present, and claims this conversation's own evidence established — the
+   * issues it has discussed are the latter, and are reachable no other way. An
+   * empty query returns everything it knows here, so the speaker can answer
+   * "how many of these are still open?" without guessing.
+   */
   recall(input: {
+    readonly conversationId: string;
     readonly nativeIds: readonly string[];
     readonly query: string;
+    readonly limit?: number;
   }): Promise<readonly RecalledMemory[]>;
+  /** Retained messages from this conversation, so the past can be re-read. */
+  searchHistory(input: {
+    readonly conversationId: string;
+    readonly query: string;
+    readonly limit?: number;
+  }): Promise<readonly RecalledMessage[]>;
+}
+
+/** One retained message, as the speaker is shown it when searching the past. */
+export interface RecalledMessage {
+  readonly observationId: string;
+  readonly sentAt: string;
+  readonly senderId?: string;
+  readonly text: string;
+  readonly attachment?: ConversationAttachment;
 }
 
 export interface ConversationMessage {
@@ -237,6 +261,10 @@ export interface RecalledMemory {
 export interface ConversationAgentTools {
   sendMessage(text: string, callId: string): Promise<{ readonly operationId: string }>;
   recall(query: string, callId: string): Promise<{ readonly claims: readonly RecalledMemory[] }>;
+  searchHistory(
+    query: string,
+    callId: string,
+  ): Promise<{ readonly messages: readonly RecalledMessage[] }>;
   /**
    * Open one bounded assignment for a granted agent. The host validates the
    * agent and target against the chat's grant and derives the assignment id

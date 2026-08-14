@@ -603,3 +603,92 @@ test("memory recall limits current claims after collapsing historical versions",
     ]);
   });
 });
+
+test("an issue is recallable through its conversation even though it is nobody's identity", async () => {
+  await withDatabase(async ({ repositories }) => {
+    await repositories.runs.start({
+      id: "issue-run",
+      agentId: "memory-main",
+      role: "memory",
+      model,
+      promptVersion: "memory-v1",
+      input: {},
+    });
+    await repositories.observations.retain({
+      id: "issue-evidence",
+      source: "whatsapp",
+      accountId: "main",
+      nativeId: "issue-message",
+      conversationId: "group@g.us",
+      occurredAt: "2026-08-13T15:16:00.000Z",
+      kind: "message",
+      payload: {
+        kind: "image",
+        media: { ref: "media:v1:deadbeef", mimetype: "image/jpeg", caption: "Live Activity loops" },
+      },
+    });
+    await repositories.memory.putEntity({
+      id: "issue-entity",
+      kind: "issue",
+      canonicalName: "Live Activity repeats prayer prompts",
+    });
+    await repositories.memory.putPredicate({
+      id: "issue-status",
+      name: "issue_status",
+      description: "The latest explicitly stated status of an issue",
+      valueSchema: {},
+    });
+    await repositories.memory.applyPatch({
+      id: "issue-patch",
+      runId: "issue-run",
+      source: {},
+      operations: [
+        {
+          operation: "create",
+          claimId: "issue-claim",
+          entityId: "issue-entity",
+          predicateId: "issue-status",
+          value: "open",
+          confidence: "high",
+          evidenceObservationIds: ["issue-evidence"],
+        },
+      ],
+    });
+
+    // The old wire: an issue is not linked to any phone number, so a
+    // person-scoped recall can never surface it however it is queried.
+    expect(
+      await repositories.memory.recall({ nativeIds: ["someone@s.whatsapp.net"], query: "" }),
+    ).toEqual([]);
+
+    // The fix: the conversation's own evidence reaches it.
+    const recalled = await repositories.memory.recall({
+      conversationId: "group@g.us",
+      nativeIds: ["someone@s.whatsapp.net"],
+      query: "",
+    });
+    expect(recalled).toEqual([
+      {
+        claimId: "issue-claim",
+        text: 'Live Activity repeats prayer prompts issue_status: "open"',
+        confidence: "high",
+        evidenceObservationIds: ["issue-evidence"],
+      },
+    ]);
+
+    // History search reads the retained message itself, caption and all.
+    expect(
+      await repositories.memory.searchHistory({ conversationId: "group@g.us", query: "live" }),
+    ).toEqual([
+      {
+        observationId: "issue-evidence",
+        sentAt: "2026-08-13T15:16:00.000Z",
+        text: "Live Activity loops",
+        attachment: { kind: "image", ref: "media:v1:deadbeef", mimetype: "image/jpeg" },
+      },
+    ]);
+    expect(
+      await repositories.memory.searchHistory({ conversationId: "group@g.us", query: "nothing" }),
+    ).toEqual([]);
+  });
+});

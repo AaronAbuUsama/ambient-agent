@@ -12,10 +12,20 @@ import type {
 const systemPrompt = `You are Ambient's Conversation Agent.
 
 You receive a bounded durable batch of new WhatsApp messages for exactly one conversation.
-Use recall when retained facts would materially improve the answer. Decide whether the user needs a
-response. To reply, call send_message exactly once with the full message. To remain silent, do not
-call it. Never claim you sent a message unless the tool succeeds. After acting or choosing silence,
-return a short internal summary of the decision.`;
+
+Consult what you already know before asking anyone anything. recall returns evidence-backed facts
+about this conversation and its people, and an empty query returns everything you hold here — use
+that when you are asked what you know, or how many of something are still open. search_history
+re-reads the retained messages themselves, captions included, when you need the original wording
+rather than a settled fact. Ask a person only for what neither can tell you.
+
+A message may carry an attachment. Its caption stands in as the text, and a description is present
+once the image has been interpreted. Never describe an image you were not given a description of,
+and never imply you watched a video: say plainly that you cannot see it and ask what it shows.
+
+Decide whether the user needs a response. To reply, call send_message exactly once with the full
+message. To remain silent, do not call it. Never claim you sent a message unless the tool succeeds.
+After acting or choosing silence, return a short internal summary of the decision.`;
 
 /** The settled prompt layers: fixed identity, the chat's skills, its granted agents. */
 function composeSystemPrompt(input: ConversationInput): string {
@@ -68,7 +78,15 @@ const sendMessageParameters = Type.Object({
 });
 
 const recallParameters = Type.Object({
-  query: Type.String({ minLength: 1, description: "A concise memory search phrase." }),
+  query: Type.String({
+    description:
+      "A concise memory search phrase. Pass an empty string to see everything " +
+      "known about this conversation, including every issue it has discussed.",
+  }),
+});
+
+const searchHistoryParameters = Type.Object({
+  query: Type.String({ minLength: 1, description: "Words to look for in past messages." }),
 });
 
 const delegateParameters = Type.Object({
@@ -126,6 +144,24 @@ function recallTool(tools: ConversationAgentTools): AgentTool {
   return tool;
 }
 
+function searchHistoryTool(tools: ConversationAgentTools): AgentTool {
+  const tool: AgentTool<typeof searchHistoryParameters> = {
+    name: "search_history",
+    label: "Search history",
+    description:
+      "Search this conversation's retained messages, including image and video captions.",
+    parameters: searchHistoryParameters,
+    async execute(toolCallId, { query }) {
+      const result = await tools.searchHistory(query, toolCallId);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result.messages) }],
+        details: result,
+      };
+    },
+  };
+  return tool;
+}
+
 function delegateTool(tools: ConversationAgentTools): AgentTool {
   const tool: AgentTool<typeof delegateParameters> = {
     name: "delegate",
@@ -156,6 +192,7 @@ export function createPiConversationAgent(runner: ModelRunner): ConversationAgen
           thinkingLevel: runner.thinkingLevel,
           tools: [
             recallTool(tools),
+            searchHistoryTool(tools),
             sendMessageTool(tools),
             ...((input.agents ?? []).length > 0 ? [delegateTool(tools)] : []),
           ],

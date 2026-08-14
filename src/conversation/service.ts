@@ -58,7 +58,7 @@ export function createConversationService(
   options: ConversationServiceOptions,
 ): ConversationService {
   const leaseOwner = options.leaseOwner ?? `conversation-service:${crypto.randomUUID()}`;
-  const promptVersion = options.promptVersion ?? "conversation-v2";
+  const promptVersion = options.promptVersion ?? "conversation-v3";
   const now = options.now ?? (() => new Date());
   const contextBuilder: ConversationContextBuilder = createConversationContextBuilder(
     options.work,
@@ -197,15 +197,33 @@ export function createConversationService(
               { query },
               () =>
                 options.recall.recall({
+                  conversationId: claim.conversationId,
                   nativeIds: [
                     input.conversationId,
                     ...new Set(input.newMessages.map(({ senderId }) => senderId)),
                   ],
                   query,
+                  limit: 60,
                 }),
               (recalled) => ({ claims: recalled }),
             );
             return { claims };
+          },
+          async searchHistory(query, callId) {
+            if (abort.signal.aborted) throw abort.signal.reason;
+            const messages = await executeTool(
+              claim.runId,
+              callId,
+              "search_history",
+              { query },
+              () =>
+                options.recall.searchHistory({
+                  conversationId: claim.conversationId,
+                  query,
+                }),
+              (found) => ({ messages: found }),
+            );
+            return { messages };
           },
         },
         abort.signal,

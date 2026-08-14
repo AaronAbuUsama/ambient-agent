@@ -1,7 +1,8 @@
 import { and, desc, eq, gt, inArray, notExists, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
-import type { RecalledMemory } from "../conversation/contract";
+import type { RecalledMemory, RecalledMessage } from "../conversation/contract";
+import { retainedMessagePayloadSchema } from "../whatsapp/message-payload";
 import type { AmbientDatabaseConnection } from "./database";
 import {
   agentRuns,
@@ -69,7 +70,13 @@ export interface MemoryRepository {
     readonly nativeId: string;
     readonly createdAt?: string;
   }): Promise<void>;
+  /**
+   * Claims about the people named by `nativeIds`, plus — when a conversation is
+   * given — the claims that conversation's own evidence established. Issues are
+   * not people, so they are only ever reachable through the second source.
+   */
   recall(input: {
+    readonly conversationId?: string;
     readonly nativeIds: readonly string[];
     readonly query: string;
     readonly limit?: number;
@@ -77,8 +84,15 @@ export interface MemoryRepository {
   /** Current claims whose evidence was observed in one conversation. */
   recallForConversation(input: {
     readonly conversationId: string;
+    readonly query?: string;
     readonly limit?: number;
   }): Promise<readonly RecalledMemory[]>;
+  /** Retained messages from one conversation whose text matches a query. */
+  searchHistory(input: {
+    readonly conversationId: string;
+    readonly query: string;
+    readonly limit?: number;
+  }): Promise<readonly RecalledMessage[]>;
   /** Shape counts for proof gates: entity kinds, identities, claim volume. */
   summary(): Promise<{
     readonly entitiesByKind: Readonly<Record<string, number>>;
@@ -136,6 +150,13 @@ export function createMemoryRepository(database: AmbientDatabaseConnection): Mem
     predicateName: predicateDefinitions.name,
   };
 
+  /** A LIKE pattern for a free-text query, or undefined when it selects everything. */
+  const likePattern = (query: string): string | undefined => {
+    const normalized = query.trim().toLocaleLowerCase();
+    if (!normalized) return undefined;
+    return `%${normalized.replaceAll("!", "!!").replaceAll("%", "!%").replaceAll("_", "!_")}%`;
+  };
+
   const withEvidence = async (
     rows: readonly {
       id: string;
@@ -167,6 +188,89 @@ export function createMemoryRepository(database: AmbientDatabaseConnection): Mem
       confidence: row.confidence,
       evidenceObservationIds: evidenceByClaim.get(row.id) ?? [],
     }));
+  };
+
+  /** Claims about the entities these native ids are linked to — people, in practice. */
+  const recallForPeople = async ({
+    nativeIds,
+    query,
+    limit,
+  }: {
+    readonly nativeIds: readonly string[];
+    readonly query: string;
+    readonly limit: number;
+  }): Promise<readonly RecalledMemory[]> => {
+    if (nativeIds.length === 0) return [];
+    const links = await database
+      .select({ entityId: identityLinks.entityId })
+      .from(identityLinks)
+      .where(
+        and(
+          eq(identityLinks.namespace, "whatsapp"),
+          inArray(identityLinks.nativeId, [...nativeIds]),
+        ),
+      );
+    const entityIds = [...new Set(links.map(({ entityId }) => entityId))];
+    if (entityIds.length === 0) return [];
+
+    const pattern = likePattern(query);
+    const rows = await database
+      .select(claimColumns)
+      .from(claims)
+      .innerJoin(entities, eq(entities.id, claims.entityId))
+      .innerJoin(predicateDefinitions, eq(predicateDefinitions.id, claims.predicateId))
+      .where(and(inArray(claims.entityId, entityIds), isCurrent, ...matching(pattern)))
+      .orderBy(desc(claims.createdAt), desc(claims.id))
+      .limit(limit);
+    return withEvidence(rows);
+  };
+
+  /** The claim-side text a free-text query is matched against. */
+  const matching = (pattern: string | undefined) =>
+    pattern
+      ? [
+          or(
+            sql`lower(${entities.canonicalName}) like ${pattern} escape '!'`,
+            sql`lower(${predicateDefinitions.name}) like ${pattern} escape '!'`,
+            sql`lower(cast(${claims.value} as text)) like ${pattern} escape '!'`,
+          ),
+        ]
+      : [];
+
+  const recallForConversation = async ({
+    conversationId,
+    query = "",
+    limit = 100,
+  }: {
+    readonly conversationId: string;
+    readonly query?: string;
+    readonly limit?: number;
+  }): Promise<readonly RecalledMemory[]> => {
+    if (limit <= 0) return [];
+    const cited = await database
+      .selectDistinct({ claimId: claimEvidence.claimId })
+      .from(claimEvidence)
+      .innerJoin(observations, eq(observations.id, claimEvidence.observationId))
+      .where(eq(observations.conversationId, conversationId));
+    if (cited.length === 0) return [];
+    const rows = await database
+      .select(claimColumns)
+      .from(claims)
+      .innerJoin(entities, eq(entities.id, claims.entityId))
+      .innerJoin(predicateDefinitions, eq(predicateDefinitions.id, claims.predicateId))
+      .where(
+        and(
+          inArray(
+            claims.id,
+            cited.map(({ claimId }) => claimId),
+          ),
+          isCurrent,
+          ...matching(likePattern(query)),
+        ),
+      )
+      .orderBy(desc(claims.createdAt), desc(claims.id))
+      .limit(limit);
+    return withEvidence(rows);
   };
 
   return {
@@ -247,75 +351,64 @@ export function createMemoryRepository(database: AmbientDatabaseConnection): Mem
       }
     },
 
-    async recall({ nativeIds, query, limit = 10 }) {
-      if (nativeIds.length === 0 || limit <= 0) return [];
-      const links = await database
-        .select({ entityId: identityLinks.entityId })
-        .from(identityLinks)
-        .where(
-          and(
-            eq(identityLinks.namespace, "whatsapp"),
-            inArray(identityLinks.nativeId, [...nativeIds]),
-          ),
-        );
-      const entityIds = [...new Set(links.map(({ entityId }) => entityId))];
-      if (entityIds.length === 0) return [];
+    async recall({ conversationId, nativeIds, query, limit = 10 }) {
+      if (limit <= 0) return [];
+      const [aboutPeople, aboutHere] = await Promise.all([
+        recallForPeople({ nativeIds, query, limit }),
+        conversationId
+          ? recallForConversation({ conversationId, query, limit })
+          : Promise.resolve<readonly RecalledMemory[]>([]),
+      ]);
+      // A claim can be reached both ways. This conversation's own evidence is
+      // the more specific answer, so it leads.
+      const merged = new Map<string, RecalledMemory>();
+      for (const claim of [...aboutHere, ...aboutPeople]) merged.set(claim.claimId, claim);
+      return [...merged.values()].slice(0, limit);
+    },
 
-      const normalized = query.trim().toLocaleLowerCase();
-      const queryPattern = `%${normalized
-        .replaceAll("!", "!!")
-        .replaceAll("%", "!%")
-        .replaceAll("_", "!_")}%`;
+    recallForConversation,
+
+    async searchHistory({ conversationId, query, limit = 20 }) {
+      if (limit <= 0) return [];
+      const pattern = likePattern(query);
       const rows = await database
-        .select(claimColumns)
-        .from(claims)
-        .innerJoin(entities, eq(entities.id, claims.entityId))
-        .innerJoin(predicateDefinitions, eq(predicateDefinitions.id, claims.predicateId))
+        .select({
+          id: observations.id,
+          occurredAt: observations.occurredAt,
+          payload: observations.payload,
+        })
+        .from(observations)
         .where(
           and(
-            inArray(claims.entityId, entityIds),
-            isCurrent,
-            ...(normalized
-              ? [
-                  or(
-                    sql`lower(${entities.canonicalName}) like ${queryPattern} escape '!'`,
-                    sql`lower(${predicateDefinitions.name}) like ${queryPattern} escape '!'`,
-                    sql`lower(cast(${claims.value} as text)) like ${queryPattern} escape '!'`,
-                  ),
-                ]
+            eq(observations.conversationId, conversationId),
+            eq(observations.kind, "message"),
+            ...(pattern
+              ? [sql`lower(cast(${observations.payload} as text)) like ${pattern} escape '!'`]
               : []),
           ),
         )
-        .orderBy(desc(claims.createdAt), desc(claims.id))
+        .orderBy(desc(observations.occurredAt), desc(observations.id))
         .limit(limit);
-      return withEvidence(rows);
-    },
 
-    async recallForConversation({ conversationId, limit = 100 }) {
-      if (limit <= 0) return [];
-      const cited = await database
-        .selectDistinct({ claimId: claimEvidence.claimId })
-        .from(claimEvidence)
-        .innerJoin(observations, eq(observations.id, claimEvidence.observationId))
-        .where(eq(observations.conversationId, conversationId));
-      if (cited.length === 0) return [];
-      const rows = await database
-        .select(claimColumns)
-        .from(claims)
-        .innerJoin(entities, eq(entities.id, claims.entityId))
-        .innerJoin(predicateDefinitions, eq(predicateDefinitions.id, claims.predicateId))
-        .where(
-          and(
-            inArray(
-              claims.id,
-              cited.map(({ claimId }) => claimId),
-            ),
-            isCurrent,
-          ),
-        )
-        .orderBy(desc(claims.createdAt), desc(claims.id))
-        .limit(limit);
-      return withEvidence(rows);
+      return rows.map(({ id, occurredAt, payload }) => {
+        const parsed = retainedMessagePayloadSchema.parse(payload);
+        const isMedia = parsed.kind !== undefined && parsed.kind !== "text";
+        return {
+          observationId: id,
+          sentAt: occurredAt,
+          ...(parsed.sender ? { senderId: parsed.sender.id } : {}),
+          text: parsed.text ?? parsed.media?.caption ?? "",
+          ...(isMedia
+            ? {
+                attachment: {
+                  kind: parsed.kind ?? "media",
+                  ...(parsed.media?.ref ? { ref: parsed.media.ref } : {}),
+                  ...(parsed.media?.mimetype ? { mimetype: parsed.media.mimetype } : {}),
+                },
+              }
+            : {}),
+        };
+      });
     },
 
     async currentClaim({ entityId, predicateId }) {
