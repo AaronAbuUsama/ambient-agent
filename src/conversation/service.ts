@@ -2,9 +2,11 @@ import { messageOf } from "../platform/errors";
 import type {
   ConversationAgent,
   ConversationClaim,
+  ConversationDelegate,
   ConversationRecall,
   ConversationSchedulingConfig,
   ConversationSkill,
+  ConversationTaskUpdate,
   ConversationWorkStore,
   ScopedMessageSender,
 } from "./contract";
@@ -27,6 +29,23 @@ export interface ConversationServiceOptions {
   readonly instructions?: string;
   /** The chat's granted skills, read fresh at run assembly (the files are the control). */
   readonly skills?: (conversationId: string) => Promise<readonly ConversationSkill[]>;
+  /** The chat's granted agents, composed fresh at run assembly. */
+  readonly agents?: (conversationId: string) => Promise<readonly ConversationDelegate[]>;
+  /** Dereference task_update inbox items to their assignments' outcomes. */
+  readonly taskUpdates?: (taskIds: readonly string[]) => Promise<readonly ConversationTaskUpdate[]>;
+  /**
+   * Open one assignment for a granted agent. The host behind this validates
+   * the grant and the target and adopts on the derived id; the service only
+   * supplies this run's provenance and idempotency key.
+   */
+  readonly delegate?: (input: {
+    readonly conversationId: string;
+    readonly requestedByRunId: string;
+    readonly agent: string;
+    readonly objective: string;
+    readonly target?: string | undefined;
+    readonly idempotencyKey: string;
+  }) => Promise<{ readonly taskId: string; readonly outcome: "created" | "adopted" }>;
   readonly scheduling: ConversationSchedulingConfig;
   readonly work: ConversationWorkStore;
   readonly recall: ConversationRecall;
@@ -39,12 +58,16 @@ export function createConversationService(
   options: ConversationServiceOptions,
 ): ConversationService {
   const leaseOwner = options.leaseOwner ?? `conversation-service:${crypto.randomUUID()}`;
-  const promptVersion = options.promptVersion ?? "conversation-v1";
+  const promptVersion = options.promptVersion ?? "conversation-v2";
   const now = options.now ?? (() => new Date());
   const contextBuilder: ConversationContextBuilder = createConversationContextBuilder(
     options.work,
     options.instructions ?? "Respond naturally and helpfully when a response is useful.",
-    options.skills,
+    {
+      ...(options.skills ? { skills: options.skills } : {}),
+      ...(options.agents ? { agents: options.agents } : {}),
+      ...(options.taskUpdates ? { taskUpdates: options.taskUpdates } : {}),
+    },
   );
   let active = false;
   let activeRunAbort: AbortController | undefined;
@@ -82,6 +105,7 @@ export function createConversationService(
     const abort = new AbortController();
     activeRunAbort = abort;
     let leaseLost: Error | undefined;
+    let delegated = false;
     let sendAttempted = false;
     let sendFailure: string | undefined;
     let submittedOperationId: string | undefined;
@@ -137,6 +161,32 @@ export function createConversationService(
               sendFailure = messageOf(error);
               throw error;
             }
+          },
+          async delegate(request, callId) {
+            if (abort.signal.aborted) throw abort.signal.reason;
+            const provider = options.delegate;
+            if (!provider) throw new Error("delegation is not available in this deployment");
+            // One delegation per run: the idempotency key derives from this
+            // claim's first item, which is stable across a retried run — the
+            // retry adopts the original assignment instead of opening a second.
+            if (delegated) throw new Error("delegate can only be called once per Conversation run");
+            delegated = true;
+            return executeTool(
+              claim.runId,
+              callId,
+              "delegate",
+              { agent: request.agent, objective: request.objective, target: request.target },
+              () =>
+                provider({
+                  conversationId: claim.conversationId,
+                  requestedByRunId: claim.runId,
+                  agent: request.agent,
+                  objective: request.objective,
+                  target: request.target,
+                  idempotencyKey: `conversation:${claim.items[0]!.id}:delegate`,
+                }),
+              (opened) => opened,
+            );
           },
           async recall(query, callId) {
             if (abort.signal.aborted) throw abort.signal.reason;

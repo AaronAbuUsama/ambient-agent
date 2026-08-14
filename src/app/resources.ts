@@ -240,6 +240,79 @@ export async function createAppResources(
             })),
           );
         },
+        // The delegation surface: granted agents render into the speaker's
+        // context as descriptions derived from code; the delegate provider
+        // is the authority regardless of what the context said.
+        agents: (conversationId) => {
+          const grants = grantsByChat.get(conversationId) ?? {};
+          return Promise.resolve(
+            Object.keys(grants).flatMap((name) => {
+              const definition = agentDefinitions.get(name);
+              const grant = grants[name];
+              if (!definition || !grant) return [];
+              const composed = toolbox.compose(definition, grant);
+              return "problem" in composed ? [] : [{ name, summary: composed.summary }];
+            }),
+          );
+        },
+        taskUpdates: async (taskIds) => {
+          const rows = await Promise.all(taskIds.map((id) => database.repositories.tasks.get(id)));
+          return rows.flatMap((task) =>
+            task
+              ? [
+                  {
+                    taskId: task.id,
+                    workerProfile: task.workerProfile,
+                    status: task.status,
+                    ...(task.resultSummary === undefined ? {} : { summary: task.resultSummary }),
+                  },
+                ]
+              : [],
+          );
+        },
+        delegate: async ({
+          conversationId,
+          requestedByRunId,
+          agent,
+          objective,
+          target,
+          idempotencyKey,
+        }) => {
+          const definition = agentDefinitions.get(agent);
+          const grant = grantsByChat.get(conversationId)?.[agent];
+          if (!definition || !grant) throw new Error(`"${agent}" is not available to this chat`);
+          const composed = toolbox.compose(definition, grant);
+          if ("problem" in composed) throw new Error(`"${agent}" cannot run: ${composed.problem}`);
+          let boundTarget = target;
+          if (composed.targets.length > 0) {
+            if (boundTarget === undefined && composed.targets.length === 1) {
+              boundTarget = composed.targets[0];
+            }
+            if (boundTarget === undefined || !composed.targets.includes(boundTarget)) {
+              throw new Error(`target must be one of: ${composed.targets.join(", ")}`);
+            }
+          } else if (boundTarget !== undefined) {
+            throw new Error(`"${agent}" takes no target`);
+          }
+          // ponytail: a flat in-flight cap; per-chat configuration when a
+          // real chat needs a different budget.
+          if ((await database.repositories.tasks.countActive(conversationId)) >= 3) {
+            throw new Error(
+              "this chat already has 3 assignments in flight; wait for one to finish",
+            );
+          }
+          const { task, outcome } = await database.repositories.tasks.create({
+            id: idempotencyKey,
+            conversationId,
+            requestedByRunId,
+            objective,
+            workerProfile: agent,
+            ...(boundTarget === undefined ? {} : { target: boundTarget }),
+          });
+          log.delegated(label(conversationId), agent);
+          worker?.wake();
+          return { taskId: task.id, outcome };
+        },
         work: database.repositories.conversationWork,
         recall: database.repositories.memory,
         agent: createPiConversationAgent(runner),

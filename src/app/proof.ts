@@ -320,6 +320,9 @@ export async function createAmbientProofHarness(
           captured = text;
           return { operationId: `replay-${crypto.randomUUID()}` };
         },
+        async delegate() {
+          return Promise.reject(new Error("replay runs do not delegate"));
+        },
         async recall(query) {
           const claims = await repositories.memory.recall({
             nativeIds: [

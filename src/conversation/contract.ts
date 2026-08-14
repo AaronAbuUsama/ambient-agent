@@ -180,11 +180,33 @@ export interface ConversationSkill {
   readonly content: string;
 }
 
+/**
+ * One agent this chat's speaker may delegate to: the advertisement rendered
+ * into its context. The summary derives from the definition and its tools'
+ * own code, so what is promised cannot drift from what the tools do.
+ */
+export interface ConversationDelegate {
+  readonly name: string;
+  readonly summary: string;
+}
+
+/** A Worker result returned to the chat that delegated it. */
+export interface ConversationTaskUpdate {
+  readonly taskId: string;
+  readonly workerProfile: string;
+  readonly status: string;
+  readonly summary?: string | undefined;
+}
+
 export interface ConversationInput {
   readonly conversationId: string;
   readonly newMessages: readonly ConversationMessage[];
   readonly instructions: string;
   readonly skills: readonly ConversationSkill[];
+  /** Agents this chat may delegate to; absent or empty means no delegation. */
+  readonly agents?: readonly ConversationDelegate[] | undefined;
+  /** Results of work this chat delegated, ready to be reported. */
+  readonly taskUpdates?: readonly ConversationTaskUpdate[] | undefined;
 }
 
 export interface ConversationResult {
@@ -201,6 +223,19 @@ export interface RecalledMemory {
 export interface ConversationAgentTools {
   sendMessage(text: string, callId: string): Promise<{ readonly operationId: string }>;
   recall(query: string, callId: string): Promise<{ readonly claims: readonly RecalledMemory[] }>;
+  /**
+   * Open one bounded assignment for a granted agent. The host validates the
+   * agent and target against the chat's grant and derives the assignment id
+   * from this run's claim, so a retried run adopts its own delegation.
+   */
+  delegate(
+    input: {
+      readonly agent: string;
+      readonly objective: string;
+      readonly target?: string | undefined;
+    },
+    callId: string,
+  ): Promise<{ readonly taskId: string; readonly outcome: "created" | "adopted" }>;
 }
 
 export interface ConversationAgent {

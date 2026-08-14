@@ -1,9 +1,11 @@
 import { whatsAppTextMessagePayloadSchema } from "../whatsapp/observation-mapper";
 import type {
   ConversationClaim,
+  ConversationDelegate,
   ConversationInput,
   ConversationMessage,
   ConversationSkill,
+  ConversationTaskUpdate,
   ConversationWorkStore,
 } from "./contract";
 
@@ -11,11 +13,19 @@ export interface ConversationContextBuilder {
   build(claim: ConversationClaim): Promise<ConversationInput>;
 }
 
+export interface ConversationContextSources {
+  /** The chat's granted skills, read fresh at run assembly (the files are the control). */
+  readonly skills?: (conversationId: string) => Promise<readonly ConversationSkill[]>;
+  /** The chat's granted agents, composed fresh at run assembly. */
+  readonly agents?: (conversationId: string) => Promise<readonly ConversationDelegate[]>;
+  /** Dereference task_update inbox items to their assignments' outcomes. */
+  readonly taskUpdates?: (taskIds: readonly string[]) => Promise<readonly ConversationTaskUpdate[]>;
+}
+
 export function createConversationContextBuilder(
   evidence: Pick<ConversationWorkStore, "observations">,
   instructions: string,
-  skills: (conversationId: string) => Promise<readonly ConversationSkill[]> = () =>
-    Promise.resolve([]),
+  sources: ConversationContextSources = {},
 ): ConversationContextBuilder {
   return {
     async build(claim) {
@@ -47,11 +57,19 @@ export function createConversationContextBuilder(
         };
       });
 
+      const taskItems = claim.items.filter(({ kind }) => kind === "task_update");
+      const taskUpdates =
+        taskItems.length > 0 && sources.taskUpdates
+          ? await sources.taskUpdates(taskItems.map(({ referenceId }) => referenceId))
+          : [];
+
       return {
         conversationId: claim.conversationId,
         newMessages,
         instructions: claim.instructions ?? instructions,
-        skills: await skills(claim.conversationId),
+        skills: (await sources.skills?.(claim.conversationId)) ?? [],
+        agents: (await sources.agents?.(claim.conversationId)) ?? [],
+        taskUpdates,
       };
     },
   };
