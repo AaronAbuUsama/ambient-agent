@@ -216,6 +216,8 @@ export async function createAppResources(
           },
           narrate: (conversationId, workerProfile, outcome) =>
             log.workerFinished(label(conversationId), workerProfile, outcome),
+          report: (conversationId, workerProfile, error) =>
+            log.runFailed(label(conversationId), `worker ${workerProfile}: ${error}`),
         })
       : undefined;
     if (config.conversation.enabled) {

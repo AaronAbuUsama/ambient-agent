@@ -49,6 +49,13 @@ export interface WorkerServiceOptions {
     workerProfile: string,
     outcome: "succeeded" | "retrying" | "parked",
   ) => void;
+  /**
+   * Infrastructure failures — anything thrown outside a model attempt — are
+   * reported here and NEVER swallowed: the lease is released for the next
+   * poll and the daemon's voice says why (measured live: one transient throw
+   * once parked the drain silently for a full lease).
+   */
+  readonly report?: (conversationId: string, workerProfile: string, error: string) => void;
 }
 
 const RECEIPT_TITLE = "issue";
@@ -65,6 +72,7 @@ export function createWorkerService(options: WorkerServiceOptions): WorkerServic
     leaseMs = 600_000,
     pollMs = 15_000,
     narrate,
+    report,
   } = options;
 
   const park = async (claim: WorkerAssignment, summary: string): Promise<void> => {
@@ -90,6 +98,35 @@ export function createWorkerService(options: WorkerServiceOptions): WorkerServic
     });
     if (!claim) return { outcome: "idle" };
 
+    try {
+      return await runClaim(claim);
+    } catch (error) {
+      // Not a model failure (those are handled inside, with attempts) — an
+      // infrastructure throw. Release the lease so the next poll retries,
+      // and say so out loud.
+      const reason = messageOf(error);
+      report?.(claim.conversationId, claim.workerProfile, reason);
+      try {
+        await work.transition(claim.id, {
+          to: "failed",
+          leaseOwner,
+          resultSummary: `infrastructure: ${reason}`,
+        });
+        await work.transition(claim.id, { to: "queued" });
+      } catch {
+        // The lease may already be gone; expiry recovery requeues it.
+      }
+      return { outcome: "failed", taskId: claim.id };
+    }
+  };
+
+  const runClaim = async (
+    claim: WorkerAssignment,
+  ): Promise<{
+    readonly outcome: "done" | "failed";
+    readonly taskId?: string;
+    readonly runId?: string;
+  }> => {
     // The retained receipt is the authority: a previous attempt may have
     // caused the effect and died before completing. Recover from the receipt
     // without running any model — GitHub is never asked.
@@ -192,8 +229,10 @@ export function createWorkerService(options: WorkerServiceOptions): WorkerServic
   const drain = async (): Promise<void> => {
     while (active) {
       try {
-        if ((await runOnce()).outcome === "idle") return;
-      } catch {
+        // A failed claim waits for the next poll instead of hot-looping.
+        if ((await runOnce()).outcome !== "done") return;
+      } catch (error) {
+        report?.("worker", "drain", messageOf(error));
         return;
       }
     }

@@ -245,3 +245,36 @@ test("an empty queue is idle", async () => {
   const agent: WorkerAgent = { model, run: () => Promise.reject(new Error("no")) };
   expect((await service({ store, runs, agent }).runOnce()).outcome).toBe("idle");
 });
+
+test("an infrastructure throw releases the lease loudly instead of parking the drain", async () => {
+  const { store, transitions } = fakeStore([assignment]);
+  const { runs, finished } = fakeRuns();
+  const reported: string[] = [];
+  const agent: WorkerAgent = {
+    model,
+    run: () => Promise.reject(new Error("must not run")),
+  };
+  const toolbox = createWorkerToolbox();
+  const worker = createWorkerService({
+    work: {
+      ...store,
+      listArtifacts: () => Promise.reject(new Error("database is locked")),
+    },
+    runs,
+    agent,
+    compose: () => toolbox.compose(definition),
+    returnResult: () => Promise.resolve(),
+    report: (_conversation, profile, error) => {
+      reported.push(`${profile}:${error}`);
+    },
+  });
+
+  const outcome = await worker.runOnce();
+
+  expect(outcome.outcome).toBe("failed");
+  expect(reported).toEqual(["github-issues:database is locked"]);
+  // The lease is released for the next poll: failed under the lease, then requeued.
+  expect(transitions.map(({ to }) => to)).toEqual(["failed", "queued"]);
+  expect(transitions[0]?.summary).toContain("infrastructure: database is locked");
+  expect(finished).toEqual([]);
+});
