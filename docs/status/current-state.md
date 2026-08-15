@@ -1411,6 +1411,30 @@ database, daemon stopped for the duration and restarted after:
 Production now recalls the identity-aware v10 ontology where its speaker
 runs.
 
+## Ambient spoke first (2026-08-15)
+
+The Root poked it (`src/ops/poke.ts <chat-slug>`) and it opened the
+conversation itself:
+
+> Hi all — I've been away, but I'm back and caught up on what I missed. [the
+> reporter], on the build you're using now, are the Live Activity repeat/late
+> Dhuhr prompts and the Android negative sunrise countdown still happening?
+> Zeeshan, have those shipped fixes already, or are they not started?
+
+One message, both people addressed, and the questions are about the issues
+memory actually holds as most recent and open — not a generic hello.
+
+Two things this exposed, both real:
+
+1. **The conversation role's model pool was exhausted.** 28 runs failed
+   `429 model_cooldown` on `gemini-3.6-flash-high` in under a minute before
+   the role was switched to `gpt-5.6-terra`. There is no backoff on a model
+   429 — the service retried as fast as it could claim. Worth a park or a
+   backoff before the next busy day.
+2. **A directly-written Inbox row does not wake the scheduler.** The poke
+   needed a daemon restart to be noticed, because `notify` is what schedules
+   a run. The poke tool should call it rather than relying on a restart.
+
 ## Live in the real Bug Reports group (2026-08-15)
 
 PR #26 merged. `bug-reports` flipped to `responding` with the `github-issues`
