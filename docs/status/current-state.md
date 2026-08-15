@@ -1411,6 +1411,87 @@ database, daemon stopped for the duration and restarted after:
 Production now recalls the identity-aware v10 ontology where its speaker
 runs.
 
+## The craft increment: BUILT AND PROVEN (2026-08-15)
+
+Seven steps, in the order that made each next one testable. Every step is
+committed on `workers-craft`; `vp check` clean, 156 unit tests green.
+
+### What shipped
+
+1. **Live media is retained.** `observation-mapper.ts` dropped every non-text
+   message, so a screenshot survived only if a history sweep later caught it.
+   whatsappd already hands over `DurableMedia` with the bytes stored, so the
+   fix cost no download: the payload became a text/media union, and the
+   speaker's `ConversationMessage` gained an attachment so media can reach it
+   without throwing.
+2. **The speaker can reach what memory knows.** `recall` filtered claims to
+   entities identity-linked to the chat's people, and only people are ever
+   linked — so all 46 issues were unreachable. It now merges that with the
+   conversation's own evidence, and an empty query returns everything held
+   here. `search_history` re-reads retained messages, captions included;
+   nothing could do that before.
+3. **Agents keep their own to-dos.** A new `agent_todos` table, distinct from
+   `tasks` (an assignment is delegated; a to-do is the agent's own intention).
+   Open ones render into every run.
+4. **Media becomes evidence.** A deterministic interpreter resolves a ref,
+   asks a vision model once, and retains the description keyed by the content
+   hash. Runs on the memory path as well as the conversation path — the bug
+   group is listening-only, so nothing else would ever look. `view_image`
+   covers older images, scoped host-side.
+5. **Modality is declared and fails closed.** Pi silently swaps images for a
+   placeholder on a text-only model, so the interpreter refuses to construct
+   without declared vision.
+6. **Issues carry their evidence.** `file_issue` takes media refs; the host
+   uploads and rewrites the body. Attachments are scoped exactly like targets.
+7. **Production provisioned** with the worker role, declared vision, and the
+   `github-issues` definition whose ceiling is the three repositories the
+   evidence supports: `TheCallApp/ios-app`, `android-app`, `api`.
+
+### Proof gate: MET
+
+**Layer 1 — deterministic.** `proof:worker-delegation` PASS, unchanged by any
+of this (production composition, synthetic home, fake `gh`). 156 unit tests.
+
+**Layer 2 — read-only against real production data.** The new retrieval run
+against the live ontology: the old wire returned **0 claims**; the new one
+returns **123, including all 46 issue statuses** (23 reading as open).
+`search_history` for "fajr" returned 8 messages, 5 carrying attachment refs —
+the screenshots that were invisible.
+
+Measured on those real blobs: the Android screenshot reads **Fajr 03:39**, the
+iOS one **Fajr 02:46**. That 53-minute gap is the defect the group argued
+about for two weeks, recovered from pixels whose caption said only "Fajr time
+ios". Second pass over the same blobs: 3ms, no model call — describe-once
+holds on real data.
+
+**Layer 3 — live rig, end to end. PASS first attempt.** Production stopped
+(same account), rig daemon up, peer account sent a real screenshot into the
+Tst group captioned only "this is wrong again"; the image showed Isha 22:21
+and a negative countdown.
+
+Receipt: media retained live · delegated · worker succeeded · exactly 1 new
+issue · marker present · **issue embeds the screenshot** (GitHub mints the
+`user-attachments` host only for an asset really uploaded and referenced) ·
+**issue quotes what only vision saw** · speaker reported the number back in
+chat, observed by the peer.
+
+The filed issue titled itself "Salah Now displays negative countdown after
+Isha time" and quoted "Isha 22:21" and "Countdown -00:14" — none of which is
+in the caption. It also noted the reporter's exact words, which is the
+honesty the old agent lacked.
+
+Two cosmetic defects the live run exposed were fixed after it: a duplicated
+Evidence heading and alt text sliced mid-sentence.
+
+### Still open
+
+- The real Bug Reports group is untouched: mandate remains `listening`, no
+  grant, nothing said in it. Go-live is the master's call.
+- `prod-master` still runs pre-#25 code; the worktree guard blocks this
+  session from pulling there.
+- Worker evals and the decline standard (task #11) remain unbuilt.
+- Video is retained and attachable but never interpreted.
+
 ## Active slice: Workers v1.5 — the craft (brief revised 2026-08-14)
 
 Revised with the master after reading the real Bug Reports history end to end.
