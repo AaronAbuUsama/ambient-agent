@@ -377,6 +377,12 @@ export async function createAmbientProofHarness(
         async viewImage() {
           return { unavailable: "not available in this context" };
         },
+        async addTodo() {
+          return { id: "" };
+        },
+        async settleTodo() {
+          return { settled: false };
+        },
       });
       const decision = captured === undefined ? ("silence" as const) : ("reply" as const);
       const textLength = captured?.length ?? 0;

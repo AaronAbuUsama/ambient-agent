@@ -312,6 +312,7 @@ export async function createAppResources(
         // Present only when a vision-capable model is configured: a picture the
         // speaker cannot be told about is better left undescribed than guessed.
         ...(mediaInterpreter ? { media: mediaInterpreter } : {}),
+        todos: database.repositories.todos,
         taskUpdates: async (taskIds) => {
           const rows = await Promise.all(taskIds.map((id) => database.repositories.tasks.get(id)));
           return rows.flatMap((task) =>

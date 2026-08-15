@@ -692,3 +692,51 @@ test("an issue is recallable through its conversation even though it is nobody's
     ).toEqual([]);
   });
 });
+
+test("an agent's to-do survives runs and cannot be settled from another chat", async () => {
+  await withDatabase(async ({ repositories }) => {
+    const kept = await repositories.todos.add({
+      conversationId: "group@g.us",
+      note: "Ask Zeeshan whether the compass haptics shipped in the next build",
+    });
+
+    expect(await repositories.todos.open("group@g.us")).toEqual([
+      {
+        id: kept.id,
+        note: "Ask Zeeshan whether the compass haptics shipped in the next build",
+        createdAt: expect.any(String),
+      },
+    ]);
+    // Situated: another chat's speaker sees none of it.
+    expect(await repositories.todos.open("other@g.us")).toEqual([]);
+
+    // ...and cannot settle it by naming the id.
+    expect(
+      await repositories.todos.settle({
+        conversationId: "other@g.us",
+        id: kept.id,
+        status: "done",
+      }),
+    ).toBe(false);
+    expect(await repositories.todos.open("group@g.us")).toHaveLength(1);
+
+    expect(
+      await repositories.todos.settle({
+        conversationId: "group@g.us",
+        id: kept.id,
+        status: "done",
+        outcome: "He confirmed it ships in the next build.",
+      }),
+    ).toBe(true);
+    expect(await repositories.todos.open("group@g.us")).toEqual([]);
+
+    // Settling twice is not a second settlement.
+    expect(
+      await repositories.todos.settle({
+        conversationId: "group@g.us",
+        id: kept.id,
+        status: "dropped",
+      }),
+    ).toBe(false);
+  });
+});

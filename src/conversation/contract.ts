@@ -189,6 +189,31 @@ export interface ConversationRecall {
   }): Promise<{ readonly mimetype?: string; readonly caption?: string } | undefined>;
 }
 
+/**
+ * Something the agent means to do itself, held across runs.
+ *
+ * Not an assignment: nothing is delegated and no worker claims it. This is how
+ * an intention formed in one run — a question worth asking, an answer worth
+ * checking back on — survives to the run that can act on it.
+ */
+export interface AgentTodo {
+  readonly id: string;
+  readonly note: string;
+  readonly createdAt: string;
+}
+
+export interface AgentTodoStore {
+  open(conversationId: string): Promise<readonly AgentTodo[]>;
+  add(input: { readonly conversationId: string; readonly note: string }): Promise<AgentTodo>;
+  /** Returns false when the id names nothing open in this conversation. */
+  settle(input: {
+    readonly conversationId: string;
+    readonly id: string;
+    readonly status: "done" | "dropped";
+    readonly outcome?: string;
+  }): Promise<boolean>;
+}
+
 /** One retained message, as the speaker is shown it when searching the past. */
 export interface RecalledMessage {
   readonly observationId: string;
@@ -254,6 +279,11 @@ export interface ConversationInput {
   readonly agents?: readonly ConversationDelegate[] | undefined;
   /** Results of work this chat delegated, ready to be reported. */
   readonly taskUpdates?: readonly ConversationTaskUpdate[] | undefined;
+  /**
+   * The agent's own open intentions here. Rendered into the prompt rather
+   * than fetched: a to-do you have to remember to look up is not a to-do.
+   */
+  readonly todos?: readonly AgentTodo[] | undefined;
 }
 
 export interface ConversationResult {
@@ -279,6 +309,12 @@ export interface ConversationAgentTools {
     ref: string,
     callId: string,
   ): Promise<{ readonly description?: string; readonly unavailable?: string }>;
+  /** Keep an intention for later runs, or settle one already held. */
+  addTodo(note: string, callId: string): Promise<{ readonly id: string }>;
+  settleTodo(
+    input: { readonly id: string; readonly status: "done" | "dropped"; readonly outcome?: string },
+    callId: string,
+  ): Promise<{ readonly settled: boolean }>;
   /**
    * Open one bounded assignment for a granted agent. The host validates the
    * agent and target against the chat's grant and derives the assignment id

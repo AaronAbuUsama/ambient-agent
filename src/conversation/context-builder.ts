@@ -1,6 +1,7 @@
 import type { MediaDescription, MediaInterpreter } from "../media/contract";
 import { whatsAppLiveMessagePayloadSchema } from "../whatsapp/observation-mapper";
 import type {
+  AgentTodo,
   ConversationClaim,
   ConversationDelegate,
   ConversationInput,
@@ -23,6 +24,8 @@ export interface ConversationContextSources {
   readonly taskUpdates?: (taskIds: readonly string[]) => Promise<readonly ConversationTaskUpdate[]>;
   /** Interpret this batch's media, so the speaker is told what a picture shows. */
   readonly media?: MediaInterpreter;
+  /** The agent's open intentions here, rendered into every run. */
+  readonly todos?: (conversationId: string) => Promise<readonly AgentTodo[]>;
 }
 
 export function createConversationContextBuilder(
@@ -105,6 +108,7 @@ export function createConversationContextBuilder(
         instructions: claim.instructions ?? instructions,
         skills: (await sources.skills?.(claim.conversationId)) ?? [],
         agents: (await sources.agents?.(claim.conversationId)) ?? [],
+        todos: (await sources.todos?.(claim.conversationId)) ?? [],
         taskUpdates,
       };
     },

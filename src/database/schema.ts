@@ -231,6 +231,35 @@ export const taskArtifacts = sqliteTable(
 );
 
 /**
+ * An agent's own intention, held across runs.
+ *
+ * Deliberately NOT `tasks`: an assignment is a bounded objective delegated to
+ * a worker, while a to-do is something this agent means to do itself — ask a
+ * question, check back on an answer, follow up when a build ships. A run that
+ * decides to ask something and then forgets it by the next run is the failure
+ * this exists to prevent.
+ */
+export const agentTodos = sqliteTable(
+  "agent_todos",
+  {
+    id: text().primaryKey(),
+    /** The chat this intention belongs to; an agent's memory is situated. */
+    conversationId: text("conversation_id").notNull(),
+    note: text().notNull(),
+    status: text({ enum: ["open", "done", "dropped"] }).notNull(),
+    createdAt: text("created_at").notNull(),
+    /** Set when it left `open`, whichever way it went. */
+    settledAt: text("settled_at"),
+    /** Why it was dropped, when it was — a silent disappearance is a lie. */
+    outcome: text(),
+  },
+  (table) => [
+    check("agent_todos_status", sql`${table.status} IN ('open', 'done', 'dropped')`),
+    index("agent_todos_conversation").on(table.conversationId, table.status),
+  ],
+);
+
+/**
  * What one piece of media shows, written once and read by every role.
  *
  * Keyed by the media store's content hash, so the same image forwarded into

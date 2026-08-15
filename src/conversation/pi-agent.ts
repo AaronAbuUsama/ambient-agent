@@ -25,6 +25,11 @@ up, say — call view_image with its ref to look at it. Never describe an image 
 description of, and never imply you watched a video: say plainly that you cannot see it and ask
 what it shows.
 
+You carry your own to-dos between runs. When you decide something is worth asking or checking but
+this is not the moment, call add_todo and it will be in front of you next time; when one is
+answered or stops mattering, call settle_todo. Do not re-ask what an open to-do says you already
+asked, and do not hoard: a to-do is a commitment, not a note.
+
 Decide whether the user needs a response. To reply, call send_message exactly once with the full
 message. To remain silent, do not call it. Never claim you sent a message unless the tool succeeds.
 After acting or choosing silence, return a short internal summary of the decision.`;
@@ -57,11 +62,13 @@ function composeSystemPrompt(input: ConversationInput): string {
 
 function prompt(input: ConversationInput): string {
   const taskUpdates = input.taskUpdates ?? [];
+  const todos = input.todos ?? [];
   return JSON.stringify(
     {
       conversationId: input.conversationId,
       instructions: input.instructions,
       newMessages: input.newMessages,
+      ...(todos.length > 0 ? { yourOpenTodos: todos } : {}),
       ...(taskUpdates.length > 0 ? { taskUpdates } : {}),
     },
     null,
@@ -96,6 +103,21 @@ const viewImageParameters = Type.Object({
     minLength: 1,
     description: "The attachment ref of an image in this conversation.",
   }),
+});
+
+const addTodoParameters = Type.Object({
+  note: Type.String({
+    minLength: 1,
+    description: "The intention, written so a later run can act on it without this context.",
+  }),
+});
+
+const settleTodoParameters = Type.Object({
+  id: Type.String({ minLength: 1, description: "The id of an open to-do." }),
+  status: Type.Union([Type.Literal("done"), Type.Literal("dropped")], {
+    description: "done when it happened; dropped when it no longer applies.",
+  }),
+  outcome: Type.Optional(Type.String({ description: "What happened, in one line." })),
 });
 
 const delegateParameters = Type.Object({
@@ -202,6 +224,47 @@ function viewImageTool(tools: ConversationAgentTools): AgentTool {
   return tool;
 }
 
+function addTodoTool(tools: ConversationAgentTools): AgentTool {
+  const tool: AgentTool<typeof addTodoParameters> = {
+    name: "add_todo",
+    label: "Keep a to-do",
+    description: "Keep an intention for a later run — something to ask, check, or follow up.",
+    parameters: addTodoParameters,
+    async execute(toolCallId, { note }) {
+      const kept = await tools.addTodo(note, toolCallId);
+      return {
+        content: [
+          { type: "text", text: kept.id ? `Kept as ${kept.id}.` : "To-dos are not available." },
+        ],
+        details: kept,
+      };
+    },
+  };
+  return tool;
+}
+
+function settleTodoTool(tools: ConversationAgentTools): AgentTool {
+  const tool: AgentTool<typeof settleTodoParameters> = {
+    name: "settle_todo",
+    label: "Settle a to-do",
+    description: "Close one of your open to-dos, as done or as no longer applicable.",
+    parameters: settleTodoParameters,
+    async execute(toolCallId, { id, status, outcome }) {
+      const result = await tools.settleTodo({ id, status, outcome }, toolCallId);
+      return {
+        content: [
+          {
+            type: "text",
+            text: result.settled ? `Settled ${id} as ${status}.` : `No open to-do "${id}".`,
+          },
+        ],
+        details: result,
+      };
+    },
+  };
+  return tool;
+}
+
 function delegateTool(tools: ConversationAgentTools): AgentTool {
   const tool: AgentTool<typeof delegateParameters> = {
     name: "delegate",
@@ -234,6 +297,8 @@ export function createPiConversationAgent(runner: ModelRunner): ConversationAgen
             recallTool(tools),
             searchHistoryTool(tools),
             viewImageTool(tools),
+            addTodoTool(tools),
+            settleTodoTool(tools),
             sendMessageTool(tools),
             ...((input.agents ?? []).length > 0 ? [delegateTool(tools)] : []),
           ],

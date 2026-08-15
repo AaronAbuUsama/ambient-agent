@@ -1,6 +1,7 @@
 import type { MediaInterpreter } from "../media/contract";
 import { messageOf } from "../platform/errors";
 import type {
+  AgentTodoStore,
   ConversationAgent,
   ConversationClaim,
   ConversationDelegate,
@@ -53,6 +54,8 @@ export interface ConversationServiceOptions {
   readonly recall: ConversationRecall;
   /** Absent when no vision model is configured; view_image then declines. */
   readonly media?: MediaInterpreter;
+  /** The agent's own intentions, held across runs. */
+  readonly todos?: AgentTodoStore;
   readonly agent: ConversationAgent;
   readonly sender: ScopedMessageSender;
   readonly now?: () => Date;
@@ -71,6 +74,10 @@ export function createConversationService(
       ...(options.skills ? { skills: options.skills } : {}),
       ...(options.agents ? { agents: options.agents } : {}),
       ...(options.taskUpdates ? { taskUpdates: options.taskUpdates } : {}),
+      ...(options.media ? { media: options.media } : {}),
+      // The agent's own intentions render into every run: a to-do it has to
+      // remember to look up is not a to-do.
+      ...(options.todos ? { todos: (id: string) => options.todos!.open(id) } : {}),
     },
   );
   let active = false;
@@ -240,6 +247,42 @@ export function createConversationService(
                 return found?.status === "described"
                   ? { description: found.description }
                   : { unavailable: found?.failureReason ?? "it could not be interpreted" };
+              },
+              (result) => result,
+            );
+          },
+          async addTodo(note, callId) {
+            if (abort.signal.aborted) throw abort.signal.reason;
+            return executeTool(
+              claim.runId,
+              callId,
+              "add_todo",
+              { note },
+              async () => {
+                if (!options.todos) return { id: "" };
+                const added = await options.todos.add({
+                  conversationId: claim.conversationId,
+                  note,
+                });
+                return { id: added.id };
+              },
+              (result) => result,
+            );
+          },
+          async settleTodo(request, callId) {
+            if (abort.signal.aborted) throw abort.signal.reason;
+            return executeTool(
+              claim.runId,
+              callId,
+              "settle_todo",
+              { id: request.id, status: request.status },
+              async () => {
+                if (!options.todos) return { settled: false };
+                const settled = await options.todos.settle({
+                  conversationId: claim.conversationId,
+                  ...request,
+                });
+                return { settled };
               },
               (result) => result,
             );

@@ -24,9 +24,11 @@ import {
   createMessageIngestionRepository,
   type MessageIngestionRepository,
 } from "./message-ingestion";
+import type { AgentTodoStore } from "../conversation/contract";
 import type { MediaDescriptionStore } from "../media/contract";
 import { createMediaDescriptionStore } from "./media";
 import { createObservationRepository, type ObservationRepository } from "./observations";
+import { createAgentTodoStore } from "./todos";
 import { createRunRepository, type RunRepository } from "./runs";
 import { createTaskRepository, type TaskRepository } from "./tasks";
 
@@ -40,6 +42,7 @@ export interface AmbientRepositories {
   readonly memory: MemoryRepository;
   readonly memoryWork: MemoryWorkStore;
   readonly mediaDescriptions: MediaDescriptionStore;
+  readonly todos: AgentTodoStore;
   readonly runs: RunRepository;
   readonly tasks: TaskRepository;
   readonly evaluations: EvaluationRepository;
@@ -74,6 +77,7 @@ function repositories(database: AmbientDatabaseConnection): AmbientRepositories 
     evaluations,
     evaluationWork: createEvaluationWorkStore(database),
     mediaDescriptions: createMediaDescriptionStore(database),
+    todos: createAgentTodoStore(database),
     memory: createMemoryRepository(database),
     memoryWork: createMemoryWorkStore(database),
   };
