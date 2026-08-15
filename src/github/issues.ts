@@ -178,7 +178,10 @@ export function createGitHubIssues(options: {
 
     const notice =
       failed > 0 ? `\n\n_${failed} attachment(s) from the report could not be uploaded._` : "";
-    const markdown = lines.length > 0 ? `\n\n## Evidence\n\n${lines.join("\n\n")}` : "";
+    // "Attached", not "Evidence": the writer often has its own Evidence
+    // section, and two identical headings in one issue reads as a mistake.
+    const markdown =
+      lines.length > 0 ? `\n\n## Attached from the report\n\n${lines.join("\n\n")}` : "";
     return { markdown: `${markdown}${notice}`, embedded: lines.length, failed };
   };
 

@@ -233,19 +233,17 @@ export async function createAppResources(
               refs.map(async (ref, index) => {
                 const bytes = await mediaBytes.read(ref);
                 if (!bytes) return [];
-                const description = (
-                  await database.repositories.mediaDescriptions.find([ref])
-                ).find((row) => row.status === "described");
-                const mimetype = description?.mimetype ?? "image/jpeg";
+                const [described] = await database.repositories.mediaDescriptions.find([ref]);
+                const mimetype = described?.mimetype ?? "image/jpeg";
                 const extension = mimetype.split("/")[1] ?? "bin";
+                // Alt text stays short and whole: a sliced description ends
+                // mid-sentence, which reads as a bug in the report itself.
                 return [
                   {
                     filename: `evidence-${index + 1}.${extension}`,
                     mimetype,
                     bytes,
-                    ...(description?.status === "described"
-                      ? { caption: description.description.slice(0, 120) }
-                      : {}),
+                    caption: "screenshot from the report",
                   },
                 ];
               }),
