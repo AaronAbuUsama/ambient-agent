@@ -10,6 +10,7 @@ import {
   claims,
   entities,
   identityLinks,
+  mediaDescriptions,
   memoryPatches,
   memoryPatchOperations,
   observations,
@@ -376,26 +377,40 @@ export function createMemoryRepository(database: AmbientDatabaseConnection): Mem
     async searchHistory({ conversationId, query, limit = 20 }) {
       if (limit <= 0) return [];
       const pattern = likePattern(query);
+      // A picture is searchable by what it SHOWED, not just by what its sender
+      // captioned it. Searching the thread for "the countdown screenshot" has
+      // to find the image whose caption was "this is wrong again", or the
+      // evidence is retained and still unfindable.
       const rows = await database
         .select({
           id: observations.id,
           occurredAt: observations.occurredAt,
           payload: observations.payload,
+          description: mediaDescriptions.description,
         })
         .from(observations)
+        .leftJoin(
+          mediaDescriptions,
+          sql`${mediaDescriptions.ref} = json_extract(${observations.payload}, '$.media.ref')`,
+        )
         .where(
           and(
             eq(observations.conversationId, conversationId),
             eq(observations.kind, "message"),
             ...(pattern
-              ? [sql`lower(cast(${observations.payload} as text)) like ${pattern} escape '!'`]
+              ? [
+                  or(
+                    sql`lower(cast(${observations.payload} as text)) like ${pattern} escape '!'`,
+                    sql`lower(${mediaDescriptions.description}) like ${pattern} escape '!'`,
+                  ),
+                ]
               : []),
           ),
         )
         .orderBy(desc(observations.occurredAt), desc(observations.id))
         .limit(limit);
 
-      return rows.map(({ id, occurredAt, payload }) => {
+      return rows.map(({ id, occurredAt, payload, description }) => {
         const parsed = retainedMessagePayloadSchema.parse(payload);
         const isMedia = parsed.kind !== undefined && parsed.kind !== "text";
         return {
@@ -409,6 +424,7 @@ export function createMemoryRepository(database: AmbientDatabaseConnection): Mem
                   kind: parsed.kind ?? "media",
                   ...(parsed.media?.ref ? { ref: parsed.media.ref } : {}),
                   ...(parsed.media?.mimetype ? { mimetype: parsed.media.mimetype } : {}),
+                  ...(description ? { description } : {}),
                 },
               }
             : {}),
