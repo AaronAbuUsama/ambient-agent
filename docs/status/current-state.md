@@ -1411,6 +1411,96 @@ database, daemon stopped for the duration and restarted after:
 Production now recalls the identity-aware v10 ontology where its speaker
 runs.
 
+## Next slice: Conversation continuity — the speaker remembers what it said (brief, cut 2026-08-15)
+
+The first live morning in the real Bug Reports group produced eight
+"I've been away, but I'm back" openers in nine messages — including one
+twenty-nine seconds after promising not to repeat it. The master's verdict:
+not a patching problem, an architectural one. He is right, and the mandate
+band-aid now in place ("you have ALREADY introduced yourself") suppresses the
+symptom only.
+
+### The problem, in code
+
+A conversational agent has no conversation. Three facts compose the failure:
+
+1. **Its own messages are never retained.** `observation-mapper.ts:112`
+   drops every `fromMe` event; the send path retains nothing either. Zero of
+   the nine messages Ambient sent exist as observations.
+2. **A run sees only its claimed batch.** `ConversationInput.newMessages` is
+   the new inbound items and nothing else — no thread window
+   (`conversation/context-builder.ts`).
+3. **The model session dies with the run.** `conversation/pi-agent.ts`
+   constructs a fresh Pi `Agent` per run and discards it.
+
+So every run is a cold start on a few new messages. The mandate said "check
+search_history: if you already reintroduced yourself, never again" — an
+instruction whose precondition is structurally unevaluable, because
+search_history reads observations and the agent's own words are not in them.
+The model obeyed it correctly nine times.
+
+### The architecture: three layers, of which two are missing
+
+The standard conversational-memory stack, mapped onto what exists:
+
+1. **Working window** — the last turns verbatim, both sides. MISSING.
+2. **Compacted middle** — a rolling state of the conversation: what is
+   being discussed, what Ambient said and asked, what it awaits. MISSING.
+3. **Long-term semantic memory** — evidence-backed claims with recall.
+   EXISTS (the ontology, recall, search_history).
+
+The failure is the missing layers 1 and 2, not a smarter layer 3: no amount
+of ontology fixes an agent that cannot see its own last sentence.
+
+### Settled design (with the master's direction: minimal, no new machinery)
+
+1. **Retain outbound.** Map `fromMe` echoes to observations, retained but
+   NEVER creating Inbox work — retention is not waking (history import
+   already has this policy; `message-ingestion.ts` currently couples
+   retain+inbox in one transition and needs a fromMe branch that retains
+   only). The echo is the right evidence: it is what WhatsApp actually
+   delivered, with the real message id.
+2. **Thread window in run input.** The context builder prepends the last
+   ~10–15 retained messages of the conversation (both sides; Ambient's own
+   marked with the `fromAgent: true` flag the contract has carried unused
+   since v1) ahead of `newMessages`.
+3. **Rolling thread state, no new table.** `ConversationResult` gains a
+   `threadState` the model writes at the end of every run — what is being
+   discussed, what it said/asked, what it awaits. It is already durable the
+   moment it exists: run results are retained in `agent_runs.result_json`.
+   The next run's input carries the latest succeeded run's state. Compaction
+   IS the model rewriting this state each run; the verbatim window stays
+   small because the state absorbs the past. One authoritative mutation path
+   (run completion), immutable history for free, natural recovery.
+4. **Prompt contract.** The system prompt explains the three layers to the
+   model: your state is your own notes and may be stale against the window;
+   the window is ground truth for what was actually said.
+
+Rejected: a persisted chatbot transcript (fights immutable-input durable
+runs, unbounded); the Memory Agent writing conversational summaries (wrong
+owner — memory holds evidence-backed facts, not thread state); a new
+conversation-state table (the run result slot already exists and already has
+exactly one writer).
+
+### Proof gate
+
+- Unit: fromMe retention creates no inbox row and never wakes; window
+  assembly ordering; threadState round-trip through run completion.
+- Rig, live, multi-turn: a three-turn conversation where turn 3's correct
+  answer requires knowing both what the peer said in turn 1 AND what Ambient
+  itself replied — and the reply must not re-greet. Assert the absence of
+  any reintroduction phrasing across all turns, and that turn 3 quotes or
+  correctly uses Ambient's own turn-1 answer.
+- The repetition class regression: send five vague messages in sequence;
+  assert Ambient never asks the same question twice (its asked questions are
+  in its own visible messages and to-dos).
+
+### Order of work
+
+Retain outbound → thread window → threadState → prompts → unit tests →
+rig proof → mandate cleanup (remove the "you do not see your own earlier
+messages" band-aid, which becomes false) → ledger + PR.
+
 ## Ambient spoke first (2026-08-15)
 
 The Root poked it (`src/ops/poke.ts <chat-slug>`) and it opened the
