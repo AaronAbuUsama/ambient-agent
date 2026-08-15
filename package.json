@@ -21,7 +21,8 @@
     "proof:memory-keepup": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/memory-keepup.ts",
     "proof:worker-delegation": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/worker-delegation.ts",
     "proof:worker-live": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/worker-live.ts",
-    "proof:media-live": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/media-live.ts"
+    "proof:media-live": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/media-live.ts",
+    "proof:intake-live": "AMBIENT_CONFIG=./ambient.config.json tsx src/proofs/intake-live.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.84.1",

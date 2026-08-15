@@ -268,6 +268,18 @@ export interface ConversationTaskUpdate {
   readonly workerProfile: string;
   readonly status: string;
   readonly summary?: string | undefined;
+  /**
+   * What actually became of it, derived from evidence rather than from what
+   * the worker said about itself.
+   *
+   * `done` means a retained receipt proves the effect happened, and `evidence`
+   * carries it. `declined` means the worker finished deliberately WITHOUT
+   * causing the effect — it needed something first — which is a first-class
+   * result, not a failure. `failed` is infrastructure giving up.
+   */
+  readonly outcome?: "done" | "declined" | "failed";
+  /** The receipt's value when the outcome is `done` — an issue URL, in practice. */
+  readonly evidence?: string;
 }
 
 export interface ConversationInput {

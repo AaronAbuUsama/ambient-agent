@@ -315,17 +315,32 @@ export async function createAppResources(
         todos: database.repositories.todos,
         taskUpdates: async (taskIds) => {
           const rows = await Promise.all(taskIds.map((id) => database.repositories.tasks.get(id)));
-          return rows.flatMap((task) =>
-            task
-              ? [
-                  {
-                    taskId: task.id,
-                    workerProfile: task.workerProfile,
-                    status: task.status,
-                    ...(task.resultSummary === undefined ? {} : { summary: task.resultSummary }),
-                  },
-                ]
-              : [],
+          return Promise.all(
+            rows
+              .flatMap((task) => (task ? [task] : []))
+              .map(async (task) => {
+                // The outcome comes from the receipt, never from the worker's
+                // own account of itself: a model that says it filed an issue
+                // when it did not is exactly the failure this system exists to
+                // make impossible. Succeeded with no receipt means it chose not
+                // to act — a decline, and the reason is its summary.
+                const receipts = await database.repositories.tasks.listArtifacts(task.id);
+                const receipt = receipts.find(({ kind }) => kind === "url");
+                const outcome =
+                  task.status === "succeeded"
+                    ? receipt
+                      ? ("done" as const)
+                      : ("declined" as const)
+                    : ("failed" as const);
+                return {
+                  taskId: task.id,
+                  workerProfile: task.workerProfile,
+                  status: task.status,
+                  outcome,
+                  ...(receipt ? { evidence: receipt.value } : {}),
+                  ...(task.resultSummary === undefined ? {} : { summary: task.resultSummary }),
+                };
+              }),
           );
         },
         delegate: async ({

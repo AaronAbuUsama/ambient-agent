@@ -53,8 +53,12 @@ function composeSystemPrompt(input: ConversationInput): string {
         `Call delegate with the agent's name, a complete self-contained objective, and — when the ` +
         `agent lists more than one destination — the one target to use. The task runs after this ` +
         `turn; its result arrives as a later task update. Delegate at most once per run, and tell ` +
-        `the chat what you set in motion. When a task update arrives in your input, report its ` +
-        `outcome concisely (numbers, links) — or its failure honestly.`,
+        `the chat what you set in motion.\n` +
+        `A task update carries an outcome. "done" means the effect really happened and evidence ` +
+        `proves it — report the number and link. "declined" means the agent deliberately did NOT ` +
+        `act because something was missing: that is an answer, not a failure, so relay what it ` +
+        `needs and ask for it. "failed" is infrastructure — say so plainly rather than implying ` +
+        `the work is still coming.`,
     );
   }
   return sections.join("\n\n");
