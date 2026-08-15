@@ -1,3 +1,4 @@
+import type { MediaInterpreter } from "../media/contract";
 import { messageOf } from "../platform/errors";
 import type {
   AppliedMemorySummary,
@@ -48,6 +49,12 @@ export interface MemoryServiceOptions {
   readonly work: MemoryWorkStore;
   readonly agent: MemoryAgent & { readonly promptVersion?: string };
   readonly ontology: MemoryOntologyWriter;
+  /**
+   * Interprets the window's pictures before they are read. A listening chat
+   * never runs a speaker, so this is the only place media in it is ever looked
+   * at — without it, a screenshot is just its caption.
+   */
+  readonly media?: MediaInterpreter;
   readonly maximumClaimsPerJob?: number;
   /** Rejected proposals allowed before the run is cut off. */
   readonly maximumProposalAttempts?: number;
@@ -68,6 +75,44 @@ export interface MemoryServiceOptions {
 }
 
 class ProposalValidationError extends Error {}
+
+/**
+ * Fill in what the window's pictures show, before the analyst reads it.
+ *
+ * Interpretation is retained per blob, so re-digesting a window costs nothing
+ * and two chats carrying the same forwarded screenshot pay once between them.
+ */
+async function withMediaDescriptions(
+  input: MemoryInput,
+  media: MediaInterpreter | undefined,
+): Promise<MemoryInput> {
+  if (!media) return input;
+  const describable = input.messages.flatMap(({ attachment }) =>
+    attachment?.ref
+      ? [
+          {
+            ref: attachment.ref,
+            ...(attachment.mimetype === undefined ? {} : { mimetype: attachment.mimetype }),
+            ...(attachment.caption === undefined ? {} : { caption: attachment.caption }),
+          },
+        ]
+      : [],
+  );
+  if (describable.length === 0) return input;
+
+  const described = await media.describe(describable);
+  return {
+    ...input,
+    messages: input.messages.map((message) => {
+      const found = message.attachment?.ref ? described.get(message.attachment.ref) : undefined;
+      if (!message.attachment || found?.status !== "described") return message;
+      return {
+        ...message,
+        attachment: { ...message.attachment, description: found.description },
+      };
+    }),
+  };
+}
 
 function validate(input: MemoryInput, proposal: MemoryProposal, maximumClaims: number): void {
   const batchIds = new Set(input.messages.map(({ observationId }) => observationId));
@@ -372,7 +417,8 @@ export function createMemoryService(options: MemoryServiceOptions): MemoryServic
         }
       },
     };
-    const result = await options.agent.run(claim.input, tools, controller.signal);
+    const input = await withMediaDescriptions(claim.input, options.media);
+    const result = await options.agent.run(input, tools, controller.signal);
     if (applied) return applied;
     if (lastRejection !== undefined) throw new ProposalValidationError(lastRejection);
     return {

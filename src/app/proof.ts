@@ -361,6 +361,7 @@ export async function createAmbientProofHarness(
         },
         async recall(query) {
           const claims = await repositories.memory.recall({
+            conversationId,
             nativeIds: [
               conversationId,
               ...new Set(context.newMessages.map(({ senderId }) => senderId)),
@@ -368,6 +369,19 @@ export async function createAmbientProofHarness(
             query,
           });
           return { claims };
+        },
+        async searchHistory(query) {
+          const messages = await repositories.memory.searchHistory({ conversationId, query });
+          return { messages };
+        },
+        async viewImage() {
+          return { unavailable: "not available in this context" };
+        },
+        async addTodo() {
+          return { id: "" };
+        },
+        async settleTodo() {
+          return { settled: false };
         },
       });
       const decision = captured === undefined ? ("silence" as const) : ("reply" as const);

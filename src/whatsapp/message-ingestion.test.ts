@@ -6,7 +6,7 @@ import { memoryBackend } from "whatsappd";
 import { createTestWhatsAppSession, textMessage } from "whatsappd/testing";
 import { openAmbientDatabase } from "../database/database";
 import type { MessageIngestionRepository } from "../database/message-ingestion";
-import { mapLiveWhatsAppMessage, whatsAppTextMessagePayloadSchema } from "./observation-mapper";
+import { mapLiveWhatsAppMessage, whatsAppLiveMessagePayloadSchema } from "./observation-mapper";
 import { createWhatsAppAcceptedSourceConsumer } from "./message-ingestion";
 import { WhatsAppSessionController } from "./session/controller";
 
@@ -91,7 +91,7 @@ test("one WhatsApp message is retained and queued exactly once across replay and
         occurredAt: "2026-08-11T10:00:00.000Z",
         kind: "message",
       });
-      expect(whatsAppTextMessagePayloadSchema.parse(observation?.payload)).toMatchObject({
+      expect(whatsAppLiveMessagePayloadSchema.parse(observation?.payload)).toMatchObject({
         messageId: "message-1",
         text: "Please remember this",
       });

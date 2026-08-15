@@ -50,6 +50,8 @@ export interface WorkerAssignment {
   readonly instructions?: string | undefined;
   readonly workerProfile: string;
   readonly target?: string | undefined;
+  /** Media refs the delegating speaker attached as evidence. */
+  readonly attachments?: readonly string[] | undefined;
 }
 
 export interface WorkerReceipt {

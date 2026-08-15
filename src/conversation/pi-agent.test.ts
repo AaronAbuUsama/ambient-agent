@@ -17,6 +17,7 @@ function fauxRunner(faux: ReturnType<typeof fauxProvider>, maxOutputTokens = 102
     snapshot: { provider: "faux", model: model.id, thinking: "off", maxOutputTokens },
     model,
     thinkingLevel: "off",
+    vision: false,
     stream: (context, options) =>
       models.streamSimple(model, context, { ...options, maxTokens: maxOutputTokens }),
   };
@@ -74,6 +75,18 @@ test("Pi Conversation calls the scoped send tool and returns an internal summary
         ],
       };
     },
+    async searchHistory() {
+      return { messages: [] };
+    },
+    async viewImage() {
+      return { unavailable: "not available in this context" };
+    },
+    async addTodo() {
+      return { id: "" };
+    },
+    async settleTodo() {
+      return { settled: false };
+    },
   });
 
   expect(sends).toEqual(["hello back"]);
@@ -96,6 +109,18 @@ test("Pi Conversation can deliberately finish without sending", async () => {
     },
     async recall() {
       return { claims: [] };
+    },
+    async searchHistory() {
+      return { messages: [] };
+    },
+    async viewImage() {
+      return { unavailable: "not available in this context" };
+    },
+    async addTodo() {
+      return { id: "" };
+    },
+    async settleTodo() {
+      return { settled: false };
     },
   });
 
@@ -128,6 +153,18 @@ test("Pi Conversation forwards output limits and propagates provider errors", as
       async recall() {
         return { claims: [] };
       },
+      async searchHistory() {
+        return { messages: [] };
+      },
+      async viewImage() {
+        return { unavailable: "not available in this context" };
+      },
+      async addTodo() {
+        return { id: "" };
+      },
+      async settleTodo() {
+        return { settled: false };
+      },
     }),
   ).rejects.toThrow("provider unavailable");
   expect(maxTokens).toBe(321);
@@ -151,6 +188,18 @@ test("granted skills are appended to the system prompt, none means the base prom
     },
     async recall() {
       return { claims: [] };
+    },
+    async searchHistory() {
+      return { messages: [] };
+    },
+    async viewImage() {
+      return { unavailable: "not available in this context" };
+    },
+    async addTodo() {
+      return { id: "" };
+    },
+    async settleTodo() {
+      return { settled: false };
     },
   };
 
@@ -222,6 +271,18 @@ test("granted agents render into the prompt and the delegate tool opens an assig
       },
       async recall() {
         return { claims: [] };
+      },
+      async searchHistory() {
+        return { messages: [] };
+      },
+      async viewImage() {
+        return { unavailable: "not available in this context" };
+      },
+      async addTodo() {
+        return { id: "" };
+      },
+      async settleTodo() {
+        return { settled: false };
       },
     },
   );

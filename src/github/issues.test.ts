@@ -92,3 +92,63 @@ test("a create that returns no URL fails loudly rather than reporting success", 
     "no issue URL",
   );
 });
+
+test("attached evidence is uploaded and embedded in the body", async () => {
+  // repos/<repo> id, auth token, then the create.
+  const gh = fakeGh(["[]", "1333510299\n", "gho_token\n", "https://github.com/o/r/issues/7\n"]);
+  const uploaded: { filename: string; mimetype: string; size: number; token: string }[] = [];
+  const issues = createGitHubIssues({
+    repository: "o/r",
+    gh,
+    upload: async ({ filename, mimetype, bytes, token }) => {
+      uploaded.push({ filename, mimetype, size: bytes.length, token });
+      return `https://github.com/user-attachments/assets/${filename}`;
+    },
+  });
+
+  const filed = await issues.file({
+    key: "task-7",
+    title: "Live Activity loops",
+    body: "It re-prompts after confirming.",
+    attachments: [
+      {
+        filename: "evidence-1.jpeg",
+        mimetype: "image/jpeg",
+        bytes: Buffer.from("pretend jpeg"),
+        caption: "the repeated prompt",
+      },
+    ],
+  });
+
+  expect(filed.attached).toEqual({ embedded: 1, failed: 0 });
+  expect(uploaded).toEqual([
+    { filename: "evidence-1.jpeg", mimetype: "image/jpeg", size: 12, token: "gho_token" },
+  ]);
+  const body = gh.calls[3]![gh.calls[3]!.indexOf("--body") + 1]!;
+  expect(body).toContain("![the repeated prompt](https://github.com/user-attachments/assets/");
+  expect(body).toContain(taskMarker("task-7"));
+});
+
+test("an upload that fails is admitted in the issue, not silently dropped", async () => {
+  const gh = fakeGh(["[]", "1333510299\n", "gho_token\n", "https://github.com/o/r/issues/8\n"]);
+  const issues = createGitHubIssues({
+    repository: "o/r",
+    gh,
+    upload: async () => {
+      throw new Error("uploads.github.com said no");
+    },
+  });
+
+  const filed = await issues.file({
+    key: "task-8",
+    title: "Widget does not open the app",
+    body: "Tapping it does nothing.",
+    attachments: [{ filename: "evidence-1.jpeg", mimetype: "image/jpeg", bytes: Buffer.from("x") }],
+  });
+
+  expect(filed.attached).toEqual({ embedded: 0, failed: 1 });
+  const body = gh.calls[3]![gh.calls[3]!.indexOf("--body") + 1]!;
+  // A reader must know a picture is missing, or they will never go looking.
+  expect(body).toContain("could not be uploaded");
+  expect(body).not.toContain("![");
+});

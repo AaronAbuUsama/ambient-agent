@@ -20,6 +20,8 @@ import { createWorkerToolbox } from "../worker/tools";
 import { createWhatsAppAcceptedSourceConsumer } from "../whatsapp/message-ingestion";
 import { createAliasResolver } from "../whatsapp/mirror";
 import { createWhatsAppService, type WhatsAppService } from "../whatsapp/service";
+import { createMediaInterpreter } from "../media/interpreter";
+import { createMediaBytes } from "../whatsapp/media-bytes";
 import type { AppConfig } from "./config";
 import type { AmbientLifecycleDependencies } from "./lifecycle";
 import { silentOperationalLog, type OperationalLog } from "./operational-log";
@@ -162,6 +164,25 @@ export async function createAppResources(
     // the truth after any missed event.
     const policyWatcher = createMandateWatcher(config.home, resyncMandates);
     const models = createModelRuntime(config.models);
+
+    // Media interpretation rides the memory role's model: it is the role that
+    // already reads evidence. Absent when that model declares no vision — the
+    // interpreter refuses to construct rather than describe images it cannot
+    // see, so the capability is missing loudly instead of lying quietly.
+    const visionRunner = config.models.roles.memory ? models.forRole("memory") : undefined;
+    const mediaBytes = createMediaBytes({
+      accountId: config.whatsapp.accountId,
+      directory: config.whatsapp.dataDirectory,
+    });
+    const mediaInterpreter =
+      visionRunner?.vision === true
+        ? createMediaInterpreter({
+            runner: visionRunner,
+            bytes: mediaBytes,
+            store: database.repositories.mediaDescriptions,
+          })
+        : undefined;
+
     const evaluations = createEvaluationService({
       work: database.repositories.evaluationWork,
       recorder: database.repositories.evaluations,
@@ -184,6 +205,7 @@ export async function createAppResources(
           work: database.repositories.memoryWork,
           agent: createPiMemoryAgent(models.forRole("memory")),
           ontology: database.repositories.memory,
+          ...(mediaInterpreter ? { media: mediaInterpreter } : {}),
           // Issue-centric coverage on dense windows legitimately exceeds the
           // old 50; still bounded.
           maximumClaimsPerJob: 80,
@@ -205,6 +227,28 @@ export async function createAppResources(
             const grant = grantsByChat.get(conversationId)?.[workerProfile];
             if (!grant) return { problem: "not granted to this chat" };
             return toolbox.compose(definition, grant);
+          },
+          attachments: async (refs) => {
+            const resolved = await Promise.all(
+              refs.map(async (ref, index) => {
+                const bytes = await mediaBytes.read(ref);
+                if (!bytes) return [];
+                const [described] = await database.repositories.mediaDescriptions.find([ref]);
+                const mimetype = described?.mimetype ?? "image/jpeg";
+                const extension = mimetype.split("/")[1] ?? "bin";
+                // Alt text stays short and whole: a sliced description ends
+                // mid-sentence, which reads as a bug in the report itself.
+                return [
+                  {
+                    filename: `evidence-${index + 1}.${extension}`,
+                    mimetype,
+                    bytes,
+                    caption: "screenshot from the report",
+                  },
+                ];
+              }),
+            );
+            return resolved.flat();
           },
           returnResult: async (conversationId, taskId) => {
             await database.repositories.inbox.enqueue({
@@ -235,6 +279,7 @@ export async function createAppResources(
       conversation = createConversationService({
         scheduling: config.conversation.scheduling,
         instructions: config.conversation.instructions,
+        ...(mediaInterpreter ? { media: mediaInterpreter } : {}),
         // Skills are read fresh from the home per run: the chat's own skills
         // shadow home skills by name; broken skills are skipped (doctor is
         // the loud surface).
@@ -264,19 +309,38 @@ export async function createAppResources(
             }),
           );
         },
+        // Present only when a vision-capable model is configured: a picture the
+        // speaker cannot be told about is better left undescribed than guessed.
+        ...(mediaInterpreter ? { media: mediaInterpreter } : {}),
+        todos: database.repositories.todos,
         taskUpdates: async (taskIds) => {
           const rows = await Promise.all(taskIds.map((id) => database.repositories.tasks.get(id)));
-          return rows.flatMap((task) =>
-            task
-              ? [
-                  {
-                    taskId: task.id,
-                    workerProfile: task.workerProfile,
-                    status: task.status,
-                    ...(task.resultSummary === undefined ? {} : { summary: task.resultSummary }),
-                  },
-                ]
-              : [],
+          return Promise.all(
+            rows
+              .flatMap((task) => (task ? [task] : []))
+              .map(async (task) => {
+                // The outcome comes from the receipt, never from the worker's
+                // own account of itself: a model that says it filed an issue
+                // when it did not is exactly the failure this system exists to
+                // make impossible. Succeeded with no receipt means it chose not
+                // to act — a decline, and the reason is its summary.
+                const receipts = await database.repositories.tasks.listArtifacts(task.id);
+                const receipt = receipts.find(({ kind }) => kind === "url");
+                const outcome =
+                  task.status === "succeeded"
+                    ? receipt
+                      ? ("done" as const)
+                      : ("declined" as const)
+                    : ("failed" as const);
+                return {
+                  taskId: task.id,
+                  workerProfile: task.workerProfile,
+                  status: task.status,
+                  outcome,
+                  ...(receipt ? { evidence: receipt.value } : {}),
+                  ...(task.resultSummary === undefined ? {} : { summary: task.resultSummary }),
+                };
+              }),
           );
         },
         delegate: async ({
@@ -285,6 +349,7 @@ export async function createAppResources(
           agent,
           objective,
           target,
+          attachments,
           idempotencyKey,
         }) => {
           const definition = agentDefinitions.get(agent);
@@ -303,6 +368,15 @@ export async function createAppResources(
           } else if (boundTarget !== undefined) {
             throw new Error(`"${agent}" takes no target`);
           }
+          // Evidence is scoped like a destination is: the speaker may attach
+          // only media its own conversation carries, so a ref it invented or
+          // read elsewhere cannot travel into an external effect.
+          const boundAttachments: string[] = [];
+          for (const ref of attachments ?? []) {
+            const carried = await database.repositories.memory.findMedia({ conversationId, ref });
+            if (!carried) throw new Error(`attachment "${ref}" is not part of this conversation`);
+            boundAttachments.push(ref);
+          }
           // ponytail: a flat in-flight cap; per-chat configuration when a
           // real chat needs a different budget.
           if ((await database.repositories.tasks.countActive(conversationId)) >= 3) {
@@ -317,6 +391,7 @@ export async function createAppResources(
             objective,
             workerProfile: agent,
             ...(boundTarget === undefined ? {} : { target: boundTarget }),
+            ...(boundAttachments.length > 0 ? { attachments: boundAttachments } : {}),
           });
           // Adoption may only point at live work. A terminal assignment is
           // history — a retried run must hear that, never resurrect it

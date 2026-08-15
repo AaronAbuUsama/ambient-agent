@@ -24,7 +24,22 @@ export interface IssueFiling {
     readonly key: string;
     readonly title: string;
     readonly body: string;
+    readonly attachments?: readonly IssueAttachment[];
   }): Promise<FiledIssue>;
+}
+
+/**
+ * One piece of evidence to embed in the issue body.
+ *
+ * Bytes, not a ref: this module knows nothing about WhatsApp or a media store,
+ * and whoever resolved the ref already proved it belongs where it came from.
+ */
+export interface IssueAttachment {
+  readonly filename: string;
+  readonly mimetype: string;
+  readonly bytes: Buffer;
+  /** Rendered as the image's alt text, so the issue reads as a report. */
+  readonly caption?: string;
 }
 
 export interface FiledIssue {
@@ -32,6 +47,8 @@ export interface FiledIssue {
   readonly url: string;
   /** `filed` created it; `adopted` found this key's existing issue. */
   readonly outcome: "filed" | "adopted";
+  /** How much evidence actually made it into the body. */
+  readonly attached?: { readonly embedded: number; readonly failed: number };
 }
 
 /** The marker that makes an issue traceable to the assignment that caused it. */
@@ -68,16 +85,108 @@ const ghCli: GhCommand = async (args) => {
   return stdout;
 };
 
+/** Uploads one file and returns the URL to embed; swapped in tests. */
+export interface AssetUpload {
+  (input: {
+    readonly repositoryId: string;
+    readonly filename: string;
+    readonly mimetype: string;
+    readonly bytes: Buffer;
+    readonly token: string;
+  }): Promise<string>;
+}
+
+/**
+ * GitHub publishes no API for issue attachments.
+ *
+ * This is the endpoint its own web client uses when you drag a file into a
+ * comment, and it accepts a `gh` token. Verified end to end: it returns 201
+ * with a `user-attachments/assets/<uuid>` URL, and GitHub rewrites that URL
+ * into a signed asset when it renders the body — images and video alike. The
+ * asset is not fetchable until it is referenced, so the upload and the issue
+ * write belong to one operation.
+ *
+ * ponytail: undocumented, so it can vanish without notice. The failure is
+ * visible (a filed issue reporting fewer embedded attachments than it was
+ * given), and the supported fallback is a release asset per repository.
+ */
+const uploadAsset: AssetUpload = async ({ repositoryId, filename, mimetype, bytes, token }) => {
+  const query = new URLSearchParams({
+    name: filename,
+    content_type: mimetype,
+    repository_id: repositoryId,
+  });
+  const endpoint = `https://uploads.github.com/user-attachments/assets?${query.toString()}`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Type": mimetype,
+    },
+    body: new Uint8Array(bytes),
+  });
+  if (!response.ok) throw new Error(`attachment upload failed with ${response.status}`);
+  const payload = uploadedAssetSchema.parse(await response.json());
+  return payload.url;
+};
+
+const uploadedAssetSchema = z.object({ url: z.string().min(1) });
+
 export function createGitHubIssues(options: {
   /** `owner/name`. Fixed for the life of this capability. */
   readonly repository: string;
   readonly gh?: GhCommand;
+  readonly upload?: AssetUpload;
 }): IssueFiling {
   const gh = options.gh ?? ghCli;
+  const upload = options.upload ?? uploadAsset;
   const repository = options.repository;
 
+  /**
+   * Embed what can be embedded, and say so when something could not be.
+   *
+   * A report that quietly drops its screenshot is worse than one that admits
+   * the screenshot is missing — the reader would never know to go looking.
+   */
+  const embed = async (
+    attachments: readonly IssueAttachment[],
+  ): Promise<{ readonly markdown: string; readonly embedded: number; readonly failed: number }> => {
+    if (attachments.length === 0) return { markdown: "", embedded: 0, failed: 0 };
+
+    const [repositoryId, token] = await Promise.all([
+      gh(["api", `repos/${repository}`, "-q", ".id"]).then((value) => value.trim()),
+      gh(["auth", "token"]).then((value) => value.trim()),
+    ]);
+
+    const lines: string[] = [];
+    let failed = 0;
+    for (const attachment of attachments) {
+      try {
+        const url = await upload({
+          repositoryId,
+          filename: attachment.filename,
+          mimetype: attachment.mimetype,
+          bytes: attachment.bytes,
+          token,
+        });
+        lines.push(`![${attachment.caption ?? attachment.filename}](${url})`);
+      } catch {
+        failed += 1;
+      }
+    }
+
+    const notice =
+      failed > 0 ? `\n\n_${failed} attachment(s) from the report could not be uploaded._` : "";
+    // "Attached", not "Evidence": the writer often has its own Evidence
+    // section, and two identical headings in one issue reads as a mistake.
+    const markdown =
+      lines.length > 0 ? `\n\n## Attached from the report\n\n${lines.join("\n\n")}` : "";
+    return { markdown: `${markdown}${notice}`, embedded: lines.length, failed };
+  };
+
   return {
-    async file({ key, title, body }) {
+    async file({ key, title, body, attachments = [] }) {
       const marker = taskMarker(key);
 
       // Look first: a previous attempt may have created the issue and died
@@ -104,6 +213,10 @@ export function createGitHubIssues(options: {
         : undefined;
       if (mine) return { number: mine.number, url: mine.html_url, outcome: "adopted" };
 
+      // Upload before creating: an asset is only fetchable once some content
+      // references it, so the body must carry the link from the start.
+      const evidence = await embed(attachments);
+
       const created = await gh([
         "issue",
         "create",
@@ -112,11 +225,18 @@ export function createGitHubIssues(options: {
         "--title",
         title,
         "--body",
-        `${body}\n\n${marker}`,
+        `${body}${evidence.markdown}\n\n${marker}`,
       ]);
       const match = createdUrlPattern.exec(created);
       if (!match?.[1]) throw new Error("gh issue create returned no issue URL");
-      return { number: Number(match[1]), url: match[0], outcome: "filed" };
+      return {
+        number: Number(match[1]),
+        url: match[0],
+        outcome: "filed",
+        ...(attachments.length > 0
+          ? { attached: { embedded: evidence.embedded, failed: evidence.failed } }
+          : {}),
+      };
     },
   };
 }

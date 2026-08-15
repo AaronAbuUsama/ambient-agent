@@ -134,6 +134,12 @@ export const tasks = sqliteTable(
     workerProfile: text("worker_profile").notNull(),
     /** The destination chosen at creation (e.g. an owner/name repository); never the model's to choose. */
     target: text(),
+    /**
+     * Media refs the delegating speaker attached as evidence, validated against
+     * its own conversation at creation. The worker carries them into the effect
+     * it causes; it never chooses which evidence to reach for.
+     */
+    attachments: text({ mode: "json" }).$type<readonly string[]>(),
     status: text({
       enum: ["queued", "running", "succeeded", "failed", "cancelled"],
     }).notNull(),
@@ -222,6 +228,64 @@ export const taskArtifacts = sqliteTable(
     createdAt: text("created_at").notNull(),
   },
   (table) => [check("task_artifacts_kind", sql`${table.kind} IN ('text', 'file', 'url', 'json')`)],
+);
+
+/**
+ * An agent's own intention, held across runs.
+ *
+ * Deliberately NOT `tasks`: an assignment is a bounded objective delegated to
+ * a worker, while a to-do is something this agent means to do itself — ask a
+ * question, check back on an answer, follow up when a build ships. A run that
+ * decides to ask something and then forgets it by the next run is the failure
+ * this exists to prevent.
+ */
+export const agentTodos = sqliteTable(
+  "agent_todos",
+  {
+    id: text().primaryKey(),
+    /** The chat this intention belongs to; an agent's memory is situated. */
+    conversationId: text("conversation_id").notNull(),
+    note: text().notNull(),
+    status: text({ enum: ["open", "done", "dropped"] }).notNull(),
+    createdAt: text("created_at").notNull(),
+    /** Set when it left `open`, whichever way it went. */
+    settledAt: text("settled_at"),
+    /** Why it was dropped, when it was — a silent disappearance is a lie. */
+    outcome: text(),
+  },
+  (table) => [
+    check("agent_todos_status", sql`${table.status} IN ('open', 'done', 'dropped')`),
+    index("agent_todos_conversation").on(table.conversationId, table.status),
+  ],
+);
+
+/**
+ * What one piece of media shows, written once and read by every role.
+ *
+ * Keyed by the media store's content hash, so the same image forwarded into
+ * ten chats is interpreted once and never again. A row is evidence: it records
+ * the model that produced it, and `failed` is retained too so a blob that
+ * cannot be read is not retried forever.
+ */
+export const mediaDescriptions = sqliteTable(
+  "media_descriptions",
+  {
+    ref: text().primaryKey(),
+    status: text({ enum: ["described", "failed"] }).notNull(),
+    mimetype: text(),
+    description: text(),
+    failureReason: text("failure_reason"),
+    model: text().notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    check("media_descriptions_status", sql`${table.status} IN ('described', 'failed')`),
+    check(
+      "media_descriptions_described_has_text",
+      sql`(${table.status} <> 'described') OR (${table.description} IS NOT NULL)`,
+    ),
+  ],
 );
 
 export const conversationInbox = sqliteTable(

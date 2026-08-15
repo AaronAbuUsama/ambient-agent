@@ -1,5 +1,7 @@
+import type { MediaInterpreter } from "../media/contract";
 import { messageOf } from "../platform/errors";
 import type {
+  AgentTodoStore,
   ConversationAgent,
   ConversationClaim,
   ConversationDelegate,
@@ -44,11 +46,16 @@ export interface ConversationServiceOptions {
     readonly agent: string;
     readonly objective: string;
     readonly target?: string | undefined;
+    readonly attachments?: readonly string[] | undefined;
     readonly idempotencyKey: string;
   }) => Promise<{ readonly taskId: string; readonly outcome: "created" | "adopted" }>;
   readonly scheduling: ConversationSchedulingConfig;
   readonly work: ConversationWorkStore;
   readonly recall: ConversationRecall;
+  /** Absent when no vision model is configured; view_image then declines. */
+  readonly media?: MediaInterpreter;
+  /** The agent's own intentions, held across runs. */
+  readonly todos?: AgentTodoStore;
   readonly agent: ConversationAgent;
   readonly sender: ScopedMessageSender;
   readonly now?: () => Date;
@@ -58,7 +65,7 @@ export function createConversationService(
   options: ConversationServiceOptions,
 ): ConversationService {
   const leaseOwner = options.leaseOwner ?? `conversation-service:${crypto.randomUUID()}`;
-  const promptVersion = options.promptVersion ?? "conversation-v2";
+  const promptVersion = options.promptVersion ?? "conversation-v3";
   const now = options.now ?? (() => new Date());
   const contextBuilder: ConversationContextBuilder = createConversationContextBuilder(
     options.work,
@@ -67,6 +74,10 @@ export function createConversationService(
       ...(options.skills ? { skills: options.skills } : {}),
       ...(options.agents ? { agents: options.agents } : {}),
       ...(options.taskUpdates ? { taskUpdates: options.taskUpdates } : {}),
+      ...(options.media ? { media: options.media } : {}),
+      // The agent's own intentions render into every run: a to-do it has to
+      // remember to look up is not a to-do.
+      ...(options.todos ? { todos: (id: string) => options.todos!.open(id) } : {}),
     },
   );
   let active = false;
@@ -175,7 +186,12 @@ export function createConversationService(
               claim.runId,
               callId,
               "delegate",
-              { agent: request.agent, objective: request.objective, target: request.target },
+              {
+                agent: request.agent,
+                objective: request.objective,
+                target: request.target,
+                attachments: request.attachments,
+              },
               () =>
                 provider({
                   conversationId: claim.conversationId,
@@ -183,6 +199,7 @@ export function createConversationService(
                   agent: request.agent,
                   objective: request.objective,
                   target: request.target,
+                  attachments: request.attachments,
                   idempotencyKey: `conversation:${claim.items[0]!.id}:delegate`,
                 }),
               (opened) => opened,
@@ -197,15 +214,94 @@ export function createConversationService(
               { query },
               () =>
                 options.recall.recall({
+                  conversationId: claim.conversationId,
                   nativeIds: [
                     input.conversationId,
                     ...new Set(input.newMessages.map(({ senderId }) => senderId)),
                   ],
                   query,
+                  limit: 60,
                 }),
               (recalled) => ({ claims: recalled }),
             );
             return { claims };
+          },
+          async viewImage(ref, callId) {
+            if (abort.signal.aborted) throw abort.signal.reason;
+            return executeTool(
+              claim.runId,
+              callId,
+              "view_image",
+              { ref },
+              async () => {
+                if (!options.media) return { unavailable: "no vision model is configured" };
+                // Scope first: a ref names a blob in a store shared by every
+                // chat, so the host decides what this run may look at.
+                const carried = await options.recall.findMedia({
+                  conversationId: claim.conversationId,
+                  ref,
+                });
+                if (!carried) return { unavailable: "that media is not part of this conversation" };
+                const described = await options.media.describe([{ ref, ...carried }]);
+                const found = described.get(ref);
+                return found?.status === "described"
+                  ? { description: found.description }
+                  : { unavailable: found?.failureReason ?? "it could not be interpreted" };
+              },
+              (result) => result,
+            );
+          },
+          async addTodo(note, callId) {
+            if (abort.signal.aborted) throw abort.signal.reason;
+            return executeTool(
+              claim.runId,
+              callId,
+              "add_todo",
+              { note },
+              async () => {
+                if (!options.todos) return { id: "" };
+                const added = await options.todos.add({
+                  conversationId: claim.conversationId,
+                  note,
+                });
+                return { id: added.id };
+              },
+              (result) => result,
+            );
+          },
+          async settleTodo(request, callId) {
+            if (abort.signal.aborted) throw abort.signal.reason;
+            return executeTool(
+              claim.runId,
+              callId,
+              "settle_todo",
+              { id: request.id, status: request.status },
+              async () => {
+                if (!options.todos) return { settled: false };
+                const settled = await options.todos.settle({
+                  conversationId: claim.conversationId,
+                  ...request,
+                });
+                return { settled };
+              },
+              (result) => result,
+            );
+          },
+          async searchHistory(query, callId) {
+            if (abort.signal.aborted) throw abort.signal.reason;
+            const messages = await executeTool(
+              claim.runId,
+              callId,
+              "search_history",
+              { query },
+              () =>
+                options.recall.searchHistory({
+                  conversationId: claim.conversationId,
+                  query,
+                }),
+              (found) => ({ messages: found }),
+            );
+            return { messages };
           },
         },
         abort.signal,

@@ -94,6 +94,8 @@ async function buildInput(
             attachment: {
               kind: payload.kind ?? "media",
               ...(payload.media?.caption ? { caption: payload.media.caption } : {}),
+              ...(payload.media?.ref ? { ref: payload.media.ref } : {}),
+              ...(payload.media?.mimetype ? { mimetype: payload.media.mimetype } : {}),
             },
           }
         : {}),

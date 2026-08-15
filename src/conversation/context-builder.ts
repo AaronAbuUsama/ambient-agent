@@ -1,5 +1,7 @@
-import { whatsAppTextMessagePayloadSchema } from "../whatsapp/observation-mapper";
+import type { MediaDescription, MediaInterpreter } from "../media/contract";
+import { whatsAppLiveMessagePayloadSchema } from "../whatsapp/observation-mapper";
 import type {
+  AgentTodo,
   ConversationClaim,
   ConversationDelegate,
   ConversationInput,
@@ -20,6 +22,10 @@ export interface ConversationContextSources {
   readonly agents?: (conversationId: string) => Promise<readonly ConversationDelegate[]>;
   /** Dereference task_update inbox items to their assignments' outcomes. */
   readonly taskUpdates?: (taskIds: readonly string[]) => Promise<readonly ConversationTaskUpdate[]>;
+  /** Interpret this batch's media, so the speaker is told what a picture shows. */
+  readonly media?: MediaInterpreter;
+  /** The agent's open intentions here, rendered into every run. */
+  readonly todos?: (conversationId: string) => Promise<readonly AgentTodo[]>;
 }
 
 export function createConversationContextBuilder(
@@ -46,14 +52,47 @@ export function createConversationContextBuilder(
         ) {
           throw new Error(`conversation inbox observation "${item.referenceId}" is not a message`);
         }
-        const payload = whatsAppTextMessagePayloadSchema.parse(observation.payload);
+        const payload = whatsAppLiveMessagePayloadSchema.parse(observation.payload);
+        const attachment =
+          "media" in payload
+            ? {
+                kind: payload.kind,
+                ...(payload.media.ref ? { ref: payload.media.ref } : {}),
+                ...(payload.media.mimetype ? { mimetype: payload.media.mimetype } : {}),
+              }
+            : undefined;
         return {
           observationId: observation.id,
           whatsappMessageId: payload.messageId,
           senderId: payload.sender.id,
           sentAt: observation.occurredAt,
-          text: payload.text,
+          text: payload.text ?? ("media" in payload ? (payload.media.caption ?? "") : ""),
+          ...(attachment ? { attachment } : {}),
           fromAgent: false,
+        };
+      });
+
+      // Interpret this batch's pictures before the speaker reads them. The
+      // description is retained, so a re-run of the same batch costs nothing.
+      const describable = newMessages
+        .map(({ attachment }) => attachment)
+        .filter((attachment) => attachment?.ref !== undefined)
+        .map((attachment) => ({
+          ref: attachment!.ref!,
+          ...(attachment!.mimetype === undefined ? {} : { mimetype: attachment!.mimetype }),
+        }));
+      const descriptions: ReadonlyMap<string, MediaDescription> =
+        sources.media && describable.length > 0
+          ? await sources.media.describe(describable)
+          : new Map();
+      const described = newMessages.map((message) => {
+        const found = message.attachment?.ref
+          ? descriptions.get(message.attachment.ref)
+          : undefined;
+        if (!message.attachment || found?.status !== "described") return message;
+        return {
+          ...message,
+          attachment: { ...message.attachment, description: found.description },
         };
       });
 
@@ -65,10 +104,11 @@ export function createConversationContextBuilder(
 
       return {
         conversationId: claim.conversationId,
-        newMessages,
+        newMessages: described,
         instructions: claim.instructions ?? instructions,
         skills: (await sources.skills?.(claim.conversationId)) ?? [],
         agents: (await sources.agents?.(claim.conversationId)) ?? [],
+        todos: (await sources.todos?.(claim.conversationId)) ?? [],
         taskUpdates,
       };
     },

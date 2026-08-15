@@ -12,10 +12,27 @@ import type {
 const systemPrompt = `You are Ambient's Conversation Agent.
 
 You receive a bounded durable batch of new WhatsApp messages for exactly one conversation.
-Use recall when retained facts would materially improve the answer. Decide whether the user needs a
-response. To reply, call send_message exactly once with the full message. To remain silent, do not
-call it. Never claim you sent a message unless the tool succeeds. After acting or choosing silence,
-return a short internal summary of the decision.`;
+
+Consult what you already know before asking anyone anything. recall returns evidence-backed facts
+about this conversation and its people, and an empty query returns everything you hold here — use
+that when you are asked what you know, or how many of something are still open. search_history
+re-reads the retained messages themselves, captions included, when you need the original wording
+rather than a settled fact. Ask a person only for what neither can tell you.
+
+A message may carry an attachment. Its caption stands in as the text, and a description is present
+once the image has been interpreted. For an older image that has none — one search_history turned
+up, say — call view_image with its ref to look at it. Never describe an image you have no
+description of, and never imply you watched a video: say plainly that you cannot see it and ask
+what it shows.
+
+You carry your own to-dos between runs. When you decide something is worth asking or checking but
+this is not the moment, call add_todo and it will be in front of you next time; when one is
+answered or stops mattering, call settle_todo. Do not re-ask what an open to-do says you already
+asked, and do not hoard: a to-do is a commitment, not a note.
+
+Decide whether the user needs a response. To reply, call send_message exactly once with the full
+message. To remain silent, do not call it. Never claim you sent a message unless the tool succeeds.
+After acting or choosing silence, return a short internal summary of the decision.`;
 
 /** The settled prompt layers: fixed identity, the chat's skills, its granted agents. */
 function composeSystemPrompt(input: ConversationInput): string {
@@ -36,8 +53,12 @@ function composeSystemPrompt(input: ConversationInput): string {
         `Call delegate with the agent's name, a complete self-contained objective, and — when the ` +
         `agent lists more than one destination — the one target to use. The task runs after this ` +
         `turn; its result arrives as a later task update. Delegate at most once per run, and tell ` +
-        `the chat what you set in motion. When a task update arrives in your input, report its ` +
-        `outcome concisely (numbers, links) — or its failure honestly.`,
+        `the chat what you set in motion.\n` +
+        `A task update carries an outcome. "done" means the effect really happened and evidence ` +
+        `proves it — report the number and link. "declined" means the agent deliberately did NOT ` +
+        `act because something was missing: that is an answer, not a failure, so relay what it ` +
+        `needs and ask for it. "failed" is infrastructure — say so plainly rather than implying ` +
+        `the work is still coming.`,
     );
   }
   return sections.join("\n\n");
@@ -45,11 +66,13 @@ function composeSystemPrompt(input: ConversationInput): string {
 
 function prompt(input: ConversationInput): string {
   const taskUpdates = input.taskUpdates ?? [];
+  const todos = input.todos ?? [];
   return JSON.stringify(
     {
       conversationId: input.conversationId,
       instructions: input.instructions,
       newMessages: input.newMessages,
+      ...(todos.length > 0 ? { yourOpenTodos: todos } : {}),
       ...(taskUpdates.length > 0 ? { taskUpdates } : {}),
     },
     null,
@@ -68,7 +91,37 @@ const sendMessageParameters = Type.Object({
 });
 
 const recallParameters = Type.Object({
-  query: Type.String({ minLength: 1, description: "A concise memory search phrase." }),
+  query: Type.String({
+    description:
+      "A concise memory search phrase. Pass an empty string to see everything " +
+      "known about this conversation, including every issue it has discussed.",
+  }),
+});
+
+const searchHistoryParameters = Type.Object({
+  query: Type.String({ minLength: 1, description: "Words to look for in past messages." }),
+});
+
+const viewImageParameters = Type.Object({
+  ref: Type.String({
+    minLength: 1,
+    description: "The attachment ref of an image in this conversation.",
+  }),
+});
+
+const addTodoParameters = Type.Object({
+  note: Type.String({
+    minLength: 1,
+    description: "The intention, written so a later run can act on it without this context.",
+  }),
+});
+
+const settleTodoParameters = Type.Object({
+  id: Type.String({ minLength: 1, description: "The id of an open to-do." }),
+  status: Type.Union([Type.Literal("done"), Type.Literal("dropped")], {
+    description: "done when it happened; dropped when it no longer applies.",
+  }),
+  outcome: Type.Optional(Type.String({ description: "What happened, in one line." })),
 });
 
 const delegateParameters = Type.Object({
@@ -84,6 +137,13 @@ const delegateParameters = Type.Object({
     Type.String({
       minLength: 1,
       description: "The destination to use when the agent lists more than one.",
+    }),
+  ),
+  attachments: Type.Optional(
+    Type.Array(Type.String({ minLength: 1 }), {
+      description:
+        "Attachment refs from this conversation to carry as evidence, such as the " +
+        "screenshot that shows the problem.",
     }),
   ),
 });
@@ -126,6 +186,89 @@ function recallTool(tools: ConversationAgentTools): AgentTool {
   return tool;
 }
 
+function searchHistoryTool(tools: ConversationAgentTools): AgentTool {
+  const tool: AgentTool<typeof searchHistoryParameters> = {
+    name: "search_history",
+    label: "Search history",
+    description:
+      "Search this conversation's retained messages, including image and video captions.",
+    parameters: searchHistoryParameters,
+    async execute(toolCallId, { query }) {
+      const result = await tools.searchHistory(query, toolCallId);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result.messages) }],
+        details: result,
+      };
+    },
+  };
+  return tool;
+}
+
+function viewImageTool(tools: ConversationAgentTools): AgentTool {
+  const tool: AgentTool<typeof viewImageParameters> = {
+    name: "view_image",
+    label: "View image",
+    description:
+      "Look at one image from this conversation — use it when an attachment has no description.",
+    parameters: viewImageParameters,
+    async execute(toolCallId, { ref }) {
+      const result = await tools.viewImage(ref, toolCallId);
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              result.description ?? `Cannot view it: ${result.unavailable ?? "unknown reason"}.`,
+          },
+        ],
+        details: result,
+      };
+    },
+  };
+  return tool;
+}
+
+function addTodoTool(tools: ConversationAgentTools): AgentTool {
+  const tool: AgentTool<typeof addTodoParameters> = {
+    name: "add_todo",
+    label: "Keep a to-do",
+    description: "Keep an intention for a later run — something to ask, check, or follow up.",
+    parameters: addTodoParameters,
+    async execute(toolCallId, { note }) {
+      const kept = await tools.addTodo(note, toolCallId);
+      return {
+        content: [
+          { type: "text", text: kept.id ? `Kept as ${kept.id}.` : "To-dos are not available." },
+        ],
+        details: kept,
+      };
+    },
+  };
+  return tool;
+}
+
+function settleTodoTool(tools: ConversationAgentTools): AgentTool {
+  const tool: AgentTool<typeof settleTodoParameters> = {
+    name: "settle_todo",
+    label: "Settle a to-do",
+    description: "Close one of your open to-dos, as done or as no longer applicable.",
+    parameters: settleTodoParameters,
+    async execute(toolCallId, { id, status, outcome }) {
+      const result = await tools.settleTodo({ id, status, outcome }, toolCallId);
+      return {
+        content: [
+          {
+            type: "text",
+            text: result.settled ? `Settled ${id} as ${status}.` : `No open to-do "${id}".`,
+          },
+        ],
+        details: result,
+      };
+    },
+  };
+  return tool;
+}
+
 function delegateTool(tools: ConversationAgentTools): AgentTool {
   const tool: AgentTool<typeof delegateParameters> = {
     name: "delegate",
@@ -133,8 +276,8 @@ function delegateTool(tools: ConversationAgentTools): AgentTool {
     description: "Open one bounded background assignment for a granted agent.",
     parameters: delegateParameters,
     executionMode: "sequential",
-    async execute(toolCallId, { agent, objective, target }) {
-      const opened = await tools.delegate({ agent, objective, target }, toolCallId);
+    async execute(toolCallId, { agent, objective, target, attachments }) {
+      const opened = await tools.delegate({ agent, objective, target, attachments }, toolCallId);
       const verb = opened.outcome === "adopted" ? "already open as" : "opened as";
       return {
         content: [{ type: "text", text: `Assignment ${verb} task ${opened.taskId}.` }],
@@ -156,6 +299,10 @@ export function createPiConversationAgent(runner: ModelRunner): ConversationAgen
           thinkingLevel: runner.thinkingLevel,
           tools: [
             recallTool(tools),
+            searchHistoryTool(tools),
+            viewImageTool(tools),
+            addTodoTool(tools),
+            settleTodoTool(tools),
             sendMessageTool(tools),
             ...((input.agents ?? []).length > 0 ? [delegateTool(tools)] : []),
           ],

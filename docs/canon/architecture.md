@@ -630,15 +630,29 @@ by succeeding the run with an explanatory private summary.
 ### Recall
 
 ```text
-model selects recall
+model selects recall / search_history / view_image
   -> retain running tool evidence
-  -> query Conversation-scoped identities
-  -> Memory read model returns current evidence-backed claims
-  -> retain returned claim references
+  -> recall: claims about this conversation's people AND the claims its own
+     evidence established; an empty query returns everything held here
+  -> search_history: the retained messages themselves, captions included
+  -> view_image: one image, only if this conversation carries it
+  -> retain returned references
   -> complete tool evidence
 ```
 
 Owner: Conversation service for scope and evidence, Memory for recall semantics.
+
+Recall has two sources because the ontology has two shapes of subject. Claims
+about people are reachable through identity links; claims about everything
+else — issues above all — are not, because an issue is not anybody's identity.
+A conversation reaches those through its own evidence. Scoping a speaker's
+recall to identity links alone leaves it unable to answer what it knows, and
+a speaker that cannot enumerate what it holds will confabulate or interrogate
+rather than consult. Both are worse than a slightly larger read.
+
+The model chooses when to call. Injecting the ontology into every run is the
+tempting alternative and the wrong one: it has no memory of what it already
+asked, and repeats itself.
 
 ### Memory digestion
 
@@ -656,13 +670,44 @@ claim, lease, and terminal transitions; `applyPatch` for ontology mutation.
 
 History import retains evidence only — it never creates Inbox work and never
 wakes a speaker. Media messages are retained with their store refs and
-captions; bytes stay in the media store.
+captions, and the live path retains them too: a screenshot is a bug report,
+and dropping it loses evidence that never comes back.
+
+### Media interpretation
+
+```text
+retained media ref (media:v1:<sha256>)
+  -> deterministic interpreter resolves bytes from the media store
+  -> one vision call, at most once per unique blob
+  -> retained description keyed by the content hash
+  -> memory digestion, speaker context, worker evidence read the text
+```
+
+Owner: the media interpreter for the call and the describe-once rule; the
+description store for retention. Bytes never enter a durable record, a claim,
+or a prompt that outlives the call.
+
+The content hash IS the idempotency key: the same image forwarded into ten
+chats is interpreted once, ever, and re-digesting a window costs nothing.
+Failures are retained too, so an unreadable blob is not retried forever.
+
+A description is evidence, not prompt decoration — a claim may cite what a
+screenshot was found to show, exactly as it cites typed text. Absence of a
+description means nobody has looked, never that there was nothing to see, and
+no role may describe an image it was given no description of.
+
+Modality is declared per model and fails closed. The harness silently swaps
+images for a placeholder on a text-only model, so the interpreter refuses to
+construct on a model that declares no vision rather than producing confident
+descriptions of nothing. Video is retained and can be attached, but is not
+interpreted: attaching is not understanding, and the honest move is to say so
+and ask.
 
 ### Worker delegation
 
 ```text
-speaker's delegate tool (granted agent, objective, target)
-  -> host validates grant, target, in-flight cap
+speaker's delegate tool (granted agent, objective, target, attachments)
+  -> host validates grant, target, attachments, in-flight cap
   -> one durable assignment (id derived from the run's claim)
   -> worker drain claims under a fenced lease
   -> receipt check, then CURRENT definition ∩ grant composed and bound
@@ -681,6 +726,13 @@ retrying cannot fix it; model failures retry to the attempt cap. Recovery
 never asks the external system whether the effect happened: the retained
 receipt is the authority, and the effect's embedded marker covers only the
 crash window before the receipt exists.
+
+Evidence is scoped exactly as a destination is. The speaker names attachment
+refs; the host validates every one against that speaker's own conversation
+before the assignment records them, and the worker's model never names a ref —
+it writes the report, and the host carries the picture into it. Evidence that
+cannot be uploaded is admitted in the report rather than dropped: a reader who
+is not told a screenshot is missing will never go looking for it.
 
 ### Evaluation
 

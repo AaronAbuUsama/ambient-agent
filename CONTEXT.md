@@ -142,12 +142,48 @@ An assignment's destination (for GitHub: `owner/name`), chosen at creation,
 recorded on the assignment, bound host-side. The model's tools carry no
 destination axis.
 
+**Recall**:
+What a speaker knows, in two sources it sees as one: claims about the people
+present, reachable through identity links, and the claims this conversation's
+own evidence established — issues among them, since an issue is nobody's
+identity. An empty query returns everything held here, so "how many are still
+open" is answerable rather than guessable.
+_Avoid_: injecting the ontology into every run; treating recall as search only
+
 **Receipt**:
 The retained `task_artifacts` row proving an external effect happened —
 recorded at the tool boundary the moment the effect exists. The receipt is
 the idempotency authority; the effect's embedded `Ambient-Task` marker
 covers only the crash window before the receipt.
 _Avoid_: asking the external system whether we already acted
+
+**Attachment**:
+Evidence an assignment carries into the effect it causes — media refs the
+speaker named, validated against its own conversation, recorded on the
+assignment, resolved to bytes host-side. Scoped exactly as a target is: the
+worker's model never names a ref. An attachment that cannot be uploaded is
+admitted in the report, never dropped in silence.
+
+### Media
+
+**Media ref**:
+`media:v1:<sha256>` — the content address of retained bytes in the media
+store. The retained observation keeps the ref and the caption; the bytes stay
+in the store, and only a deterministic reader ever fetches them.
+_Avoid_: passing bytes through records, prompts, or claims
+
+**Description**:
+What a picture was found to show, written once per unique blob and retained
+under its content hash. Evidence in its own right — a claim may cite it as it
+cites typed text. Its absence means nobody looked, never that there was
+nothing to see.
+_Avoid_: describing an image no description exists for; "the model saw it"
+
+**Vision**:
+A declared model capability, not an assumption. The harness silently swaps an
+image for a placeholder on a model that lacks it, so a role needing vision
+refuses to construct rather than describing nothing convincingly. Video is
+retained and attachable but not interpreted — attaching is not understanding.
 
 ### Identity
 

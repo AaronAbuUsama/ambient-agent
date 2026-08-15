@@ -38,8 +38,19 @@ export interface MemoryMessage {
   readonly mentions?: readonly string[];
   /** The observation this message replies to, when it is inside the batch. */
   readonly inReplyTo?: string;
-  /** Present when the message carries media; the bytes stay in the store. */
-  readonly attachment?: { readonly kind: string; readonly caption?: string };
+  /**
+   * Present when the message carries media; the bytes stay in the store.
+   * `description` is what the picture was found to show — evidence in its own
+   * right, and the only thing here a claim may be grounded on beyond the
+   * caption. Absent means nobody has looked, not that there was nothing to see.
+   */
+  readonly attachment?: {
+    readonly kind: string;
+    readonly caption?: string;
+    readonly ref?: string;
+    readonly mimetype?: string;
+    readonly description?: string;
+  };
 }
 
 export interface MemoryOntologyEntity {

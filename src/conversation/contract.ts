@@ -159,10 +159,68 @@ export interface ScopedMessageSender {
 }
 
 export interface ConversationRecall {
+  /**
+   * What Ambient knows that bears on this conversation: claims about the people
+   * present, and claims this conversation's own evidence established — the
+   * issues it has discussed are the latter, and are reachable no other way. An
+   * empty query returns everything it knows here, so the speaker can answer
+   * "how many of these are still open?" without guessing.
+   */
   recall(input: {
+    readonly conversationId: string;
     readonly nativeIds: readonly string[];
     readonly query: string;
+    readonly limit?: number;
   }): Promise<readonly RecalledMemory[]>;
+  /** Retained messages from this conversation, so the past can be re-read. */
+  searchHistory(input: {
+    readonly conversationId: string;
+    readonly query: string;
+    readonly limit?: number;
+  }): Promise<readonly RecalledMessage[]>;
+  /**
+   * One piece of media, but only if this conversation actually carries it.
+   * Scoping is the host's: a ref names a blob in a shared store, and the model
+   * must not be able to reach into another chat's evidence by naming one.
+   */
+  findMedia(input: {
+    readonly conversationId: string;
+    readonly ref: string;
+  }): Promise<{ readonly mimetype?: string; readonly caption?: string } | undefined>;
+}
+
+/**
+ * Something the agent means to do itself, held across runs.
+ *
+ * Not an assignment: nothing is delegated and no worker claims it. This is how
+ * an intention formed in one run — a question worth asking, an answer worth
+ * checking back on — survives to the run that can act on it.
+ */
+export interface AgentTodo {
+  readonly id: string;
+  readonly note: string;
+  readonly createdAt: string;
+}
+
+export interface AgentTodoStore {
+  open(conversationId: string): Promise<readonly AgentTodo[]>;
+  add(input: { readonly conversationId: string; readonly note: string }): Promise<AgentTodo>;
+  /** Returns false when the id names nothing open in this conversation. */
+  settle(input: {
+    readonly conversationId: string;
+    readonly id: string;
+    readonly status: "done" | "dropped";
+    readonly outcome?: string;
+  }): Promise<boolean>;
+}
+
+/** One retained message, as the speaker is shown it when searching the past. */
+export interface RecalledMessage {
+  readonly observationId: string;
+  readonly sentAt: string;
+  readonly senderId?: string;
+  readonly text: string;
+  readonly attachment?: ConversationAttachment;
 }
 
 export interface ConversationMessage {
@@ -170,8 +228,22 @@ export interface ConversationMessage {
   readonly whatsappMessageId: string;
   readonly senderId: string;
   readonly sentAt: string;
+  /** The caption stands in as text for a media message; empty when it had none. */
   readonly text: string;
+  readonly attachment?: ConversationAttachment;
   readonly fromAgent: boolean;
+}
+
+/**
+ * What the speaker is told about a media message. `description` is present once
+ * the media has been interpreted; `ref` addresses the bytes for a tool that can
+ * look at them. The bytes themselves never enter the prompt.
+ */
+export interface ConversationAttachment {
+  readonly kind: string;
+  readonly ref?: string;
+  readonly mimetype?: string;
+  readonly description?: string;
 }
 
 /** One granted skill's text, ready for the speaker's prompt. */
@@ -196,6 +268,18 @@ export interface ConversationTaskUpdate {
   readonly workerProfile: string;
   readonly status: string;
   readonly summary?: string | undefined;
+  /**
+   * What actually became of it, derived from evidence rather than from what
+   * the worker said about itself.
+   *
+   * `done` means a retained receipt proves the effect happened, and `evidence`
+   * carries it. `declined` means the worker finished deliberately WITHOUT
+   * causing the effect — it needed something first — which is a first-class
+   * result, not a failure. `failed` is infrastructure giving up.
+   */
+  readonly outcome?: "done" | "declined" | "failed";
+  /** The receipt's value when the outcome is `done` — an issue URL, in practice. */
+  readonly evidence?: string;
 }
 
 export interface ConversationInput {
@@ -207,6 +291,11 @@ export interface ConversationInput {
   readonly agents?: readonly ConversationDelegate[] | undefined;
   /** Results of work this chat delegated, ready to be reported. */
   readonly taskUpdates?: readonly ConversationTaskUpdate[] | undefined;
+  /**
+   * The agent's own open intentions here. Rendered into the prompt rather
+   * than fetched: a to-do you have to remember to look up is not a to-do.
+   */
+  readonly todos?: readonly AgentTodo[] | undefined;
 }
 
 export interface ConversationResult {
@@ -223,6 +312,21 @@ export interface RecalledMemory {
 export interface ConversationAgentTools {
   sendMessage(text: string, callId: string): Promise<{ readonly operationId: string }>;
   recall(query: string, callId: string): Promise<{ readonly claims: readonly RecalledMemory[] }>;
+  searchHistory(
+    query: string,
+    callId: string,
+  ): Promise<{ readonly messages: readonly RecalledMessage[] }>;
+  /** Look at one image from this conversation that has not been described yet. */
+  viewImage(
+    ref: string,
+    callId: string,
+  ): Promise<{ readonly description?: string; readonly unavailable?: string }>;
+  /** Keep an intention for later runs, or settle one already held. */
+  addTodo(note: string, callId: string): Promise<{ readonly id: string }>;
+  settleTodo(
+    input: { readonly id: string; readonly status: "done" | "dropped"; readonly outcome?: string },
+    callId: string,
+  ): Promise<{ readonly settled: boolean }>;
   /**
    * Open one bounded assignment for a granted agent. The host validates the
    * agent and target against the chat's grant and derives the assignment id
@@ -233,6 +337,8 @@ export interface ConversationAgentTools {
       readonly agent: string;
       readonly objective: string;
       readonly target?: string | undefined;
+      /** Attachment refs from this conversation to carry as evidence. */
+      readonly attachments?: readonly string[] | undefined;
     },
     callId: string,
   ): Promise<{ readonly taskId: string; readonly outcome: "created" | "adopted" }>;

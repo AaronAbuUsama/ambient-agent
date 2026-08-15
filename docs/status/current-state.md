@@ -1411,6 +1411,231 @@ database, daemon stopped for the duration and restarted after:
 Production now recalls the identity-aware v10 ontology where its speaker
 runs.
 
+## The craft increment: BUILT AND PROVEN (2026-08-15)
+
+Seven steps, in the order that made each next one testable. Every step is
+committed on `workers-craft`; `vp check` clean, 156 unit tests green.
+
+### What shipped
+
+1. **Live media is retained.** `observation-mapper.ts` dropped every non-text
+   message, so a screenshot survived only if a history sweep later caught it.
+   whatsappd already hands over `DurableMedia` with the bytes stored, so the
+   fix cost no download: the payload became a text/media union, and the
+   speaker's `ConversationMessage` gained an attachment so media can reach it
+   without throwing.
+2. **The speaker can reach what memory knows.** `recall` filtered claims to
+   entities identity-linked to the chat's people, and only people are ever
+   linked — so all 46 issues were unreachable. It now merges that with the
+   conversation's own evidence, and an empty query returns everything held
+   here. `search_history` re-reads retained messages, captions included;
+   nothing could do that before.
+3. **Agents keep their own to-dos.** A new `agent_todos` table, distinct from
+   `tasks` (an assignment is delegated; a to-do is the agent's own intention).
+   Open ones render into every run.
+4. **Media becomes evidence.** A deterministic interpreter resolves a ref,
+   asks a vision model once, and retains the description keyed by the content
+   hash. Runs on the memory path as well as the conversation path — the bug
+   group is listening-only, so nothing else would ever look. `view_image`
+   covers older images, scoped host-side.
+5. **Modality is declared and fails closed.** Pi silently swaps images for a
+   placeholder on a text-only model, so the interpreter refuses to construct
+   without declared vision.
+6. **Issues carry their evidence.** `file_issue` takes media refs; the host
+   uploads and rewrites the body. Attachments are scoped exactly like targets.
+7. **Production provisioned** with the worker role, declared vision, and the
+   `github-issues` definition whose ceiling is the three repositories the
+   evidence supports: `TheCallApp/ios-app`, `android-app`, `api`.
+
+### Proof gate: MET
+
+**Layer 1 — deterministic.** `proof:worker-delegation` PASS, unchanged by any
+of this (production composition, synthetic home, fake `gh`). 156 unit tests.
+
+**Layer 2 — read-only against real production data.** The new retrieval run
+against the live ontology: the old wire returned **0 claims**; the new one
+returns **123, including all 46 issue statuses** (23 reading as open).
+`search_history` for "fajr" returned 8 messages, 5 carrying attachment refs —
+the screenshots that were invisible.
+
+Measured on those real blobs: the Android screenshot reads **Fajr 03:39**, the
+iOS one **Fajr 02:46**. That 53-minute gap is the defect the group argued
+about for two weeks, recovered from pixels whose caption said only "Fajr time
+ios". Second pass over the same blobs: 3ms, no model call — describe-once
+holds on real data.
+
+**Layer 3 — live rig, end to end. PASS first attempt.** Production stopped
+(same account), rig daemon up, peer account sent a real screenshot into the
+Tst group captioned only "this is wrong again"; the image showed Isha 22:21
+and a negative countdown.
+
+Receipt: media retained live · delegated · worker succeeded · exactly 1 new
+issue · marker present · **issue embeds the screenshot** (GitHub mints the
+`user-attachments` host only for an asset really uploaded and referenced) ·
+**issue quotes what only vision saw** · speaker reported the number back in
+chat, observed by the peer.
+
+The filed issue titled itself "Salah Now displays negative countdown after
+Isha time" and quoted "Isha 22:21" and "Countdown -00:14" — none of which is
+in the caption. It also noted the reporter's exact words, which is the
+honesty the old agent lacked.
+
+Two cosmetic defects the live run exposed were fixed after it: a duplicated
+Evidence heading and alt text sliced mid-sentence.
+
+### Still open
+
+- The real Bug Reports group is untouched: mandate remains `listening`, no
+  grant, nothing said in it. Go-live is the master's call.
+- `prod-master` still runs pre-#25 code; the worktree guard blocks this
+  session from pulling there.
+- Worker evals and the decline standard (task #11) remain unbuilt.
+- Video is retained and attachable but never interpreted.
+
+## Active slice: Workers v1.5 — the craft (brief revised 2026-08-14)
+
+Revised with the master after reading the real Bug Reports history end to end.
+The first cut assumed a generated backfill document; that assumption is
+withdrawn. What follows replaces it.
+
+### What changed, and why
+
+Reading the group's 266 retained messages settled three things the earlier
+brief got wrong.
+
+**Backfill is a conversation, not machinery.** The memory agent already
+carries the group's world: 46 issue entities, 8 people, 5 repositories, 134
+evidence-cited claims, with status lineage (one issue carries _open_ →
+_filed as #132_ → _verified correct in a retest_). The master's instruction:
+"I could just speak to it and say, we're starting back up again, can you go
+back and check through all the issues." No triage document, no dry-run
+artifact. Ambient asks about what it is unsure of, in the chat, like a
+colleague. Whatever survives that conversation is what gets filed.
+
+**Issues are already nouns; the retrieval was never wired.** `recall`
+(`src/database/memory.ts:250`) filters claims to entities identity-linked to
+the conversation's participants, and `identity_links` only ever holds
+people — so all 46 issues are unreachable by the speaker's only memory tool.
+`recallForConversation` (`memory.ts:294`) reaches them and is called
+exclusively by the proof harness. This is a missing wire, not a missing
+model.
+
+**The real gap is feature compatibility, not comprehension.** Bug reports in
+this group are carried by screenshots and video: 14 images and 4 videos, 17
+of 18 captioned. The caption tells you a bug exists; the pixels _are_ the
+report. Five consecutive screenshots on 1 August compare Fajr times across
+five apps, and that comparison is invisible to Ambient today. Measured on
+production: a vision call on the screenshot captioned only "Fajr time
+android" returned Fajr 03:39, Sunrise 05:21, device time 03:30. An issue
+filed without the image is a worse issue than a human would write.
+
+### The gaps, precisely
+
+Retrieval — the agent cannot reach what it knows:
+
+- `recall` is scoped to identity-linked people; issues are invisible.
+- Nothing enumerates the ontology (`recall` is a `LIKE` match, `limit 10`).
+- Nothing searches conversation history at all; "go back through the thread"
+  is not expressible.
+- An agent has no way to hold an intention across runs, so anything it
+  decides to ask is forgotten by the next run.
+
+Media — retained but inert:
+
+- Live ingestion discards every non-text message
+  (`src/whatsapp/observation-mapper.ts:56`). Every screenshot in the group
+  survived only because a history import swept it up; one posted now is lost.
+- The retained-read schema types only the caption
+  (`src/whatsapp/message-payload.ts:25`), so the blob ref is invisible to
+  readers.
+- Nothing resolves a ref to bytes. `whatsappd` exposes `MediaStore.open`; the
+  store is constructed at `src/whatsapp/session/local-deployment.ts:60` and
+  no handle is kept.
+- `src/models/runtime.ts:82` pins `input: ["text"]`, and Pi _silently_
+  replaces images with a placeholder string — vision fails invisibly.
+- `file_issue` takes title and body only (`src/github/issues.ts:25`).
+
+Provisioning — production is not ready:
+
+- No `worker` role in `~/.ambient/config.yaml`; `forRole("worker")` throws.
+- No `~/.ambient/agents/` directory; the definition exists only in the rig.
+
+### Settled decisions
+
+1. **Backfill is conversational.** No triage document, no answer-key
+   artifact. The exchange with the reporter is the answer key.
+2. **Three retrieval tools**: conversation-scoped recall, ontology
+   enumeration by status, and history search over observations. A pull tool
+   the model chooses to call is correct; injection is not.
+3. **A to-do primitive**, not a triage queue — generalizable, so any agent
+   can hold its own intentions. Kept distinct from `tasks`, which means
+   Worker assignment: an agent's to-do is its intention, not a delegated
+   bounded objective.
+4. **Media: describe-once funnel plus on-demand `view_image`.** A
+   deterministic service resolves the ref, calls vision once, and retains the
+   description keyed by the content hash — so each unique image is described
+   exactly once, ever, and every role reads text. The description is
+   evidence, and evidence is retained before the next role runs.
+5. **Modality is explicit and fails loud.** Model metadata carries it; a role
+   needing vision refuses to start on a model without it. Silent degradation
+   is worse than a crash because a misconfiguration looks like success.
+6. **Attachments are first-class.** `file_issue` takes media refs, never
+   URLs; the host resolves, uploads, and rewrites the body as one operation.
+   Verified working: `POST uploads.github.com/user-attachments/assets` with a
+   `gh` token returns 201, and GitHub rewrites the embedded URL into a signed
+   asset — images and video both. The endpoint is undocumented, so a
+   release-asset fallback is required.
+7. **Attaching is not understanding.** Ambient can attach a video it cannot
+   watch. It says so and asks what it shows, rather than guessing — the
+   decline-with-a-reason path, with media as one more reason.
+
+### Order of work
+
+Each step makes the next testable.
+
+1. Retain live media; expose `ref`/`mimetype` to readers.
+2. Wire the three retrieval tools.
+3. Add the to-do primitive.
+4. Media description funnel and `view_image`; modality explicit.
+5. `file_issue` with attachments, plus fallback.
+6. Provision production: worker role, agent definition with the repo ceiling,
+   grant in the mandate.
+7. Prove it (below), then flip the mandate to responding.
+
+### Proof gate — three layers
+
+**Layer 1: deterministic.** Full `vp check` and `vp test`, plus the existing
+offline rehearsal (`proof:worker-delegation`) extended with a media case: a
+synthetic image through the funnel, into a filed issue, against a fake `gh`
+that cannot reach GitHub. Fails closed on a missing description.
+
+**Layer 2: read-only, against real production data.** Exercise the new
+retrieval tools against the production ontology — 46 issues, 263
+observations, 134 claims — with no sends and no writes. Asserts that the
+speaker asked "go through the issues" can enumerate all 46 with their latest
+status, search history, and reach the ones the old `recall` could not. This
+is the layer that proves the wire on real data rather than fixtures.
+
+**Layer 3: live rig, end to end.** The rig subject is the same WhatsApp
+account as production, so production stops first and is restored after. The
+peer account sends a screenshot with a caption into the Tst group. The chain
+under test: live retention → description funnel → speaker sees an image it
+can reason about → delegation → worker files a sandbox issue _with the image
+embedded_ → speaker reports the number back in chat. Verdict requires all
+five: exactly one new issue, the marker present, the attachment resolving to
+a signed asset, the description citing the observation, and the peer
+observing the report.
+
+Then the same chain once more with a video, where the expected outcome is
+the honest decline: attached, not interpreted, and a question asked.
+
+### Open
+
+The repo ceiling for the real definition. Evidence supports exactly three —
+`TheCallApp/ios-app`, `TheCallApp/android-app`, `TheCallApp/api`. Memory's
+other two repository entities are a rename artifact (`ios-design-system`
+redirects to `ios-app`) and an unresolved chat question ("API repo").
+
 ## Live test rig
 
 Two linked proof profiles copied (checksums verified) from the whatsappd

@@ -32,6 +32,12 @@ export interface ModelRunner {
   readonly model: Model<Api>;
   /** The role's live thinking level for agent construction. */
   readonly thinkingLevel: ModelConfig["thinking"];
+  /**
+   * Whether this binding can carry an image. A caller that needs one must
+   * check: the harness drops images silently for models that cannot take them,
+   * so an unchecked call would look successful and see nothing.
+   */
+  readonly vision: boolean;
   stream(context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream;
 }
 
@@ -79,7 +85,7 @@ function providerModel(
     provider: providerId,
     baseUrl: definition.baseUrl,
     reasoning: metadata.reasoning,
-    input: ["text"],
+    input: metadata.vision ? ["text", "image"] : ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: metadata.contextWindow,
     maxTokens: metadata.maxTokens,
@@ -153,6 +159,7 @@ export function createModelRuntime(
       snapshot: profile,
       model,
       thinkingLevel: profile.thinking,
+      vision: model.input.includes("image"),
       stream: (context, options) =>
         models.streamSimple(model, context, {
           ...options,
