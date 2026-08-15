@@ -256,6 +256,24 @@ export class WhatsAppSessionController {
     return client.messages.send.text(chatId, text, { idempotencyKey });
   }
 
+  /**
+   * Send an image through the same durable queue.
+   *
+   * Proof tooling: production speaks in text. A live proof needs a real
+   * inbound picture, and the only honest way to get one is for a real linked
+   * account to send it.
+   */
+  async sendImage(
+    chatId: string,
+    bytes: Buffer,
+    caption: string,
+    idempotencyKey: string,
+  ): Promise<WhatsAppOperation<MessageRef>> {
+    const client = this.#client;
+    if (!client) throw new Error("not connected");
+    return client.messages.send.image(chatId, bytes, { caption, idempotencyKey });
+  }
+
   async dispose(): Promise<void> {
     this.#disposed = true;
     await this.detach();

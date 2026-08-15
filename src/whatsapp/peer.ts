@@ -20,6 +20,8 @@ export interface PeerMessage {
 export interface WhatsAppPeer {
   start(): Promise<void>;
   sendText(chatId: string, text: string): Promise<void>;
+  /** Send a real inbound picture, so a media proof exercises the real path. */
+  sendImage(chatId: string, bytes: Buffer, caption: string): Promise<void>;
   waitForText(match: (message: PeerMessage) => boolean, timeoutMs: number): Promise<PeerMessage>;
   stop(): Promise<void>;
 }
@@ -110,6 +112,16 @@ export function createWhatsAppPeer(options: {
       await controller.sendText(
         chatId,
         text,
+        `peer:${options.accountId}:${sends}:${crypto.randomUUID()}`,
+      );
+    },
+
+    async sendImage(chatId, bytes, caption) {
+      sends += 1;
+      await controller.sendImage(
+        chatId,
+        bytes,
+        caption,
         `peer:${options.accountId}:${sends}:${crypto.randomUUID()}`,
       );
     },
