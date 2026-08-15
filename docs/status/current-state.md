@@ -1411,6 +1411,85 @@ database, daemon stopped for the duration and restarted after:
 Production now recalls the identity-aware v10 ontology where its speaker
 runs.
 
+## Live in the real Bug Reports group (2026-08-15)
+
+PR #26 merged. `bug-reports` flipped to `responding` with the `github-issues`
+grant, and production restarted on the merged code.
+
+### Why the first live issue was shallow, and what changed
+
+The master's judgement on the first live-proof issue: shallow. He was right,
+and the cause was the prompts, not the model. The rig mandate said "when
+someone reports a bug — delegate filing it", the definition had no permission
+to decline, and the `bug-intake` skill this brief specified was never written
+— `~/.ambient/skills/` was empty. The machine shipped; the craft did not.
+
+Now:
+
+- **The definition holds a bar** — what, where, platform, expectation — and
+  declines rather than padding a thin report. Declining is free; a wrong
+  issue costs a developer an afternoon.
+- **The `bug-intake` skill** makes the speaker consult recall and history
+  before asking a person, challenge words like "again" that claim a history
+  nobody established, and ask which repository rather than guess.
+- **A task update carries an outcome derived from the receipt**, so a decline
+  reads as a decline instead of a fake success.
+- **The mandate distrusts one class of memory**: anything saying Ambient
+  previously filed or tagged something. Several of those were invented, and
+  memory recorded them because it said them.
+
+Reference copies live in `docs/skills/`; the running copies are in the home.
+
+### Proof: `proof:intake-live`, PASS
+
+Two turns against the running rig daemon. Turn 1 is the same vague report
+that produced the thin issue — a screenshot captioned only "this is wrong
+again". Turn 2 supplies the answers and names a repository. Two repositories
+sit in the ceiling so routing cannot be skipped by there being one candidate.
+
+Verdict PASS: asked without filing on turn 1 (**three separate runs on a
+clean thread, three times asked**), filed into the named repository and
+nowhere else, embedded the screenshot, quoted values only vision could know,
+and named the platform.
+
+The issue it wrote contains the line the first one lacked: _"Although the
+initial caption said 'wrong again,' no prior matching report was found."_
+
+Two real defects surfaced and were fixed along the way:
+
+1. **Evidence could not be carried across turns.** A report arrives as a
+   picture first and its details several messages later, and the speaker sees
+   only this turn's messages. Fixed in the skill (search for the ref before
+   delegating) and, more importantly, in code.
+2. **`search_history` matched only the caption**, so a picture was findable
+   by "this is wrong again" and by nothing about the bug it showed.
+   Descriptions now join the search and return with the result.
+
+One run filed on turn 1 and was RIGHT to: it had read the previous run's
+answers, still sitting in the group. The proof now isolates its own thread —
+the control the experiment needed.
+
+### Operational state
+
+- Production runs from `.claude/worktrees/memory-ship-gate`, whose content is
+  identical to merged master. `prod-master` is still stale and this session
+  cannot `git pull` there (worktree isolation). **Do not delete that worktree
+  until production is moved back.**
+- Production database backed up before migration:
+  `.proof-private/backups/ambient-pre-craft-20260815.db`.
+- Ambient speaks when the next message lands in the group; it does not
+  initiate. The reintroduction is instructed to happen once, on its first
+  run, and never again.
+
+### Known gaps at go-live
+
+- **No true @mentions.** whatsappd supports them; `sendText` does not pass
+  them, and wiring it means putting real phone identifiers into model space.
+  Ambient addresses people by name instead.
+- No proactive speech: it cannot open the conversation unprompted.
+- Worker evals and the decline standard as eval cases remain unbuilt.
+- Video is retained and attachable but never interpreted.
+
 ## The craft increment: BUILT AND PROVEN (2026-08-15)
 
 Seven steps, in the order that made each next one testable. Every step is
